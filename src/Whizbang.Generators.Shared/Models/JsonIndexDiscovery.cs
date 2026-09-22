@@ -304,62 +304,83 @@ public static class JsonIndexDiscovery {
 
     foreach (var declaration in model.GetAttributes()
         .Where(a => TypeNameUtilities.IsNamed(a.AttributeClass, PERSPECTIVE_INDEX))) {
-      var names = declaration.ConstructorArguments.Length > 0
-        ? declaration.ConstructorArguments[0].Values
-            .Select(static v => v.Value as string)
-            .Where(static n => !string.IsNullOrWhiteSpace(n))
-            .Select(static n => n!)
-            .ToArray()
-        : [];
-
-      if (names.Length == 0) {
-        continue;
+      if (_compositeFor(declaration, properties) is { } index) {
+        found.Add(index);
       }
-
-      var elements = new List<CompositeIndexElement>(names.Length);
-      var resolved = true;
-
-      foreach (var name in names) {
-        if (!properties.TryGetValue(name, out var property)) {
-          resolved = false;
-          break;
-        }
-
-        var element = _elementFor(property);
-        if (element is null) {
-          resolved = false;
-          break;
-        }
-
-        elements.Add(new CompositeIndexElement(name, element));
-      }
-
-      if (!resolved) {
-        continue;
-      }
-
-      string? declaredName = null;
-      string? where = null;
-      var unique = false;
-
-      foreach (var argument in declaration.NamedArguments) {
-        switch (argument.Key) {
-          case "Name":
-            declaredName = argument.Value.Value as string;
-            break;
-          case "Where":
-            where = argument.Value.Value as string;
-            break;
-          case "Unique":
-            unique = argument.Value.Value is true;
-            break;
-        }
-      }
-
-      found.Add(new CompositeIndexInfo([.. elements], declaredName, where, unique));
     }
 
     return [.. found];
+  }
+
+  /// <summary>
+  /// One declaration resolved against the model, or null when it cannot be.
+  /// </summary>
+  /// <remarks>
+  /// Separate from the walk above so each does one thing: the walk finds declarations, this decides
+  /// what one means. Inline it was a loop inside a loop inside a loop, which the quality gate
+  /// measured at cognitive complexity 21.
+  /// </remarks>
+  private static CompositeIndexInfo? _compositeFor(
+      AttributeData declaration, Dictionary<string, IPropertySymbol> properties) {
+    var elements = _elementsFor(declaration, properties);
+    if (elements is null) {
+      return null;
+    }
+
+    string? declaredName = null;
+    string? where = null;
+    var unique = false;
+
+    foreach (var argument in declaration.NamedArguments) {
+      switch (argument.Key) {
+        case "Name":
+          declaredName = argument.Value.Value as string;
+          break;
+        case "Where":
+          where = argument.Value.Value as string;
+          break;
+        case "Unique":
+          unique = argument.Value.Value is true;
+          break;
+      }
+    }
+
+    return new CompositeIndexInfo([.. elements], declaredName, where, unique);
+  }
+
+  /// <summary>
+  /// The declaration's properties resolved to the SQL each is indexed over, or null when any one of
+  /// them cannot be.
+  /// </summary>
+  /// <remarks>
+  /// All or nothing. A composite missing one of its columns is a different index, and one that
+  /// silently answered fewer filters would be worse than none at all.
+  /// </remarks>
+  private static List<CompositeIndexElement>? _elementsFor(
+      AttributeData declaration, Dictionary<string, IPropertySymbol> properties) {
+    var names = declaration.ConstructorArguments.Length > 0
+      ? declaration.ConstructorArguments[0].Values
+          .Select(static v => v.Value as string)
+          .Where(static n => !string.IsNullOrWhiteSpace(n))
+          .Select(static n => n!)
+          .ToArray()
+      : [];
+
+    if (names.Length == 0) {
+      return null;
+    }
+
+    var elements = new List<CompositeIndexElement>(names.Length);
+
+    foreach (var name in names) {
+      if (!properties.TryGetValue(name, out var property) || _elementFor(property) is not { } element) {
+        return null;
+      }
+
+      elements.Add(new CompositeIndexElement(name, element));
+    }
+
+    return elements;
   }
 
   /// <summary>

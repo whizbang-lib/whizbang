@@ -97,9 +97,9 @@ public static class CompositeIndexSql {
 
     var suffix = $"_{_stableHash(name):x8}";
 
-    // Substring rather than a span overload: this project targets the generator's netstandard2.0,
-    // where string.Concat has no span overload.
-    return name.Substring(0, IDENTIFIER_LIMIT - suffix.Length) + suffix;
+    // A range rather than Substring's two arguments; the project targets the generator's
+    // netstandard2.0, where string.Concat has no span overload, so this stays a string.
+    return name[..(IDENTIFIER_LIMIT - suffix.Length)] + suffix;
   }
 
   /// <summary>A hash that is the same on every run.</summary>
@@ -124,7 +124,7 @@ public static class CompositeIndexSql {
   /// <param name="indexPrefix">A prefix making derived names unique to the table.</param>
   public static string CreateStatement(
       CompositeIndexInfo index, string qualifiedTable, string indexPrefix) {
-    if (index is null || index.Elements.IsDefaultOrEmpty) {
+    if (index?.Elements.IsDefaultOrEmpty != false) {
       return string.Empty;
     }
 

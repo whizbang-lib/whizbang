@@ -1,6 +1,5 @@
 extern alias shared;
 
-using System.Collections.Immutable;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -117,7 +116,7 @@ public class CompositeIndexNamingTests {
   [Test]
   public async Task AnEmptyDeclaration_EmitsNothingAsync() {
     var statement = CompositeIndexSql.CreateStatement(
-      new CompositeIndexInfo(ImmutableArray<CompositeIndexElement>.Empty), "s.t", "doc");
+      new CompositeIndexInfo([]), "s.t", "doc");
 
     await Assert.That(statement).IsEmpty()
       .Because("an index over no properties is not an index; emitting one would be a syntax error "

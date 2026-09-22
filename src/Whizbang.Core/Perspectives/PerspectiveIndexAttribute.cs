@@ -47,19 +47,15 @@ namespace Whizbang.Core.Perspectives;
 /// </example>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveIndexAttributeTests.cs</tests>
+/// <param name="properties">
+/// The model properties the index covers, leading property first. One is allowed: an index over a
+/// single property with a <see cref="Where"/> predicate is a partial index, which
+/// <see cref="IndexedAttribute"/> cannot express.
+/// </param>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = true)]
-public sealed class PerspectiveIndexAttribute : Attribute {
-  /// <summary>Declares the index over <paramref name="properties"/>, in that order.</summary>
-  /// <param name="properties">
-  /// The model properties the index covers, leading property first. One is allowed: an index over a
-  /// single property with a <see cref="Where"/> predicate is a partial index, which
-  /// <see cref="IndexedAttribute"/> cannot express.
-  /// </param>
-  public PerspectiveIndexAttribute(params string[] properties) =>
-    Properties = properties ?? [];
-
+public sealed class PerspectiveIndexAttribute(params string[] properties) : Attribute {
   /// <summary>The model properties the index covers, leading property first.</summary>
-  public string[] Properties { get; }
+  public string[] Properties { get; } = properties ?? [];
 
   /// <summary>
   /// The index name, or null to derive one from the table and the properties.
