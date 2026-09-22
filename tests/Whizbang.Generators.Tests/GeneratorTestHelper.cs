@@ -183,6 +183,10 @@ public static class GeneratorTestHelper {
     var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
     references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+    // Whizbang.Core too, so a source can carry the framework's own attributes rather than a
+    // look-alike declared beside it. Discovery matches an attribute by its display name, so a
+    // hand-rolled copy passes while proving nothing about the real one.
+    _addWhizbangCore(references);
 
     // Create compilation
     return CSharpCompilation.Create(
@@ -191,6 +195,22 @@ public static class GeneratorTestHelper {
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
+  }
+
+  /// <summary>Adds a reference to Whizbang.Core, by name first and then from beside the tests.</summary>
+  private static void _addWhizbangCore(List<MetadataReference> references) {
+    try {
+      var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
+      references.Add(MetadataReference.CreateFromFile(coreAssembly.Location));
+    } catch (FileNotFoundException) {
+      var coreAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Core.dll"
+      );
+      if (File.Exists(coreAssemblyPath)) {
+        references.Add(MetadataReference.CreateFromFile(coreAssemblyPath));
+      }
+    }
   }
 
   /// <summary>
