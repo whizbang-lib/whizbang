@@ -15,8 +15,8 @@ using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Routing;
-using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Tests.Helpers;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Workers;
 
