@@ -2477,7 +2477,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       discardPolicy.RecordDiscard(
         gate: MessageDiscardGate.Receive,
         decision: policyDecision,
-        payloadClrType: decision.EnvelopeTypeName!,
+        payloadClrType: decision.EnvelopeTypeName,
         additionalTags: new Dictionary<string, object?> {
           ["topic"] = topic,
           ["subscription"] = subscription,

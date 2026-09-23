@@ -51,7 +51,11 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     // Generate registry with unique class name per assembly
     context.RegisterSourceOutput(
         taggedTypes.Collect().Combine(assemblyName),
+        // The bang is the element-nullability conversion the compiler requires (CS8620 without it):
+        // the collected array is of the nullable element type, the callee takes the non-nullable one.
+#pragma warning disable S8969
         static (ctx, data) => _generateRegistry(ctx, data.Left!, data.Right)
+#pragma warning restore S8969
     );
   }
 

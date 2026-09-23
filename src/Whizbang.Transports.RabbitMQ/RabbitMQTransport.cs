@@ -1091,14 +1091,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     if (discardPolicy is null || string.IsNullOrEmpty(envelopeTypeName)) {
       return false;
     }
-    var decision = discardPolicy.EvaluateReceive(envelopeTypeName!, topic: queueName, subscription: queueName);
+    var decision = discardPolicy.EvaluateReceive(envelopeTypeName, topic: queueName, subscription: queueName);
     if (!decision.ShouldDiscard) {
       return false;
     }
     discardPolicy.RecordDiscard(
       gate: MessageDiscardGate.Receive,
       decision: decision,
-      payloadClrType: envelopeTypeName!,
+      payloadClrType: envelopeTypeName,
       additionalTags: new Dictionary<string, object?> {
         ["queue"] = queueName,
         ["message_id"] = messageId,

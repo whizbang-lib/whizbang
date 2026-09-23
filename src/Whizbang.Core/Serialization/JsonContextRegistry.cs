@@ -961,8 +961,8 @@ public static class JsonContextRegistry {
       IsPublic = true,
       IsVirtual = false,
       DeclaringType = typeof(TDeclaringType),
-      Getter = obj => _getter((TDeclaringType)obj!),
-      Setter = _setter != null ? (obj, value) => _setter((TDeclaringType)obj!, value!) : null,
+      Getter = obj => _getter((TDeclaringType)obj),
+      Setter = _setter != null ? (obj, value) => _setter((TDeclaringType)obj, value!) : null,
       JsonPropertyName = _propertyName,
       PropertyName = _propertyName
     };
@@ -986,8 +986,8 @@ public static class JsonContextRegistry {
       IsPublic = true,
       IsVirtual = false,
       DeclaringType = typeof(TDeclaringType),
-      Getter = obj => _getter((TDeclaringType)obj!),
-      Setter = _setter != null ? (obj, value) => _setter((TDeclaringType)obj!, value!) : null,
+      Getter = obj => _getter((TDeclaringType)obj),
+      Setter = _setter != null ? (obj, value) => _setter((TDeclaringType)obj, value!) : null,
       JsonPropertyName = _propertyName,
       PropertyName = _propertyName,
       PropertyTypeInfo = _propertyTypeInfo // CRITICAL: Use the custom polymorphic type info

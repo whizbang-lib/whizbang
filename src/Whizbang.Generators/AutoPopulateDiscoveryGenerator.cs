@@ -50,13 +50,21 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     // Generate registry with unique class name per assembly
     context.RegisterSourceOutput(
         populatedProperties.Collect().Combine(assemblyName),
+        // The bang is the element-nullability conversion the compiler requires (CS8620 without it):
+        // the collected array is of the nullable element type, the callee takes the non-nullable one.
+#pragma warning disable S8969
         static (ctx, data) => _generateRegistry(ctx, data.Left!, data.Right)
+#pragma warning restore S8969
     );
 
     // Generate populator (record 'with' + class in-place population)
     context.RegisterSourceOutput(
         populatedProperties.Collect().Combine(assemblyName).Combine(scopeAliases),
+        // The bang is the element-nullability conversion the compiler requires (CS8620 without it):
+        // the collected array is of the nullable element type, the callee takes the non-nullable one.
+#pragma warning disable S8969
         static (ctx, data) => _generatePopulator(ctx, data.Left.Left!, data.Left.Right, data.Right)
+#pragma warning restore S8969
     );
   }
 

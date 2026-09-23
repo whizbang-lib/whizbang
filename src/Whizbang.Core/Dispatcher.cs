@@ -2846,7 +2846,7 @@ public abstract partial class Dispatcher(
   /// </summary>
   private Guid _cascadeStreamIdFromSourceIfNeeded(object msg, Type messageType, Guid streamId, IMessageEnvelope? sourceEnvelope) {
     if (streamId == Guid.Empty && sourceEnvelope is not null && _streamIdExtractor is not null) {
-      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
       if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
         streamId = sourceStreamId.Value;
         if (msg is IHasStreamId hasStreamIdForCascade) {
@@ -2854,7 +2854,7 @@ public abstract partial class Dispatcher(
         } else {
           _streamIdExtractor.SetStreamId(msg, streamId);
         }
-        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload!.GetType().Name, messageType.Name);
+        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload.GetType().Name, messageType.Name);
       }
     }
     return streamId;
@@ -3225,7 +3225,7 @@ public abstract partial class Dispatcher(
     try {
 
       // Auto-generate StreamId for events with [GenerateStreamId] attribute
-      _autoGenerateStreamIdIfNeeded(eventData!, eventType);
+      _autoGenerateStreamIdIfNeeded(eventData, eventType);
 
       // Create MessageId once - used for outbox and will be used by process_work_batch for event storage
       var messageId = MessageId.New();
@@ -3250,7 +3250,7 @@ public abstract partial class Dispatcher(
       // service's own transported copy loops back and is echo-discarded (it already fanned out here), so
       // there is no double fan-out. The composite itself is IMessage-not-IEvent and is never event-stored.
       if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
-        await _fanOutCompositeLocallyAtPublishAsync(eventData!, eventType, messageId).ConfigureAwait(false);
+        await _fanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
       }
 
       // Start outbox publishing concurrently with the local receptor.
@@ -3269,7 +3269,7 @@ public abstract partial class Dispatcher(
         await publisher(eventData);
         // CancellationToken.None: this PublishAsync overload takes no token, and the local
         // receptor invocation above is likewise uncancellable — explicit opt-out, not an oversight.
-        await _publishToForeignLookupsAsync(eventData!, eventType, null, CancellationToken.None).ConfigureAwait(false);
+        await _publishToForeignLookupsAsync(eventData, eventType, null, CancellationToken.None).ConfigureAwait(false);
       } catch {
         // Ensure outbox task is observed before re-throwing to avoid UnobservedTaskException
         try { await outboxTask; } catch { /* outbox exception is secondary */ }
@@ -3341,7 +3341,7 @@ public abstract partial class Dispatcher(
     try {
 
       // Auto-generate StreamId for events with [GenerateStreamId] attribute
-      _autoGenerateStreamIdIfNeeded(eventData!, eventType);
+      _autoGenerateStreamIdIfNeeded(eventData, eventType);
 
       var messageId = MessageId.New();
 
@@ -3349,7 +3349,7 @@ public abstract partial class Dispatcher(
 
       // Owned composite — fan out LOCALLY at publish (step 1.1); see the other PublishAsync overload.
       if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
-        await _fanOutCompositeLocallyAtPublishAsync(eventData!, eventType, messageId).ConfigureAwait(false);
+        await _fanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
       }
 
       // Start outbox concurrently with receptor (see other overload for rationale).
@@ -3372,7 +3372,7 @@ public abstract partial class Dispatcher(
         var publisher = GetReceptorPublisher(eventData, eventType);
         try {
           await publisher(eventData);
-          await _publishToForeignLookupsAsync(eventData!, eventType, null, options.CancellationToken).ConfigureAwait(false);
+          await _publishToForeignLookupsAsync(eventData, eventType, null, options.CancellationToken).ConfigureAwait(false);
         } catch {
           try { await outboxTask; } catch { /* outbox exception is secondary */ }
           throw;
@@ -3568,7 +3568,7 @@ public abstract partial class Dispatcher(
 
     // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
     if (streamId == Guid.Empty && sourceEnvelope is not null && _streamIdExtractor is not null) {
-      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
       if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
         streamId = sourceStreamId.Value;
         if (message is IHasStreamId hasStreamIdForCascade) {
@@ -3576,7 +3576,7 @@ public abstract partial class Dispatcher(
         } else {
           _streamIdExtractor.SetStreamId(message, streamId);
         }
-        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload!.GetType().Name, messageType.Name);
+        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload.GetType().Name, messageType.Name);
       }
     }
 
@@ -3779,14 +3779,14 @@ public abstract partial class Dispatcher(
     if (sourceEnvelope is not null && _streamIdExtractor is not null) {
       var eventStreamId = _streamIdExtractor.ExtractStreamId(eventData!, eventType);
       if (!eventStreamId.HasValue || eventStreamId.Value == Guid.Empty) {
-        var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+        var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
         if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
           if (eventData is IHasStreamId hasStreamId) {
             hasStreamId.StreamId = sourceStreamId.Value;
           } else {
             _streamIdExtractor.SetStreamId(eventData!, sourceStreamId.Value);
           }
-          Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload!.GetType().Name, eventType.Name);
+          Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload.GetType().Name, eventType.Name);
         }
       }
     }
@@ -4084,7 +4084,7 @@ public abstract partial class Dispatcher(
       return;
     }
 
-    var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+    var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
     if (!sourceStreamId.HasValue || sourceStreamId.Value == Guid.Empty) {
       return;
     }
@@ -4094,7 +4094,7 @@ public abstract partial class Dispatcher(
     } else {
       _streamIdExtractor.SetStreamId(eventData, sourceStreamId.Value);
     }
-    Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload!.GetType().Name, eventType.Name);
+    Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload.GetType().Name, eventType.Name);
   }
 
   /// <summary>
@@ -4270,7 +4270,7 @@ public abstract partial class Dispatcher(
     // 3. Apply routing strategy (pool suffix, tenant prefix, etc.)
     // _topicRoutingStrategy is never null (defaults to PassthroughRoutingStrategy if not provided)
     // baseTopic is never null here: either from registry or convention fallback always assigns a value
-    var resolvedTopic = _topicRoutingStrategy!.ResolveTopic(eventType, baseTopic, context);
+    var resolvedTopic = _topicRoutingStrategy.ResolveTopic(eventType, baseTopic, context);
     return resolvedTopic;
   }
 
@@ -4371,7 +4371,7 @@ public abstract partial class Dispatcher(
       }
 
       // Serialize envelope to OutboxMessage
-      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message!, messageType, destination);
+      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
       // Queue message for batched processing — async path routes through the per-stream batcher.
       await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
@@ -4380,7 +4380,7 @@ public abstract partial class Dispatcher(
       await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
-      var streamId = _streamIdExtractor?.ExtractStreamId(message!, messageType);
+      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
       // Return delivery receipt with Accepted status (message queued)
       return DeliveryReceipt.Accepted(
@@ -5043,7 +5043,7 @@ public abstract partial class Dispatcher(
 
         if (isLocal) {
           // Auto-generate StreamId for events with [GenerateStreamId] attribute
-          _autoGenerateStreamIdIfNeeded(eventData!, eventType);
+          _autoGenerateStreamIdIfNeeded(eventData, eventType);
 
           // Has local receptor - process locally via publish semantics
           var cascade = _cascadeContextFactory.NewRoot();

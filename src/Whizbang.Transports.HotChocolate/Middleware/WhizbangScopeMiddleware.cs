@@ -65,7 +65,7 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
   private void _seedInboundCorrelation(HttpContext context) {
     if (context.Request.Headers.TryGetValue(_options.CorrelationIdHeaderName, out var header) &&
         !string.IsNullOrEmpty(header) &&
-        Guid.TryParse(header!, out var correlationGuid)) {
+        Guid.TryParse(header, out var correlationGuid)) {
       // FromExternal accepts any 128-bit token (a client v4 UUID, a W3C trace-id) without UUIDv7 validation —
       // a correlation id can originate outside the system.
       InboundCorrelationAccessor.Current = CorrelationId.FromExternal(correlationGuid);
@@ -89,7 +89,7 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
     foreach (var (headerName, extensionKey) in _options.ExtensionHeaderMappings) {
       if (context.Request.Headers.TryGetValue(headerName, out var headerValue) &&
           !string.IsNullOrEmpty(headerValue)) {
-        extensions.Add(new ScopeExtension { Key = extensionKey, Value = headerValue! });
+        extensions.Add(new ScopeExtension { Key = extensionKey, Value = headerValue });
       }
     }
 
@@ -118,7 +118,7 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
     // Then try header
     if (context.Request.Headers.TryGetValue(headerName, out var headerValue) &&
         !string.IsNullOrEmpty(headerValue)) {
-      return headerValue!;
+      return headerValue;
     }
 
     return null;

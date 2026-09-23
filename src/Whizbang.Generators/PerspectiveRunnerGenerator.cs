@@ -595,7 +595,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string _generateUpsertCode(PerspectiveInfo perspective) {
     var sb = new StringBuilder();
 
-    if (perspective.PhysicalFields == null || perspective.PhysicalFields!.Length == 0) {
+    if (perspective.PhysicalFields == null || perspective.PhysicalFields.Length == 0) {
       _appendSimpleUpsertCode(sb);
     } else {
       _appendPhysicalFieldsUpsertCode(sb, perspective);
@@ -669,7 +669,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     for (int i = 0; i < perspective.PhysicalFields!.Length; i++) {
       var field = perspective.PhysicalFields[i];
-      var comma = i < perspective.PhysicalFields!.Length - 1 ? "," : "";
+      var comma = i < perspective.PhysicalFields.Length - 1 ? "," : "";
       if (field.IsVectorField) {
         sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} != null ? new Pgvector.Vector(model.{field.PropertyName}) : null }}{comma}");
       } else {
