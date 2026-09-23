@@ -1,14 +1,34 @@
 name: CI
 
+# Without this, a run is titled after its commit, and a post-merge run on develop is therefore
+# titled "Merge pull request #NNN from ..." -- which reads as though the run IS the merge. It is
+# not: it starts seconds AFTER the merge has already landed, and canceling it cannot undo
+# anything, it only abandons whatever the run had left to do (for develop, that is the prerelease
+# publish). Saying which event this is, up front, is the difference.
+run-name: >-
+  CI ${{ github.event_name == 'pull_request' && format('· PR #{0} · {1}', github.event.pull_request.number, github.head_ref)
+      || github.event_name == 'merge_group' && '· merge queue'
+      || github.event_name == 'workflow_dispatch' && format('· manual · {0}', github.ref_name)
+      || format('· post-merge · {0}', github.ref_name) }}
+
 on:
   push:
     branches:
-      - develop        # release.yml handles post-merge to main
+      - develop        # alpha channel: the prerelease-publish job
+      - main           # a release landing here is what analyzes the main line (see below)
       - 'release/v**'  # branch-name-versioned publish (release-publish job)
   pull_request:
     branches: [main, develop, 'release/**']
   merge_group:       # the queue's own run, on the prospective merge commit
   workflow_dispatch:
+
+# WHY main IS A PUSH TRIGGER: reusable-quality.yml has always had a main-branch shape — its
+# scanner steps run on a pull request OR a push to main, and for the latter it omits
+# sonar.branch.name so SonarCloud records the analysis as the main line. Nothing ever produced
+# that push: release.yml merges the release PR and calls no quality workflow, so main went
+# unanalyzed from one release to the next and the badge kept reporting a months-old verdict on
+# months-old code. Main receives one merge per release, so this costs one matrix per release, and
+# every publish job here is guarded to develop or release/** and cannot fire from it.
 
 # Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
 # what it needs. Only the publish jobs get contents/id-token write, and only
@@ -26,7 +46,7 @@ concurrency:
   #
   # PUSH runs are keyed by SHA, so every pushed commit gets its OWN group and can never be
   # displaced by a later push. cancel-in-progress: false is NOT sufficient on its own — it
-  # prevents cancelling a RUNNING run, but GitHub keeps at most ONE pending run per group, so
+  # prevents canceling a RUNNING run, but GitHub keeps at most ONE pending run per group, so
   # a third push arriving while one run is executing and another is queued EVICTS the queued
   # one. That run is cancelled before it starts (tell-tale: total_jobs = 0), and because
   # Detect Changes scopes publish to the pushed commit, the evicted commit's packages are
