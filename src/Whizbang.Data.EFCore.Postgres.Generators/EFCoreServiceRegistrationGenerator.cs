@@ -256,22 +256,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       CancellationToken ct) {
     var classDecl = (ClassDeclarationSyntax)context.Node;
 
-    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol) {
-      return null;
-    }
-
-    // Check if class inherits from DbContext
-    var baseType = symbol.BaseType;
-    bool inheritsDbContext = false;
-    while (baseType != null) {
-      if (TypeNameUtilities.IsNamed(baseType, "Microsoft.EntityFrameworkCore.DbContext")) {
-        inheritsDbContext = true;
-        break;
-      }
-      baseType = baseType.BaseType;
-    }
-
-    if (!inheritsDbContext) {
+    // Check if class inherits from DbContext. The bind guard shares that exit: a declaration Roslyn
+    // bound no named type for has no base chain to walk, so it is not a DbContext either and the
+    // symbol is never dereferenced.
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol
+        || !_inheritsFromDbContext(symbol)) {
       return null;
     }
 
@@ -491,20 +480,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       CancellationToken ct) {
     var classDecl = (ClassDeclarationSyntax)context.Node;
 
-    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol) {
-      return null;
-    }
-
-    // Check if class implements IPerspectiveFor<TModel> base interface
-    var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
-      var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
-      return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
-             originalDef == "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel>" ||
-             originalDef == "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>";
-    });
-
-    if (perspectiveForInterface is null) {
-      return null; // Not a perspective
+    // Check if class implements IPerspectiveFor<TModel> base interface. The bind guard shares that
+    // exit: a declaration Roslyn bound no named type for implements no interfaces either.
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol
+        || symbol.AllInterfaces.FirstOrDefault(_isPerspectiveMarkerInterface) is not { } perspectiveForInterface) {
+      return null; // Unbound declaration, or not a perspective
     }
 
     // Perspective discovered - extract TModel from first type argument
@@ -632,6 +612,26 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     );
   }
 
+
+  /// <summary>True for the one-argument perspective marker interfaces the candidate scan matches.</summary>
+  private static bool _isPerspectiveMarkerInterface(INamedTypeSymbol iface) {
+    var originalDef = TypeNameUtilities.Display(iface.OriginalDefinition);
+    return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
+           originalDef == "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel>" ||
+           originalDef == "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>";
+  }
+
+  /// <summary>True when <paramref name="symbol"/> has <c>Microsoft.EntityFrameworkCore.DbContext</c>
+  /// somewhere in its base chain.</summary>
+  private static bool _inheritsFromDbContext(INamedTypeSymbol symbol) {
+    for (var baseType = symbol.BaseType; baseType != null; baseType = baseType.BaseType) {
+      if (TypeNameUtilities.IsNamed(baseType, "Microsoft.EntityFrameworkCore.DbContext")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// <summary>
   /// Extracts string array keys from attribute constructor arguments.
   /// Supports params string[] parameter pattern used by WhizbangDbContext and WhizbangPerspective attributes.
@@ -642,20 +642,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithSingleKey_DiscoversDbContextWithKeyAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
   private static string[] _extractKeysFromAttribute(AttributeData attribute) {
-    if (attribute.ConstructorArguments.Length == 0) {
-      return [];
-    }
-
-    var arg = attribute.ConstructorArguments[0];
-
-    // Handle params array argument
-    if (arg.Kind == TypedConstantKind.Array) {
-      return [.. arg.Values
-          .Where(v => v.Value is string)
-          .Select(v => (string)v.Value!)];
-    }
-
-    return [];
+    // Handle the params array argument. An attribute whose constructor did not bind has no arguments
+    // at all, and FirstOrDefault then yields the default constant, whose kind is not Array — the same
+    // "no keys" answer as a first argument that is not the params array.
+    var arg = attribute.ConstructorArguments.FirstOrDefault();
+    return arg.Kind == TypedConstantKind.Array
+      ? [.. arg.Values.Where(v => v.Value is string).Select(v => (string)v.Value!)]
+      : [];
   }
 
   /// <summary>
@@ -959,31 +952,19 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static MultiLensQueryInfo? _extractMultiLensQueryInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
+    // One test for every way a constructor parameter fails to be a multi-model lens query: it must be
+    // a generic name, it must resolve to a named type, and that type must be the ILensQuery interface
+    // from Whizbang.Core.Lenses with two or more model arguments. The first two and the arity cannot
+    // fail today — the syntax predicate already required a generic type with two or more arguments,
+    // and even an unresolved generic name binds to a named error symbol — but they stay as the guards
+    // on the cast and the symbol, and they answer exactly as the rest do.
     var parameterSyntax = (ParameterSyntax)context.Node;
-    if (parameterSyntax.Type is not GenericNameSyntax genericName) {
-      return null;
-    }
-
-    // Get the semantic type info for the parameter type
-    var typeInfo = context.SemanticModel.GetTypeInfo(genericName, ct);
-    if (typeInfo.Type is not INamedTypeSymbol type) {
-      return null;
-    }
-
-    // Check if it's ILensQuery from Whizbang.Core.Lenses with 2+ type arguments
-    if (type.TypeKind != TypeKind.Interface) {
-      return null;
-    }
-
-    if (!type.Name.Equals("ILensQuery", StringComparison.Ordinal)) {
-      return null;
-    }
-
-    if (type.TypeArguments.Length < 2) {
-      return null;
-    }
-
-    if (!TypeNameUtilities.IsNamed(type.ContainingNamespace, "Whizbang.Core.Lenses")) {
+    if (parameterSyntax.Type is not GenericNameSyntax genericName
+        || context.SemanticModel.GetTypeInfo(genericName, ct).Type is not INamedTypeSymbol type
+        || type.TypeKind != TypeKind.Interface
+        || !type.Name.Equals("ILensQuery", StringComparison.Ordinal)
+        || type.TypeArguments.Length < 2
+        || !TypeNameUtilities.IsNamed(type.ContainingNamespace, "Whizbang.Core.Lenses")) {
       return null;
     }
 
@@ -1398,16 +1379,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     _reportRegistrationDebugDiagnostic(context, perspectives, dbContexts, multiLensQueries);
 
-    if (dbContexts.IsEmpty) {
-      return;  // No DbContext found - nothing to register
+    // Nothing to register without a DbContext, and nothing to emit if the shared registration
+    // snippets cannot be read — the load reports EFCORE999 itself before answering false. Both leave
+    // by the same exit, and the short circuit keeps the snippet read off the no-DbContext path
+    // exactly as the separate early return did.
+    if (dbContexts.IsEmpty
+        || !_tryLoadRegistrationSnippets(context, out var infrastructureSnippet, out var perspectiveSnippet)) {
+      return;
     }
 
     var dbContextGroups = _groupPerspectivesByDbContext(perspectives, dbContexts);
     var totalUniqueModels = perspectives.IsEmpty ? 0 : perspectives.GroupBy(p => p.ModelTypeName).Count();
-
-    if (!_tryLoadRegistrationSnippets(context, out var infrastructureSnippet, out var perspectiveSnippet)) {
-      return;
-    }
 
     var sb = new StringBuilder();
     var consumerNamespace = dbContextGroups[0].DbContext.Namespace;
@@ -2402,10 +2384,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     context.ReportDiagnostic(Diagnostic.Create(diagnosticDescriptor, Location.None,
         migrationResources.Length, assembly.GetName().Name, resourcePrefix, resourceList));
 
-    if (migrationResources.Length == 0) {
-      return "// No migration files found in embedded resources";
-    }
-
     // Generate migration tuples
     for (int i = 0; i < migrationResources.Length; i++) {
       var resourceName = migrationResources[i];
@@ -2415,34 +2393,37 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // Or from "...Templates.Migrations.001_Name.sql" -> "001_Name.sql"
       var fileName = resourceName[resourcePrefix.Length..];
 
-      // Read content from embedded resource
+      // Read content from embedded resource. The name came from GetManifestResourceNames, so the
+      // stream is there; guarding it keeps a name that stops resolving between the two calls from
+      // faulting the generator, and contributes no entry when it fires. Written as a block the
+      // resource enters rather than as a skip it leaves by, so the test runs on every resource.
       using var stream = assembly.GetManifestResourceStream(resourceName);
-      if (stream == null) {
-        continue; // Skip if resource not found
-      }
+      if (stream is not null) {
+        using var reader = new System.IO.StreamReader(stream);
+        var content = reader.ReadToEnd();
 
-      using var reader = new System.IO.StreamReader(stream);
-      var content = reader.ReadToEnd();
+        // Escape the SQL content for C# verbatim string literal (@"...")
+        // In verbatim strings, only quotes need escaping (by doubling them)
+        // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
+        // IMPORTANT: Replace __SCHEMA__ with __MIGRATION_SCHEMA__ to prevent build-time replacement.
+        //            The runtime _transformMigrationSql function uses the schema parameter, not __SCHEMA__.
+        var escapedContent = content
+            .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")  // Preserve for runtime transformation
+            .Replace("\"", "\"\"")  // Escape quotes for verbatim string
+            .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
+            .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
 
-      // Escape the SQL content for C# verbatim string literal (@"...")
-      // In verbatim strings, only quotes need escaping (by doubling them)
-      // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
-      // IMPORTANT: Replace __SCHEMA__ with __MIGRATION_SCHEMA__ to prevent build-time replacement.
-      //            The runtime _transformMigrationSql function uses the schema parameter, not __SCHEMA__.
-      var escapedContent = content
-          .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")  // Preserve for runtime transformation
-          .Replace("\"", "\"\"")  // Escape quotes for verbatim string
-          .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
-          .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
+        sb.Append($"      (\"{fileName}\", @\"{escapedContent}\")");
 
-      sb.Append($"      (\"{fileName}\", @\"{escapedContent}\")");
-
-      if (i < migrationResources.Length - 1) {
-        sb.AppendLine(",");
+        if (i < migrationResources.Length - 1) {
+          sb.AppendLine(",");
+        }
       }
     }
 
-    return sb.ToString();
+    // An empty resource set produces no entries, and the placeholder comment stands in for them so
+    // the generated array initializer still reads as deliberate rather than as a truncation.
+    return migrationResources.Length == 0 ? "// No migration files found in embedded resources" : sb.ToString();
   }
 
   /// <summary>

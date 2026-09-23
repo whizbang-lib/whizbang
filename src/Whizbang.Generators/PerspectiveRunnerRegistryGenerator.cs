@@ -66,12 +66,12 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
     var methodDecl = (MethodDeclarationSyntax)context.Node;
-    if (context.SemanticModel.GetDeclaredSymbol(methodDecl, cancellationToken) is not IMethodSymbol methodSymbol) {
-      return null;
-    }
-    var hasAttribute = methodSymbol.GetAttributes()
-        .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, COLLECTIVE_APPLY_FOR_ATTRIBUTE_FQN));
-    if (!hasAttribute || methodSymbol.Parameters.Length < 1) {
+    // The bind guard shares the "not a [CollectiveApplyFor] method" exit: a method Roslyn cannot bind
+    // exposes no attributes and no parameters, so it fails the same test without being dereferenced.
+    if (context.SemanticModel.GetDeclaredSymbol(methodDecl, cancellationToken) is not IMethodSymbol methodSymbol
+        || !methodSymbol.GetAttributes()
+              .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, COLLECTIVE_APPLY_FOR_ATTRIBUTE_FQN))
+        || methodSymbol.Parameters.Length < 1) {
       return null;
     }
     return TypeNameUtilities.FullyQualified(methodSymbol.Parameters[0].Type);

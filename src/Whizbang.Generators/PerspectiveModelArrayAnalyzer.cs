@@ -56,13 +56,11 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
   }
 
   private static void _analyzeTypeDeclaration(SyntaxNodeAnalysisContext context, TypeDeclarationSyntax typeDeclaration) {
-    var typeSymbol = context.SemanticModel.GetDeclaredSymbol(typeDeclaration, context.CancellationToken);
-    if (typeSymbol is null) {
-      return;
-    }
-
-    // Check if this type is used as a perspective model
-    if (!_isPerspectiveModel(typeSymbol)) {
+    // Check if this type is used as a perspective model. The bind guard shares that exit: a
+    // declaration Roslyn bound no symbol for is not a perspective model either, so it leaves by the
+    // same test and the symbol is never dereferenced.
+    if (context.SemanticModel.GetDeclaredSymbol(typeDeclaration, context.CancellationToken) is not { } typeSymbol
+        || !_isPerspectiveModel(typeSymbol)) {
       return;
     }
 

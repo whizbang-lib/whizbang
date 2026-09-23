@@ -229,22 +229,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       CancellationToken ct) {
     var classDecl = (ClassDeclarationSyntax)context.Node;
 
-    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol) {
-      return null;
-    }
-
-    // Check if class inherits from DbContext
-    var baseType = symbol.BaseType;
-    bool inheritsDbContext = false;
-    while (baseType != null) {
-      if (TypeNameUtilities.IsNamed(baseType, "Microsoft.EntityFrameworkCore.DbContext")) {
-        inheritsDbContext = true;
-        break;
-      }
-      baseType = baseType.BaseType;
-    }
-
-    if (!inheritsDbContext) {
+    // Check if class inherits from DbContext. The bind guard shares that exit: a declaration Roslyn
+    // bound no named type for has no base chain to walk, so it is not a DbContext either and the
+    // symbol is never dereferenced.
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol
+        || !_inheritsFromDbContext(symbol)) {
       return null;
     }
 
@@ -269,6 +258,30 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // empty (issue #707): ask the symbol, and let an empty string reach the default-schema arm.
     var namespaceName = TypeNameUtilities.NamespaceName(symbol.ContainingNamespace);
     return _deriveSchemaFromNamespace(namespaceName);
+  }
+
+
+  /// <summary>True for any perspective interface, marker or event-carrying, that the candidate scan
+  /// matches.</summary>
+  private static bool _isPerspectiveInterface(INamedTypeSymbol iface) {
+    var originalDef = TypeNameUtilities.Display(iface.OriginalDefinition);
+    return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
+           originalDef == "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel>" ||
+           originalDef == "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>" ||
+           originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel,", StringComparison.Ordinal) ||
+           originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel,", StringComparison.Ordinal) ||
+           originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel,", StringComparison.Ordinal);
+  }
+
+  /// <summary>True when <paramref name="symbol"/> has <c>Microsoft.EntityFrameworkCore.DbContext</c>
+  /// somewhere in its base chain.</summary>
+  private static bool _inheritsFromDbContext(INamedTypeSymbol symbol) {
+    for (var baseType = symbol.BaseType; baseType != null; baseType = baseType.BaseType) {
+      if (TypeNameUtilities.IsNamed(baseType, "Microsoft.EntityFrameworkCore.DbContext")) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// <summary>
@@ -321,28 +334,17 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       CancellationToken ct) {
     var classDecl = (ClassDeclarationSyntax)context.Node;
 
-    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol) {
-      return null;
-    }
-
-    // Check if class implements IPerspectiveFor<TModel> base interface or any variant
+    // Check if class implements IPerspectiveFor<TModel> base interface or any variant.
     // IPerspectiveFor has multiple overloads:
     // - IPerspectiveFor<TModel> (base marker)
     // - IPerspectiveFor<TModel, TEvent1>
     // - IPerspectiveFor<TModel, TEvent1, TEvent2>
     // ... up to IPerspectiveFor<TModel, TEvent1, ..., TEvent5>
-    var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
-      var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
-      return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
-             originalDef == "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel>" ||
-             originalDef == "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>" ||
-             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel,", StringComparison.Ordinal) ||
-             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel,", StringComparison.Ordinal) ||
-             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel,", StringComparison.Ordinal);
-    });
-
-    if (perspectiveForInterface is null) {
-      return null; // Not a perspective
+    // The bind guard shares this exit: a declaration Roslyn bound no named type for implements no
+    // interfaces either, so it is not a perspective and the symbol is never dereferenced.
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol
+        || symbol.AllInterfaces.FirstOrDefault(_isPerspectiveInterface) is not { } perspectiveForInterface) {
+      return null; // Unbound declaration, or not a perspective
     }
 
     // Perspective discovered - extract TModel from first type argument

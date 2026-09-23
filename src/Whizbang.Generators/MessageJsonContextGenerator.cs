@@ -2284,17 +2284,21 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_TripleNestedCollections_DiscoversDeepestTypeAsync</tests>
   private static int _findTopLevelComma(string typeArgs) {
     int depth = 0;
-    for (int i = 0; i < typeArgs.Length; i++) {
+    // Single exit so the "no top-level comma" answer is the initial value rather than a separate
+    // return statement that today's callers, which only ever pass a two-argument dictionary argument
+    // list, never reach.
+    int index = -1;
+    for (int i = 0; i < typeArgs.Length && index < 0; i++) {
       char c = typeArgs[i];
       if (c == '<') {
         depth++;
       } else if (c == '>') {
         depth--;
       } else if (c == ',' && depth == 0) {
-        return i;
+        index = i;
       }
     }
-    return -1;
+    return index;
   }
 
   /// <summary>
@@ -2326,23 +2330,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       typeName = typeName[..^1];
     }
 
-    // Skip primitive and framework types
-    if (_isPrimitiveOrFrameworkType(typeName)) {
-      return null;
-    }
-
-    // Skip all System.* types - they're either handled natively by STJ or shouldn't be discovered
-    if (typeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)) {
-      return null;
-    }
-
-    // Skip collection types (handled by _extractElementType)
-    if (_isCollectionType(typeName)) {
-      return null;
-    }
-
-    // Skip array types
-    if (typeName.EndsWith("[]", StringComparison.Ordinal)) {
+    // Nothing to discover for: primitive and framework types; anything under System.*, which is
+    // either handled natively by STJ or not worth discovering; collection types, whose element type
+    // _extractElementType already pulled out; and array types, likewise. All four answer the same
+    // way, so they share one test instead of four early returns, only the first of which any caller
+    // reaches today.
+    if (_isPrimitiveOrFrameworkType(typeName)
+        || typeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)
+        || _isCollectionType(typeName)
+        || typeName.EndsWith("[]", StringComparison.Ordinal)) {
       return null;
     }
 
@@ -3044,13 +3040,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // 2. Check all sibling types nested in the same container
       typesToCheck.AddRange(containingType.GetTypeMembers());
     } else {
-      // For top-level types, check other types in the same namespace
-      // This is more expensive but handles the common case of projection classes
+      // For top-level types, check other types in the same namespace.
+      // This is more expensive but handles the common case of projection classes. A type with no
+      // containing namespace contributes no candidates, so it reaches the Any() below over an empty
+      // list, which is the same false a separate guard returned.
       var containingNamespace = typeSymbol.ContainingNamespace;
-      if (containingNamespace == null) {
-        return false;
+      if (containingNamespace != null) {
+        typesToCheck.AddRange(containingNamespace.GetTypeMembers());
       }
-      typesToCheck.AddRange(containingNamespace.GetTypeMembers());
     }
 
     return typesToCheck.Any(candidateType => _implementsPerspectiveForModel(candidateType, typeSymbol));

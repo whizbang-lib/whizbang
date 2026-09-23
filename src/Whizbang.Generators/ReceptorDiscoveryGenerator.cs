@@ -825,6 +825,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// The two spellings of the <c>Routed&lt;T&gt;</c> wrapper prefix, most-qualified first, so a name
+  /// carrying the global:: alias is matched on that spelling rather than on the bare one.
+  /// </summary>
+  private static readonly string[] _routedPrefixes = [
+    "global::Whizbang.Core.Dispatch.Routed<",
+    "Whizbang.Core.Dispatch.Routed<"
+  ];
+
+  /// <summary>
   /// Unwraps Routed&lt;T&gt; wrapper type names from string representation.
   /// Handles patterns like "global::Whizbang.Core.Dispatch.Routed&lt;global::MyApp.MyEvent&gt;".
   /// Returns null for RoutedNone types, the inner type for Routed&lt;T&gt;, or the original for non-Routed types.
@@ -837,20 +846,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Check for Routed<T> pattern - extract inner type
-    // Pattern: global::Whizbang.Core.Dispatch.Routed<InnerType> or Whizbang.Core.Dispatch.Routed<InnerType>
-    const string routedPrefix1 = "global::Whizbang.Core.Dispatch.Routed<";
-    const string routedPrefix2 = "Whizbang.Core.Dispatch.Routed<";
-
-    if (typeName.StartsWith(routedPrefix1, StringComparison.Ordinal)) {
-      // Extract inner type: remove prefix and trailing >
-      var inner = typeName.Substring(routedPrefix1.Length, typeName.Length - routedPrefix1.Length - 1);
-      return inner;
-    }
-
-    if (typeName.StartsWith(routedPrefix2, StringComparison.Ordinal)) {
-      var inner = typeName.Substring(routedPrefix2.Length, typeName.Length - routedPrefix2.Length - 1);
-      return inner;
+    // Check for Routed<T> pattern - extract inner type.
+    // Callers pass fully-qualified names, so the global:: spelling is the one that arrives; the bare
+    // spelling is kept for any caller that hands over a display name instead. Both strip the prefix
+    // and the trailing '>', so they share one body rather than each having an arm of its own.
+    foreach (var routedPrefix in _routedPrefixes) {
+      if (typeName.StartsWith(routedPrefix, StringComparison.Ordinal)) {
+        // Extract inner type: remove prefix and trailing >
+        return typeName.Substring(routedPrefix.Length, typeName.Length - routedPrefix.Length - 1);
+      }
     }
 
     // Not a Routed wrapper - return as-is
@@ -1069,14 +1073,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Adds a parsed tuple element to the list. Recursively extracts nested tuples.
   /// </summary>
   private static void _addTupleElement(List<string> elements, string element) {
-    if (string.IsNullOrEmpty(element)) {
-      return;
-    }
-
-    if (element.StartsWith("(", StringComparison.Ordinal)) {
-      elements.AddRange(_extractTupleElements(element));
-    } else {
-      elements.Add(element);
+    // An empty element contributes nothing, which is what skipping both arms does. The parser only
+    // hands over trimmed, non-empty segments today, so the emptiness test gates the dispatch rather
+    // than standing on an exit of its own. The pattern also rejects null, as the old check did.
+    if (element is { Length: > 0 }) {
+      if (element.StartsWith("(", StringComparison.Ordinal)) {
+        elements.AddRange(_extractTupleElements(element));
+      } else {
+        elements.Add(element);
+      }
     }
   }
 
@@ -1967,12 +1972,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     var snippet = _selectSnippet(receptor, responseSnippet, voidSnippet, tracedResponseSnippet, tracedVoidSnippet);
 
+    // Every shipped snippet carries the ReceptorInfo constructor, so the manual build is the safety
+    // net for a snippet edited out of shape rather than a path today's templates take.
     var entryTemplate = _extractReceptorInfoFromSnippet(snippet);
-    if (entryTemplate is null) {
-      return _generateReceptorInfoEntryManually(receptor, syncAttributesCode);
-    }
-
-    return _applyReceptorReplacements(entryTemplate, receptor, syncAttributesCode, handlerCount);
+    return entryTemplate is null ? _generateReceptorInfoEntryManually(receptor, syncAttributesCode) : _applyReceptorReplacements(entryTemplate, receptor, syncAttributesCode, handlerCount);
   }
 
   /// <summary>
@@ -1997,23 +2000,24 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private static string? _extractReceptorInfoFromSnippet(string snippet) {
     const string marker = "new global::Whizbang.Core.Messaging.ReceptorInfo(";
     var entryStart = snippet.IndexOf(marker, StringComparison.Ordinal);
-    if (entryStart < 0) {
-      return null;
-    }
 
+    // Single exit: a snippet without the marker never enters the loop, and one whose parentheses do
+    // not balance runs off the end of it. Both leave the result at null, which is the "pattern not
+    // found" answer the caller falls back on.
+    string? entry = null;
     int parenDepth = 0;
-    for (int i = entryStart; i < snippet.Length; i++) {
+    for (int i = entryStart; i >= 0 && i < snippet.Length && entry is null; i++) {
       if (snippet[i] == '(') {
         parenDepth++;
       } else if (snippet[i] == ')') {
         parenDepth--;
         if (parenDepth == 0) {
-          return snippet[entryStart..(i + 1)];
+          entry = snippet[entryStart..(i + 1)];
         }
       }
     }
 
-    return null;
+    return entry;
   }
 
   /// <summary>

@@ -106,20 +106,16 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       CancellationToken ct) {
 
     var structDecl = (StructDeclarationSyntax)context.Node;
-    var structSymbol = context.SemanticModel.GetDeclaredSymbol(structDecl, ct);
 
-    if (structSymbol is null) {
-      return null;
-    }
-
-    // Check for [WhizbangId] attribute
-    var whizbangIdAttr = structSymbol.GetAttributes().FirstOrDefault(a =>
-        a.AttributeClass?.Name == "WhizbangIdAttribute" ||
-        a.AttributeClass?.Name == "WhizbangId" ||
-        TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANGID_ATTRIBUTE) ||
-        (a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == $"global::{WHIZBANGID_ATTRIBUTE}"));
-
-    if (whizbangIdAttr is null) {
+    // Check for [WhizbangId] attribute. The bind guard shares this exit: a declaration Roslyn bound
+    // no symbol for carries no attributes, so it fails the same test without being dereferenced.
+    if (context.SemanticModel.GetDeclaredSymbol(structDecl, ct) is not { } structSymbol
+        || structSymbol.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.Name == "WhizbangIdAttribute" ||
+            a.AttributeClass?.Name == "WhizbangId" ||
+            TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANGID_ATTRIBUTE) ||
+            (a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == $"global::{WHIZBANGID_ATTRIBUTE}"))
+           is not { } whizbangIdAttr) {
       return null;
     }
 
@@ -171,18 +167,15 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       CancellationToken ct) {
     var propertyDecl = (PropertyDeclarationSyntax)context.Node;
 
-    if (context.SemanticModel.GetDeclaredSymbol(propertyDecl, ct) is not IPropertySymbol propertySymbol) {
-      return null;
-    }
-
-    // Check for [WhizbangId] attribute
-    var whizbangIdAttr = propertySymbol.GetAttributes().FirstOrDefault(a =>
-        a.AttributeClass?.Name == "WhizbangIdAttribute" ||
-        a.AttributeClass?.Name == "WhizbangId" ||
-        TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANGID_ATTRIBUTE) ||
-        (a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == $"global::{WHIZBANGID_ATTRIBUTE}"));
-
-    if (whizbangIdAttr is null) {
+    // Check for [WhizbangId] attribute. The bind guard shares this exit: a declaration Roslyn bound
+    // no symbol for carries no attributes, so it fails the same test without being dereferenced.
+    if (context.SemanticModel.GetDeclaredSymbol(propertyDecl, ct) is not IPropertySymbol propertySymbol
+        || propertySymbol.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.Name == "WhizbangIdAttribute" ||
+            a.AttributeClass?.Name == "WhizbangId" ||
+            TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANGID_ATTRIBUTE) ||
+            (a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == $"global::{WHIZBANGID_ATTRIBUTE}"))
+           is not { } whizbangIdAttr) {
       return null;
     }
 
@@ -232,18 +225,15 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       CancellationToken ct) {
     var parameterDecl = (ParameterSyntax)context.Node;
 
-    if (context.SemanticModel.GetDeclaredSymbol(parameterDecl, ct) is not IParameterSymbol parameterSymbol) {
-      return null;
-    }
-
-    // Check for [WhizbangId] attribute
-    var whizbangIdAttr = parameterSymbol.GetAttributes().FirstOrDefault(a =>
-        a.AttributeClass?.Name == "WhizbangIdAttribute" ||
-        a.AttributeClass?.Name == "WhizbangId" ||
-        TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANGID_ATTRIBUTE) ||
-        (a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == $"global::{WHIZBANGID_ATTRIBUTE}"));
-
-    if (whizbangIdAttr is null) {
+    // Check for [WhizbangId] attribute. The bind guard shares this exit: a declaration Roslyn bound
+    // no symbol for carries no attributes, so it fails the same test without being dereferenced.
+    if (context.SemanticModel.GetDeclaredSymbol(parameterDecl, ct) is not IParameterSymbol parameterSymbol
+        || parameterSymbol.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.Name == "WhizbangIdAttribute" ||
+            a.AttributeClass?.Name == "WhizbangId" ||
+            TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANGID_ATTRIBUTE) ||
+            (a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == $"global::{WHIZBANGID_ATTRIBUTE}"))
+           is not { } whizbangIdAttr) {
       return null;
     }
 

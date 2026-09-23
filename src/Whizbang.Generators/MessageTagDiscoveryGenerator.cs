@@ -70,14 +70,11 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       CancellationToken ct) {
 
     var typeDecl = (TypeDeclarationSyntax)context.Node;
-    var typeSymbol = context.SemanticModel.GetDeclaredSymbol(typeDecl, ct);
 
-    if (typeSymbol is null) {
-      yield break;
-    }
-
-    // Only process public types to avoid discovering test types
-    if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+    // Only process public types to avoid discovering test types. The bind guard shares that exit: a
+    // declaration Roslyn bound no symbol for has no declared accessibility to inspect either.
+    if (context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) is not { } typeSymbol
+        || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
       yield break;
     }
 
@@ -245,46 +242,45 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       return "null";
     }
 
-    switch (value.Kind) {
-      case TypedConstantKind.Primitive:
-        return value.Value switch {
-          string s => $"\"{_escapeString(s)}\"",
-          bool b => b ? "true" : "false",
-          char c => $"'{c}'",
-          null => "null",
-          _ => value.Value.ToString()
-        };
-      case TypedConstantKind.Enum:
-        // Emit as ((EnumType)underlyingValue) — always compiles even for [Flags] combinations.
-        var enumTypeName = value.Type is null ? "int" : TypeNameUtilities.FullyQualified(value.Type);
-        return $"({enumTypeName})({value.Value})";
-      case TypedConstantKind.Type:
-        return value.Value is not ITypeSymbol t ? null : $"typeof({TypeNameUtilities.FullyQualified(t)})";
-      case TypedConstantKind.Array:
-        var elementType = value.Type is IArrayTypeSymbol arrayType ? TypeNameUtilities.FullyQualified(arrayType.ElementType) : null;
-        if (elementType is null) { return null; }
-        var elements = value.Values
-            .Select(_typedConstantToCSharpLiteral)
-            .Where(e => e is not null)
-            .ToArray();
-        return $"new {elementType}[] {{ {string.Join(", ", elements)} }}";
-      default:
-        return null;
+    if (value.Kind == TypedConstantKind.Primitive) {
+      return value.Value switch {
+        string s => $"\"{_escapeString(s)}\"",
+        bool b => b ? "true" : "false",
+        char c => $"'{c}'",
+        _ => value.Value?.ToString() ?? "null"
+      };
     }
+
+    if (value.Kind == TypedConstantKind.Enum) {
+      // Emit as ((EnumType)underlyingValue) — always compiles even for [Flags] combinations.
+      var enumTypeName = value.Type is null ? "int" : TypeNameUtilities.FullyQualified(value.Type);
+      return $"({enumTypeName})({value.Value})";
+    }
+
+    if (value.Kind == TypedConstantKind.Array) {
+      var elementType = value.Type is IArrayTypeSymbol arrayType ? TypeNameUtilities.FullyQualified(arrayType.ElementType) : null;
+      if (elementType is null) { return null; }
+      var elements = value.Values
+          .Select(_typedConstantToCSharpLiteral)
+          .Where(e => e is not null)
+          .ToArray();
+      return $"new {elementType}[] {{ {string.Join(", ", elements)} }}";
+    }
+
+    // TypedConstantKind.Type, and any kind this generator has no rendering for. The only other kind
+    // is Error, whose value is always null, so it never gets this far — the IsNull test above took
+    // it. Either way the answer is the same: no ITypeSymbol to name means nothing to emit.
+    return value.Value is not ITypeSymbol t ? null : $"typeof({TypeNameUtilities.FullyQualified(t)})";
   }
 
   private static bool _inheritsFromMessageTagAttribute(INamedTypeSymbol? attributeClass) {
-    if (attributeClass is null) {
-      return false;
-    }
-
-    // Check if the attribute is MessageTagAttribute or inherits from it
-    var current = attributeClass;
-    while (current is not null) {
+    // Check if the attribute is MessageTagAttribute or inherits from it. An attribute class that did
+    // not bind starts the walk at null, so the loop body never runs and the answer is the same false
+    // a separate guard returned.
+    for (var current = attributeClass; current is not null; current = current.BaseType) {
       if (TypeNameUtilities.IsNamed(current, MESSAGE_TAG_ATTRIBUTE)) {
         return true;
       }
-      current = current.BaseType;
     }
 
     return false;
@@ -579,13 +575,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("    },");
   }
 
-  private static string _escapeString(string? s) {
-    if (s is null) {
-      return "";
-    }
-
-    return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
-  }
+  private static string _escapeString(string? s) => s is null ? "" : s.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
   private static string _sanitizeIdentifier(string name) {
     // Replace dots and hyphens with underscores, remove other invalid chars

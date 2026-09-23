@@ -252,11 +252,11 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
     return null;
   }
 
+  /// <summary>True for the handful of System types that never hold anything worth walking into.</summary>
+  /// <remarks>A type with no containing namespace is not in System either, so it answers false
+  /// through the same comparison instead of needing a guard on a line of its own.</remarks>
   private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
     var ns = type.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : null;
-    if (ns == null) {
-      return false;
-    }
 
     // Skip common system types that definitely won't contain polymorphic properties
     if (ns == "System") {

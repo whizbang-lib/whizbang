@@ -47,13 +47,12 @@ public class MessageTagParameterAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    // Check if this type inherits from MessageTagAttribute
-    if (!_inheritsFromMessageTagAttribute(typeSymbol)) {
-      return;
-    }
-
-    // Skip the MessageTagAttribute base class itself
-    if (TypeNameUtilities.IsNamed(typeSymbol, MESSAGE_TAG_ATTRIBUTE_NAME)) {
+    // Check that this type inherits from MessageTagAttribute and is not that base class itself.
+    // The second test cannot fire while the inheritance walk starts at the base type, because a type
+    // does not inherit from itself. It stays as the guard for any future walk that includes self, and
+    // is merged into one condition so that it is evaluated on every analyzed type.
+    if (!_inheritsFromMessageTagAttribute(typeSymbol)
+        || TypeNameUtilities.IsNamed(typeSymbol, MESSAGE_TAG_ATTRIBUTE_NAME)) {
       return;
     }
 

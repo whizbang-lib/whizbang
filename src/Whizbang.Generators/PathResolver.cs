@@ -36,13 +36,12 @@ public static class PathResolver {
       return null;
     }
 
+    // Path.GetDirectoryName is null only when the library root IS the filesystem root, which would
+    // take a .git directory at "/". The guard stays, folded into the existence test so it is
+    // evaluated on every call: no parent means no sibling path, which means no documentation repo.
     var parentDir = Path.GetDirectoryName(libraryRoot);
-    if (parentDir == null) {
-      return null;
-    }
-
-    var docsPath = Path.Combine(parentDir, "whizbang-lib.github.io");
-    return Directory.Exists(docsPath) ? docsPath : null;
+    var docsPath = parentDir == null ? null : Path.Combine(parentDir, "whizbang-lib.github.io");
+    return docsPath != null && Directory.Exists(docsPath) ? docsPath : null;
   }
 
   /// <summary>

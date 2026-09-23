@@ -69,11 +69,10 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol typeSymbol) {
-      return null;
-    }
-
-    if (typeSymbol.IsAbstract) {
+    // The bind guard shares the abstract-type exit: neither an unbound declaration nor an abstract
+    // type is a message the catalog can name a constructible type for.
+    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol typeSymbol
+        || typeSymbol.IsAbstract) {
       return null;
     }
 

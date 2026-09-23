@@ -192,18 +192,24 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   /// Determines the service category (Lens or Perspective) from a user interface.
   /// </summary>
   private static ServiceCategory _getServiceCategory(INamedTypeSymbol userInterface) {
+    // Lens is both the answer for a lens-query interface and the default for an interface that
+    // matches neither prefix, which cannot happen while the only caller has already checked that one
+    // of the two matches. Writing it once as the initial value keeps that default without an exit no
+    // input reaches, and the first match still decides, so an interface extending both keeps whatever
+    // its interface order said before.
+    var category = ServiceCategory.Lens;
     foreach (var baseInterface in userInterface.AllInterfaces) {
       var name = TypeNameUtilities.Display(baseInterface.OriginalDefinition);
       if (name.StartsWith(PERSPECTIVE_BASE_INTERFACE, StringComparison.Ordinal)) {
-        return ServiceCategory.Perspective;
+        category = ServiceCategory.Perspective;
+        break;
       }
       if (name.StartsWith(LENS_QUERY_INTERFACE, StringComparison.Ordinal)) {
-        return ServiceCategory.Lens;
+        break;
       }
     }
 
-    // Default to Lens (shouldn't happen if _isUserInterfaceExtendingWhizbang returned true)
-    return ServiceCategory.Lens;
+    return category;
   }
 
   /// <summary>

@@ -123,18 +123,15 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
       GeneratorSyntaxContext context,
       CancellationToken ct) {
     var structDecl = (StructDeclarationSyntax)context.Node;
-    var structSymbol = context.SemanticModel.GetDeclaredSymbol(structDecl, ct);
-    if (structSymbol is null) {
-      return null;
-    }
 
-    var hasWhizbangIdAttribute = structSymbol.GetAttributes().Any(static a =>
-        a.AttributeClass?.Name == "WhizbangIdAttribute" ||
-        a.AttributeClass?.Name == "WhizbangId" ||
-        TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANG_ID_ATTRIBUTE) ||
-        (a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_ID_ATTRIBUTE}"));
-
-    if (!hasWhizbangIdAttribute) {
+    // The bind guard shares the "no [WhizbangId]" exit: a declaration Roslyn bound no symbol for
+    // carries no attributes, so it fails the same test without ever being dereferenced.
+    if (context.SemanticModel.GetDeclaredSymbol(structDecl, ct) is not { } structSymbol
+        || !structSymbol.GetAttributes().Any(static a =>
+            a.AttributeClass?.Name == "WhizbangIdAttribute" ||
+            a.AttributeClass?.Name == "WhizbangId" ||
+            TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANG_ID_ATTRIBUTE) ||
+            (a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_ID_ATTRIBUTE}"))) {
       return null;
     }
 

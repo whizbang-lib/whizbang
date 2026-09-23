@@ -121,14 +121,11 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       CancellationToken ct) {
 
     var typeDecl = (TypeDeclarationSyntax)context.Node;
-    var typeSymbol = context.SemanticModel.GetDeclaredSymbol(typeDecl, ct);
 
-    if (typeSymbol is null) {
-      yield break;
-    }
-
-    // Only process public types
-    if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+    // Only process public types. The bind guard shares that exit: a declaration Roslyn bound no
+    // symbol for has no declared accessibility to inspect either.
+    if (context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) is not { } typeSymbol
+        || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
       yield break;
     }
 
@@ -400,21 +397,19 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine($"      PropertyType = typeof({info.PropertyTypeFullName}),");
     sb.AppendLine($"      PopulateKind = PopulateKind.{info.PopulateKind},");
 
-    // Add the specific kind based on PopulateKind. Header carries a string key (not an enum).
+    // Add the specific kind based on PopulateKind. Header carries a string key, so it is quoted; the
+    // rest name an enum member and are emitted bare. A kind matching none of the five appends
+    // nothing, which is what falling off the end of this chain does — no dead default arm needed.
     if (info.PopulateKind == POPULATE_KIND_HEADER) {
       sb.AppendLine($"      HttpHeaderName = \"{info.SpecificKind}\",");
-    } else {
-      var specificKindProperty = info.PopulateKind switch {
-        POPULATE_KIND_TIMESTAMP => "TimestampKind",
-        POPULATE_KIND_CONTEXT => "ContextKind",
-        POPULATE_KIND_SERVICE => "ServiceKind",
-        POPULATE_KIND_IDENTIFIER => "IdentifierKind",
-        _ => null
-      };
-
-      if (specificKindProperty is not null) {
-        sb.AppendLine($"      {specificKindProperty} = {info.SpecificKind},");
-      }
+    } else if (info.PopulateKind == POPULATE_KIND_TIMESTAMP) {
+      sb.AppendLine($"      TimestampKind = {info.SpecificKind},");
+    } else if (info.PopulateKind == POPULATE_KIND_CONTEXT) {
+      sb.AppendLine($"      ContextKind = {info.SpecificKind},");
+    } else if (info.PopulateKind == POPULATE_KIND_SERVICE) {
+      sb.AppendLine($"      ServiceKind = {info.SpecificKind},");
+    } else if (info.PopulateKind == POPULATE_KIND_IDENTIFIER) {
+      sb.AppendLine($"      IdentifierKind = {info.SpecificKind},");
     }
 
     sb.AppendLine("    },");

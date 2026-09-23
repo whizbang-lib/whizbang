@@ -75,16 +75,12 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    // Get class symbol
-    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
-      return null;  // Early exit - Roslyn returned null or not a named type
-    }
-
-    // Check if implements ICommand
-    var implementsICommand = TypeNameHelper.ImplementsInterface(classSymbol, StandardInterfaceNames.I_COMMAND);
-
-    if (!implementsICommand) {
-      return null;  // Early exit - not a command
+    // Check if implements ICommand. The "Roslyn bound no named type" guard shares this exit: a
+    // declaration with no symbol implements no interfaces either, so it is not a command and the
+    // symbol is never dereferenced.
+    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol
+        || !TypeNameHelper.ImplementsInterface(classSymbol, StandardInterfaceNames.I_COMMAND)) {
+      return null;  // Early exit - unbound declaration, or not a command
     }
 
     // Get fully qualified command type name
@@ -93,20 +89,15 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     // Extract all TopicFilter attributes (AllowMultiple = true)
     var attributes = classSymbol.GetAttributes();
     var topicFilterAttrs = attributes.Where(attr => {
-      var attrClass = attr.AttributeClass;
-      if (attrClass is null) {
-        return false;
-      }
-
-      // Check if attribute is TopicFilterAttribute or derived from it
-      var currentClass = attrClass;
-      while (currentClass is not null) {
+      // Check if attribute is TopicFilterAttribute or derived from it. An attribute whose class did
+      // not bind starts the walk at null, so the loop body never runs and the answer is the same
+      // "no" a guard would have given — no separate null check needed.
+      for (var currentClass = attr.AttributeClass; currentClass is not null; currentClass = currentClass.BaseType) {
         var fullName = TypeNameHelper.GetFullyQualifiedName(currentClass);
         if (fullName == StandardInterfaceNames.TOPIC_FILTER_ATTRIBUTE ||
             fullName.StartsWith(StandardInterfaceNames.TOPIC_FILTER_ATTRIBUTE + "<", StringComparison.Ordinal)) {
           return true;
         }
-        currentClass = currentClass.BaseType;
       }
       return false;
     }).ToList();
@@ -151,18 +142,16 @@ public class TopicFilterGenerator : IIncrementalGenerator {
       var enumType = firstArg.Type;
       var enumValue = firstArg.Value;
 
-      if (enumValue is null) {
-        return null;
-      }
-
-      // Get the enum field for this value by matching the constant value
-      // Note: enumValue is the numeric value (e.g., 0, 1, 2)
-      var enumField = enumType.GetMembers()
+      // Get the enum field for this value by matching the constant value.
+      // Note: enumValue is the numeric value (e.g., 0, 1, 2). An enum argument that carries no value
+      // at all matches no field, so it shares the fallback below, which yields null for it — the same
+      // answer a separate guard gave.
+      var enumField = enumValue is null ? null : enumType.GetMembers()
           .OfType<IFieldSymbol>()
           .FirstOrDefault(f => f.HasConstantValue && Equals(f.ConstantValue, enumValue));
 
       if (enumField is null) {
-        return enumValue.ToString();  // Fallback - should be rare
+        return enumValue?.ToString();  // Fallback - should be rare
       }
 
       // Try to extract Description attribute
