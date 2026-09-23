@@ -410,6 +410,26 @@ public class JsonbContainmentSqlMatrixTests {
     Base("nullable/guid/null/param", rows => rows.Where(x => x.Data.MaybeGid == nullGid), Destination.Extraction);
     Base("nullable/int/null/param", rows => rows.Where(x => x.Data.MaybeNum == nullNum), Destination.Extraction);
 
+    // --- Set membership, which had no coverage at all.
+    //
+    // "this field is any of these values" is rewritten too, against a set of single-key documents.
+    // Pinned per element type and collection shape, because the rewrite had no coverage here at all
+    // and the reshape does not claim the shape, so the two mechanisms have to be held to the same
+    // rows by something.
+    var strSet = new[] { "v", "w" };
+    var gidSet = new[] { _probeGuid };
+    var intSet = new[] { 1, 2 };
+    var longSet = new[] { 1L, 2L };
+    var gidList = new List<Guid> { _probeGuid };
+    var intList = new List<int> { 1, 2 };
+
+    Base("set/guid/param", rows => rows.Where(x => gidSet.Contains(x.Data.Gid)), Destination.Containment);
+    Base("set/int/param", rows => rows.Where(x => intSet.Contains(x.Data.Num)), Destination.Containment);
+    Base("set/long/param", rows => rows.Where(x => longSet.Contains(x.Data.Big)), Destination.Containment);
+    Base("set/guid/list/param", rows => rows.Where(x => gidList.Contains(x.Data.Gid)), Destination.Containment);
+    Base("set/int/list/param", rows => rows.Where(x => intList.Contains(x.Data.Num)), Destination.Containment);
+    Base("set/string/param", rows => rows.Where(x => strSet.Contains(x.Data.Str)), Destination.Containment);
+
     // --- The scope document, which every tenant-isolating read filters on.
     //
     // Its keys are the framework's own and an absent one is ordinary rather than exceptional, so a
@@ -572,7 +592,7 @@ public class JsonbContainmentSqlMatrixTests {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Three deliberate differences, and the direction matters: one is the reshape doing less, and two
+  /// Four deliberate differences, and the direction matters: two are the reshape doing less, and two
   /// are the reshape doing better. None of them is a disagreement about which rows come back, which
   /// is the thing the two mechanisms are not allowed to differ on.
   /// </para>
@@ -591,6 +611,14 @@ public class JsonbContainmentSqlMatrixTests {
   /// still excludes the row.
   /// </para>
   /// <para>
+  /// <strong>Set membership does less.</strong> The tree rewrite compiles "this field is any of
+  /// these values" into a containment test against a document per candidate; the reshape sees the
+  /// membership after Entity Framework has already translated it and does not claim that shape at
+  /// all, so it keeps the IN form. Correct rows, no index. The rows agree because both mechanisms
+  /// now stand down for the element type that can hold a null, which is the only value the two forms
+  /// disagree on.
+  /// </para>
+  /// <para>
   /// <strong>An emptiness test does better.</strong> On the tree there is no equality to see, because
   /// the shape is still a method call. After translation it is a null test or an equality against the
   /// empty string, and the second half of that indexes. The rows are the same: an absent key and an
@@ -602,7 +630,8 @@ public class JsonbContainmentSqlMatrixTests {
       return shared;
     }
 
-    if (caseKey.StartsWith("eligible-now/datetime/", StringComparison.Ordinal)) {
+    if (caseKey.StartsWith("eligible-now/datetime/", StringComparison.Ordinal)
+        || caseKey.StartsWith("set/", StringComparison.Ordinal)) {
       return Destination.Extraction;
     }
 
@@ -642,7 +671,10 @@ public class JsonbContainmentSqlMatrixTests {
     switch (expected) {
       case Destination.Containment:
         await Assert.That(containment).IsTrue();
-        await Assert.That(sql).Contains("jsonb_build_object", StringComparison.Ordinal);
+        // Equality builds its one document inline; set membership builds a document per candidate
+        // inside the helper, so the marker differs while the destination is the same.
+        await Assert.That(sql.Contains("jsonb_build_object", StringComparison.Ordinal)
+                          || sql.Contains("jsonb_containment_set", StringComparison.Ordinal)).IsTrue();
         break;
 
       case Destination.Extraction:
