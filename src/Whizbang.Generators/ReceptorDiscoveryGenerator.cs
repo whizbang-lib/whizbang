@@ -1767,7 +1767,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,
       string receptorInterface) {
     return _buildReceptorInvocationsCore(messageType, receptorsByMessageType, receptorInterface,
-      useCancellationToken: true, useStageFiltering: true);
+      useCancellationToken: true);
   }
 
   /// <summary>
@@ -1782,17 +1782,21 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,
       string receptorInterface) {
     return _buildReceptorInvocationsCore(messageType, receptorsByMessageType, receptorInterface,
-      useCancellationToken: false, useStageFiltering: true);
+      useCancellationToken: false);
   }
 
+  /// <summary>
+  /// Shared body behind both routing paths. Both stage-filter their void receptors — the cascade path
+  /// and the publish path alike — so there is no unfiltered variant to select between. What actually
+  /// differs between them is whether a cancellation token is in scope to thread into <c>HandleAsync</c>.
+  /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S125:Sections of code should not be commented out",
     Justification = "Explanatory prose comment (mentioning 'sourceEnvelope' / cascade-path semantics) is misidentified as commented-out code; it documents the surrounding routing logic and is not executable C#.")]
   private static string _buildReceptorInvocationsCore(
       string messageType,
       Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,
       string receptorInterface,
-      bool useCancellationToken,
-      bool useStageFiltering) {
+      bool useCancellationToken) {
     if (!receptorsByMessageType.TryGetValue(messageType, out var receptorsForType)) {
       return string.Empty;
     }
@@ -1803,7 +1807,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // the cascade path's snippet declares it from sourceEnvelope. When emitting the
     // [FireAt] guard from the publish path we must declare the local ourselves, and
     // only when there are explicit receptors to gate (otherwise CS0219 fires).
-    var publishPathDeclaresIsDefaultDispatch = !useCancellationToken && useStageFiltering;
+    var publishPathDeclaresIsDefaultDispatch = !useCancellationToken;
 
     var typedReceptors = receptorsForType.Where(r => !r.IsVoid).ToList();
     var voidReceptors = receptorsForType.Where(r => r.IsVoid).ToList();
@@ -1813,14 +1817,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: true, indent: "          ");
     }
 
-    if (useStageFiltering) {
-      _appendStageFilteredVoidReceptors(sb, messageType, receptorInterface, voidReceptors, handleArgs, publishPathDeclaresIsDefaultDispatch);
-    } else {
-      // No stage filtering — all void receptors fire (used by PublishAsync)
-      foreach (var receptor in voidReceptors) {
-        _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: false, indent: "          ");
-      }
-    }
+    _appendStageFilteredVoidReceptors(sb, messageType, receptorInterface, voidReceptors, handleArgs, publishPathDeclaresIsDefaultDispatch);
 
     return sb.ToString().TrimEnd();
   }

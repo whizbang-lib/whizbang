@@ -12,8 +12,18 @@ public static class PathResolver {
   /// Finds the documentation repository path.
   /// Priority: 1) WHIZBANG_DOCS_PATH env var, 2) Sibling directory discovery
   /// </summary>
+  /// <param name="searchStartDirectory">
+  /// Where sibling discovery starts walking up from. Null (the default, and what every production
+  /// call site passes) means the process's current directory.
+  /// </param>
   /// <returns>Path to documentation repository, or null if not found</returns>
-  public static string? FindDocsRepositoryPath() {
+  /// <remarks>
+  /// The start directory is a parameter rather than always the process's current directory so the
+  /// "not inside a git working tree" outcome — a generator running from a NuGet package in a build
+  /// directory with no repository above it — can be asserted without mutating process-wide state
+  /// that every other test in the run shares.
+  /// </remarks>
+  public static string? FindDocsRepositoryPath(string? searchStartDirectory = null) {
     // Priority 1: Environment variable override
     var envPath = Environment.GetEnvironmentVariable("WHIZBANG_DOCS_PATH");
     if (!string.IsNullOrEmpty(envPath) && Directory.Exists(envPath)) {
@@ -21,7 +31,7 @@ public static class PathResolver {
     }
 
     // Priority 2: Sibling directory discovery
-    var libraryRoot = _findGitRoot(Directory.GetCurrentDirectory());
+    var libraryRoot = _findGitRoot(searchStartDirectory ?? Directory.GetCurrentDirectory());
     if (libraryRoot == null) {
       return null;
     }

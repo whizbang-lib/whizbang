@@ -87,6 +87,55 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
   #region [WhizbangDbContext] Schema / ConnectionStringName named arguments
 
   /// <summary>
+  /// <c>[WhizbangDbContext(42)]</c> names a real attribute with an argument that matches none of its
+  /// constructors, so Roslyn binds the attribute TYPE but hands the generator an attribute with zero
+  /// constructor arguments. Discovery still recognizes the context — it matches on the attribute
+  /// class — so key extraction runs against that empty argument list and must answer "no keys"
+  /// (falling back to the default unnamed key) rather than index position 0.
+  /// </summary>
+  /// <remarks>
+  /// A generator that reached for <c>ConstructorArguments[0]</c> here would throw inside the Roslyn
+  /// pipeline, and a throwing generator does not fail one file — it fails the whole compilation with
+  /// an unhandled-exception diagnostic and emits none of its output, so a single mistyped attribute
+  /// argument would take every other DbContext's registration down with it. This is the state the IDE
+  /// runs the generator in constantly: the argument is mid-edit and does not bind yet.
+  /// </remarks>
+  [Test]
+  public async Task Generator_WithUnbindableDbContextAttributeArgument_FallsBackToTheDefaultKeyAsync() {
+    // Arrange - 42 matches no WhizbangDbContextAttribute constructor (params string[])
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_SNIPPET}}
+
+      [WhizbangDbContext(42)]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error)).IsFalse()
+      .Because("an argument the compiler rejected must not fault the generator; a generator exception aborts the entire compilation's generated output, not just this context");
+
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("TestDbContext_SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull()
+      .Because("the context is still discovered — discovery matches on the attribute class, which bound fine — so its registration must still be generated");
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+    await Assert.That(sourceText).Contains("-- Schema: testapp")
+      .Because("with no usable attribute arguments the context keeps the namespace-derived schema, proving extraction returned cleanly rather than being skipped");
+  }
+
+  /// <summary>
   /// The Schema named argument on [WhizbangDbContext] must win over namespace derivation:
   /// the generated schema SQL targets the explicit schema, not one derived from "TestApp".
   /// </summary>
