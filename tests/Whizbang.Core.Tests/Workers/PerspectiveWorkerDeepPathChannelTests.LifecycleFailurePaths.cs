@@ -382,7 +382,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
         Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
       Task.FromResult(byStream.TryGetValue(streamId, out var envelope)
-        ? new List<MessageEnvelope<IEvent>> { envelope }
+        ? [envelope]
         : new List<MessageEnvelope<IEvent>>());
 
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];

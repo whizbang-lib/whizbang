@@ -37,7 +37,7 @@ public class ServiceCollectionExtensionsTests {
     var services = new ServiceCollection();
     _ = services.AddWhizbang(o => o.Tracing.Verbosity = TraceVerbosity.Verbose);
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     await Assert.That(provider.GetService<IConfiguration>()).IsNotNull()
       .Because("AddWhizbang registers an empty root so the types that read Whizbang:* keys can take "
