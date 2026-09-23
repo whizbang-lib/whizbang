@@ -409,13 +409,12 @@ public class ReceptorInvokerTests {
   /// Tracks which messages were cascaded (for testing purposes).
   /// </summary>
   private sealed class CascadeTracker : IEventCascader {
-    private readonly List<IMessage> _cascadedMessages = [];
-    public List<IMessage> CascadedMessages => _cascadedMessages;
+    public List<IMessage> CascadedMessages { get; } = [];
 
     public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchModes? receptorDefault = null, CancellationToken cancellationToken = default) {
       // Extract messages from result (using same logic as DispatcherEventCascader)
       foreach (var (message, _) in MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
-        _cascadedMessages.Add(message);
+        CascadedMessages.Add(message);
       }
       return Task.CompletedTask;
     }

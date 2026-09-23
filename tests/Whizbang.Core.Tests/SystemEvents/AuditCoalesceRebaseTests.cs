@@ -129,7 +129,7 @@ public class AuditCoalesceRebaseTests {
     await Assert.That(composite).IsTypeOf<AuditEventsComposite>()
       .Because("the audit group folds into its proven carrier, not the generic composite");
     var audit = (AuditEventsComposite)composite;
-    await Assert.That(audit.InnerEventIds).IsEquivalentTo(new List<Guid> { single!.MessageId });
+    await Assert.That(audit.InnerEventIds).IsEquivalentTo([single!.MessageId]);
     await Assert.That(audit.InnerTypeNames[0]).IsEqualTo(single.MessageType);
   }
 

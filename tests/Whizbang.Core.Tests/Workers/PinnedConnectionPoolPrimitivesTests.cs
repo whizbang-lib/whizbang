@@ -261,12 +261,11 @@ public class PinnedConnectionPoolPrimitivesTests {
   /// constructed — never opened — so the abstract members can throw.
   /// </summary>
   private sealed class StubDbConnection(string id) : DbConnection {
-    private readonly string _id = id;
 #pragma warning disable CS8765
     public override string ConnectionString { get; set; } = "";
 #pragma warning restore CS8765
-    public override string Database => _id;
-    public override string DataSource => _id;
+    public override string Database { get; } = id;
+    public override string DataSource { get; } = id;
     public override string ServerVersion => "0";
     public override System.Data.ConnectionState State => System.Data.ConnectionState.Closed;
     public override void ChangeDatabase(string databaseName) => throw new NotSupportedException();

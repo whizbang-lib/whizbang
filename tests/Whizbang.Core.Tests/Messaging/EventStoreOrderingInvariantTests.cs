@@ -83,7 +83,7 @@ public class EventStoreOrderingInvariantTests {
       allTasks[taskIdx] = Task.Run(async () => {
         for (var i = 0; i < perTask; i++) {
           var id = (Guid)TrackedGuid.NewMedo();
-          await store.AppendAsync(streamId, _envelope(id, new TestEvent(taskIdx * perTask + i)));
+          await store.AppendAsync(streamId, _envelope(id, new TestEvent((taskIdx * perTask) + i)));
         }
       });
     }
@@ -99,7 +99,7 @@ public class EventStoreOrderingInvariantTests {
 
     var inversions = 0;
     for (var i = 1; i < retrievedIds.Length; i++) {
-      if (string.Compare(retrievedIds[i].ToString("D"), retrievedIds[i - 1].ToString("D"), StringComparison.Ordinal) < 0) {
+      if (string.CompareOrdinal(retrievedIds[i].ToString("D"), retrievedIds[i - 1].ToString("D")) < 0) {
         inversions++;
       }
     }

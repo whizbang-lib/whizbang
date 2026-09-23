@@ -1145,7 +1145,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Message = "DIAG[5] PostInbox lifecycle returned: message={MessageId}")]
   static partial void LogDiagPostInboxReturned(ILogger logger, Guid messageId);
 
-  [LoggerMessage(EventId = 25, Level = LogLevel.Warning,
+  [LoggerMessage(EventId = 75, Level = LogLevel.Warning,
     Message = "InboxDispatchWorker MaxConcurrentDispatch={Configured} exceeds WorkCoordinatorGate.MaxConcurrent={GateMaxConcurrent}; clamped to {EffectivePartitionCount}. Extra dispatch consumers would idle in the gate queue without delivering throughput. Either raise the gate (WorkCoordinatorGate.FromPoolSize, NpgsqlConfig MaxPoolSize) or lower MaxConcurrentDispatch to match.")]
   static partial void LogPartitionCountClamped(ILogger logger, int configured, int effectivePartitionCount, int gateMaxConcurrent);
 

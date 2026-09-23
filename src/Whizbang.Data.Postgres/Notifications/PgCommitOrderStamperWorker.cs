@@ -302,7 +302,7 @@ public sealed partial class PgCommitOrderStamperWorker(
 #pragma warning disable CS0618 // Honoring the Slice 1 knob for backward compat until the stamper backstop loop retires in a follow-up slice.
     var relaxed = options.NotifyHealthyPollingInterval;
 #pragma warning restore CS0618
-    if (relaxed.HasValue && relaxed.Value > options.PollingInterval) {
+    if (relaxed > options.PollingInterval) {
       return relaxed.Value;
     }
     return options.PollingInterval;
@@ -414,6 +414,6 @@ public sealed partial class PgCommitOrderStamperWorker(
     bool hasUsername,
     bool hasSecret);
 
-  [LoggerMessage(EventId = 7, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker stopped")]
+  [LoggerMessage(EventId = 14, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker stopped")]
   static partial void LogStopped(ILogger logger);
 }

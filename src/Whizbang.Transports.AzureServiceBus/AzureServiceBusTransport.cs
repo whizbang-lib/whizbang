@@ -266,10 +266,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           }
         }
       }
-      if (_perspectiveRegistry != null && _perspectiveRegistry.GetEventTypes().Contains(type)) {
-        return true;
-      }
-      return false;
+      return _perspectiveRegistry?.GetEventTypes().Contains(type) == true;
     };
   }
 

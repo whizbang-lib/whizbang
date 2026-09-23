@@ -279,10 +279,10 @@ public class PerspectiveScope {
       }
     }
 
+    // Union that keeps declaration order: the set decides what is new, the list keeps the order.
+    var knownPrincipals = new HashSet<string>(AllowedPrincipals, StringComparer.Ordinal);
     var mergedPrincipals = new List<string>(AllowedPrincipals);
-    foreach (var p in other.AllowedPrincipals.Where(p => !mergedPrincipals.Contains(p))) {
-      mergedPrincipals.Add(p);
-    }
+    mergedPrincipals.AddRange(other.AllowedPrincipals.Where(knownPrincipals.Add));
 
     return new PerspectiveScope {
       TenantId = !string.IsNullOrEmpty(other.TenantId) ? other.TenantId : TenantId,

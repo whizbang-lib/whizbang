@@ -1355,7 +1355,7 @@ public partial class PerspectiveWorker(
             }
             _metrics?.Errors.Add(1);
             if (upcomingEvents is { Count: > 0 }) {
-              var failedEventIds = upcomingEvents.Select(e => e.MessageId.Value).ToList();
+              var failedEventIds = upcomingEvents.ConvertAll(e => e.MessageId.Value);
               _syncEventTracker.MarkProcessedByPerspective(failedEventIds, perspectiveName);
             }
             var failure = new PerspectiveCursorFailure {
@@ -2354,7 +2354,7 @@ public partial class PerspectiveWorker(
         await _completionStrategy.ReportCompletionAsync(result, groupWorkCoordinator, leaseCt);
 
         if (filteredEvents.Count > 0) {
-          var processedEventIds = filteredEvents.Select(e => e.MessageId.Value).ToList();
+          var processedEventIds = filteredEvents.ConvertAll(e => e.MessageId.Value);
           _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
         }
 
@@ -3787,7 +3787,7 @@ public partial class PerspectiveWorker(
     // This signals any WaitForPerspectiveEventsAsync callers that this perspective has processed these events
     // Note: Uses MarkProcessedByPerspective to only remove THIS perspective's entry, not all perspectives
     if (processedEvents.Count > 0) {
-      var processedEventIds = processedEvents.Select(e => e.MessageId.Value).ToList();
+      var processedEventIds = processedEvents.ConvertAll(e => e.MessageId.Value);
 #pragma warning disable CA1848
       if (_logger.IsEnabled(LogLevel.Debug)) {
         _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessedByPerspective: Perspective={Perspective}, StreamId={StreamId}, EventCount={Count}, EventIds=[{Ids}]",

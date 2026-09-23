@@ -12,6 +12,9 @@ namespace Whizbang.Generators.Tests;
 /// Ensures EF Core-specific perspective association registration code is generated correctly.
 /// </summary>
 public partial class EFCorePerspectiveAssociationGeneratorTests {
+  [System.Text.RegularExpressions.GeneratedRegex(@"AssociationsHash\s*=\s*""([0-9a-f]{64})""")]
+  private static partial System.Text.RegularExpressions.Regex _associationsHashPattern();
+
 
   [System.Text.RegularExpressions.GeneratedRegex(@"AssociationsHash\s*=\s*""([0-9a-f]{64})""")]
   private static partial System.Text.RegularExpressions.Regex AssociationsHashPattern();
@@ -523,8 +526,7 @@ namespace TestNamespace {
       .Because("Generated class must expose an AssociationsHash constant for drift detection");
 
     // Hash is 64 hex chars (SHA256) — locate the literal and validate shape
-    var match = System.Text.RegularExpressions.Regex.Match(
-      generatedSource!, @"AssociationsHash\s*=\s*""([0-9a-f]{64})""");
+    var match = _associationsHashPattern().Match(generatedSource!);
     await Assert.That(match.Success).IsTrue()
       .Because("AssociationsHash must be a 64-char lowercase hex SHA256 literal");
   }

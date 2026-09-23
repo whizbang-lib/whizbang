@@ -251,11 +251,10 @@ public class DispatcherEventCascaderTests {
   }
 
   private sealed class FakeMessageEnvelope : IMessageEnvelope {
-    private readonly List<MessageHop> _hops = [];
 
     public FakeMessageEnvelope(MessageId messageId, CorrelationId? correlationId) {
       MessageId = messageId;
-      _hops.Add(new MessageHop {
+      Hops.Add(new MessageHop {
         Type = HopType.Current,
         Timestamp = DateTimeOffset.UtcNow,
         ServiceInstance = new ServiceInstanceInfo {
@@ -272,12 +271,12 @@ public class DispatcherEventCascaderTests {
     public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public MessageId MessageId { get; }
     public object Payload => new { };
-    public List<MessageHop> Hops => _hops;
+    public List<MessageHop> Hops { get; } = [];
 
-    public void AddHop(MessageHop hop) => _hops.Add(hop);
-    public DateTimeOffset GetMessageTimestamp() => _hops[0].Timestamp;
-    public CorrelationId? GetCorrelationId() => _hops[0].CorrelationId;
-    public MessageId? GetCausationId() => _hops[0].CausationId;
+    public void AddHop(MessageHop hop) => Hops.Add(hop);
+    public DateTimeOffset GetMessageTimestamp() => Hops[0].Timestamp;
+    public CorrelationId? GetCorrelationId() => Hops[0].CorrelationId;
+    public MessageId? GetCausationId() => Hops[0].CausationId;
     public JsonElement? GetMetadata(string key) => null;
     public SecurityContext? GetCurrentSecurityContext() => null;
     public ScopeContext? GetCurrentScope() => null;

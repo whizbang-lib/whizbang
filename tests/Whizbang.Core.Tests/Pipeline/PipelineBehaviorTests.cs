@@ -95,16 +95,14 @@ public class PipelineBehaviorTests {
   }
 
   private sealed class PreProcessingBehavior : PipelineBehavior<string, string> {
-    private readonly List<string> _log = [];
-
-    public List<string> Log => _log;
+    public List<string> Log { get; } = [];
 
     public override async Task<string> HandleAsync(
       string request,
       Func<Task<string>> continuation,
       CancellationToken cancellationToken = default
     ) {
-      _log.Add("pre-process");
+      Log.Add("pre-process");
       return await continuation();
     }
   }

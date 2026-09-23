@@ -378,7 +378,7 @@ public sealed partial class IntegrityCheckpointReceptor(
   static partial void LogRepairSkipped(ILogger logger, string originServiceName,
     bool transportMissing, bool serializerMissing, bool requesterMissing, bool topicMissing);
 
-  [LoggerMessage(EventId = 58, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 64, Level = LogLevel.Information,
     Message = "Repair request to '{OriginServiceName}' withheld ({EventType}) — no origin-carried " +
               "request address yet; the origin's next checkpoint teaches it")]
   static partial void LogRepairSkippedNoOriginTopic(ILogger logger, string originServiceName, string eventType);

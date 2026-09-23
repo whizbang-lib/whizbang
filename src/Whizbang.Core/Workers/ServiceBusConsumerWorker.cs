@@ -890,7 +890,7 @@ public partial class ServiceBusConsumerWorker(
   static partial void LogCreatedInboxMessage(ILogger logger, Guid messageId, bool isEvent, Guid? streamId, string messageType, string? envelopeType, JsonValueKind payloadType);
 
   [LoggerMessage(
-    EventId = 25,
+    EventId = 26,
     Level = LogLevel.Debug,
     Message = "ServiceBus dropped message {MessageId} of unsubscribed type {EnvelopeType} — no consumer registered on this service"
   )]

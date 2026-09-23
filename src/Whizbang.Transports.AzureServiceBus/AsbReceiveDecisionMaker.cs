@@ -135,10 +135,7 @@ internal sealed class AsbReceiveDecisionMaker {
     if (typeInfo == null) {
       // Slice 5 — try raw receptor before giving up on this message.
       var rawDecision = _tryRawReceptor(envelopeTypeName, bodyJson, rawReceptorRegistry);
-      if (rawDecision != null) {
-        return rawDecision;
-      }
-      return new AsbReceiveDecision {
+      return rawDecision ?? new AsbReceiveDecision {
         Action = AsbReceiveAction.AckAndDrop,
         EnvelopeTypeName = envelopeTypeName,
         Reason = AsbReceiveReason.MISSING_JSON_TYPE_INFO,

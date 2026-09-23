@@ -933,15 +933,15 @@ public sealed partial class MaintenanceWorker(
   static partial void LogRewriteScanFailed(ILogger logger, Exception ex);
 
 
-  [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
+  [LoggerMessage(EventId = 56, Level = LogLevel.Debug,
     Message = "PreDestruction hook ran for a batch of {TargetCount} ephemeral events (cancel={Cancel}, defer={Defer}) — decision not yet enforced (E2-2)")]
   static partial void LogPreDestruction(ILogger logger, int targetCount, bool cancel, bool defer);
 
-  [LoggerMessage(EventId = 25, Level = LogLevel.Warning,
+  [LoggerMessage(EventId = 57, Level = LogLevel.Warning,
     Message = "PreDestruction hook threw for a batch of {TargetCount} ephemeral events — attempt {Attempt}/{MaxRetries}; {Outcome}")]
   static partial void LogPreDestructionFailed(ILogger logger, Exception ex, int targetCount, int attempt, int maxRetries, string outcome);
 
-  [LoggerMessage(EventId = 26, Level = LogLevel.Warning,
+  [LoggerMessage(EventId = 58, Level = LogLevel.Warning,
     Message = "PostDestruction hook threw for a batch of {TargetCount} ephemeral events (non-fatal)")]
   static partial void LogPostDestructionFailed(ILogger logger, Exception ex, int targetCount);
 
