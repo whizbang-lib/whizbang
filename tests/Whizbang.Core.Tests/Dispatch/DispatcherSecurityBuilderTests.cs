@@ -8,6 +8,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
@@ -54,6 +55,40 @@ public class DispatcherSecurityBuilderTests {
     await Assert.That(context!.ActualPrincipal).IsNull();
     await Assert.That(context.EffectivePrincipal).IsEqualTo("SYSTEM");
     await Assert.That(context.ContextType).IsEqualTo(SecurityContextType.System);
+  }
+
+  /// <summary>
+  /// The syncing local invoke carries the explicit context the same way its siblings do, and gives
+  /// it back afterwards.
+  /// </summary>
+  /// <remarks>
+  /// The verb exists for a caller that writes under an explicit context and reads what it wrote on
+  /// the next line, so the context has to be in force where the receptor runs, and the caller's own
+  /// context has to be what is left behind when the call returns.
+  /// </remarks>
+  [Test]
+  public async Task AsSystem_LocalInvokeAndSync_RunsUnderTheExplicitContextAndRestoresItAsync() {
+    DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    var callerContext = ScopeContextAccessor.CurrentContext;
+    var command = new DispatcherSecurityBuilderTestCommand("test-data");
+
+    await dispatcher.AsSystem().ForAllTenants()
+      .LocalInvokeAndSyncAsync(command, SyncMode.AllProjections, CancellationToken.None);
+
+    var context = DispatcherSecurityBuilderTestCommandReceptor.CapturedContext;
+    await Assert.That(context).IsNotNull()
+      .Because("the receptor has to have run, not merely been dispatched to");
+    await Assert.That(context!.EffectivePrincipal).IsEqualTo("SYSTEM");
+    await Assert.That(context.ContextType).IsEqualTo(SecurityContextType.System);
+    await Assert.That(context.Scope.TenantId).IsEqualTo(TenantConstants.AllTenants)
+      .Because("what a cross-tenant write stores has to be reachable by every tenant that reads it");
+
+    await Assert.That(ScopeContextAccessor.CurrentContext).IsEqualTo(callerContext)
+      .Because("the elevation lasts for the call and no longer, the wait included");
   }
 
   /// <summary>

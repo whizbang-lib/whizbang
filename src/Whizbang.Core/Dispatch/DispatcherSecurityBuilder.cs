@@ -264,6 +264,47 @@ public sealed partial class DispatcherSecurityBuilder {
     }
   }
 
+  /// <summary>
+  /// Invokes a void receptor in-process with explicit security context, and waits for the chosen
+  /// completion before returning.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The syncing counterpart of <see cref="LocalInvokeAsync{TMessage}(TMessage)"/>, and the verb a
+  /// caller needs when it writes under an explicit context and reads what it wrote immediately
+  /// afterwards. Without it such a caller had to give up one or the other: drop the context to keep
+  /// the sync, or drop the sync to keep the context. Seeding at startup is exactly that caller,
+  /// writing under a cross-tenant context and reading the result back on the next line.
+  /// </para>
+  /// <para>
+  /// The context is in force for the wait as well as the invocation, so anything the sync triggers
+  /// sees the same context the receptor did, and it is restored afterwards either way.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <param name="message">The message to process.</param>
+  /// <param name="mode">What completion to wait for. Required, as it is on the dispatcher.</param>
+  /// <param name="cancellationToken">A cancellation token.</param>
+  /// <returns>A task that completes when the chosen sync mode is satisfied.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeContractTests.cs:ExplicitSecurityContext_CanTerminateWithTheSyncingLocalInvokeAsync</tests>
+  public async ValueTask LocalInvokeAndSyncAsync<TMessage>(
+      TMessage message,
+      Perspectives.Sync.SyncMode mode,
+      CancellationToken cancellationToken = default) where TMessage : notnull {
+    var previousContext = ScopeContextAccessor.CurrentContext;
+    var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
+    try {
+      var explicitContext = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = explicitContext;
+      // CRITICAL: Clear InitiatingContext to ensure explicit context takes precedence
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+      await _dispatcher.LocalInvokeAndSyncAsync(message, mode, cancellationToken);
+    } finally {
+      ScopeContextAccessor.CurrentContext = previousContext;
+      ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
+    }
+  }
+
   private ImmutableScopeContext _createExplicitContext() {
     // Warn if the actual principal (current user before elevation) is an empty GUID
     // This indicates the originating request didn't have proper user context

@@ -118,6 +118,16 @@ public class SlidingWindowOutboxBatchStrategyTests {
 
   // ===== MaxSize early flush =====
 
+  /// <summary>
+  /// Reaching the size cap flushes at once, without waiting for the window.
+  /// </summary>
+  /// <remarks>
+  /// The window is set far longer than the appends can take, so the size cap is the only thing that
+  /// can flush. With a window short enough to elapse mid-loop, which is what this asked for before,
+  /// the assertion was really "one of the two mechanisms fired" and the batch it examined was
+  /// whichever one got there first: on a loaded machine the window flushed two messages and the
+  /// test read that as the size cap failing. A test for one mechanism has to exclude the other.
+  /// </remarks>
   [Test]
   public async Task AppendAsync_BatchExceedsMaxSize_FlushesEarlyAsync() {
     var captured = new List<OutboxMessage[]>();
@@ -132,8 +142,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(50),
-        MaxWait = TimeSpan.FromSeconds(10),
+        SlidingWindow = TimeSpan.FromSeconds(30),
+        MaxWait = TimeSpan.FromSeconds(30),
         MaxSize = 5,
       });
 
