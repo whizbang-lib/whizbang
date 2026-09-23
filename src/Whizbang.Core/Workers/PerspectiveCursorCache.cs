@@ -207,6 +207,14 @@ public sealed class PerspectiveCursorCache {
     if (nowTicks - prevSweepTicks < _options.SweepInterval.Ticks) {
       return;
     }
+    SweepIfRaceWon(nowTicks, prevSweepTicks);
+  }
+
+  /// <summary>
+  /// Performs the sweep only for the caller that wins the interval. Internal rather than private
+  /// so the losing side can be driven with a stale expected value instead of a real race.
+  /// </summary>
+  internal void SweepIfRaceWon(long nowTicks, long prevSweepTicks) {
     // Single CAS so only one releaser performs the sweep per interval.
     if (Interlocked.CompareExchange(ref _lastSweepTicks, nowTicks, prevSweepTicks) != prevSweepTicks) {
       return;

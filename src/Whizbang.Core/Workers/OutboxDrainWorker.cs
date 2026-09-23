@@ -1019,10 +1019,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var runtimeMessageType = typedEnvelope.Payload?.GetType();
     var hasDetached = !_isGatedOutboxStage(detachedStage)
       || _receptorRegistry.HasReceptors(detachedStage, work.MessageType)
-      || _runtimeHasReceptors(runtimeMessageType, detachedStage);
+      || RuntimeHasReceptors(runtimeMessageType, detachedStage);
     var hasInline = !_isGatedOutboxStage(inlineStage)
       || _receptorRegistry.HasReceptors(inlineStage, work.MessageType)
-      || _runtimeHasReceptors(runtimeMessageType, inlineStage);
+      || RuntimeHasReceptors(runtimeMessageType, inlineStage);
     if (!hasDetached && !hasInline) {
       return;
     }
@@ -1104,7 +1104,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           or LifecycleStage.PostOutboxDetached
           or LifecycleStage.PostOutboxInline;
 
-  private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
+  /// <summary>
+  /// Whether any receptor was registered at runtime for this message type at this stage. Internal
+  /// so the unresolved-type answer can be asserted directly; the callers pass a type that a wire
+  /// name may not have resolved to.
+  /// </summary>
+  internal bool RuntimeHasReceptors(Type? messageType, LifecycleStage stage) {
     if (messageType is null) {
       return false;
     }

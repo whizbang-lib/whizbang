@@ -47,7 +47,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     // Start sampling timer if using CPU time sampling mode
     if (_shouldUseCpuSampling()) {
       var interval = (int)_options.SamplingInterval.TotalMilliseconds;
-      _sampler = new Timer(_sampleCpuTime, null, interval, interval);
+      _sampler = new Timer(SampleCpuTime, null, interval, interval);
     }
   }
 
@@ -107,7 +107,11 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     };
   }
 
-  private void _sampleCpuTime(object? state) {
+  /// <summary>
+  /// One sampling tick. Internal rather than private so the disposed guard and each detection
+  /// mode can be driven deterministically; the timer supplies the real cadence.
+  /// </summary>
+  internal void SampleCpuTime(object? state) {
     if (_disposed) {
       return;
     }

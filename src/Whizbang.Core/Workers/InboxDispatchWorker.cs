@@ -795,9 +795,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
     var runtimeType = typedEnvelope.Payload?.GetType();
     var hasPre = _receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
-      || _runtimeHasReceptors(runtimeType, LifecycleStage.PreInboxInline);
+      || RuntimeHasReceptors(runtimeType, LifecycleStage.PreInboxInline);
     var hasPost = _receptorRegistry.HasReceptors(LifecycleStage.PostInboxInline, work.MessageType)
-      || _runtimeHasReceptors(runtimeType, LifecycleStage.PostInboxInline);
+      || RuntimeHasReceptors(runtimeType, LifecycleStage.PostInboxInline);
     if (!hasPre && !hasPost) {
       return default;
     }
@@ -904,10 +904,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var runtimeMessageType = typedEnvelope.Payload?.GetType();
     var hasDetached = !_isGatedStage(detachedStage)
       || _receptorRegistry.HasReceptors(detachedStage, work.MessageType)
-      || _runtimeHasReceptors(runtimeMessageType, detachedStage);
+      || RuntimeHasReceptors(runtimeMessageType, detachedStage);
     var hasInline = !_isGatedStage(inlineStage)
       || _receptorRegistry.HasReceptors(inlineStage, work.MessageType)
-      || _runtimeHasReceptors(runtimeMessageType, inlineStage);
+      || RuntimeHasReceptors(runtimeMessageType, inlineStage);
     if (!hasDetached && !hasInline) {
       return;
     }
@@ -1010,7 +1010,12 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           or LifecycleStage.PostInboxDetached
           or LifecycleStage.PostInboxInline;
 
-  private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
+  /// <summary>
+  /// Whether any receptor was registered at runtime for this message type at this stage. Internal
+  /// so the unresolved-type answer can be asserted directly; the callers pass a type that a wire
+  /// name may not have resolved to.
+  /// </summary>
+  internal bool RuntimeHasReceptors(Type? messageType, LifecycleStage stage) {
     if (messageType is null) {
       return false;
     }

@@ -218,12 +218,11 @@ public partial class ServiceBusConsumerWorker(
     LogBackgroundProcessingStarted(_logger);
 
     try {
+      // An infinite delay on the stopping token ends one way only, so cancellation is the
+      // single case to handle here.
       await Task.Delay(Timeout.Infinite, stoppingToken);
     } catch (OperationCanceledException) {
       LogWorkerStopping(_logger);
-    } catch (Exception ex) {
-      LogFatalError(_logger, ex);
-      throw;
     }
   }
 
@@ -368,8 +367,8 @@ public partial class ServiceBusConsumerWorker(
       var runtimeMessageType = typedEnvelope.Payload?.GetType();
       if (!_receptorRegistry.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType)
           && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
-          && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxDetached)
-          && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxInline)) {
+          && !RuntimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxDetached)
+          && !RuntimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxInline)) {
         continue;
       }
       var lifecycleContext = new LifecycleExecutionContext {
@@ -482,7 +481,12 @@ public partial class ServiceBusConsumerWorker(
       lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
   }
 
-  private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
+  /// <summary>
+  /// Whether any receptor was registered at runtime for this message type at this stage. Internal
+  /// so the unresolved-type answer can be asserted directly; the callers pass a type that a wire
+  /// name may not have resolved to.
+  /// </summary>
+  internal bool RuntimeHasReceptors(Type? messageType, LifecycleStage stage) {
     if (messageType is null) {
       return false;
     }
@@ -770,13 +774,6 @@ public partial class ServiceBusConsumerWorker(
     Message = "ServiceBusConsumerWorker is stopping..."
   )]
   static partial void LogWorkerStopping(ILogger logger);
-
-  [LoggerMessage(
-    EventId = 7,
-    Level = LogLevel.Error,
-    Message = "Fatal error in ServiceBusConsumerWorker"
-  )]
-  static partial void LogFatalError(ILogger logger, Exception ex);
 
   [LoggerMessage(
     EventId = 8,

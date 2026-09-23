@@ -107,10 +107,7 @@ public static class TypeMatcher {
   /// To: "Type, Assembly"
   /// </remarks>
   private static string _stripVersionInfo(string typeString) {
-    if (string.IsNullOrEmpty(typeString)) {
-      return typeString;
-    }
-
+    // No emptiness guard: every caller tests for empty before it gets here.
     // Split by comma and take parts before version info
     var parts = typeString.Split(',').Select(p => p.Trim()).ToArray();
 
@@ -133,10 +130,7 @@ public static class TypeMatcher {
   /// To: "Namespace.Type"
   /// </remarks>
   private static string _stripAssembly(string typeString) {
-    if (string.IsNullOrEmpty(typeString)) {
-      return typeString;
-    }
-
+    // No emptiness guard: every caller tests for empty before it gets here.
     // Split by comma and take only the first part (type name with namespace)
     var parts = typeString.Split(',');
     return parts[0].Trim();

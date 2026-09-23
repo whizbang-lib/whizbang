@@ -91,7 +91,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
     // Start the timer for periodic flushing
     _flushTimer = new Timer(
-      _flushTimerCallback,
+      FlushTimerTick,
       state: null,
       dueTime: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds),
       period: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds)
@@ -361,7 +361,11 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
-  private void _flushTimerCallback(object? state) {
+  /// <summary>
+  /// One timer tick. Internal rather than private so the disposed guard can be driven
+  /// deterministically; the timer supplies the real cadence.
+  /// </summary>
+  internal void FlushTimerTick(object? state) {
     if (_disposed) {
       return;
     }

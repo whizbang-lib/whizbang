@@ -468,7 +468,7 @@ public partial class TransportPublishStrategy(
   /// <param name="work">The outbox work item</param>
   /// <returns>The resolved transport destination</returns>
   private TransportDestination _resolveDestination(OutboxWork work) {
-    var destination = _resolveEntityDestination(work);
+    var destination = ResolveEntityDestination(work);
 
     if (_transportNamespaces is not { HasBindings: true }) {
       return destination;
@@ -487,7 +487,11 @@ public partial class TransportPublishStrategy(
   /// </summary>
   /// <param name="work">The outbox work item</param>
   /// <returns>The resolved transport destination, before TransportNamespace stamping</returns>
-  private TransportDestination _resolveEntityDestination(OutboxWork work) {
+  /// <summary>
+  /// Resolves the entity a work item publishes to. Internal so the event-destination invariant
+  /// below can be asserted directly; both callers filter empty destinations out before this runs.
+  /// </summary>
+  internal TransportDestination ResolveEntityDestination(OutboxWork work) {
     // ALWAYS detect message kind - commands MUST go to inbox, not individual command topics
     // This is critical: without this, commands would be published to non-existent topics
     // and silently dropped by the message broker

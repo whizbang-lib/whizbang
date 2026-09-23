@@ -46,15 +46,6 @@ public sealed class DefaultMessageSecurityContextProvider(
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(scopedProvider);
 
-    // Defensive: Verify internal state is valid (should never be null after constructor)
-    if (_options is null) {
-      throw new InvalidOperationException("MessageSecurityOptions is null - provider not properly initialized");
-    }
-
-    if (_extractors is null) {
-      throw new InvalidOperationException("Extractors list is null - provider not properly initialized");
-    }
-
     // Check for cancellation first
     cancellationToken.ThrowIfCancellationRequested();
 

@@ -108,6 +108,23 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     return await new ValueTask<TResult>(source, token);
   }
 
+  /// <summary>
+  /// Enqueues a work item whose execute delegate is supplied by the caller. This is the second
+  /// construction site the catch in <see cref="_processWorkItemsAsync"/> describes, and it exists
+  /// so that net can be exercised: nothing on the ordinary path can hand the worker a delegate
+  /// that faults, and a net nobody has ever seen work is not a net.
+  /// </summary>
+  internal async Task EnqueueFaultingForTestsAsync(Func<object?, ValueTask> executeAsync, CancellationToken ct = default) {
+    ArgumentNullException.ThrowIfNull(executeAsync);
+    var workItem = new WorkItem(
+      executeAsync: executeAsync,
+      cancelAsync: static (_, token) => throw new OperationCanceledException(token),
+      state: null,
+      cancellationToken: ct
+    );
+    await _channel.Writer.WriteAsync(workItem, ct);
+  }
+
   /// <inheritdoc/>
   public Task StartAsync(CancellationToken ct = default) {
     lock (_stateLock) {
@@ -217,23 +234,13 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
       try {
         await workItem.ExecuteAsync(workItem.State);
       } catch (Exception ex) {
-        // UNREACHABLE from outside this type, and deliberately kept. The invariant: the only
-        // delegate ever assigned to WorkItem.ExecuteAsync is _executeWithPooledStateAsync, at the
-        // single construction site above; it is an async method, and its own try, catch and finally
-        // cover its whole body including the handler invocation itself -- so a handler that throws
-        // synchronously before its first await is caught there exactly as one that throws after it,
-        // is recorded on the pooled source, and leaves this await successfully completed. The
-        // caller observes the exception; the worker never does. WorkItem and _channel are private,
-        // so no test can enqueue a work item whose delegate faults, and the repository bans
-        // reflection.
-        //
-        // Not excluded from coverage: this catch shares a member with the FIFO loop and the
-        // canceled-while-queued branch, both of which are tested, and
-        // [ExcludeFromCodeCoverage] is member-level -- annotating here would hide their coverage
-        // too (see ai-docs/coverage-exclusions.md). Left uncovered on purpose, with the invariant
-        // written down so a reader can tell whether it still holds. If PooledValueTaskSource ever
-        // stops capturing, or a second enqueue site appears, this becomes reachable and should get
-        // a test rather than this comment.
+        // The ordinary path cannot get here: the only delegate the public enqueue assigns is
+        // _executeWithPooledStateAsync, whose own try, catch and finally cover its whole body, so
+        // a faulting handler is recorded on the pooled source and this await completes. What the
+        // net is for is the rest of that delegate -- completing an already-completed source,
+        // resetting state, returning it to the pool -- any of which throwing would otherwise end
+        // the worker loop silently. EnqueueFaultingForTestsAsync is the second construction site
+        // that lets a test hand the worker a delegate that faults, so the net is exercised.
         WhizbangActivitySource.RecordDefensiveException(
           activity,
           ex,

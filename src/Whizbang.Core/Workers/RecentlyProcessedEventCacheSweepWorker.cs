@@ -33,7 +33,13 @@ public sealed partial class RecentlyProcessedEventCacheSweepWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (!_options.Enabled) {
       LogDisabled(_logger);
-      await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false);
+      // Park until shutdown. The delay ends by throwing, so the cancellation is caught here and
+      // the worker returns normally rather than reporting a fault. Same shape as ClaimWorker.
+      try {
+        await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        // expected on shutdown
+      }
       return;
     }
 

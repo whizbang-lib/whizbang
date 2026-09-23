@@ -96,7 +96,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
 
     // Debounce timer: fires once after quiet period, not repeating
     _debounceTimer = new Timer(
-      _debounceTimerCallback,
+      DebounceTimerTick,
       state: null,
       dueTime: Timeout.Infinite,
       period: Timeout.Infinite
@@ -390,7 +390,11 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// <summary>
   /// Debounce timer callback - fires when no new messages arrive for IntervalMilliseconds.
   /// </summary>
-  private void _debounceTimerCallback(object? state) {
+  /// <summary>
+  /// One timer tick. Internal rather than private so the disposed guard can be driven
+  /// deterministically; the timer supplies the real cadence.
+  /// </summary>
+  internal void DebounceTimerTick(object? state) {
     if (_disposed) {
       return;
     }

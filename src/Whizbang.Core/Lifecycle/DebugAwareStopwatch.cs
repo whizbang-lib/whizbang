@@ -36,9 +36,8 @@ internal sealed class DebugAwareStopwatch {
   /// Starts or resumes measuring elapsed time.
   /// </summary>
   public void Start() {
-    if (Debugger.IsAttached) {
-      _debuggerWasAttached = true;
-    }
+    // Sticky, the way Restart is not: a resume under a debugger taints the whole measurement.
+    _debuggerWasAttached |= Debugger.IsAttached;
     _stopwatch.Start();
   }
 
