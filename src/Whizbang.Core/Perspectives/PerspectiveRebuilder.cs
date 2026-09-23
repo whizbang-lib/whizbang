@@ -239,6 +239,7 @@ public sealed partial class PerspectiveRebuilder(
     await coordinator.ReconcileFollowerPresenceAsync(followerTable, announcerTables, ct).ConfigureAwait(false);
   }
 
+  [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Replays one stream inside a rebuild that is already in progress: the runner and stream to replay, the completion seam and its pending batch, and the running totals the caller keeps across streams. The totals are the caller's loop state, threaded through rather than held in a field the rebuild would share.")]
   private async Task<(int StreamsProcessed, int EventsReplayed)> _replayStreamAsync(
       IPerspectiveRunner runner,
       string perspectiveName,

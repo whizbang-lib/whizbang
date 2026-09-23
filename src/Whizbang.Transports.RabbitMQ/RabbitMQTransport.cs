@@ -65,6 +65,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// <param name="poisonDetector">Topology arc phase 8.5 — Core's poison policy. Optional; null
   /// keeps pre-phase-8.5 behavior (the <c>IMessageDiscardPolicy</c> idiom — no new ITransport member).</param>
   /// <param name="timeProvider">Clock used for message-age evaluation and publish stamping.</param>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
   public RabbitMQTransport(
     IConnection connection,
     JsonSerializerOptions jsonOptions,

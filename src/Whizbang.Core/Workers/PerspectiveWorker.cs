@@ -3069,6 +3069,7 @@ public partial class PerspectiveWorker(
   /// Phase 1: Resolves runner, event store, loads upcoming events, and extracts trace context
   /// for a single perspective group. Returns null runner if resolution fails (caller should skip).
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Resolves one perspective group's dependencies inside a scope the caller owns. The scope, the coordinator and the invoker come from the caller's lifetime and cannot be re-resolved here; the rest names the group and the trace parent its work belongs under.")]
   private async Task<(PerspectiveCursorInfo? Checkpoint, IPerspectiveRunner? Runner, IEventStore? EventStore,
                        List<MessageEnvelope<IEvent>>? UpcomingEvents, ActivityContext PerspectiveParentContext)>
     _resolveDependenciesAndLoadEventsAsync(

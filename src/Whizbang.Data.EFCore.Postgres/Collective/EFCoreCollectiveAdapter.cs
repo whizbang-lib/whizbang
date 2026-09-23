@@ -215,6 +215,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
   /// exactly those ids. On failure the <c>await using</c> transaction rolls back before the retry re-attempts
   /// the same batch (idempotent for the same cursor).
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Runs one bounded batch in its own transaction: the two statements, the compiled setters and predicate, the apply options, the advisory lock key, the store columns and the cursor it resumes from. The Dapper applier's equivalent takes the same shape, and the two are read side by side.")]
   private static async Task<(int Count, Guid? MaxId)> _executeOneBatchAsync(
       DbContext dbContext, string selectSql, string updateSql,
       List<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments,

@@ -169,6 +169,7 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
   /// <c>UPDATE … WHERE id = ANY</c> of exactly those ids. Returns the batch count and the greatest id (next
   /// cursor). A fresh connection per call keeps retries clean.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Runs one bounded batch on a fresh connection: the two statements, their parameter sets, the apply options, the advisory lock key, the store columns and the cursor it resumes from. The arguments already are the batch's description, and a wrapper type would exist only to be unpacked on the first line.")]
   private static async Task<(int Count, Guid? MaxId)> _executeOneBatchAsync(
       IDbConnectionFactory connectionFactory, string selectSql, string updateSql,
       IReadOnlyDictionary<string, object?> setParameters, IReadOnlyDictionary<string, object?> whereParameters,

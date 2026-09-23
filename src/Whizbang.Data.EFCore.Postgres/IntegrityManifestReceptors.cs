@@ -954,6 +954,7 @@ public sealed partial class IntegrityManifestReceptor(
     Message = "AUDIT divergence: {EventType} (tenant {TenantScope}) — {DivergentStreams} stream(s) vs origin " +
               "'{OriginServiceName}' (e.g. {SampleStreamId}); origin {OriginTotal}, local {LocalTotal} " +
               "(autoRepair={AutoRepairRequested})")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source-generated method: the parameter list mirrors the structured log template's placeholders and cannot be grouped without losing structured-logging semantics.")]
   static partial void LogDivergence(ILogger logger, string eventType, string? tenantScope, int divergentStreams,
     Guid sampleStreamId, string originServiceName, long originTotal, long localTotal, bool autoRepairRequested);
 

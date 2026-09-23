@@ -340,6 +340,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     Message = "CONFIRMED integrity gap: {EventType} (tenant {TenantScope}) from origin '{OriginServiceName}' " +
               "window ({FromCommitSequence}, {ToCommitSequence}] — expected {ExpectedCount}, have {ActualCount} " +
               "(autoRepair={AutoRepairRequested})")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source-generated method: the parameter list mirrors the structured log template's placeholders and cannot be grouped without losing structured-logging semantics.")]
   static partial void LogGapConfirmed(ILogger logger, string eventType, string? tenantScope, string originServiceName,
     long fromCommitSequence, long toCommitSequence, int expectedCount, int actualCount, bool autoRepairRequested);
 

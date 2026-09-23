@@ -33,6 +33,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
 public sealed partial class PgSharedNotifyConnection(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,

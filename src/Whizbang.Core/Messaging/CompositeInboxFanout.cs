@@ -400,6 +400,7 @@ public static partial class CompositeInboxFanout {
   /// <see cref="IMessage"/>; <see cref="IEnvelopeSerializer.SerializeEnvelope{TMessage}"/> derives the
   /// wire type from the inner event's runtime type, so no reflective generic-method binding is needed.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Writes one inbox row for a fan-out child. Every argument is a column of that row or the resolver its value comes from, so a parameter object would be the row itself, assembled a step earlier and handed back in.")]
   private static InboxMessage _buildChildInbox(
       IMessage inner,
       IMessageEnvelope source,

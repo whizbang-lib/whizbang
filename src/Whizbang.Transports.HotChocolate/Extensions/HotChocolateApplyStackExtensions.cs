@@ -24,6 +24,7 @@ namespace Whizbang.Transports.HotChocolate;
 public sealed class WhizbangApplyStackQueries {
 #pragma warning disable CA1822 // HotChocolate binds resolvers on instance members of the type extension
   /// <summary>The path signatures matching the filters, plus the anchored flow view when an anchor is given.</summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A GraphQL resolver. HotChocolate binds each parameter as a field argument, so this list is the field's published schema; grouping them would change the query shape clients write.")]
   public Task<ApplyStackReport> GetWhizbangApplyStacksAsync(
       IResolverContext context,
       string? perspective = null,

@@ -1562,6 +1562,7 @@ public interface IWorkCoordinator {
   /// provider cannot store it: reporting proceeds (over-reporting is recoverable) and repair does
   /// not (an unbounded repair request against real data is not).
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Mirrors IIntegrityRepairLedger.TryBeginReportAsync so a provider forwards the call unchanged. The parameter list is that interface's, and the two have to stay identical.")]
   Task<bool> IntegrityTryBeginReportAsync(
       IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
       DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
@@ -1746,6 +1747,7 @@ public interface IWorkCoordinator {
   /// <param name="settleWindow">Only events older than this count.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity</docs>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The parameters are the window being asked for: origin, event types, the sequence range, the paging cursor and its bound, and the settle horizon. A request object would become public API in Core and would have to be versioned alongside the method.")]
   Task<WindowedDigestResult?> ComputeStreamDigestsWindowedAsync(
     Guid? originServiceId, IReadOnlyList<string>? eventTypes,
     long sinceSequence, long? untilSequence, Guid? resumeAfterStreamId, int maxDigests,
