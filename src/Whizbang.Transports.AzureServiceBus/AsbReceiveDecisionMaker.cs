@@ -25,7 +25,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </remarks>
 [SuppressMessage("Performance", "CA1822:Mark members as static",
   Justification = "Instance method enables DI registration as singleton; future revisions may inject ILogger / counters.")]
-internal sealed class AsbReceiveDecisionMaker {
+internal class AsbReceiveDecisionMaker {
   /// <summary>
   /// Evaluates the inbound message and returns the action + envelope (when applicable).
   /// </summary>
@@ -51,7 +51,8 @@ internal sealed class AsbReceiveDecisionMaker {
   /// adapted from the broker message by the caller.</param>
   [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
     Justification = "Each parameter is an independent optional receive-side policy seam; bundling them would obscure which are wired at each call site.")]
-  public AsbReceiveDecision Decide(
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One decision answers a received message with one of six actions, and reaching each means ruling out the ones before it: quarantine, a missing envelope-type property, a type name no context knows, a raw receptor that can take it anyway, a body that will not deserialize, and a payload no receptor here handles. The order is the policy, and the three deserialization catches are three different reasons the same message is undeliverable.")]
+  public virtual AsbReceiveDecision Decide(
       IReadOnlyDictionary<string, object> applicationProperties,
       string bodyJson,
       Func<string, JsonSerializerOptions, JsonTypeInfo?> getTypeInfoByName,

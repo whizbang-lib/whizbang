@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -32,7 +33,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly SemaphoreSlim _senderLock = new(1, 1);
   private readonly AzureServiceBusOptions _options;
   private readonly JsonSerializerOptions _jsonOptions;
-  private readonly AsbReceiveDecisionMaker _decisionMaker = new();
+  /// <summary>
+  /// The receive-side policy: given a broker message, what to do with it.
+  /// </summary>
+  /// <remarks>
+  /// Init-settable and internal so a test can substitute a policy that names an action this
+  /// transport's switch does not know. Every decision the real policy produces names one of the
+  /// four defined actions, so the switch's unknown-action guard - the thing that stops a future
+  /// action from being silently treated as "process" - is otherwise unreachable.
+  /// </remarks>
+  internal AsbReceiveDecisionMaker DecisionMaker { get; init; } = new();
   private readonly Whizbang.Core.Messaging.IReceptorRegistry? _receptorRegistry;
   private readonly Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? _perspectiveRegistry;
   private readonly Whizbang.Core.Messaging.IRawReceptorRegistry? _rawReceptorRegistry;
@@ -253,6 +263,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// "filter disabled" and falls through to legacy behavior. Once registries are present, the
   /// closure is built once and reused across receives.
   /// </remarks>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The predicate is built once and answers for every later receive, so it folds both registries into one closure: every lifecycle stage of the receptor registry and every event type of the perspective registry. Returning null when neither registry is wired is what tells the decision maker the filter is off, which is a third answer rather than a false.")]
   private Func<Type, bool>? _buildIsHandledLocally() {
     if (_receptorRegistry is null && _perspectiveRegistry is null) {
       return null;
@@ -469,6 +480,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     return _publishCoreAsync(envelope, destination, envelopeType, preSerializedBytes, cancellationToken);
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One publish carries optional pieces that each have to be absent-safe: a pre-serialized body, a stream id parsed out of destination metadata, correlation and causation ids, the control-message time to live pulled out of the metadata loop, and a send that can time out or come back as a broker fault. The diagnostics are each behind an explicit level check so a disabled level costs nothing.")]
   private async Task _publishCoreAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
@@ -1606,7 +1618,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
     var poisonContext = _buildPoisonContext(args.Message, destination, subscription);
 
-    var decision = _decisionMaker.Decide(
+    var decision = DecisionMaker.Decide(
       args.Message.ApplicationProperties,
       json,
       Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
@@ -1691,7 +1703,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
     var poisonContext = _buildPoisonContext(args.Message, destination, subscription);
 
-    var decision = _decisionMaker.Decide(
+    var decision = DecisionMaker.Decide(
       args.Message.ApplicationProperties,
       json,
       Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
@@ -1993,7 +2005,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     if (_adminClient != null) {
       try {
-        await _applyCorrelationFilterAsync(topicName, subscriptionName, destinationFilter, cancellationToken);
+        await ApplyCorrelationFilterAsync(topicName, subscriptionName, destinationFilter, cancellationToken);
       } catch (Exception ex) {
         _logger.LogWarning(
           ex,
@@ -2017,7 +2029,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// Applies a CorrelationFilter to a subscription by replacing the default rule.
   /// Filters messages based on the Destination application property.
   /// </summary>
-  private async Task _applyCorrelationFilterAsync(
+  /// <remarks>
+  /// Internal rather than private so its administration-client precondition can be asserted
+  /// directly. The only call site already checks for a client before calling, so the guard cannot
+  /// be reached through the subscribe path - and it is still worth keeping, because rule
+  /// replacement is a management-plane write and a null client here means the transport was
+  /// configured without the connection that write needs.
+  /// </remarks>
+  internal async Task ApplyCorrelationFilterAsync(
     string topicName,
     string subscriptionName,
     string destination,

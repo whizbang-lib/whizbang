@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using Azure;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Routing;
@@ -115,6 +116,7 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
   /// </remarks>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_SecondCall_PerformsZeroManagementOpsAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_OwnedCommandInbox_ForeignSubscription_RecordsDriftAsync</tests>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Provisioning walks topics then subscriptions, and each level is skipped by the per-process existence cache, may race another instance into a conflict that is treated as success, and may carry routing patterns and an ownership check. The nesting is the topology; the conflict arm is what makes the whole thing idempotent across instances.")]
   public async Task ProvisionManifestAsync(
       TopologyManifest manifest,
       CancellationToken cancellationToken = default) {
