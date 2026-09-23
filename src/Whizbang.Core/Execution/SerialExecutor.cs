@@ -114,15 +114,25 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
   /// so that net can be exercised: nothing on the ordinary path can hand the worker a delegate
   /// that faults, and a net nobody has ever seen work is not a net.
   /// </summary>
-  internal async Task EnqueueFaultingForTestsAsync(Func<object?, ValueTask> executeAsync, CancellationToken ct = default) {
+  /// <param name="executeAsync">What the worker runs for this item.</param>
+  /// <param name="itemCancellationToken">
+  /// The token the WORK ITEM carries, which is what the worker tests before running it. It does not
+  /// cancel the enqueue: a caller that wants to exercise the canceled-while-queued branch has to be
+  /// able to enqueue an item whose token is already canceled.
+  /// </param>
+  internal async Task EnqueueFaultingForTestsAsync(
+      Func<object?, ValueTask> executeAsync,
+      CancellationToken itemCancellationToken = default) {
     ArgumentNullException.ThrowIfNull(executeAsync);
     var workItem = new WorkItem(
+      // Nothing to finish: there is no pooled state and no caller awaiting a source, so an item this
+      // seam enqueues with a canceled token is simply not run.
       executeAsync: executeAsync,
-      cancelAsync: static (_, token) => throw new OperationCanceledException(token),
+      cancelAsync: static (_, _) => ValueTask.CompletedTask,
       state: null,
-      cancellationToken: ct
+      cancellationToken: itemCancellationToken
     );
-    await _channel.Writer.WriteAsync(workItem, ct);
+    await _channel.Writer.WriteAsync(workItem, CancellationToken.None);
   }
 
   /// <inheritdoc/>

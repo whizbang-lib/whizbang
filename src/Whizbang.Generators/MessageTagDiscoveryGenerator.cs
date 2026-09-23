@@ -237,6 +237,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
   /// named arguments (primitive, string, enum, type, array). Returns null for unsupported
   /// kinds to let callers drop them safely.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The branching is the constant-kind table: null, the four primitive shapes that need different quoting, enum, array and type. Every arm renders a different C# literal, none of them nest beyond the array's element pass, and splitting the table would hide that it is closed over what Roslyn can hand an attribute argument.")]
   private static string? _typedConstantToCSharpLiteral(TypedConstant value) {
     if (value.IsNull) {
       return "null";

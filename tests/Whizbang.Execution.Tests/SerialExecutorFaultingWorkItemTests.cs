@@ -101,6 +101,49 @@ public class SerialExecutorFaultingWorkItemTests {
     await executor.DisposeAsync();
   }
 
+  /// <summary>
+  /// A work item whose token is already canceled when the worker reads it is finished without being
+  /// run, and the loop carries on. The ordinary path completes such an item through the pooled
+  /// source so the caller's await returns; an item enqueued through the test seam has no caller and
+  /// no pooled state, so finishing it is nothing more than not running it.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ProcessWorkItems_TokenAlreadyCanceled_SkipsTheItemAndKeepsRunningAsync(
+      CancellationToken cancellationToken) {
+    var executor = new SerialExecutor();
+    await executor.StartAsync(cancellationToken);
+
+    var ran = false;
+    using var alreadyCanceled = new CancellationTokenSource();
+    await alreadyCanceled.CancelAsync();
+
+    await executor.EnqueueFaultingForTestsAsync(
+      _ => {
+        ran = true;
+        return ValueTask.CompletedTask;
+      },
+      alreadyCanceled.Token);
+
+    // FIFO: this item is read after the canceled one, so its completion proves the worker already
+    // decided what to do with the canceled item — no polling, no timeout standing in for a signal.
+    var afterTheSkip = await executor.ExecuteAsync<int>(
+      _envelope("after-the-skip"),
+      (_, _) => ValueTask.FromResult(11),
+      null!,   // execution strategies do not read the policy context
+      cancellationToken);
+
+    await Assert.That(afterTheSkip).IsEqualTo(11)
+      .Because("the loop has to continue past an item it skips; if it ended, this item is never read "
+        + "and the call hangs");
+    await Assert.That(ran).IsFalse()
+      .Because("a work item canceled while it sat in the channel must not run — the caller has "
+        + "already been told it was canceled");
+
+    await executor.StopAsync(CancellationToken.None);
+    await executor.DisposeAsync();
+  }
+
   /// <summary>A locally dispatched envelope, which is all the executor reads of it.</summary>
   private static MessageEnvelope<FaultProbeMessage> _envelope(string payload) =>
     new() {
