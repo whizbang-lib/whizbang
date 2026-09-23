@@ -46,6 +46,12 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
     public Guid TenantId { get; init; }
     public int Rank { get; init; }
 
+    /// <summary>
+    /// A member the bulk-seeded documents do not carry at all, which is the shape a row written
+    /// before a property existed has and the one a containment test cannot match.
+    /// </summary>
+    public string? Note { get; init; }
+
     /// <summary>A date, which reaches the index through a rendering rather than through the value.</summary>
     public DateTime OccurredAt { get; init; }
   }
@@ -144,6 +150,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
           Title = i == 0 ? "needle" : $"hay-{i.ToString(CultureInfo.InvariantCulture)}",
           TenantId = i == 0 ? _needleTenant : Guid.NewGuid(),
           Rank = i,
+          Note = i == 0 ? "noted" : null,
           OccurredAt = i == 0 ? _needleInstant : _needleInstant.AddDays(i),
         },
         // Seeded so a filter on scope or metadata is as selective as the one on data. The generator
@@ -223,6 +230,37 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
 
     await Assert.That(byEquality).Count().IsEqualTo(1);
     await Assert.That(byContainment).IsEquivalentTo(byEquality);
+  }
+
+  /// <summary>
+  /// A filter whose value turns out to be null returns the row whose key is absent from the
+  /// document, which is what the comparison it replaced would have returned and what a containment
+  /// test on its own cannot match.
+  /// </summary>
+  /// <remarks>
+  /// The bulk-seeded documents name three keys and no more, so every one of them is a row written
+  /// before the member existed — the case the rewrite has to keep answering correctly. A value that
+  /// is not null is asked for in the same test, because a guard that fixed the null case by making
+  /// every filter match the absent rows would be a worse bug than the one it replaced.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AFilterOnANullValue_StillMatchesTheRowsWhoseKeyIsAbsentAsync(CancellationToken cancellationToken) {
+    string? unset = null;
+    var noted = "noted";
+
+    var absent = await _context!.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Data.Title == "bulk-7" && r.Data.Note == unset)
+      .CountAsync(cancellationToken);
+
+    var present = await _context.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Data.Note == noted)
+      .CountAsync(cancellationToken);
+
+    await Assert.That(absent).IsEqualTo(1)
+      .Because("a document without the key reads as null, so a null value has to match it");
+    await Assert.That(present).IsEqualTo(1)
+      .Because("a value that is not null must still match only the rows that carry it");
   }
 
   /// <summary>A Guid survives the round trip through jsonb_build_object, casing included.</summary>
