@@ -143,14 +143,14 @@ public class MessageTagProcessorCoverageTests {
   [Test]
   public async Task ProcessTagsAsync_NoResolverAndNoScopeFactory_SaysSoAndProcessesNothingAsync() {
     var logger = new CapturingLogger<MessageTagProcessor>();
-    var processor = new MessageTagProcessor(new TagOptions(), logger);
+    var processor = new MessageTagProcessor(new TagOptions(), logger, hookResolver: null, scopeFactory: null);
 
     await processor.ProcessTagsAsync(
       new FallbackTaggedMessage("value"),
       typeof(FallbackTaggedMessage),
       LifecycleStage.AfterReceptorCompletion);
 
-    var messages = logger.Snapshot().Select(e => e.Message).ToList();
+    var messages = logger.Snapshot().ConvertAll(e => e.Message);
     await Assert.That(messages.Any(m => m.Contains("No hook resolver or scope factory", StringComparison.Ordinal))).IsTrue()
       .Because("a processor with nothing to resolve hooks through runs no hook at all, and this "
         + "line is the only thing that tells an operator why");
@@ -174,14 +174,15 @@ public class MessageTagProcessorCoverageTests {
       var processor = new MessageTagProcessor(
         options,
         logger,
-        hookResolver: type => type == typeof(SignalTrackingHook) ? signalHook : null);
+        hookResolver: type => type == typeof(SignalTrackingHook) ? signalHook : null,
+        scopeFactory: null);
 
       await processor.ProcessTagsAsync(
         new FallbackTaggedMessage("value"),
         typeof(FallbackTaggedMessage),
         LifecycleStage.AfterReceptorCompletion);
 
-      var messages = logger.Snapshot().Select(e => e.Message).ToList();
+      var messages = logger.Snapshot().ConvertAll(e => e.Message);
       await Assert.That(messages.Any(m => m.Contains("Using direct hook resolver", StringComparison.Ordinal))).IsTrue()
         .Because("the resolver a processor used decides which scope the hooks saw; saying 'scope "
           + "factory' here would send an operator hunting a scope that was never created");

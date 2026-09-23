@@ -2240,7 +2240,7 @@ public class PerspectiveWorkerCoverageTests {
     await Assert.That(observer.Deduped.Count).IsEqualTo(1)
       .Because("exactly one of the two copies must be turned away; reporting neither means both were "
         + "admitted and the event applies twice");
-    await Assert.That(observer.Deduped[0].EventIds).IsEquivalentTo(new[] { workId })
+    await Assert.That(observer.Deduped[0].EventIds).IsEquivalentTo([workId])
       .Because("the deduped report names the work id that lost the test-and-set, which is what a "
         + "duplicate-suppression audit is read from");
     await Assert.That(observer.Deduped[0].StreamId).IsEqualTo(streamId)

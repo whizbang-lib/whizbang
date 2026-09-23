@@ -82,8 +82,8 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
   internal MessageTagProcessor(
       TagOptions options,
       ILogger logger,
-      Func<Type, object?>? hookResolver = null,
-      IServiceScopeFactory? scopeFactory = null) {
+      Func<Type, object?>? hookResolver,
+      IServiceScopeFactory? scopeFactory) {
     _options = options ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _hookResolver = hookResolver;

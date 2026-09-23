@@ -840,7 +840,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
         PerspectiveWork = []
       });
 
-      await Assert.That(writer.Written).IsEquivalentTo(new[] { fresh })
+      await Assert.That(writer.Written).IsEquivalentTo([fresh])
         .Because("only the row that is not already being handled may be written; writing the "
           + "in-flight one would dispatch the same message to a second handler concurrently");
     } finally {

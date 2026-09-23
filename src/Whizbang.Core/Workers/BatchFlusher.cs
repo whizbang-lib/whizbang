@@ -84,11 +84,10 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   private async Task _runAsync(CancellationToken ct) {
     try {
       while (!ct.IsCancellationRequested) {
-        var read = await BatchFlusherChannelRead.TryReadNextAsync(_channel.Reader, ct).ConfigureAwait(false);
-        if (!read.Ok) {
+        var (ok, first) = await BatchFlusherChannelRead.TryReadNextAsync(_channel.Reader, ct).ConfigureAwait(false);
+        if (!ok) {
           break;
         }
-        var first = read.Item;
 
         var batch = new List<T>(_options.MaxBatchSize) { first };
         var deadlineMs = Environment.TickCount + _options.CoalesceWindowMs;

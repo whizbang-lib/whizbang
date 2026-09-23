@@ -108,9 +108,9 @@ public class BatchFlusherCoverageTests {
     using var stopped = new CancellationTokenSource();
     await stopped.CancelAsync();
 
-    var read = await BatchFlusherChannelRead.TryReadNextAsync(channel.Reader, stopped.Token);
+    var (ok, _) = await BatchFlusherChannelRead.TryReadNextAsync(channel.Reader, stopped.Token);
 
-    await Assert.That(read.Ok).IsFalse()
+    await Assert.That(ok).IsFalse()
       .Because("a forced shutdown past the drain timeout cancels this read, and the loop has to "
              + "end on that answer rather than let the cancellation escape");
   }
@@ -120,9 +120,9 @@ public class BatchFlusherCoverageTests {
     var channel = System.Threading.Channels.Channel.CreateUnbounded<int>();
     channel.Writer.Complete();
 
-    var read = await BatchFlusherChannelRead.TryReadNextAsync(channel.Reader, CancellationToken.None);
+    var (ok, _) = await BatchFlusherChannelRead.TryReadNextAsync(channel.Reader, CancellationToken.None);
 
-    await Assert.That(read.Ok).IsFalse()
+    await Assert.That(ok).IsFalse()
       .Because("a graceful shutdown completes the writer, and the loop ends once the channel is "
              + "drained — this is the ordinary way the flusher stops");
   }
@@ -134,10 +134,10 @@ public class BatchFlusherCoverageTests {
     var channel = System.Threading.Channels.Channel.CreateUnbounded<int>();
     channel.Writer.TryWrite(42);
 
-    var read = await BatchFlusherChannelRead.TryReadNextAsync(channel.Reader, CancellationToken.None);
+    var (ok, item) = await BatchFlusherChannelRead.TryReadNextAsync(channel.Reader, CancellationToken.None);
 
-    await Assert.That(read.Ok).IsTrue();
-    await Assert.That(read.Item).IsEqualTo(42)
+    await Assert.That(ok).IsTrue();
+    await Assert.That(item).IsEqualTo(42)
       .Because("the item read here is the first of the batch the flusher coalesces around");
   }
 }

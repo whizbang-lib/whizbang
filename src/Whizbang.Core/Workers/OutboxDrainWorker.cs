@@ -1300,7 +1300,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
               "control-plane traffic is re-emitted on its own cadence and is never durably dead-lettered")]
   static partial void LogOutboxControlPlaneDropped(ILogger logger, Guid messageId, string messageType, int attempts);
 
-  [LoggerMessage(EventId = 53, Level = LogLevel.Warning,
+  [LoggerMessage(EventId = 55, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker EstablishFullContextAsync timed out for {MessageId} after {TimeoutSeconds}s — IMessageSecurityContextProvider implementation hung; routing to failure channel with Reason=SecurityContextEstablishmentFailure")]
   static partial void LogSecurityContextTimedOut(ILogger logger, Guid messageId, int timeoutSeconds);
 
