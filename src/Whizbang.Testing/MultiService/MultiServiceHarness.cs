@@ -17,6 +17,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Testing.MultiService;
 
@@ -229,7 +230,7 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
           services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
             new HarnessServiceInstanceProvider(definition.Name));
           services.AddScoped<IWorkCoordinator>(_ => inbox);
-          services.AddSingleton<IReceptorRegistryQuery>(new ClaimAllReceptorRegistryQuery());
+          services.AddSingleton<IReceptorRegistryQuery>(new PermissiveReceptorRegistryQuery());
           definition.ConfigureServices?.Invoke(services);
 
           services.AddWhizbang()
@@ -260,12 +261,6 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
 
       return new MultiServiceHarness(wire, runtimes, faults);
     }
-  }
-
-  private sealed class ClaimAllReceptorRegistryQuery : IReceptorRegistryQuery {
-    public bool HasReceptors(LifecycleStage stage, string messageType) => true;
-    public bool HasInboxHandler(string messageType) => true;
-    public bool HasAnyConsumer(string messageType) => true;
   }
 }
 

@@ -139,6 +139,13 @@ public static class SubscriptionWarmup {
         return; // Success!
       } catch (TimeoutException) {
         // Retry
+      } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
+        // The overall warmup budget ran out while this retry interval was still waiting.
+        // That is a timeout, and this method documents a TimeoutException for it, so stop
+        // retrying and report it below. Only the CALLER's cancellation propagates as a
+        // cancellation; letting the internal deadline escape as one would tell a caller its
+        // own token was canceled when it never was.
+        break;
       }
     }
 

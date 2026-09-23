@@ -9,28 +9,16 @@ using Whizbang.Transports.AzureServiceBus;
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
-/// Coverage-round-23 targets for <see cref="AzureServiceBusConnectionRetry"/>.
+/// Coverage-round targets for <see cref="AzureServiceBusConnectionRetry"/>: the indefinite-retry
+/// heartbeat log, and the success path through the retry loop.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Only source lines 104-105 (the "still retrying" heartbeat log inside
-/// <c>_handleRetryOrRethrow</c>'s indefinite-retry branch) are exercised here. The other five
-/// target lines for this class — 76, 77, 78 (the "connection established after N attempts" log),
-/// 80 (<c>return client;</c>), and 87 (the method's closing brace, which the compiler's async
-/// state-machine epilogue only reaches via that same successful return) are NOT reachable from a
-/// unit test and are not attempted here.
-/// </para>
-/// <para>
-/// All five sit downstream of <c>adminClient.GetNamespacePropertiesAsync(...)</c> actually
-/// succeeding — a real Azure Service Bus management-plane round trip that the local emulator does
-/// not implement, with no seam in this class to substitute a fake admin client. This is
-/// previously-recorded residue (entries AF and AP), not a new gap: pointing this method at a
-/// namespace that doesn't exist can only ever take the failure path (already covered by
-/// <c>AzureServiceBusConnectionRetryTests</c>), and pointing it at a real namespace would make
-/// this suite depend on live Azure infrastructure and network conditions — exactly what a unit
-/// test must not do. Reaching lines 76-80/87 requires either a real namespace in CI or a
-/// constructor seam for the admin client, neither of which exists today.
-/// </para>
+/// The success path used to be unreachable from a unit test: everything past
+/// <c>adminClient.GetNamespacePropertiesAsync(...)</c> needed a real management-plane round trip,
+/// which the local emulator does not implement and which a unit test must not depend on. That
+/// verification round trip is now an internal seam on the class
+/// (<c>VerifyNamespaceReachableAsync</c>), so these tests drive the loop's failure-then-success
+/// behavior offline while production still uses the real administration client.
 /// </remarks>
 /// <docs>messaging/transports/azure-service-bus#connection-retry</docs>
 /// <tests>Whizbang.Transports.AzureServiceBus/AzureServiceBusConnectionRetry.cs:*</tests>
@@ -114,5 +102,78 @@ public class AzureServiceBusConnectionRetryCoverageTests {
     await Assert.That(log.StillRetryingAtAttempt.Any(attempt => attempt < 10)).IsFalse()
       .Because("firing before the tenth attempt means the modulo gate is not filtering at all, "
              + "which is the log-spam failure mode the gate exists to prevent");
+  }
+
+  /// <summary>Records every log line so a test can assert which retry arm ran.</summary>
+  private sealed class RecordingLog : ILogger {
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) =>
+      Entries.Add((logLevel, formatter(state, exception)));
+  }
+
+  private static AzureServiceBusOptions _fastRetryOptions() => new() {
+    InitialRetryAttempts = 1,
+    InitialRetryDelay = TimeSpan.FromMilliseconds(1),
+    MaxRetryDelay = TimeSpan.FromMilliseconds(1),
+    BackoffMultiplier = 1.0,
+    RetryIndefinitely = true,
+  };
+
+  // Recovery is the whole point of retrying: a namespace that refuses once and answers next time
+  // has to end with a usable client, not another retry. The "established after N attempts" line is
+  // the only signal an operator gets that a pod which was stuck at startup is now connected, so it
+  // has to carry the attempt number it actually took.
+  [Test]
+  public async Task CreateClientWithRetryAsync_WhenTheNamespaceAnswersOnTheSecondAttempt_ReturnsTheClientAndLogsRecoveryAsync(
+      CancellationToken cancellationToken) {
+    var log = new RecordingLog();
+    var verifications = 0;
+    var retry = new AzureServiceBusConnectionRetry(_fastRetryOptions(), log) {
+      VerifyNamespaceReachableAsync = (_, _) => {
+        verifications++;
+        return verifications == 1
+          ? Task.FromException(new Azure.RequestFailedException("namespace not answering yet"))
+          : Task.CompletedTask;
+      }
+    };
+
+    await using var client = await retry.CreateClientWithRetryAsync(UNREACHABLE_NAMESPACE, cancellationToken);
+
+    await Assert.That(client).IsNotNull()
+      .Because("a verified namespace must yield the client, not another retry");
+    await Assert.That(verifications).IsEqualTo(2);
+    await Assert.That(log.Entries.Count(e =>
+        e.Level == LogLevel.Information &&
+        e.Message.Contains("established after 2 attempts", StringComparison.Ordinal)))
+      .IsEqualTo(1)
+      .Because("the recovery line is an operator's only signal that a stalled startup connected, "
+             + "and it must name the attempt it actually took");
+  }
+
+  // The first-attempt success is the normal case and must stay silent at Information level:
+  // logging "established after 1 attempts" on every healthy start turns the recovery signal above
+  // into background noise nobody reads.
+  [Test]
+  public async Task CreateClientWithRetryAsync_WhenTheNamespaceAnswersImmediately_ReturnsTheClientWithoutARecoveryLineAsync(
+      CancellationToken cancellationToken) {
+    var log = new RecordingLog();
+    var verifications = 0;
+    var retry = new AzureServiceBusConnectionRetry(_fastRetryOptions(), log) {
+      VerifyNamespaceReachableAsync = (_, _) => {
+        verifications++;
+        return Task.CompletedTask;
+      }
+    };
+
+    await using var client = await retry.CreateClientWithRetryAsync(UNREACHABLE_NAMESPACE, cancellationToken);
+
+    await Assert.That(client).IsNotNull();
+    await Assert.That(verifications).IsEqualTo(1);
+    await Assert.That(log.Entries.Any(e => e.Message.Contains("established after", StringComparison.Ordinal)))
+      .IsFalse()
+      .Because("nothing was recovered from, so there is nothing to report at Information level");
   }
 }

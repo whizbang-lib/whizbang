@@ -71,14 +71,12 @@ public abstract class EventStoreContractTests {
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
 
-    // Act
-    var events = new List<IMessageEnvelope>();
-    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0)) {
-      events.Add(evt);
-    }
-
-    // Assert
-    await Assert.That(events).Count().IsEqualTo(0);
+    // Act + Assert - enumerate the reader directly. Accumulating into a list would put the
+    // "add an event" statement in a loop body that an empty stream can never enter: code no
+    // implementation of this contract can execute, and a red line in every derived suite.
+    // Asking the enumerator for its first element says the same thing and can run.
+    await using var reader = eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0).GetAsyncEnumerator();
+    await Assert.That(await reader.MoveNextAsync()).IsFalse();
   }
 
   [Test]
@@ -259,14 +257,12 @@ public abstract class EventStoreContractTests {
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
 
-    // Act
-    var events = new List<IMessageEnvelope>();
-    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromEventId: null)) {
-      events.Add(evt);
-    }
-
-    // Assert
-    await Assert.That(events).Count().IsEqualTo(0);
+    // Act + Assert - enumerate the reader directly. Accumulating into a list would put the
+    // "add an event" statement in a loop body that an empty stream can never enter: code no
+    // implementation of this contract can execute, and a red line in every derived suite.
+    // Asking the enumerator for its first element says the same thing and can run.
+    await using var reader = eventStore.ReadAsync<TestEvent>(streamId, fromEventId: null).GetAsyncEnumerator();
+    await Assert.That(await reader.MoveNextAsync()).IsFalse();
   }
 
   // ========================================
@@ -299,15 +295,14 @@ public abstract class EventStoreContractTests {
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
 
-    // Act
     var eventTypes = new List<Type> { typeof(TestEvent) };
-    var events = new List<IMessageEnvelope>();
-    await foreach (var evt in eventStore.ReadPolymorphicAsync(streamId, fromEventId: null, eventTypes)) {
-      events.Add(evt);
-    }
 
-    // Assert
-    await Assert.That(events).Count().IsEqualTo(0);
+    // Act + Assert - enumerate the reader directly. Accumulating into a list would put the
+    // "add an event" statement in a loop body that an empty stream can never enter: code no
+    // implementation of this contract can execute, and a red line in every derived suite.
+    // Asking the enumerator for its first element says the same thing and can run.
+    await using var reader = eventStore.ReadPolymorphicAsync(streamId, fromEventId: null, eventTypes).GetAsyncEnumerator();
+    await Assert.That(await reader.MoveNextAsync()).IsFalse();
   }
 
   // ========================================
