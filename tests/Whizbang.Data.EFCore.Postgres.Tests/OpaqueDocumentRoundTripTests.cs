@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TUnit.Assertions;
+using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
@@ -24,6 +25,7 @@ public sealed record OpaqueTurn(Guid TurnId, string Content, DateTime At, IReadO
 /// <summary>
 /// A model the mapped path refuses, so its document is stored as one serialized value.
 /// </summary>
+[SuppressIndexAdvisory("the ordering case below accepts the scan; what it does not accept is a statement that cannot run")]
 public sealed class OpaqueDocument {
   [StreamId]
   public Guid Id { get; set; }
@@ -204,6 +206,106 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
     await Assert.That(row.Data.Turns[0].At).IsEqualTo(_startedAt.AddMinutes(1));
     await Assert.That(row.Data.Turns[0].Attachments![0].FileName).IsEqualTo("a.txt");
     await Assert.That(row.Metadata.Timestamp).IsEqualTo(_startedAt);
+  }
+
+  /// <summary>
+  /// Ordering and filtering on a temporal inside the document answer in the instant's own order.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The document is stored as one serialized value, so the mapped path holds no metadata for the
+  /// members inside it: a member read in a query is translated from its CLR type alone, and a date
+  /// becomes a cast of the extracted text to a timestamp. What is stored is the canonical number, so
+  /// the cast is handed a count of microseconds and PostgreSQL refuses the whole statement.
+  /// </para>
+  /// <para>
+  /// Ordering and filtering are where a consumer meets this, and neither needs the instant
+  /// reconstructed: the canonical unit counts forward, so the number's order is the instant's order
+  /// and a bound converted the same way compares the same way.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task OrderingAndFilteringOnATemporalInsideTheDocumentAnswerAsync() {
+    var earlier = Guid.CreateVersion7();
+    var later = Guid.CreateVersion7();
+
+    await using (var writer = _context()) {
+      var strategy = new PostgresUpsertStrategy();
+      foreach (var (id, at) in new[] { (earlier, _startedAt), (later, _startedAt.AddDays(1)) }) {
+        await strategy.UpsertPerspectiveRowAsync(
+          writer, TABLE, id,
+          new OpaqueDocument { Id = id, StartedAt = at, Turns = [] },
+          new PerspectiveMetadata { EventType = "e", EventId = "1", Timestamp = at },
+          new PerspectiveScope());
+      }
+    }
+
+    await using var reader = _context();
+
+    var newestFirst = await reader.Set<PerspectiveRow<OpaqueDocument>>().AsNoTracking()
+      .OrderByDescending(r => r.Data.StartedAt)
+      .Select(r => r.Id)
+      .ToListAsync();
+
+    await Assert.That(newestFirst).IsEquivalentTo([later, earlier], CollectionOrdering.Matching)
+      .Because("the canonical unit counts forward, so its order is the instant's order");
+
+    var after = await reader.Set<PerspectiveRow<OpaqueDocument>>().AsNoTracking()
+      .Where(r => r.Data.StartedAt > _startedAt)
+      .Select(r => r.Id)
+      .ToListAsync();
+
+    await Assert.That(after).IsEquivalentTo([later])
+      .Because("a bound converted the same way compares the same way");
+
+    // The bound above is written into the query, so it is converted here, by the same code that
+    // wrote the row. A bound that arrives as a parameter cannot be, and is converted by the database
+    // instead, which is the only place the two renderings of an instant can disagree.
+    var bound = _startedAt;
+    var afterParameter = await reader.Set<PerspectiveRow<OpaqueDocument>>().AsNoTracking()
+      .Where(r => r.Data.StartedAt > bound)
+      .Select(r => r.Id)
+      .ToListAsync();
+
+    await Assert.That(afterParameter).IsEquivalentTo(after)
+      .Because("where the bound came from cannot change which rows answer");
+  }
+
+  /// <summary>
+  /// The database converts an instant to the canonical unit exactly as the serializer does.
+  /// </summary>
+  /// <remarks>
+  /// A filter whose bound arrives as a parameter is converted in the database, and a filter whose
+  /// bound is written into the query is converted by the same code that wrote the row. A
+  /// disagreement of one microsecond between those two would be an off-by-one on every boundary
+  /// comparison and would show up as a row missing from a range, which is the kind of wrong answer
+  /// that never looks like a bug in the conversion. The instants below are the ones where a
+  /// rendering can drift: a whole second, a fraction that is not representable in binary, the
+  /// smallest unit the format keeps, and the epoch itself.
+  /// </remarks>
+  [Test]
+  public async Task TheDatabaseConvertsAnInstantAsTheSerializerDoesAsync(CancellationToken cancellationToken) {
+    DateTime[] instants = [
+      new(2026, 3, 4, 5, 6, 7, 0, DateTimeKind.Utc),
+      new(2026, 3, 4, 5, 6, 7, 123, DateTimeKind.Utc),
+      new DateTime(2026, 3, 4, 5, 6, 7, 0, DateTimeKind.Utc).AddTicks(1230),
+      DateTime.UnixEpoch,
+      new DateTime(1969, 12, 31, 23, 59, 59, 999, DateTimeKind.Utc),
+    ];
+
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    foreach (var instant in instants) {
+      await using var command = new NpgsqlCommand(
+        "SELECT (date_part('epoch', $1::timestamptz) * 1000000)::bigint", db);
+      command.Parameters.AddWithValue(instant);
+
+      var inDatabase = (long)(await command.ExecuteScalarAsync(cancellationToken))!;
+
+      await Assert.That(inDatabase).IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(instant))
+        .Because($"the two conversions of {instant:O} have to be the same number");
+    }
   }
 
   /// <summary>

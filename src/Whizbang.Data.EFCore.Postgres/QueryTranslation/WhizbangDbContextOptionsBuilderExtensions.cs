@@ -55,6 +55,7 @@ public static class WhizbangDbContextOptionsBuilderExtensions {
     // depends on the candidate values and those are not known until the command is built.
     optionsBuilder.ReplaceService<IRelationalParameterBasedSqlProcessorFactory, ContainmentParameterProcessorFactory>();
 
+
     return optionsBuilder;
   }
 

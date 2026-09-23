@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 
+using Whizbang.Data.EFCore.Postgres.Perspectives;
+
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 
 /// <summary>
@@ -27,6 +29,13 @@ public sealed class ContainmentPostprocessor(
     ArgumentNullException.ThrowIfNull(query);
 
     var translated = base.Process(query);
+
+
+    // Unconditional, and first. A temporal inside a document is stored as the canonical number
+    // whatever else is in force, so a query that reads one as a timestamp is refused by the database
+    // rather than answered differently, and no switch should be able to leave that in place.
+    translated = new CanonicalTemporalSqlRewriter(
+      RelationalDependencies.TypeMappingSource.FindMapping(typeof(long))!).Visit(translated);
 
     // Asked per compilation rather than cached, so a deployment can change mechanism without a
     // release, and asked for this mechanism in particular so that only one of the two ever acts.

@@ -7,6 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
 
+using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
+
 namespace Whizbang.Data.EFCore.Postgres.Functions;
 
 /// <summary>
@@ -43,6 +45,14 @@ public static class WhizbangDbContextOptionsExtensions {
   public static NpgsqlDbContextOptionsBuilder UseWhizbangFunctions(
       this NpgsqlDbContextOptionsBuilder optionsBuilder) {
     ArgumentNullException.ThrowIfNull(optionsBuilder);
+
+    // A temporal inside a document a perspective stores as one serialized value is held as the
+    // canonical count of microseconds, and a query that reads it as a timestamp is refused by the
+    // database. Correcting that rides here rather than on the promoted-field switch, because a
+    // perspective with no promoted field is exactly the one whose document is opaque, so the
+    // correction has to reach a context that never asked for promotion.
+    ((IRelationalDbContextOptionsBuilderInfrastructure)optionsBuilder).OptionsBuilder
+      .ReplaceService<IQueryTranslationPostprocessorFactory, ContainmentPostprocessorFactory>();
 
     // Add our custom method call translator plugin to the existing collection
     // This preserves Npgsql's built-in translators while adding our own
