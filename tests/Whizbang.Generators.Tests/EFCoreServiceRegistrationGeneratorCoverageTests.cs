@@ -15,6 +15,47 @@ namespace Whizbang.Generators.Tests;
 [Category("SourceGenerators")]
 public class EFCoreServiceRegistrationGeneratorCoverageTests {
 
+  /// <summary>
+  /// The snippet loader refuses and says why when the assembly it reads carries no snippets.
+  /// The generator can never hand it such an assembly — the snippets are its own embedded
+  /// resources — so the failure arm is asserted against the contract rather than driven through
+  /// a compilation.
+  /// </summary>
+  [Test]
+  public async Task TryLoadRegistrationSnippets_AssemblyWithoutSnippets_ReportsEFCORE999AndRefusesAsync() {
+    var reported = new List<Diagnostic>();
+
+    var loaded = Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator.TryLoadRegistrationSnippets(
+      reported.Add,
+      out var infrastructureSnippet,
+      out var perspectiveSnippet,
+      typeof(object).Assembly);
+
+    await Assert.That(loaded).IsFalse()
+      .Because("emitting registration code without the snippets would put the error marker in the generated file");
+    await Assert.That(infrastructureSnippet).IsEmpty();
+    await Assert.That(perspectiveSnippet).IsEmpty();
+    await Assert.That(reported.Select(d => d.Id)).Contains("EFCORE999");
+    await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
+  }
+
+  /// <summary>The same loader reads this generator's own snippets, which is the path every
+  /// generated registration file takes.</summary>
+  [Test]
+  public async Task TryLoadRegistrationSnippets_OwnAssembly_ReturnsBothSnippetsAsync() {
+    var reported = new List<Diagnostic>();
+
+    var loaded = Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator.TryLoadRegistrationSnippets(
+      reported.Add,
+      out var infrastructureSnippet,
+      out var perspectiveSnippet);
+
+    await Assert.That(loaded).IsTrue();
+    await Assert.That(reported).IsEmpty();
+    await Assert.That(infrastructureSnippet).IsNotEmpty();
+    await Assert.That(perspectiveSnippet).IsNotEmpty();
+  }
+
   // Minimal perspective boilerplate (class model per coverage-test conventions - records
   // classify polymorphic via compiler-generated EqualityContract in other generators).
   private const string PERSPECTIVE_SNIPPET = """

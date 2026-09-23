@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -1384,7 +1385,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // by the same exit, and the short circuit keeps the snippet read off the no-DbContext path
     // exactly as the separate early return did.
     if (dbContexts.IsEmpty
-        || !_tryLoadRegistrationSnippets(context, out var infrastructureSnippet, out var perspectiveSnippet)) {
+        || !TryLoadRegistrationSnippets(context.ReportDiagnostic, out var infrastructureSnippet, out var perspectiveSnippet)) {
       return;
     }
 
@@ -1458,11 +1459,27 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <summary>Loads the shared infra + perspective registration snippets from
   /// EFCoreSnippets.cs. Reports EFCORE999 and returns false on load failure so the caller can
   /// abort generation instead of emitting broken output.</summary>
-  private static bool _tryLoadRegistrationSnippets(
-      SourceProductionContext context,
+  /// <remarks>
+  /// Internal, and taking its diagnostic sink and its assembly rather than reaching for either,
+  /// because the failure arm is the half worth pinning and it cannot be reached through the
+  /// generator: the snippets it loads are this assembly's own embedded resources, so the only way
+  /// the load fails in production is a corrupt build. A test hands it an assembly without those
+  /// resources and asserts it reports EFCORE999 and refuses rather than emitting broken output.
+  /// <see cref="SourceProductionContext"/> has no public constructor, which is why the sink is an
+  /// Action rather than the context itself. Public rather than internal because InternalsVisibleTo
+  /// on this project exposes its PolySharp polyfills (IsExternalInit, ModuleInitializerAttribute)
+  /// to a net10.0 test project that already has them, and every type collides. This assembly ships
+  /// as an analyzer, so its public surface is not a consumer API.
+  /// </remarks>
+  public static bool TryLoadRegistrationSnippets(
+      Action<Diagnostic> reportDiagnostic,
       out string infrastructureSnippet,
-      out string perspectiveSnippet) {
-    var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
+      out string perspectiveSnippet,
+      Assembly? snippetAssembly = null) {
+    var assembly = snippetAssembly ?? typeof(EFCoreServiceRegistrationGenerator).Assembly;
+    string? failure;
+    infrastructureSnippet = string.Empty;
+    perspectiveSnippet = string.Empty;
     try {
       infrastructureSnippet = TemplateUtilities.ExtractSnippet(
           assembly,
@@ -1476,21 +1493,37 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           "REGISTER_PERSPECTIVE_MODEL_SNIPPET",
           "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
       );
-      return true;
-    } catch (Exception ex) {
-      var errorDescriptor = new DiagnosticDescriptor(
-          id: "EFCORE999",
-          title: "Failed to Load Snippets",
-          messageFormat: "Failed to load snippets from EFCoreSnippets.cs: {0}",
-          category: DIAGNOSTIC_CATEGORY,
-          defaultSeverity: DiagnosticSeverity.Error,
-          isEnabledByDefault: true);
-      context.ReportDiagnostic(Diagnostic.Create(errorDescriptor, Location.None, ex.Message));
-      infrastructureSnippet = string.Empty;
-      perspectiveSnippet = string.Empty;
-      return false;
+      // ExtractSnippet answers a missing resource or a missing region with an error marker rather
+      // than throwing, so the marker is what a corrupt build actually looks like from here.
+      // Catching only exceptions let that through, and the registration file was emitted with the
+      // marker sitting in it as a comment.
+      failure = _snippetFailure(infrastructureSnippet) ?? _snippetFailure(perspectiveSnippet);
+    } catch (RegexMatchTimeoutException ex) {
+      // The region match carries a timeout against a pathological template; nothing else here throws.
+      failure = ex.Message;
     }
+
+    if (failure is null) {
+      return true;
+    }
+
+    var errorDescriptor = new DiagnosticDescriptor(
+        id: "EFCORE999",
+        title: "Failed to Load Snippets",
+        messageFormat: "Failed to load snippets from EFCoreSnippets.cs: {0}",
+        category: DIAGNOSTIC_CATEGORY,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+    reportDiagnostic(Diagnostic.Create(errorDescriptor, Location.None, failure));
+    infrastructureSnippet = string.Empty;
+    perspectiveSnippet = string.Empty;
+    return false;
   }
+
+  /// <summary>The error marker ExtractSnippet returns in place of a snippet it could not read,
+  /// or null when the text is a snippet.</summary>
+  private static string? _snippetFailure(string snippet) =>
+    snippet.StartsWith("// ERROR:", StringComparison.Ordinal) ? snippet : null;
 
   /// <summary>Emits the auto-generated header, conditional pgvector usings, consumer namespace,
   /// and the GeneratedModelRegistration class + ModuleInitializer opening. pgvector usings are
