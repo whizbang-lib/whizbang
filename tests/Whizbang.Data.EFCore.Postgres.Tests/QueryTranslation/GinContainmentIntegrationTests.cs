@@ -268,6 +268,36 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       .Because("a value that is not null must still match only the rows that carry it");
   }
 
+  /// <summary>
+  /// A membership filter whose candidates include a null returns the rows whose key is absent, which
+  /// a containment test against a document per candidate cannot match.
+  /// </summary>
+  /// <remarks>
+  /// The same absent-key rows as the case above, reached through the other rewrite. A candidate that
+  /// is null cannot be recognized while the filter is compiled, so this shape stands down for the
+  /// element type that can hold one and Entity Framework builds the membership test itself.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AMembershipFilterIncludingANullCandidate_StillMatchesTheRowsWhoseKeyIsAbsentAsync(
+      CancellationToken cancellationToken) {
+    var withNull = new[] { "noted", null };
+    var withoutNull = new[] { "noted" };
+
+    var both = await _context!.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Data.Title == "bulk-7" && withNull.Contains(r.Data.Note))
+      .CountAsync(cancellationToken);
+
+    var onlyNoted = await _context.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => withoutNull.Contains(r.Data.Note))
+      .CountAsync(cancellationToken);
+
+    await Assert.That(both).IsEqualTo(1)
+      .Because("a null candidate has to match a document that does not carry the key");
+    await Assert.That(onlyNoted).IsEqualTo(1)
+      .Because("candidates that are all values must still match only the rows that carry one");
+  }
+
   /// <summary>A Guid survives the round trip through jsonb_build_object, casing included.</summary>
   /// <remarks>The extraction side is read as SQL, for the reason given on the case above.</remarks>
   [Test]

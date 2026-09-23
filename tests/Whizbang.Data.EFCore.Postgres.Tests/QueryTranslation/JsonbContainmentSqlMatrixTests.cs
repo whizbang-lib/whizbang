@@ -430,6 +430,15 @@ public class JsonbContainmentSqlMatrixTests {
     Base("set/int/list/param", rows => rows.Where(x => intList.Contains(x.Data.Num)), Destination.Containment);
     Base("set/string/param", rows => rows.Where(x => strSet.Contains(x.Data.Str)), Destination.Containment);
 
+    // A candidate that is null builds a document holding an explicit JSON null, which does not match
+    // a key that is absent, while the membership test it replaced does. Which candidates are null is
+    // only known once the command is built for a set of values, so that is where a null test is
+    // added. The containment test stays and still carries the candidates that are values, so the
+    // destination is unchanged and only the rows the null would have lost come back.
+    var strSetWithNull = new[] { "v", null };
+    Base("set/string/with-null/param",
+      rows => rows.Where(x => strSetWithNull.Contains(x.Data.MaybeStr)), Destination.Containment);
+
     // --- The scope document, which every tenant-isolating read filters on.
     //
     // Its keys are the framework's own and an absent one is ordinary rather than exceptional, so a
