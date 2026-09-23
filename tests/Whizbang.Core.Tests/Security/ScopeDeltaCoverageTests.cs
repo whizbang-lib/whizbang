@@ -1452,4 +1452,55 @@ public class ScopeDeltaCoverageTests {
   }
 
   #endregion
+
+  #region Scope comparison — both sides absent
+
+  // A hop can legitimately carry a scope context with no perspective scope at all: the wire
+  // format makes the scope optional, and a system-originated message has nothing tenant- or
+  // user-shaped to record. Two such hops in a row differ in nothing, so the delta must carry no
+  // scope entry. If the comparison reported them as different instead, the very next line would
+  // hand a null scope to the serializer and every hop of a system message would fail to stamp.
+  [Test]
+  public async Task CreateDelta_PreviousAndCurrentBothCarryNoScope_OmitsTheScopeEntryAsync() {
+    var previous = _contextWithoutScope();
+    var current = _contextWithoutScope();
+
+    var delta = ScopeDelta.CreateDelta(previous, current);
+
+    await Assert.That(delta).IsNull()
+      .Because("nothing changed between the two hops, so there is no delta to stamp at all");
+  }
+
+  // The control: with a scope on one side only, the comparison must report a difference, so the
+  // test above is about two absent scopes being equal and not about the comparison never firing.
+  [Test]
+  public async Task CreateDelta_PreviousCarriesNoScopeAndCurrentDoes_EmitsTheScopeEntryAsync() {
+    var previous = _contextWithoutScope();
+    var current = new ScopeContext {
+      Scope = new PerspectiveScope { TenantId = "tenant-a" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+    };
+
+    var delta = ScopeDelta.CreateDelta(previous, current);
+
+    await Assert.That(delta).IsNotNull();
+    await Assert.That(delta!.Values!.ContainsKey(ScopeProp.Scope)).IsTrue()
+      .Because("a hop that introduces a tenant has to stamp it, or the next hop inherits nothing");
+  }
+
+  /// <summary>
+  /// A scope context with no perspective scope — the shape a system-originated hop produces.
+  /// </summary>
+  private static ScopeContext _contextWithoutScope() => new() {
+    Scope = null!,
+    Roles = new HashSet<string>(),
+    Permissions = new HashSet<Permission>(),
+    SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+    Claims = new Dictionary<string, string>(),
+  };
+
+  #endregion
 }

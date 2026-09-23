@@ -84,14 +84,11 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   private async Task _runAsync(CancellationToken ct) {
     try {
       while (!ct.IsCancellationRequested) {
-        T first;
-        try {
-          first = await _channel.Reader.ReadAsync(ct);
-        } catch (OperationCanceledException) {
-          break;
-        } catch (ChannelClosedException) {
+        var read = await BatchFlusherChannelRead.TryReadNextAsync(_channel.Reader, ct).ConfigureAwait(false);
+        if (!read.Ok) {
           break;
         }
+        var first = read.Item;
 
         var batch = new List<T>(_options.MaxBatchSize) { first };
         var deadlineMs = Environment.TickCount + _options.CoalesceWindowMs;
@@ -243,4 +240,32 @@ public sealed class BatchFlusherOptions {
 
   /// <summary>Cap on the retry backoff. Default 5000 ms.</summary>
   public int FlushRetryMaxBackoffMs { get; set; } = 5_000;
+}
+
+/// <summary>
+/// The read at the head of a <see cref="BatchFlusher{T}"/> loop, and the one decision it makes:
+/// whether there is another item or the loop is over.
+/// </summary>
+/// <remarks>
+/// Split out and internal because the two ways a read ends the loop cannot both be produced
+/// through <c>DisposeAsync</c>: it always completes the writer first, so a pending read resolves
+/// as a closed channel long before the stop token is ever canceled, and the canceled answer —
+/// which a forced shutdown past the drain timeout does produce — has no ordering a test can pin.
+/// Both still have to end the loop quietly: five workers share one flusher, and a read that threw
+/// out of the loop would fault a task nobody awaits and silently stop every one of them.
+/// </remarks>
+internal static class BatchFlusherChannelRead {
+  /// <summary>
+  /// Reads the next item. <c>Ok</c> is false when the loop should stop — the channel is closed
+  /// and drained, or the stop token fired while the read was pending.
+  /// </summary>
+  internal static async Task<(bool Ok, T Item)> TryReadNextAsync<T>(ChannelReader<T> reader, CancellationToken ct) {
+    try {
+      return (true, await reader.ReadAsync(ct).ConfigureAwait(false));
+    } catch (OperationCanceledException) {
+      return (false, default!);
+    } catch (ChannelClosedException) {
+      return (false, default!);
+    }
+  }
 }

@@ -417,7 +417,16 @@ public static class TransportConsumerBuilderExtensions {
   /// <summary>
   /// Gets the service name from <see cref="IServiceInstanceProvider"/> or falls back to assembly name.
   /// </summary>
-  private static string _getServiceName(IServiceProvider sp) {
+  private static string _getServiceName(IServiceProvider sp)
+    => ResolveServiceName(sp, static () => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name);
+
+  /// <summary>
+  /// The service-name fallback chain, with the entry-assembly lookup supplied by the caller.
+  /// Internal with that parameter because a hosted process always has an entry assembly, so the
+  /// last fallback is unreachable in a test host — and it is the one that decides what a service
+  /// with no identity at all calls itself on the wire, which is worth pinning rather than assuming.
+  /// </summary>
+  internal static string ResolveServiceName(IServiceProvider sp, Func<string?> entryAssemblyName) {
     // Try to get from IServiceInstanceProvider first
     var instanceProvider = sp.GetService<IServiceInstanceProvider>();
     if (instanceProvider is not null) {
@@ -425,7 +434,7 @@ public static class TransportConsumerBuilderExtensions {
     }
 
     // Fall back to entry assembly name
-    var assemblyName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name;
+    var assemblyName = entryAssemblyName();
     if (!string.IsNullOrWhiteSpace(assemblyName)) {
       return assemblyName;
     }

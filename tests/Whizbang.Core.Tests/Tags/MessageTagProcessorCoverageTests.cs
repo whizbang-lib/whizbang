@@ -5,6 +5,7 @@ using TUnit.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Tags;
+using Whizbang.Core.Tests.Helpers;
 
 namespace Whizbang.Core.Tests.Tags;
 
@@ -13,33 +14,19 @@ namespace Whizbang.Core.Tests.Tags;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Only the base-context fallback in <c>_createHookContextForAttribute</c> (source lines
-/// 326-333) is exercised here. The other five target lines for this class — 86, 87 (the
-/// Debug-log inside the "neither resolver nor scope factory" early return) and 113, 114 (the
-/// Debug-log in the direct-hookResolver branch), plus 137 (the <c>continue;</c> when
-/// <c>_enforcePayloadSize</c> returns <c>false</c>) — are unreachable given the current
-/// implementation, not merely untested:
+/// Two of the diagnostics here were once recorded as unreachable, and the reasoning still holds
+/// for the public constructors: <c>Logger</c> resolves to a no-op whenever <c>_scopeFactory</c> is
+/// null, and both the "neither resolver nor scope factory" branch and the direct-hook-resolver
+/// branch require exactly that. They are asserted through the internal constructor that takes the
+/// logger directly, because those two lines are the only explanation an operator gets for tag
+/// hooks that silently never ran.
 /// </para>
-/// <list type="bullet">
-/// <item><description>
-/// <c>Logger</c> resolves to <c>NullLogger.Instance</c> whenever <c>_scopeFactory</c> is
-/// <c>null</c> (see the <c>Logger</c> property's <c>??</c> fallback). Reaching the "neither
-/// resolver nor scope factory" branch (line 84) and the direct-hookResolver "else" branch (line
-/// 111) both REQUIRE <c>_scopeFactory is null</c> — which pins <c>Logger</c> to
-/// <c>NullLogger</c>, whose <c>IsEnabled</c> always returns <c>false</c>. So the
-/// <c>Logger.IsEnabled(LogLevel.Debug)</c> guard at lines 85 and 112 can never be true in that
-/// branch, and the guarded lines 86/87/113/114 can never execute. (Contrast with the existing
-/// <c>WithDebugLoggingOn_TheProcessorNarratesWhatItDecidedAsync</c> test, which gets real Debug
-/// logging only by using the scope-factory constructor — the one path that structurally excludes
-/// lines 86/87/113/114.)
-/// </description></item>
-/// <item><description>
-/// <c>_enforcePayloadSize</c> has exactly two <c>return</c> statements and both return
-/// <c>true</c>; the only other exit is a <c>throw</c> on the error-threshold path. It can never
-/// return <c>false</c>, so the <c>continue;</c> at line 137 (guarded by
-/// <c>!_enforcePayloadSize(...)</c>) is dead code under the current method body.
-/// </description></item>
-/// </list>
+/// <para>
+/// One target is still unreachable: <c>_enforcePayloadSize</c> has exactly two <c>return</c>
+/// statements and both return <c>true</c>; the only other exit is a <c>throw</c> on the
+/// error-threshold path. It can never return <c>false</c>, so the <c>continue;</c> guarded by
+/// <c>!_enforcePayloadSize(...)</c> is dead under the current method body.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#processing</docs>
 public class MessageTagProcessorCoverageTests {
@@ -144,6 +131,67 @@ public class MessageTagProcessorCoverageTests {
           AttributeFactory = () => new SignalTagAttribute { Tag = "signal-tag" }
         };
       }
+    }
+  }
+
+  // Tag hooks that never run are invisible: nothing fails, the message just goes through without
+  // its routing or telemetry side effects. These two Debug lines are the whole diagnosis, and
+  // they say which of the two reasons applies — no resolver was wired at all, versus a resolver
+  // was wired and used. Getting them the wrong way round sends an operator looking in the wrong
+  // place.
+
+  [Test]
+  public async Task ProcessTagsAsync_NoResolverAndNoScopeFactory_SaysSoAndProcessesNothingAsync() {
+    var logger = new CapturingLogger<MessageTagProcessor>();
+    var processor = new MessageTagProcessor(new TagOptions(), logger);
+
+    await processor.ProcessTagsAsync(
+      new FallbackTaggedMessage("value"),
+      typeof(FallbackTaggedMessage),
+      LifecycleStage.AfterReceptorCompletion);
+
+    var messages = logger.Snapshot().Select(e => e.Message).ToList();
+    await Assert.That(messages.Any(m => m.Contains("No hook resolver or scope factory", StringComparison.Ordinal))).IsTrue()
+      .Because("a processor with nothing to resolve hooks through runs no hook at all, and this "
+        + "line is the only thing that tells an operator why");
+    await Assert.That(messages.Any(m => m.Contains("tag registrations", StringComparison.Ordinal))).IsFalse()
+      .Because("the early return happens before the registry is consulted; looking up tags for a "
+        + "processor that could not invoke them is work with no possible effect");
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_DirectHookResolver_SaysSoAndInvokesTheHookAsync() {
+    _cleanupRegistry();
+    _cleanupDispatcherRegistry();
+    try {
+      MessageTagRegistry.Register(new FallbackAndSignalRegistry(), priority: 100);
+
+      var signalHook = new SignalTrackingHook();
+      var options = new TagOptions();
+      options.UseHook<SignalTagAttribute, SignalTrackingHook>();
+      var logger = new CapturingLogger<MessageTagProcessor>();
+      var processor = new MessageTagProcessor(
+        options,
+        logger,
+        hookResolver: type => type == typeof(SignalTrackingHook) ? signalHook : null);
+
+      await processor.ProcessTagsAsync(
+        new FallbackTaggedMessage("value"),
+        typeof(FallbackTaggedMessage),
+        LifecycleStage.AfterReceptorCompletion);
+
+      var messages = logger.Snapshot().Select(e => e.Message).ToList();
+      await Assert.That(messages.Any(m => m.Contains("Using direct hook resolver", StringComparison.Ordinal))).IsTrue()
+        .Because("the resolver a processor used decides which scope the hooks saw; saying 'scope "
+          + "factory' here would send an operator hunting a scope that was never created");
+      await Assert.That(messages.Any(m => m.Contains("Using scope factory", StringComparison.Ordinal))).IsFalse()
+        .Because("the two branches are mutually exclusive and the diagnosis has to name the right one");
+      await Assert.That(signalHook.InvokedCount).IsEqualTo(1)
+        .Because("the branch really did dispatch through the resolver it announced");
+    } finally {
+      _cleanupRegistry();
+      _cleanupDispatcherRegistry();
     }
   }
 }

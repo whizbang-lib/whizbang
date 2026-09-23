@@ -130,6 +130,18 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
   public Task RunIdleSweepNowAsync() => _runIdleSweepAsync();
 
   /// <summary>
+  /// Test seam: the drain workers of every mapped stream channel.
+  /// </summary>
+  /// <remarks>
+  /// How a worker's loop ENDED is invisible from outside: a shutdown absorbed by the loop's own
+  /// catch and one that escapes it both stop draining, and <see cref="FlushAndStopAsync"/> folds a
+  /// faulted worker into the same catch it uses for a caller-canceled shutdown, so it swallows the
+  /// difference in production too. The task's final state is the only evidence, and a worker that
+  /// faults instead of returning is an unobserved exception nobody ever sees.
+  /// </remarks>
+  internal Task WhenWorkersStoppedForTests() => Task.WhenAll(_streams.Values.Select(s => s.Worker));
+
+  /// <summary>
   /// Test helper: spins until every stream channel is empty (or the timeout elapses).
   /// Useful when the test needs to assert post-processing state without arbitrary delays.
   /// </summary>
@@ -190,12 +202,8 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
             if (winner == delayTask) {
               break;
             }
-            try {
-              if (!await arrivalTask.ConfigureAwait(false)) {
-                break; // channel completed
-              }
-            } catch (OperationCanceledException) {
-              break;
+            if (!await StreamBatchWindow.ContinueBatchingAsync(arrivalTask).ConfigureAwait(false)) {
+              break; // channel completed, or shutdown observed while waiting for the next arrival
             }
           }
         }
@@ -266,5 +274,30 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
     public ChannelWriter<T> Writer => channel.Writer;
     public DateTimeOffset LastActivity { get; set; } = createdAt;
     public Task Worker { get; set; } = Task.CompletedTask;
+  }
+}
+
+/// <summary>
+/// The one decision the per-stream batch window makes about an arrival that won the race against
+/// its own delay: keep batching, or stop.
+/// </summary>
+/// <remarks>
+/// Split out and internal because both answers are otherwise unassertable. The arrival wait and
+/// the window delay share one linked token, so a shutdown cancels them together and which one
+/// <see cref="Task.WhenAny"/> reports first is not something a test can pin down — yet the
+/// canceled answer has to close the window rather than escape, or a forced shutdown faults a
+/// stream worker that nobody awaits.
+/// </remarks>
+internal static class StreamBatchWindow {
+  /// <summary>
+  /// Awaits an arrival that has already completed, answering whether the batch window should
+  /// keep collecting. A closed channel and an observed cancellation both answer <c>false</c>.
+  /// </summary>
+  internal static async Task<bool> ContinueBatchingAsync(Task<bool> arrivalTask) {
+    try {
+      return await arrivalTask.ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      return false;
+    }
   }
 }

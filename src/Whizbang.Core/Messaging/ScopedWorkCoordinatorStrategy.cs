@@ -172,7 +172,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     // Clear queues after successful flush
     _queues.Clear();
 
-    _routeClaimedInboxWorkToChannel(workBatch);
+    RouteClaimedInboxWorkToChannel(workBatch);
 
     return workBatch;
   }
@@ -186,7 +186,13 @@ public partial class ScopedWorkCoordinatorStrategy(
   /// <summary>Routes claimed inbox work to the publisher worker via the in-memory channel,
   /// deduplicating by IsInFlight. No-op when no channel writer is configured or the batch has
   /// no inbox rows.</summary>
-  private void _routeClaimedInboxWorkToChannel(WorkBatch workBatch) {
+  /// <remarks>
+  /// Internal rather than private so the dedup itself can be asserted. Since the work-pump
+  /// decomposition a flush only stores rows — claiming moved to the claim worker — so the only
+  /// caller always hands this an empty batch, and the dedup that decides whether a claimed row
+  /// reaches the publisher would otherwise go untested until the day claiming moves back.
+  /// </remarks>
+  internal void RouteClaimedInboxWorkToChannel(WorkBatch workBatch) {
     if (workBatch.InboxWork.Count == 0) {
       return;
     }

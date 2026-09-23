@@ -1395,7 +1395,7 @@ public partial class PerspectiveWorker(
       _pendingPostLifecycle = BackgroundStageDispatch.StartLongRunning(async () => {
         await using var bgScope = _scopeFactory.CreateAsyncScope();
         var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
-        await _firePostLifecycleDetached(
+        await FirePostLifecycleDetachedAsync(
           bgProcessedEvents, bgCoordinator, bgReceptorInvoker, bgGroupedWork,
           bgScope.ServiceProvider, bgCt, bgIsNew);
       }, cancellationToken);
@@ -1421,7 +1421,7 @@ public partial class PerspectiveWorker(
     if (Interlocked.CompareExchange(ref _cursorCacheEvictionSubscribed, 1, 0) != 0) {
       return;
     }
-    _cursorCache.OnStreamsEvicted += _onCursorCacheStreamsEvicted;
+    _cursorCache.OnStreamsEvicted += OnCursorCacheStreamsEvicted;
   }
 
   /// <summary>
@@ -1434,7 +1434,13 @@ public partial class PerspectiveWorker(
   /// re-stamped the cache's per-stream activity tick first, which would have disqualified
   /// the stream from this very eviction pass.
   /// </summary>
-  private void _onCursorCacheStreamsEvicted(IReadOnlyList<Guid> evictedStreams) {
+  /// <remarks>
+  /// Internal rather than private so the empty-list answer can be asserted: the cache raises this
+  /// only when it evicted something, so a pass carrying nothing cannot arrive through the
+  /// subscription — and the guard is what keeps such a pass from building a set and walking every
+  /// live gate to match nothing.
+  /// </remarks>
+  internal void OnCursorCacheStreamsEvicted(IReadOnlyList<Guid> evictedStreams) {
     if (evictedStreams.Count == 0) {
       return;
     }
@@ -1606,6 +1612,18 @@ public partial class PerspectiveWorker(
     if (nowTicks - prevSweepTicks < sweepIntervalTicks) {
       return;
     }
+    SweepStreamAffinityGatesIfRaceWon(nowTicks, prevSweepTicks);
+  }
+
+  /// <summary>
+  /// Performs the affinity-gate sweep only for the caller that wins the interval.
+  /// </summary>
+  /// <remarks>
+  /// Internal rather than private so the losing side can be driven with a stale expected value
+  /// instead of a real race between two releasers. A loser that swept anyway would dispose gates a
+  /// concurrent applier is about to acquire.
+  /// </remarks>
+  internal void SweepStreamAffinityGatesIfRaceWon(long nowTicks, long prevSweepTicks) {
     // Single CAS so only one releaser performs the sweep this cycle; all others observe the
     // updated timestamp and short-circuit on their next release.
     if (Interlocked.CompareExchange(ref _lastStreamAffinitySweepTicks, nowTicks, prevSweepTicks) != prevSweepTicks) {
@@ -1669,7 +1687,7 @@ public partial class PerspectiveWorker(
   /// Drain mode: processes perspective events for leased streams via batch-fetch + RunWithEventsAsync.
   /// Single SQL round-trip for all events, pre-deserialized, perspectives run with pre-fetched events.
   /// Full lifecycle chain: PrePerspective → RunWithEvents → PostPerspective → signal coordinator.
-  /// PostAllPerspectives + PostLifecycle fire via _firePostLifecycleDetached after this returns.
+  /// PostAllPerspectives + PostLifecycle fire via FirePostLifecycleDetachedAsync after this returns.
   /// </summary>
   /// <docs>fundamentals/perspectives/drain-mode</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.cs</tests>
@@ -3599,7 +3617,7 @@ public partial class PerspectiveWorker(
       // Start keepalive if lock was acquired
       using var keepaliveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
       var keepaliveTask = lockAcquired
-        ? _startLockKeepaliveAsync(streamId, perspectiveName, keepaliveCts.Token)
+        ? StartLockKeepaliveAsync(streamId, perspectiveName, keepaliveCts.Token)
         : Task.CompletedTask;
 
       using (var activity = enablePerspectiveSpans ? WhizbangActivitySource.Tracing.StartActivity("Perspective RewindAndRunAsync", ActivityKind.Internal) : null) {
@@ -3918,7 +3936,12 @@ public partial class PerspectiveWorker(
   /// The coordinator guarantees exactly-once PostLifecycle via stage guards + perspective WhenAll.
   /// Falls back to direct invocation when coordinator is not registered.
   /// </summary>
-  private async Task _firePostLifecycleDetached(
+  /// <remarks>
+  /// Internal rather than private so the empty-batch answer can be asserted: the only call site
+  /// checks the batch first, and the guard is what keeps a batch that processed nothing from
+  /// registering a when-all gate no perspective will ever complete.
+  /// </remarks>
+  internal async Task FirePostLifecycleDetachedAsync(
       ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
       ILifecycleCoordinator? lifecycleCoordinator,
       IReceptorInvoker? receptorInvoker,
@@ -4054,7 +4077,7 @@ public partial class PerspectiveWorker(
       await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
       // Detached: fire-and-forget with own DI scope
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
-      var detachedTask = _fireDetachedStageStaticAsync(scopeFactory, envelope, LifecycleStage.PostLifecycleDetached, context);
+      var detachedTask = FireDetachedStageStaticAsync(scopeFactory, envelope, LifecycleStage.PostLifecycleDetached, context);
       trackDetachedTask?.Invoke(detachedTask);
       // Inline: blocks pipeline
       await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
@@ -4099,7 +4122,17 @@ public partial class PerspectiveWorker(
     await Task.WhenAll(_detachedTasks).ConfigureAwait(false);
   }
 
-  private static Task _fireDetachedStageStaticAsync(
+  /// <summary>
+  /// Fires a detached lifecycle stage on its own scope, with no ambient cancellation.
+  /// </summary>
+  /// <remarks>
+  /// Internal rather than private so the last-resort error path can be asserted. Everything this
+  /// runs normally reports its own failures through receptor telemetry; what is left is a throw
+  /// BEFORE telemetry — a scope that cannot be created, a security context that will not
+  /// establish — and the log written here from a fresh scope is then the only trace that the stage
+  /// ran at all, on a task nobody awaits.
+  /// </remarks>
+  internal static Task FireDetachedStageStaticAsync(
       IServiceScopeFactory scopeFactory, MessageEnvelope<IEvent> envelope,
       LifecycleStage stage, LifecycleExecutionContext context) {
     return Task.Run(async () => {
@@ -4181,7 +4214,12 @@ public partial class PerspectiveWorker(
   /// Starts a background keepalive task that periodically renews a stream lock.
   /// The task runs until the cancellation token is canceled.
   /// </summary>
-  private async Task _startLockKeepaliveAsync(Guid streamId, string perspectiveName, CancellationToken ct) {
+  /// <remarks>
+  /// Internal rather than private so the unconfigured answer can be asserted: the only call site
+  /// starts a keepalive after a lock was acquired, which an unconfigured locker never grants, and
+  /// the guard is what keeps a keepalive loop from renewing a lock that does not exist.
+  /// </remarks>
+  internal async Task StartLockKeepaliveAsync(Guid streamId, string perspectiveName, CancellationToken ct) {
     if (!_streamLocker.IsConfigured) {
       return;
     }

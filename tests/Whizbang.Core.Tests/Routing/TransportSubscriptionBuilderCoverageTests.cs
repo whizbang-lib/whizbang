@@ -78,11 +78,29 @@ public class TransportSubscriptionBuilderCoverageTests {
                "to AddTransportSubscriptionBuilder, not a default or mismatched value");
   }
 
-  // Targets line 252: the "no routing configured" branch of TryAddTopologyManifest's factory,
-  // which fires when no IOptions<RoutingOptions> is registered at all. A host that has not wired
-  // up routing must still resolve a usable TopologyManifest - manifest-driven provisioning has to
-  // be a deliberate no-op here, not a startup crash and not a manifest that invents subscriptions
-  // or publications nobody configured.
+  // The "no routing configured" branch of TryAddTopologyManifest's factory, which fires when no
+  // IOptions<RoutingOptions> is registered at all. A host that has not wired up routing must still
+  // resolve a usable TopologyManifest - manifest-driven provisioning has to be a deliberate no-op
+  // here, not a startup crash and not a manifest that invents subscriptions or publications nobody
+  // configured. Dark provisioning walks this manifest and creates every entity it names, so an
+  // invented entry would create broker topology for a service that asked for none.
+  [Test]
+  public async Task TryAddTopologyManifest_WithNoRoutingRegistered_ResolvesAnEmptyManifestAsync() {
+    var services = new ServiceCollection();
+    TransportSubscriptionBuilderExtensions.TryAddTopologyManifest(services, _ => "OrderService");
+    await using var provider = services.BuildServiceProvider();
+
+    var manifest = provider.GetRequiredService<TopologyManifest>();
+
+    await Assert.That(manifest.ServiceName).IsEqualTo("OrderService")
+      .Because("the manifest still identifies the service, so provisioning can report whose "
+               + "topology it found nothing to create for");
+    await Assert.That(manifest.Subscriptions.Count).IsEqualTo(0)
+      .Because("a host with no routing configured subscribes to nothing; naming a subscription "
+               + "here would have dark provisioning create broker topology nobody asked for");
+    await Assert.That(manifest.PublishDestinations.Count).IsEqualTo(0)
+      .Because("the same, on the publish side");
+  }
 
   private sealed class MetadataVarietyStrategy : IInboxRoutingStrategy {
     public InboxSubscription GetSubscription(

@@ -81,4 +81,31 @@ public class LeaseHandleCoverageTests {
     await Assert.That(lease.RenewalCount).IsEqualTo(0)
       .Because("a renewal that did not actually push the deadline out must not consume the maxRenewals budget — otherwise a no-op call would starve the handler of a real renewal later.");
   }
+
+  // Dispose runs on the cleanup path of every dispatch, including the ones already unwinding from
+  // a failure. An exception thrown there replaces the real error with a bookkeeping one and the
+  // operator never sees why the work actually failed — so cancelling a source that has already
+  // been disposed has to be a no-op rather than a throw.
+  [Test]
+  public async Task CancelIgnoringDisposal_SourceAlreadyDisposed_DoesNotThrowAsync() {
+    var alreadyDisposed = new CancellationTokenSource();
+    alreadyDisposed.Dispose();
+
+    await Assert.That(() => LeaseHandle.CancelIgnoringDisposal(alreadyDisposed)).ThrowsNothing()
+      .Because("disposing a lease handle must never throw; a source somebody else already "
+             + "released is nothing left to cancel");
+  }
+
+  // The control: a live source really is canceled, so the silence above is the disposed case
+  // being absorbed and not the cancel having been dropped altogether — every straggler awaiting
+  // the lease token depends on this firing.
+  [Test]
+  public async Task CancelIgnoringDisposal_LiveSource_CancelsItAsync() {
+    using var live = new CancellationTokenSource();
+
+    LeaseHandle.CancelIgnoringDisposal(live);
+
+    await Assert.That(live.IsCancellationRequested).IsTrue()
+      .Because("disposal cancels the lease deadline so anything still awaiting the token stops");
+  }
 }

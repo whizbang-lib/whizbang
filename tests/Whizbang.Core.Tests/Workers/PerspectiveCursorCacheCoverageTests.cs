@@ -79,4 +79,44 @@ public class PerspectiveCursorCacheCoverageTests {
     await Assert.That(cache.TryGet(staleStream, "TestPerspective", out _)).IsFalse()
       .Because("the stale stream's entry must be gone once the activity-triggered sweep completes, proving the no-subscriber path in _raiseEvicted ran to completion instead of throwing");
   }
+
+  // The sweep is triggered from every cache access, so on a busy worker several threads can find
+  // the interval elapsed at the same instant. The compare-and-swap is what makes exactly one of
+  // them do the work: the losers must leave the cache alone. If a loser swept anyway, two passes
+  // would walk the same entries and both would raise OnStreamsEvicted for them, so the paired
+  // affinity-gate dictionary in the worker would be told twice to drop streams the first pass had
+  // already dropped — and a stream that became active again in between would lose its fresh gate.
+  [Test]
+  public async Task SweepIfRaceWon_LosesTheCompareAndSwap_EvictsNothingAndRaisesNothingAsync() {
+    // Arrange — one stream that is unambiguously past the idle window, so a sweep that DID run
+    // would certainly evict it.
+    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var cache = new PerspectiveCursorCache(_testOptions(), clock);
+    var staleStream = Guid.NewGuid();
+    cache.Set(staleStream, "TestPerspective", Guid.NewGuid());
+    var evictionNotifications = new List<IReadOnlyList<Guid>>();
+    cache.OnStreamsEvicted += evicted => evictionNotifications.Add(evicted);
+    clock.Advance(TimeSpan.FromHours(1));
+
+    // Act — a prior-sweep value the cache never held, so the compare-and-swap cannot match and
+    // this caller is the one that lost the race.
+    cache.SweepIfRaceWon(clock.GetUtcNow().Ticks, prevSweepTicks: 0);
+
+    // Assert
+    await Assert.That(cache.HasStream(staleStream)).IsTrue()
+      .Because("the caller that loses the interval must leave the cache exactly as it found it, "
+        + "even though this stream is well past its idle window");
+    await Assert.That(cache.Count).IsEqualTo(1)
+      .Because("losing the race means no entry is removed at all, not merely that the stream index "
+        + "survived");
+    await Assert.That(evictionNotifications).IsEmpty()
+      .Because("a second eviction notification for streams the winning sweep already reported would "
+        + "make the paired affinity-gate dictionary drop gates a second time");
+
+    // A winner on the same cache still sweeps — otherwise the assertions above would pass for a
+    // cache that simply had nothing to evict.
+    cache.RunSweepNowForTests();
+    await Assert.That(cache.HasStream(staleStream)).IsFalse()
+      .Because("the stream really was evictable; only the lost compare-and-swap kept it alive above");
+  }
 }

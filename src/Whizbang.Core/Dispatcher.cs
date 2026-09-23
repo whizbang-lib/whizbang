@@ -1459,7 +1459,7 @@ public abstract partial class Dispatcher(
     }
 
     // 3. Cascade remaining messages (excluding the extracted response)
-    await _cascadeEventsExcludingResponseAsync(fullResult, response, messageType);
+    await CascadeEventsExcludingResponseAsync(fullResult, response, messageType);
 
     // 4. Return the extracted response
     return response!;
@@ -1476,7 +1476,13 @@ public abstract partial class Dispatcher(
   /// <param name="originalMessageType">The type of the original message for routing lookup.</param>
   /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
-  private async Task _cascadeEventsExcludingResponseAsync<TResult>(
+  /// <remarks>
+  /// Internal rather than private so the null-result answer can be asserted. The only caller
+  /// reaches this after response extraction succeeded, and extraction refuses a null result, so
+  /// the guard cannot fire through the RPC path — it is what keeps a future caller from walking a
+  /// null result and cascading nothing by accident rather than by decision.
+  /// </remarks>
+  internal async Task CascadeEventsExcludingResponseAsync<TResult>(
     object? result,
     TResult? extractedResponse,
     Type? originalMessageType = null
@@ -3250,7 +3256,7 @@ public abstract partial class Dispatcher(
       // service's own transported copy loops back and is echo-discarded (it already fanned out here), so
       // there is no double fan-out. The composite itself is IMessage-not-IEvent and is never event-stored.
       if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
-        await _fanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
+        await FanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
       }
 
       // Start outbox publishing concurrently with the local receptor.
@@ -3349,7 +3355,7 @@ public abstract partial class Dispatcher(
 
       // Owned composite — fan out LOCALLY at publish (step 1.1); see the other PublishAsync overload.
       if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
-        await _fanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
+        await FanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
       }
 
       // Start outbox concurrently with receptor (see other overload for rationale).
@@ -3807,9 +3813,14 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_AtomicAtomicity_PropagatesChildFailureAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_FansOutAtPublish_ViaDispatchOptionsOverloadAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:NonOwnedComposite_DoesNotFanOutAtPublishAsync</tests>
+  /// <remarks>
+  /// Internal rather than private so the not-a-composite answer can be asserted. Both call sites
+  /// test the message first, so the guard cannot fire through a publish — it is what keeps a
+  /// future caller from reading inner events off something that has none.
+  /// </remarks>
   // S3776: linear loop with one atomicity branch — already minimal.
 #pragma warning disable S3776
-  private async Task _fanOutCompositeLocallyAtPublishAsync(object composite, Type compositeType, MessageId messageId) {
+  internal async Task FanOutCompositeLocallyAtPublishAsync(object composite, Type compositeType, MessageId messageId) {
     if (composite is not ICompositeEvent comp) {
       return;
     }
@@ -4051,7 +4062,7 @@ public abstract partial class Dispatcher(
 
       // Build and queue the outbox message
       var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType)
-        ?? _extractStreamIdFromMetadata(hopMetadata)
+        ?? ExtractStreamIdFromMetadata(hopMetadata)
         ?? messageId.Value;
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId, _ephemeralModeResolver);
@@ -4214,7 +4225,13 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Extracts stream ID from hop metadata (aggregate ID stored as JsonElement).
   /// </summary>
-  private static Guid? _extractStreamIdFromMetadata(Dictionary<string, JsonElement>? metadata) {
+  /// <remarks>
+  /// Internal rather than private so the "no usable aggregate id" answer can be asserted. The only
+  /// caller passes metadata this class built, which is either null or carries a parsable id, so the
+  /// final fallback cannot fire today — it is what keeps a hop carrying someone else's metadata
+  /// shape from producing a stream id out of an unparsable string.
+  /// </remarks>
+  internal static Guid? ExtractStreamIdFromMetadata(Dictionary<string, JsonElement>? metadata) {
     if (metadata == null) {
       return null;
     }

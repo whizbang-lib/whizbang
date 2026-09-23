@@ -735,4 +735,63 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     public bool IsEnabled(LogLevel logLevel) => true;
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
   }
+
+  // ============================================================
+  // DebounceTimerTick — the disposed guard
+  // ============================================================
+
+  // Disposal stops the debounce timer and takes the final flush itself, but a tick the runtime
+  // had already dispatched still lands afterwards. Without the guard it would announce a quiet
+  // period and open another flush against a coordinator the owner has finished with — after the
+  // strategy has reported itself drained.
+  [Test]
+  public async Task DebounceTimerTick_AfterDispose_AnnouncesNothingAndStartsNoFlushAsync() {
+    var coordinator = new BatchFullCoverageCoordinator();
+    var logger = new DebounceRecordingLogger();
+    var sut = new BatchWorkCoordinatorStrategy(
+      coordinator: coordinator,
+      instanceProvider: new BatchFullCoverageInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 60000),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter());
+
+    // Control: while the strategy is live, a tick announces the quiet period synchronously.
+    sut.DebounceTimerTick(null);
+    await Assert.That(logger.DebounceFiredCount).IsEqualTo(1)
+      .Because("a live tick logs the quiet period before it hands the flush off, so the count is a "
+        + "synchronous record of the tick having gone past the guard");
+
+    await sut.DisposeAsync();
+
+    sut.DebounceTimerTick(null);
+
+    await Assert.That(logger.DebounceFiredCount).IsEqualTo(1)
+      .Because("a tick that lands after disposal must return at the guard; logging a second quiet "
+        + "period would mean it also queued another flush against a disposed strategy");
+  }
+
+  /// <summary>Counts the debounce-fired log event, which a live tick emits synchronously.</summary>
+  private sealed class DebounceRecordingLogger : ILogger<BatchWorkCoordinatorStrategy> {
+    private const int DEBOUNCE_TIMER_FIRED_EVENT_ID = 5;
+    private int _debounceFired;
+
+    public int DebounceFiredCount => Volatile.Read(ref _debounceFired);
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (eventId.Id == DEBOUNCE_TIMER_FIRED_EVENT_ID) {
+        Interlocked.Increment(ref _debounceFired);
+      }
+    }
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+  }
 }

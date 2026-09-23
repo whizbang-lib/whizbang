@@ -227,7 +227,19 @@ public sealed partial class LifecycleCoordinator(
     }
   }
 
-  private sealed class WhenAllState(PostLifecycleCompletionSource[] sources) {
+  /// <summary>
+  /// The fan-in latch for one event's post-lifecycle segments: fires exactly once, when every
+  /// expected source has signaled.
+  /// </summary>
+  /// <remarks>
+  /// Internal rather than private so the already-fired answer can be asserted directly.
+  /// <see cref="SignalSegmentCompleteAsync"/> removes the state from the dictionary the moment it
+  /// fires, so a later sequential signal never finds this object again — the only way a second
+  /// call reaches a fired latch is two segments completing concurrently, which is exactly what the
+  /// flag is for and exactly what a test cannot schedule. Getting it wrong fires PostLifecycle
+  /// twice for one event.
+  /// </remarks>
+  internal sealed class WhenAllState(PostLifecycleCompletionSource[] sources) {
     private readonly HashSet<PostLifecycleCompletionSource> _expected = [.. sources];
     private readonly ConcurrentDictionary<PostLifecycleCompletionSource, bool> _completed = new();
     private readonly Lock _lock = new();

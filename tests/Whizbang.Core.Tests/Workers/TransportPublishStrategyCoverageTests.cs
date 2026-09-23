@@ -385,4 +385,63 @@ public class TransportPublishStrategyCoverageTests {
     public ILogger CreateLogger(string categoryName) => logger;
     public void Dispose() { }
   }
+
+  // ============================================================
+  // ResolveEntityDestination — the event-destination invariant
+  // ============================================================
+
+  // An event-store-only row carries no destination and is meant to be short-circuited before any
+  // of this runs. If that early return were ever removed or reordered, an empty address would
+  // otherwise flow into the transport and the message would be published to "" — accepted by some
+  // brokers, silently unroutable, and invisible until a consumer noticed nothing ever arrived.
+  // Failing loudly here is what turns that into a diagnosable error naming the message.
+  [Test]
+  public async Task ResolveEntityDestination_EventWithNoDestination_ThrowsNamingTheMessageAsync() {
+    var strategy = new TransportPublishStrategy(
+      transport: new CaptureTransport(),
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: new LoggerFactoryReturning(new CapturingLogger()),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
+
+    var work = _work() with {
+      Destination = "",
+      MessageType = "Coverage.Events.SomethingHappened, Coverage"
+    };
+
+    var thrown = Assert.Throws<InvalidOperationException>(() => strategy.ResolveEntityDestination(work));
+
+    await Assert.That(thrown).IsNotNull()
+      .Because("an event with no destination has no entity to publish to; resolving it to an empty "
+        + "address would publish into nowhere instead of reporting the mistake");
+    await Assert.That(thrown!.Message).Contains(work.MessageId.ToString())
+      .Because("the message id is the only handle an operator has on the offending row");
+    await Assert.That(thrown.Message).Contains("Coverage.Events.SomethingHappened")
+      .Because("the type name says which message shape reached the publisher without a destination");
+  }
+
+  // The same resolver on the same work item, with a destination present, is the control: the
+  // throw above is about the missing destination and not about this work item being malformed in
+  // some other way.
+  [Test]
+  public async Task ResolveEntityDestination_EventWithADestination_UsesItAsTheAddressAsync() {
+    var strategy = new TransportPublishStrategy(
+      transport: new CaptureTransport(),
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: new LoggerFactoryReturning(new CapturingLogger()),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
+
+    var work = _work() with {
+      Destination = "coverage-events-topic",
+      MessageType = "Coverage.Events.SomethingHappened, Coverage"
+    };
+
+    var destination = strategy.ResolveEntityDestination(work);
+
+    await Assert.That(destination.Address).IsEqualTo("coverage-events-topic")
+      .Because("events publish to the destination already resolved for them, unchanged");
+  }
 }

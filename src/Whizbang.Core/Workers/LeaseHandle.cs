@@ -143,6 +143,25 @@ public sealed class LeaseHandle : IDisposable {
   /// </summary>
   public event Action<LeaseHandle>? Disposed;
 
+  /// <summary>
+  /// Cancels a source, treating an already-disposed source as nothing to do.
+  /// </summary>
+  /// <remarks>
+  /// Internal and static rather than inline in <see cref="Dispose"/> so the already-disposed
+  /// answer can be asserted. The deadline source is private and only ever disposed by
+  /// <see cref="Dispose"/>, which is guarded by <c>_disposed</c> under the gate, so no caller can
+  /// reach this with a disposed source today. What it protects is the rule that disposing a lease
+  /// handle never throws: <c>Dispose</c> runs on the cleanup path of every dispatch, including the
+  /// ones already unwinding from a failure, and an exception there replaces the real error.
+  /// </remarks>
+  internal static void CancelIgnoringDisposal(CancellationTokenSource source) {
+    try {
+      source.Cancel();
+    } catch (ObjectDisposedException) {
+      // Already disposed by a racing call.
+    }
+  }
+
   /// <inheritdoc />
   public void Dispose() {
     lock (_gate) {
@@ -154,11 +173,7 @@ public sealed class LeaseHandle : IDisposable {
     // Cancel + dispose both sources. Post-dispose reads of <see cref="Token"/> remain safe
     // because the token was cached at construction (CancellationToken is a struct that
     // still answers IsCancellationRequested after its source is disposed).
-    try {
-      _deadlineCts.Cancel();
-    } catch (ObjectDisposedException) {
-      // Already disposed by a racing call.
-    }
+    CancelIgnoringDisposal(_deadlineCts);
     _linkedCts.Dispose();
     _deadlineCts.Dispose();
     Disposed?.Invoke(this);

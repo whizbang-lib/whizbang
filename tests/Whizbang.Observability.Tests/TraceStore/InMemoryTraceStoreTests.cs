@@ -381,4 +381,57 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     await Assert.That(chain.Select(e => e.MessageId)).Contains(child1.MessageId);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(child2.MessageId);
   }
+
+  /// <summary>
+  /// The descent that builds the "children" half of a causal chain refuses to revisit a message
+  /// it has already added.
+  /// </summary>
+  /// <remarks>
+  /// Both call sites filter their candidates with <c>!chain.Contains(...)</c> and each envelope
+  /// carries exactly one causation id, so no query the store can be asked today re-enters with a
+  /// message already in the chain — which is why this asserts the descent's contract directly
+  /// rather than driving it through <c>GetCausalChainAsync</c>. It matters because a producer
+  /// that writes a causation cycle turns an unbounded descent into a stack overflow inside a
+  /// diagnostics query, and the chain set is the only thing that stops it.
+  /// </remarks>
+  [Test]
+  public async Task AddChildrenRecursive_MessageAlreadyInTheChain_AddsNothingAsync() {
+    var store = new InMemoryTraceStore();
+    var alreadySeen = _createEnvelope();
+    await store.StoreAsync(alreadySeen);
+
+    var chain = new HashSet<MessageId> { alreadySeen.MessageId };
+    var results = new List<IMessageEnvelope>();
+
+    store.AddChildrenRecursive(alreadySeen, chain, results);
+
+    await Assert.That(results).IsEmpty()
+      .Because("a message already in the chain has been walked once; adding it again would repeat "
+             + "its whole subtree, and on a causation cycle would never stop");
+    await Assert.That(chain.Count).IsEqualTo(1)
+      .Because("the visited set must not grow either — it is what the recursion tests against");
+  }
+
+  /// <summary>
+  /// The control for the test above: a message the chain has NOT seen is added, along with its
+  /// descendants, so the empty result above is the guard's answer and not the descent being inert.
+  /// </summary>
+  [Test]
+  public async Task AddChildrenRecursive_MessageNotInTheChain_AddsItAndItsDescendantsAsync() {
+    var store = new InMemoryTraceStore();
+    var root = _createEnvelope();
+    var child = _createEnvelope(causationId: root.MessageId);
+    await store.StoreAsync(root);
+    await store.StoreAsync(child);
+
+    var chain = new HashSet<MessageId>();
+    var results = new List<IMessageEnvelope>();
+
+    store.AddChildrenRecursive(root, chain, results);
+
+    await Assert.That(results.Select(e => e.MessageId)).Contains(root.MessageId)
+      .Because("the message the descent is handed is part of the chain it builds");
+    await Assert.That(results.Select(e => e.MessageId)).Contains(child.MessageId)
+      .Because("the descent is what pulls in everything caused by it");
+  }
 }
