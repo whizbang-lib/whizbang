@@ -27,6 +27,10 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <docs>data/work-coordinator-strategies</docs>
 public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  // Reported as the strategy dimension on every metric this type emits, and passed to the
+  // shared drain helper so its metrics carry the same name.
+  private const string STRATEGY_NAME = "batch";
+
   private readonly IWorkCoordinator? _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
@@ -227,7 +231,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
-      new KeyValuePair<string, object?>("strategy", "batch"),
+      new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
       new KeyValuePair<string, object?>("trigger", "signal"));
     // Batch waits for debounce / batch-size trigger. Queueing already reset the timer.
     return Task.CompletedTask;
@@ -248,7 +252,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, FlushTrigger trigger, bool skipLifecycle, CancellationToken ct) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
-      new KeyValuePair<string, object?>("strategy", "batch"),
+      new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
       new KeyValuePair<string, object?>("trigger", trigger.ToString()));
 
     // Forced-flush with optional coalescing window
@@ -285,7 +289,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
             _queuedOutboxFailures.Count == 0 &&
             _queuedInboxCompletions.Count == 0 &&
             _queuedInboxFailures.Count == 0) {
-          _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "batch"));
+          _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME));
           LogNoQueuedOperations(_logger);
           return new WorkBatch {
             OutboxWork = [],
@@ -314,7 +318,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
 
       var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
         new FlushContext(
-          _coordinator, _scopeFactory, _instanceProvider, _options, "batch",
+          _coordinator, _scopeFactory, _instanceProvider, _options, STRATEGY_NAME,
           outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
           outboxFailures, inboxFailures, flags, _lifecycleMessageDeserializer,
           _logger, _tracingOptions, _metrics, _lifecycleMetrics,

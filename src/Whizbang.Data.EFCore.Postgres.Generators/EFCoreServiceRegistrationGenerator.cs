@@ -41,6 +41,9 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// </summary>
 [Generator]
 public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
+  // The column type every timestamp column in the emitted schema uses.
+  private const string TIMESTAMPTZ = "timestamptz";
+
   private const string DIAGNOSTIC_CATEGORY = "Whizbang.Generator";
   private const string EFCORE_GENERATOR_ERROR_TITLE = "EFCore Generator Error";
   private const string PLACEHOLDER_GLOBAL = "global::";
@@ -55,6 +58,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private const string CLOSE_BRACE_INDENT_4 = "    });";
   private const string CLOSE_BRACE_INDENT_8 = "        });";
   private const string CLOSE_BRACE_ONLY_INDENT_6 = "      }";
+  private const string CLOSE_BRACE_ONLY_INDENT_8 = "        }";
+  private const string CLOSE_BRACE_ONLY_INDENT_10 = "          }";
   private const string PERSPECTIVE_TABLE_PREFIX = "wh_per_";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -1021,7 +1026,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<global::Pgvector.Vector?>(\"{field.ColumnName}\");");
         sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
         sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
-        sb.AppendLine("          }");
+        sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
       } else {
         // Non-vector fields: direct type cast
         var clrType = field.TypeName;
@@ -1030,7 +1035,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
           sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
           sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
-          sb.AppendLine("          }");
+          sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
         } else {
           sb.AppendLine($"          row.Data.{field.PropertyName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
         }
@@ -1057,7 +1062,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine($"          var _{field.ColumnName} = (global::Pgvector.Vector?)entry.Property(\"{field.ColumnName}\").CurrentValue;");
         sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
         sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
-        sb.AppendLine("          }");
+        sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
       } else {
         var clrType = field.TypeName;
         var isNullable = clrType.EndsWith("?", StringComparison.Ordinal);
@@ -1065,7 +1070,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           sb.AppendLine($"          var _{field.ColumnName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue;");
           sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
           sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
-          sb.AppendLine("          }");
+          sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
         } else {
           sb.AppendLine($"          row.Data.{field.PropertyName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue!;");
         }
@@ -1878,7 +1883,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    services.PostConfigure<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>(opts => {");
       sb.AppendLine("      if (string.IsNullOrWhiteSpace(opts.ConnectionStringKey)) {");
       sb.AppendLine("        opts.ConnectionStringKey = connectionStringKey;");
-      sb.AppendLine("      }");
+      sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
       sb.AppendLine("    });");
       sb.AppendLine();
       // 2026-06-12 fix: defer all IConfiguration access to provider-build time.
@@ -1921,7 +1926,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("          connStringBuilder.Timeout = timeout;");
       sb.AppendLine("        if (int.TryParse(poolSection[\"CommandTimeout\"], out var commandTimeout))");
       sb.AppendLine("          connStringBuilder.CommandTimeout = commandTimeout;");
-      sb.AppendLine("      }");
+      sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
       sb.AppendLine("      connectionString = connStringBuilder.ToString();");
       sb.AppendLine();
       sb.AppendLine("      var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);");
@@ -1944,8 +1949,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine("          using var createCmd = tempConn.CreateCommand();");
         sb.AppendLine("          createCmd.CommandText = \"CREATE EXTENSION vector\";");
         sb.AppendLine("          createCmd.ExecuteNonQuery();");
-        sb.AppendLine("        }");
-        sb.AppendLine("      }");
+        sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
+        sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
       }
       sb.AppendLine();
       sb.AppendLine("      return dataSourceBuilder.Build();");
@@ -2029,7 +2034,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      services.PostConfigure<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>(opts => {");
     sb.AppendLine("        if (string.IsNullOrWhiteSpace(opts.ConnectionStringKey)) {");
     sb.AppendLine("          opts.ConnectionStringKey = connectionStringKey;");
-    sb.AppendLine("        }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
     sb.AppendLine("      });");
     sb.AppendLine();
     // 2026-06-12 fix: defer all IConfiguration access to provider-build time.
@@ -2062,7 +2067,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("            connStringBuilder.Timeout = timeout;");
     sb.AppendLine("          if (int.TryParse(poolSection[\"CommandTimeout\"], out var commandTimeout))");
     sb.AppendLine("            connStringBuilder.CommandTimeout = commandTimeout;");
-    sb.AppendLine("        }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
     sb.AppendLine("        connectionString = connStringBuilder.ToString();");
     sb.AppendLine();
     sb.AppendLine("        var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);");
@@ -2085,8 +2090,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("            using var createCmd = tempConn.CreateCommand();");
       sb.AppendLine("            createCmd.CommandText = \"CREATE EXTENSION vector\";");
       sb.AppendLine("            createCmd.ExecuteNonQuery();");
-      sb.AppendLine("          }");
-      sb.AppendLine("        }");
+      sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
+      sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
     }
     sb.AppendLine();
     sb.AppendLine("        return dataSourceBuilder.Build();");
@@ -2133,7 +2138,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      if (initConnStr != null) {");
     sb.AppendLine("        if (logger is not null) {");
     sb.AppendLine($"          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.UsingInitConnectionString(logger, \"{defaultConnectionStringKey}\");");
-    sb.AppendLine("        }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
     sb.AppendLine("        // Build dedicated DbContext with direct Postgres connection for initialization");
     sb.AppendLine("        var initDsBuilder = new Npgsql.NpgsqlDataSourceBuilder(initConnStr);");
     sb.AppendLine("        var jsonOptions = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
@@ -2157,7 +2162,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("        if (dbContext == null) {");
     sb.AppendLine($"          logger?.LogDebug(\"{{DbContextName}} not registered in DI, skipping initialization\", \"{dbContext.ClassName}\");");
     sb.AppendLine("          return;");
-    sb.AppendLine("        }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
     sb.AppendLine("        await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, null, scope.ServiceProvider, ct);");
     sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
@@ -2921,11 +2926,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       new("data", "jsonb", false, false, false, null),
       new("metadata", "jsonb", false, false, false, null),
       new("scope", "jsonb", false, false, false, null),
-      new("created_at", "timestamptz", false, false, false, null),
-      new("updated_at", "timestamptz", false, false, false, null),
-      new("sys_created_at", "timestamptz", true, false, false, null),
-      new("sys_updated_at", "timestamptz", true, false, false, null),
-      new("expires_at", "timestamptz", true, false, false, null),
+      new("created_at", TIMESTAMPTZ, false, false, false, null),
+      new("updated_at", TIMESTAMPTZ, false, false, false, null),
+      new("sys_created_at", TIMESTAMPTZ, true, false, false, null),
+      new("sys_updated_at", TIMESTAMPTZ, true, false, false, null),
+      new("expires_at", TIMESTAMPTZ, true, false, false, null),
       new("version", "integer", false, false, false, null)
     };
 

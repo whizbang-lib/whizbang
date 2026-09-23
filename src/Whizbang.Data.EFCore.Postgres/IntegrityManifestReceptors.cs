@@ -25,6 +25,15 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs</tests>
+/// <summary>
+/// Metric dimension names shared by the manifest receptors in this file. Only the ones that
+/// recur are named here; a dimension used once reads better spelled at its use.
+/// </summary>
+internal static class IntegrityManifestTags {
+  /// <summary>Names the service a manifest message came from.</summary>
+  internal const string ORIGIN = "origin";
+}
+
 public sealed partial class IntegrityManifestRequestReceptor(
     IServiceScopeFactory scopeFactory,
     ILogger<IntegrityManifestRequestReceptor> logger) : IReceptor<RequestIntegrityManifest> {
@@ -223,7 +232,7 @@ public sealed partial class IntegrityManifestReceptor(
     if (!await _compareGate.WaitAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false)) {
       LogCompareBusySkipped(logger, message.OriginServiceName, message.Digests.Count);
       _declinedMetrics()?.ComparesDeclined.Add(1,
-        new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+        new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
       return;
     }
     var compareTimer = System.Diagnostics.Stopwatch.StartNew();
@@ -444,7 +453,7 @@ public sealed partial class IntegrityManifestReceptor(
     for (var i = 0; i < divergent.Count; i++) {
       var (origin, mine, _, reason) = divergent[i];
       metrics?.DivergencesDetected.Add(1,
-        new KeyValuePair<string, object?>("origin", message.OriginServiceName),
+        new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName),
         new KeyValuePair<string, object?>("event_type", origin.EventType),
         new KeyValuePair<string, object?>("reason", reason));
       var shouldReport = i < reportFlags.Count && reportFlags[i];
@@ -452,7 +461,7 @@ public sealed partial class IntegrityManifestReceptor(
       if (autoRepair) {
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "audit"),
-          new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+          new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
         if (!repairBatches.TryGetValue((origin.TenantScope, origin.EventType), out var streams)) {
           repairBatches[(origin.TenantScope, origin.EventType)] = streams = [];
         }
@@ -567,7 +576,7 @@ public sealed partial class IntegrityManifestReceptor(
     if (Pages >= Math.Max(0, options.MaxManifestPagesPerAudit)) {
       LogCursorFollowCapped(logger, message.OriginServiceName, Pages);
       services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestPagesCapped.Add(1,
-        new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+        new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
       return;   // the rest of the lane re-audits from the seal next cycle.
     }
 
@@ -589,7 +598,7 @@ public sealed partial class IntegrityManifestReceptor(
 
     _pagesFollowed[key] = (Pages + 1, now);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestPagesFollowed.Add(1,
-      new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+      new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
     if (_pagesFollowed.Count > 256) {
       _pagesFollowed.Clear();   // windows advance; stale keys are waste, not state.
     }
@@ -741,7 +750,7 @@ public sealed partial class IntegrityManifestReceptor(
         bulkEscalated.Add(origin.EventType);
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "bulk"),
-          new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+          new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
         await _sendBulkBackfillRequestAsync(services, options, message, origin.TenantScope, origin.EventType, cancellationToken)
           .ConfigureAwait(false);
         LogBulkBackfillRequested(logger, origin.EventType, origin.TenantScope, deficit, message.OriginServiceName);
@@ -799,7 +808,7 @@ public sealed partial class IntegrityManifestReceptor(
       Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.DrillDownsRequested.Add(1,
-      new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+      new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
     LogDrillDown(logger, drillDown.Count, mismatched.Count, message.OriginServiceName);
   }
 

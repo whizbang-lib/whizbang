@@ -24,6 +24,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
   private const string XML_DOC_SUMMARY_OPEN = "/// <summary>";
   private const string XML_DOC_SUMMARY_CLOSE = "/// </summary>";
   private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
+  private const string XML_DOC_INHERITDOC_INDENTED = "  /// <inheritdoc />";
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
   // Built-in attribute types that are handled directly by MessageTagProcessor
@@ -347,7 +348,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
 
     sb.AppendLine("  };");
     sb.AppendLine();
-    sb.AppendLine("  /// <inheritdoc />");
+    sb.AppendLine(XML_DOC_INHERITDOC_INDENTED);
     sb.AppendLine("  public IEnumerable<MessageTagRegistration> GetTagsFor(Type messageType) {");
     sb.AppendLine("    foreach (var tag in _tags) {");
     sb.AppendLine("      if (tag.MessageType == messageType) {");
@@ -356,7 +357,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("    }");
     sb.AppendLine("  }");
     sb.AppendLine();
-    sb.AppendLine("  /// <inheritdoc />");
+    sb.AppendLine(XML_DOC_INHERITDOC_INDENTED);
     sb.AppendLine("  public IEnumerable<MessageTagRegistration> GetAllTags() => _tags;");
     sb.AppendLine("}");
     sb.AppendLine();
@@ -444,7 +445,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Generate TryCreateContext method
-    sb.AppendLine("  /// <inheritdoc />");
+    sb.AppendLine(XML_DOC_INHERITDOC_INDENTED);
     sb.AppendLine("  public object? TryCreateContext(");
     sb.AppendLine("      Type attributeType,");
     sb.AppendLine("      MessageTagAttribute attribute,");
@@ -474,7 +475,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Generate TryDispatchAsync method
-    sb.AppendLine("  /// <inheritdoc />");
+    sb.AppendLine(XML_DOC_INHERITDOC_INDENTED);
     sb.AppendLine("  public async ValueTask<JsonElement?> TryDispatchAsync(");
     sb.AppendLine("      object hookInstance,");
     sb.AppendLine("      object context,");

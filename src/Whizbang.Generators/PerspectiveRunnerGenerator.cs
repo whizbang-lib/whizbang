@@ -20,6 +20,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
   private const string PERSPECTIVE_SCOPE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveScopeFor";
+
+  /// <summary>
+  /// Spells a bool the way C# source does. ToString() would emit "True"/"False", which does not
+  /// compile in the generated file.
+  /// </summary>
+  private static string _csharpBool(bool value) => value ? "true" : "false";
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
   /// <inheritdoc/>
@@ -541,7 +547,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         ? "var snapshotThreshold = _snapshotOptions.Value.EphemeralSnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.EphemeralMaxSnapshotsPerStream;"
         : "var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;");
     result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
-        $"private const bool _isEphemeralPerspective = {(perspective.IsEphemeral ? "true" : "false")};");
+        $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};");
     // E2-4d: a TtlRow perspective registers its row TTL via a [ModuleInitializer] so the upsert stamps
     // expires_at. Non-TtlRow perspectives emit nothing (their rows never expire).
     result = TemplateUtilities.ReplaceRegion(result, "TTL_REGISTRATION", perspective.TtlRowSeconds >= 0
@@ -583,7 +589,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         continue;
       }
       registrations.Add(
-        $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerStreamGroup{i}() =>\n      global::Whizbang.Core.Perspectives.PerspectiveStreamGroupRegistry.Register(typeof({modelTypeName}), \"{parts[0]}\", {(parts[1] == "1" ? "true" : "false")}, {(parts[2] == "1" ? "true" : "false")}, {(parts[3] == "1" ? "true" : "false")});");
+        $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerStreamGroup{i}() =>\n      global::Whizbang.Core.Perspectives.PerspectiveStreamGroupRegistry.Register(typeof({modelTypeName}), \"{parts[0]}\", {_csharpBool(parts[1] == "1")}, {_csharpBool(parts[2] == "1")}, {_csharpBool(parts[3] == "1")});");
     }
     return string.Join("\n\n  ", registrations);
   }

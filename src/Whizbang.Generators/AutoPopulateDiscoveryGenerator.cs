@@ -23,6 +23,14 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   private const string POPULATE_FROM_CONTEXT_ATTRIBUTE = "Whizbang.Core.Attributes.PopulateFromContextAttribute";
   private const string POPULATE_FROM_SERVICE_ATTRIBUTE = "Whizbang.Core.Attributes.PopulateFromServiceAttribute";
   private const string POPULATE_FROM_IDENTIFIER_ATTRIBUTE = "Whizbang.Core.Attributes.PopulateFromIdentifierAttribute";
+
+  // The PerspectiveScope properties this generator populates from. The names are also the
+  // default JSON aliases, which is why each one is handed to the alias resolver twice.
+  private const string USER_ID_PROPERTY = "UserId";
+  private const string TENANT_ID_PROPERTY = "TenantId";
+
+  // Emitted closing brace, named the way the other generators name theirs.
+  private const string CLOSE_BRACE_ONLY_INDENT_4 = "    }";
   private const string POPULATE_FROM_HTTP_HEADER_ATTRIBUTE = "Whizbang.Core.Attributes.PopulateFromHttpHeaderAttribute";
 
   private const string POPULATE_KIND_TIMESTAMP = "Timestamp";
@@ -75,8 +83,8 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   private static ScopeAliases _resolveScopeAliases(Compilation compilation) {
     var scopeType = compilation.GetTypeByMetadataName("Whizbang.Core.Lenses.PerspectiveScope");
     return new ScopeAliases(
-        _resolveJsonAlias(scopeType, "UserId", "UserId"),
-        _resolveJsonAlias(scopeType, "TenantId", "TenantId"));
+        _resolveJsonAlias(scopeType, USER_ID_PROPERTY, USER_ID_PROPERTY),
+        _resolveJsonAlias(scopeType, TENANT_ID_PROPERTY, TENANT_ID_PROPERTY));
   }
 
   private static string _resolveJsonAlias(INamedTypeSymbol? type, string propertyName, string fallback) {
@@ -201,9 +209,9 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
     var kindValue = (int)kindArg.Value;
     var kindName = kindValue switch {
-      0 => "UserId",
-      1 => "TenantId",
-      _ => "UserId"
+      0 => USER_ID_PROPERTY,
+      1 => TENANT_ID_PROPERTY,
+      _ => USER_ID_PROPERTY
     };
 
     return new AutoPopulateInfo(
@@ -358,7 +366,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("      if (registration.MessageType == messageType) {");
     sb.AppendLine("        yield return registration;");
     sb.AppendLine("      }");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine("  }");
     sb.AppendLine();
     sb.AppendLine("  /// <inheritdoc />");
@@ -514,7 +522,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
     sb.AppendLine("      default:");
     sb.AppendLine("        return null;");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine("  }");
     sb.AppendLine();
   }
@@ -538,7 +546,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
     sb.AppendLine("      default:");
     sb.AppendLine("        return null;");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine("  }");
     sb.AppendLine();
   }
@@ -651,7 +659,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("  private static string? _extractScopeValue(MessageHop hop, params string[] aliases) {");
     sb.AppendLine("    if (hop.Scope?.Values == null) {");
     sb.AppendLine("      return null;");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine();
     sb.AppendLine("    // Look inside each scope object for the value under any of its known JSON aliases.");
     sb.AppendLine("    foreach (var kvp in hop.Scope.Values) {");
@@ -662,7 +670,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("          }");
     sb.AppendLine("        }");
     sb.AppendLine("      }");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine();
     sb.AppendLine("    return null;");
     sb.AppendLine("  }");
@@ -674,7 +682,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("  private static string? _extractExtensionValue(MessageHop hop, string headerKey) {");
     sb.AppendLine("    if (hop.Scope?.Values == null) {");
     sb.AppendLine("      return null;");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine();
     sb.AppendLine("    // Header values ride the scope 'ex' extension list ([{\"k\":key,\"v\":value}]).");
     sb.AppendLine("    foreach (var kvp in hop.Scope.Values) {");
@@ -689,7 +697,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("          }");
     sb.AppendLine("        }");
     sb.AppendLine("      }");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine();
     sb.AppendLine("    return null;");
     sb.AppendLine("  }");

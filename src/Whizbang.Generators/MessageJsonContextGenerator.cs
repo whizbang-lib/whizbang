@@ -52,6 +52,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMPOSITE_EVENT = "Whizbang.Core.Minting.ICompositeEvent";
   private const string JSON_IGNORE_ATTRIBUTE = "System.Text.Json.Serialization.JsonIgnoreAttribute";
 
+  // The two halves of the emitted RegisterTypeName call; the alias arguments between them
+  // differ per call site, the surrounding call does not.
+  private const string REGISTER_TYPE_NAME_OPEN = "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n";
+  private const string REGISTER_TYPE_NAME_CLOSE = "    MessageJsonContext.Default);";
+
   /// <summary>True if the property carries <c>[JsonIgnore]</c> (any condition) — excluded from the
   /// generated JsonTypeInfo to match System.Text.Json's own behavior.</summary>
   private static bool _hasJsonIgnore(IPropertySymbol property) =>
@@ -3435,10 +3440,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // Use CLR type name format (uses + for nested types) for runtime type resolution
       var assemblyQualifiedName = $"{message.ClrTypeName}, {actualAssemblyName}";
 
-      return "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+      return REGISTER_TYPE_NAME_OPEN +
              $"    \"{assemblyQualifiedName}\",\n" +
              $"    typeof({message.FullyQualifiedName}),\n" +
-             "    MessageJsonContext.Default);";
+             REGISTER_TYPE_NAME_CLOSE;
     });
     sb.AppendLine(string.Join("\n", typeRegistrations));
   }
@@ -3462,10 +3467,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // Use CLR type name format (uses + for nested types) for runtime type resolution
       var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{message.ClrTypeName}, {actualAssemblyName}]], Whizbang.Core";
 
-      return "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+      return REGISTER_TYPE_NAME_OPEN +
              $"    \"{envelopeTypeName}\",\n" +
              $"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{message.FullyQualifiedName}>),\n" +
-             "    MessageJsonContext.Default);";
+             REGISTER_TYPE_NAME_CLOSE;
     });
     sb.AppendLine(string.Join("\n", envelopeRegistrations));
   }
@@ -3517,17 +3522,17 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       var formerQualified = $"{alias.FormerClrTypeName}, {actualAssemblyName}";
       emitted.Add(
-        "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+        REGISTER_TYPE_NAME_OPEN +
         $"    \"{formerQualified}\",\n" +
         $"    typeof({fullyQualifiedName}),\n" +
-        "    MessageJsonContext.Default);");
+        REGISTER_TYPE_NAME_CLOSE);
 
       var formerEnvelope = $"Whizbang.Core.Observability.MessageEnvelope`1[[{formerQualified}]], Whizbang.Core";
       emitted.Add(
-        "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+        REGISTER_TYPE_NAME_OPEN +
         $"    \"{formerEnvelope}\",\n" +
         $"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{fullyQualifiedName}>),\n" +
-        "    MessageJsonContext.Default);");
+        REGISTER_TYPE_NAME_CLOSE);
     }
 
     if (emitted.Count == 0) {

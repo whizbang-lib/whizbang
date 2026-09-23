@@ -24,6 +24,10 @@ namespace Whizbang.Core.Messaging;
 /// Best for: Background workers with high throughput, batch processing.
 /// </summary>
 public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  // Reported as the strategy dimension on every metric this type emits, and passed to the
+  // shared drain helper so its metrics carry the same name.
+  private const string STRATEGY_NAME = "interval";
+
   private readonly IWorkCoordinator? _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
@@ -205,7 +209,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
-      new KeyValuePair<string, object?>("strategy", "interval"),
+      new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
       new KeyValuePair<string, object?>("trigger", "signal"));
     // Interval batches until the timer fires. Nothing to do here beyond the metric.
     return Task.CompletedTask;
@@ -228,7 +232,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, string trigger, bool skipLifecycle, CancellationToken ct) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
-      new KeyValuePair<string, object?>("strategy", "interval"),
+      new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
       new KeyValuePair<string, object?>("trigger", trigger));
 
     // Forced-flush with optional coalescing window
@@ -261,7 +265,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
       var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
         new FlushContext(
-          _coordinator, _scopeFactory, _instanceProvider, _options, "interval",
+          _coordinator, _scopeFactory, _instanceProvider, _options, STRATEGY_NAME,
           snapshot.OutboxMessages, snapshot.InboxMessages,
           snapshot.OutboxCompletions, snapshot.InboxCompletions,
           snapshot.OutboxFailures, snapshot.InboxFailures,
@@ -297,7 +301,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
           _queuedOutboxFailures.Count == 0 &&
           _queuedInboxCompletions.Count == 0 &&
           _queuedInboxFailures.Count == 0) {
-        _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"));
+        _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME));
         LogNoQueuedOperations(_logger);
         snapshot = default;
         return false;

@@ -652,6 +652,11 @@ public partial class DapperWorkCoordinator(
     "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)";
   private const string DISCARD_PENDING_OUTBOX_SQL = "DELETE FROM public.wh_outbox r " + DISCARD_PENDING_WHERE;
 
+  // The payload builders below write JSON by hand, so they need the lower-case spellings:
+  // StringBuilder.Append(bool) would emit "True"/"False", which no JSON reader accepts.
+  private const string JSON_TRUE = "true";
+  private const string JSON_FALSE = "false";
+
   /// <summary>
   /// The maintenance sweep behind "a feature that is off leaves nothing behind", for one table.
   /// Containment, not equality: a stored message_type may carry assembly version metadata or an envelope
@@ -997,7 +1002,7 @@ public partial class DapperWorkCoordinator(
     sb.Append(",\"host_name\":\"").Append(_jsonEscape(request.HostName)).Append('"');
     sb.Append(",\"process_id\":").Append(request.ProcessId);
     sb.Append(",\"partition_count\":").Append(request.PartitionCount);
-    sb.Append(",\"debug_mode\":").Append(request.DebugMode ? "true" : "false");
+    sb.Append(",\"debug_mode\":").Append(request.DebugMode ? JSON_TRUE : JSON_FALSE);
     sb.Append(",\"inbox_completion\":{")
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
@@ -1036,9 +1041,9 @@ public partial class DapperWorkCoordinator(
       sb.Append("{\"InquiryId\":\"").Append(inq.InquiryId).Append("\",")
         .Append("\"StreamId\":\"").Append(inq.StreamId).Append("\",")
         .Append("\"PerspectiveName\":\"").Append(_jsonEscape(inq.PerspectiveName)).Append("\",")
-        .Append("\"DiscoverPendingFromOutbox\":").Append(inq.DiscoverPendingFromOutbox ? "true" : "false").Append(',')
-        .Append("\"IncludePendingEventIds\":").Append(inq.IncludePendingEventIds ? "true" : "false").Append(',')
-        .Append("\"IncludeProcessedEventIds\":").Append(inq.IncludeProcessedEventIds ? "true" : "false");
+        .Append("\"DiscoverPendingFromOutbox\":").Append(inq.DiscoverPendingFromOutbox ? JSON_TRUE : JSON_FALSE).Append(',')
+        .Append("\"IncludePendingEventIds\":").Append(inq.IncludePendingEventIds ? JSON_TRUE : JSON_FALSE).Append(',')
+        .Append("\"IncludeProcessedEventIds\":").Append(inq.IncludeProcessedEventIds ? JSON_TRUE : JSON_FALSE);
       sb.Append('}');
     }
     sb.Append(']');
