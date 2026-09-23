@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 
@@ -154,6 +155,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
     return stream;
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Draining one stream's channel implements a batch window: read the first item, then race further arrivals against the remaining window and the capacity bound, sort when a comparer is configured, and hand the items over one at a time with cancellation checked between them. The race is the method.")]
   private async Task _drainStreamAsync(StreamChannel stream) {
     var batch = new List<T>(capacity: 16);
     try {

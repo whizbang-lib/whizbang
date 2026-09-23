@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
@@ -302,6 +303,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       ? work.Error
       : $"InboxDispatchWorker dead-lettered: attempts={work.Attempts} > max={maxAttempts}";
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Dispatching one inbox row decides, in order, whether the subsystem is disabled, whether attempts are exhausted and the row should be dropped or dead-lettered, whether the discard policy skips it, whether the security context timed out, whether the payload is a composite that repair traffic has turned off, and whether the message is state-only. Each decision ends the row's life differently, so they read as one ladder.")]
   internal async Task ProcessOneInnerAsync(InboxWork work, CancellationToken stoppingToken) {
     // #664: a message whose INNER payload belongs to a subsystem this host has DISABLED is
     // discarded AS its processing — a terminal completion through the normal commit channel

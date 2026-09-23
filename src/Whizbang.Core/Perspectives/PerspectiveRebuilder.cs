@@ -49,6 +49,7 @@ public sealed partial class PerspectiveRebuilder(
     return Task.FromResult(status);
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The rebuild separates state-based models from event-sourced ones, because a state-based model is repopulated by its guard rather than replayed, and then replays the rest stream by stream with per-stream failure containment.")]
   private async Task<RebuildResult> _rebuildCoreAsync(
       string perspectiveName, RebuildMode mode, List<Guid>? streamIds, CancellationToken ct) {
 

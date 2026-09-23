@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -79,6 +80,7 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
     _loop = _runAsync(_stop.Token);
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The loop coalesces a batch under both a size bound and a deadline, and separates cancellation from channel closure at two points, because a closed channel ends the worker while cancellation ends the wait.")]
   private async Task _runAsync(CancellationToken ct) {
     try {
       while (!ct.IsCancellationRequested) {

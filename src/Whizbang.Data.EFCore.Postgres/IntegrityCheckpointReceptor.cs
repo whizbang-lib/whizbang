@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -30,6 +31,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     ILogger<IntegrityCheckpointReceptor> logger) : IReceptor<IntegrityCheckpoint> {
 
   /// <inheritdoc />
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A checkpoint is actionable only when every collaborator is wired, it did not come from this service, and the store can measure counts. After that each pending bucket is recounted, confirmed or left alone, under a report cap and an optional auto-repair. The branches are the preconditions and the per-bucket verdicts.")]
   public async ValueTask HandleAsync(IntegrityCheckpoint message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
     await using var scope = scopeFactory.CreateAsyncScope();

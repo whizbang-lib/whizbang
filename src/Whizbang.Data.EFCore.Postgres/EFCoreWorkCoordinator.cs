@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -2048,6 +2049,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return results;
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Writes the inquiry array by hand, and a hand-written JSON array needs a separator decision at every element of every nested array. The loops and their index tests are the format.")]
   private static string _buildInquiriesJson(IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries) {
     var sb = new System.Text.StringBuilder("[");
     for (var i = 0; i < inquiries.Count; i++) {
@@ -2088,6 +2090,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reads the claim's result set column by column into a work batch and then, when outstanding counts were requested, the second result set as well. The column reads dominate the count.")]
   public async Task<WorkBatch> ClaimWorkAsync(
     ClaimWorkRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
@@ -4786,6 +4789,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return result is int i ? i : 0;
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reads the event rows column by column, and each optional column is read through its own catch so a provider that omits it yields the default rather than failing the whole read.")]
   public async Task<List<StreamEventData>> GetStreamEventsAsync(
     Guid instanceId,
     Guid[] streamIds,

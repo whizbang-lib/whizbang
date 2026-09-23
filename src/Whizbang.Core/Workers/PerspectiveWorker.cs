@@ -591,6 +591,7 @@ public partial class PerspectiveWorker(
   /// each batch via <see cref="ProcessChannelBatchAsync"/>. Replaces the legacy SQL polling loop
   /// when channels are wired.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The consumer loop reads from two channels, coalesces each into its own batch under its own bound, decides whether the result is worth processing, and distinguishes shutdown, disposal and failure. The guarantee that PostLifecycle runs once per batch is what ties the two readers together.")]
   private async Task _runChannelConsumerLoopAsync(CancellationToken stoppingToken) {
     var workReader = _perspectiveChannelWriter.Reader;
     var drainReader = _perspectiveDrainChannel.Reader;
@@ -1086,6 +1087,7 @@ public partial class PerspectiveWorker(
   /// (batched fetch + RunWithEventsAsync) before per-event work is processed — same ordering
   /// as the legacy poll path.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One channel batch handles drain-mode stream ids and per-event work under one activity, and per group it resolves the runner, chooses between the normal, replay and rewind paths, tracks which events were newly applied, and separates cancellation from failure at two levels. The paths share the batch's activity, its completion bookkeeping and its ordering guarantee, which is what keeps them in one method.")]
   internal async Task ProcessChannelBatchAsync(
     List<PerspectiveWork> workItems, List<Guid> drainStreamIds, CancellationToken cancellationToken) {
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -167,6 +168,7 @@ public partial class TransportPublishStrategy(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#event-store-only</docs>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Publishing one message resolves the destination (an empty one is an event-store-only message and succeeds without a transport call), pre-serializes when a hook needs it, and then retries on throttling up to the configured attempts. The retry loop and the preflight failure are the branches.")]
   public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
     // Skip transport publishing for event-store-only messages (destination is null)
     // These messages are stored in event store via process_work_batch but should not be transported
@@ -294,6 +296,7 @@ public partial class TransportPublishStrategy(
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EmptyList_ReturnsEmptyResultsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PartialItemResults_MapsCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_AllEventStoreOnly_NoTransportCallsAsync</tests>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A batch is grouped by resolved destination, each group is pre-serialized and preflighted per item, published with the same throttle retry the singular path uses, and then one group outcome is mapped back onto every item in it. The per-item passes on both sides of the single call are what make a partial failure attributable.")]
   public async Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(
     IReadOnlyList<OutboxWork> workItems,
     CancellationToken cancellationToken) {

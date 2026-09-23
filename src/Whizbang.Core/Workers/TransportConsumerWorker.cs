@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -220,6 +221,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// Executes the worker, creating subscriptions for all configured destinations.
   /// </summary>
   /// <param name="stoppingToken">Token to signal shutdown</param>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup waits on the schema gate and then, per destination, checks readiness, provisions the owned domains, applies the manifest and subscribes, with an explicit level check in front of each diagnostic so a disabled level costs nothing.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     // Startup barrier: nothing below may run before migrations complete — subscribing lets the
     // broker deliver, and delivery lands in the inbox tables the migration creates.
@@ -498,6 +500,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
          ct => _handleMessageBatchAsync(messages, ct),
          messages.Count, _logger, batchToken, hostStoppingToken);
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One received batch decides per message whether it is a control-class non-durable receive, whether it maps to an inbox row, and whether it carries a cleanup claim, then runs poison detection over what survived and releases the claims. The per-message decisions determine what the batch-level steps operate on.")]
   private async Task _handleMessageBatchAsync(
       IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken) {
     if (messages.Count == 0) {

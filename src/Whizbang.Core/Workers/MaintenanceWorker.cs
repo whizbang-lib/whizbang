@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -336,6 +337,7 @@ public sealed partial class MaintenanceWorker(
   /// keeps its row and is retried next sweep. A claim whose provider has no registered store keeps
   /// its row as the operator's signal rather than being silently dropped.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The sweep's invariant is that a ledger row outlives its blob, so every branch is about whether a row may be removed: no expiry configured, no claim, no registered store for the provider, a delete that threw, or a short page that ends the sweep. The branches are the invariant.")]
   private async Task _sweepExpiredOffloadClaimsAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     var opts = sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<Whizbang.Core.Offloads.MessageBodyOffloadOptions>>()?.CurrentValue;
@@ -479,6 +481,7 @@ public sealed partial class MaintenanceWorker(
   // offer each guard its batch, and make the decisions durable — Proceed releases any prior hold,
   // Defer/Cancel hold (absent decision = Defer: the guard exists to prevent orphaned external
   // resources, so silence fails safe). A throwing guard gets the destruction retry ladder.
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Offering rows to the destruction guards is a three-level walk (guard, guarded model, target row) whose inner switch has one arm per guard decision, and the deferred rows are grouped by release time so the journal records one row per time. The structure follows the decision type.")]
   private async Task<List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard Guard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget> Released)>>
       _offerRowsToGuardsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     var releasedByGuard = new List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>)>();
@@ -559,6 +562,7 @@ public sealed partial class MaintenanceWorker(
   // GUARDED perspectives to their guards (holds honored), then execute the hold-aware cascade
   // deletes. Deferred cascades re-queue their seeds so the next cycle re-offers — convergence, not
   // loss. Best-effort: any failure is logged and the journal retries next cycle.
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A cascade resolves model names to types, computes the closure, groups it by model, maps each model to its table and its guard, and then applies the same per-decision switch the direct offer uses. Each stage narrows what the next one needs, and every stage can legitimately produce nothing and end the cascade.")]
   private async Task<List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard Guard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget> Released)>>
       _cascadeStreamGroupEvictionsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     var released = new List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>)>();

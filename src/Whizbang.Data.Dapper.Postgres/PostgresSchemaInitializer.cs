@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -338,6 +339,7 @@ public sealed class PostgresSchemaInitializer {
     return dropped;
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Deciding what to run compares each migration's recorded hash against the file, then pulls in the redefinition closure of whatever drifted. Both passes walk the same ordered list, and the second depends on what the first found.")]
   private async Task _executeMigrationsWithHashDetectionAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
     var migrations = _migrationProvider.GetMigrations();
     if (migrations.Count == 0) {

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -57,6 +58,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
     }
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Answering a request chooses between the windowed digest path, a full recompute and the stored digests, each of which can come back empty and fall through to the next, then pages the answer. The fall-through order is the method.")]
   private async Task _handleCoreAsync(RequestIntegrityManifest message, CancellationToken cancellationToken) {
     var answerTimer = System.Diagnostics.Stopwatch.StartNew();
     await using var scope = scopeFactory.CreateAsyncScope();
@@ -261,6 +263,7 @@ public sealed partial class IntegrityManifestReceptor(
     return _gateMetrics;
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Comparing a manifest decides first whether to act at all (collaborators wired, not our own manifest, generation coherent, the level), then per digest whether it matches, whether it falls inside the settle window, and whether the difference is a deficit worth stamping for repair. Each stage narrows the set the next one walks, and the settle rule needs both sides' timestamps.")]
   private async Task _handleCoreAsync(IntegrityManifest message, CancellationToken cancellationToken) {
     await using var scope = scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
@@ -638,6 +641,7 @@ public sealed partial class IntegrityManifestReceptor(
   /// type complete — one comparison instead of thousands. Mismatched types escalate (capped) to a
   /// DIRECTED stream-level manifest request; reports only ever come from the stream-level compare.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The type-level compare matches each type's roll-up, applies the settle window, sorts the mismatches into bulk-backfill candidates and drill-down requests, applies the repair grant cap over the candidates, and addresses each drill-down to its origin's request topic. The stages share the mismatch set they narrow.")]
   private async Task _handleTypeLevelAsync(
       IServiceProvider services, StreamIntegrityOptions options, IntegrityManifest message,
       List<string> types, TimeSpan settle, CancellationToken cancellationToken) {

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
@@ -38,6 +39,7 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
   private readonly DbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
 
   /// <inheritdoc />
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The method owns its transaction only when one was not supplied, so every exit (success, a per-completion skip, a failure) has to commit, roll back or leave it alone accordingly. The branching is that ownership.")]
   public async Task CompleteAsync(
       IReadOnlyList<PerspectiveCursorCompletion> completions,
       CancellationToken cancellationToken = default) {

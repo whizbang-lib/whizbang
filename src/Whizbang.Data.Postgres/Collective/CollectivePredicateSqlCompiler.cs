@@ -197,6 +197,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   };
 
   // <values>.Contains(row.Data.X) → row.data->>'X' IN (@p0, @p1, …).
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Contains arrives in three shapes (the two-argument and three-argument static forms and the instance form) and only the three-argument form with a null comparer is translatable. The shapes are the overload set.")]
   private static void _compileContains(
       MethodCallExpression mc, Ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
       List<ReferencedJsonPath> refs) {

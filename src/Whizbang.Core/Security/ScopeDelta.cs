@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -471,6 +472,7 @@ public sealed class ScopeDelta {
     first = false;
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reads a scope from its compact JSON form, where every field is optional and separately shaped: five scalars, an array of principals and an array of extension objects. One branch per property, none nested beyond the checks on an array element.")]
   private static PerspectiveScope _deserializeScope(JsonElement element) {
     var scope = new PerspectiveScope();
 

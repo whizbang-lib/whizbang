@@ -137,6 +137,7 @@ public partial class ServiceBusConsumerWorker(
   /// messages land in inbox tables the migration creates. Both halves are fixed by moving the
   /// subscribe here, behind the gate.
   /// </remarks>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup waits on the schema gate, subscribes to each configured topic and keeps the worker alive, with shutdown cancellation separated from a subscribe failure in both the per-topic and the outer scope.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     using var activity = WhizbangActivitySource.Hosting.StartActivity("ServiceBusConsumerWorker.Start");
     activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);

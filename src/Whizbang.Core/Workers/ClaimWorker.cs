@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -320,6 +321,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   /// <inheritdoc />
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup is a sequence of preconditions that each have their own reason to skip or stop (the adaptive budget report, the killswitch, the schema gate, instance registration, perspective-only mode), and the poll loop then adapts its cadence on four signals: the startup catch-up, the doorbell, a repeat claim and the drain linger. Every branch carries the comment explaining the policy it implements, and moving them apart would separate each policy from the loop that applies it.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.PollingIntervalMilliseconds, _options.PollingMaxIntervalMilliseconds, _instanceProvider.InstanceId);
 

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -123,6 +124,7 @@ public sealed partial class IntegrityAuditWorker(
   /// cross-service infrastructure at all returns <see langword="false"/>: that is a configuration,
   /// not a cold start, and retrying sooner would never help.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One audit cycle runs the local half (verification, epoch drift, gap reports, optional rebuild) and the cross-service half (ask each reachable origin), and its return value distinguishes a cycle that asked nobody from a deployment with nobody to ask. Both halves feed that one answer.")]
   private async Task<bool> _runAuditCoreAsync(bool forceSweep, CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);   // system work nobody waits on: everything dispatched here inherits background

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 
@@ -61,6 +62,7 @@ public sealed class SlidingWindowBatcher<T> {
   /// Yields batches of items as they accumulate. Completes when the underlying channel
   /// is closed and drained. Throws <see cref="OperationCanceledException"/> on cancellation.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A sliding window is two bounds racing: the window since the last arrival and the maximum wait since the first, either of which can flush, while the size bound can flush before either. The wait, the drain and the two timers have to be read together to see that every path yields the batch exactly once.")]
   public async IAsyncEnumerable<IReadOnlyList<T>> ReadBatchesAsync(
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
     while (!cancellationToken.IsCancellationRequested) {

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -469,6 +470,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// satisfy the FIRST loop iteration without a round-trip; every later iteration fetches
   /// normally, so a cap-filling stream still drains its tail. Null on the standalone path.
   /// </param>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Draining one stream to empty interleaves four concerns in a single loop: the prefetched first page, per-row deduplication, the attempt ladder that drops or dead-letters, and the choice between bulk and singular publish. The loop ends on a short page, which is only knowable after all four have run.")]
   private async Task _drainStreamInnerAsync(
       Guid streamId, CancellationToken ct, IReadOnlyList<OutboxBatchRow>? prefetched = null) {
     using var scope = _scopeFactory.CreateScope();
@@ -721,6 +723,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     }
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A bulk publish builds a work item per row, each of which can fail to deserialize, carry no destination, or fail to establish a security context, then makes one transport call whose outcome has to be mapped back per row. The per-row branches on both sides of the single call are that mapping.")]
   internal async Task PublishBulkAsync(List<OutboxBatchRow> rows, CancellationToken ct) {
     var works = new List<OutboxWork>(rows.Count);
     var rowsByMessageId = new Dictionary<Guid, OutboxBatchRow>(rows.Count);

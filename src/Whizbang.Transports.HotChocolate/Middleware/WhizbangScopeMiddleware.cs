@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
@@ -143,6 +144,7 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
   /// name that yields any values wins), or <c>Aggregate</c> (union across all configured
   /// claim names, deduplicated).
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Extracts across several claim names under two aggregation strategies, where FirstMatch stops at the first name that yields anything and Aggregate unions and deduplicates across all of them. The branches are the two strategies.")]
   private static IEnumerable<string> _extractMultiValuedClaim(
       HttpContext context, List<string> claimTypes, ClaimAggregation aggregation) {
     if (context.User is null || claimTypes.Count == 0) {

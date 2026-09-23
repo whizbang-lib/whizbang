@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Perspectives;
@@ -32,6 +33,7 @@ public sealed partial class PerspectiveMigrationWorker(
   public Func<string, int, string, CancellationToken, Task>? UpdateMigrationStatus { get; set; }
 
   /// <inheritdoc/>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The worker is inert unless both delegates are wired, waits on the schema gate, and then processes each pending rebuild with its own success, failure and status-update error handling, because a failed status update must not lose the rebuild's own result.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (GetPendingRebuilds == null || UpdateMigrationStatus == null) {
       return;
