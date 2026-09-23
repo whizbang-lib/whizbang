@@ -275,8 +275,9 @@ public class CoalesceShipWorkerTests {
     // is the fake coordinator's first stats call; no wall-clock advance is needed, which also
     // keeps this free of the FakeTimeProvider register-after-advance race.
     var time = new FakeTimeProvider(_testNow);
-    var coordinator = new FakeCoalesceCoordinator();
-    coordinator.Stats = [];
+    var coordinator = new FakeCoalesceCoordinator {
+      Stats = []
+    };
     var tagOptions = new TagOptions();
     tagOptions.Coalesce("record-digest", c => c.SlideSeconds = 15);
     var resolver = new CoalesceGroupResolver(tagOptions, time, () => []);

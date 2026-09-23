@@ -231,8 +231,8 @@ public class IntegrityCheckpointWorkerTests {
     await worker.RunCheckpointOnceAsync(CancellationToken.None);
 
     await Assert.That(transport.Published).IsNotEmpty();
-    foreach (var published in transport.Published) {
-      await Assert.That(ControlMessageTtl.FromMetadata(published.Destination.Metadata))
+    foreach (var (_, Destination, _) in transport.Published) {
+      await Assert.That(ControlMessageTtl.FromMetadata(Destination.Metadata))
         .IsEqualTo(TimeSpan.FromSeconds(120))
         .Because("60s cadence x the shipped 2x multiplier — derived from the worker's OWN "
                + "interval, so retuning the cadence retunes the lifetime with it");

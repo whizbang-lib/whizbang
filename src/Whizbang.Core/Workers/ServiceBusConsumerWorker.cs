@@ -380,7 +380,7 @@ public partial class ServiceBusConsumerWorker(
         AttemptNumber = null
       };
 
-      _fireDetachedStageAsync(typedEnvelope, LifecycleStage.PreInboxDetached, lifecycleContext, ct);
+      _fireDetachedStage(typedEnvelope, LifecycleStage.PreInboxDetached, lifecycleContext, ct);
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
       await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
@@ -435,7 +435,7 @@ public partial class ServiceBusConsumerWorker(
         AttemptNumber = null
       };
 
-      _fireDetachedStageAsync(typedEnvelope, LifecycleStage.PostInboxDetached, lifecycleContext, ct);
+      _fireDetachedStage(typedEnvelope, LifecycleStage.PostInboxDetached, lifecycleContext, ct);
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
       await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
@@ -488,7 +488,7 @@ public partial class ServiceBusConsumerWorker(
     return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
   }
 
-  private void _fireDetachedStageAsync(
+  private void _fireDetachedStage(
       IMessageEnvelope envelope, LifecycleStage stage,
       LifecycleExecutionContext context, CancellationToken ct) {
     var task = Task.Run(async () => {

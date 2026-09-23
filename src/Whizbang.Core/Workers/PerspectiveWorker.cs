@@ -3501,7 +3501,7 @@ public partial class PerspectiveWorker(
                 AttemptNumber = 1
               };
               // Detached: fire-and-forget with own DI scope
-              _fireDetachedStageAsync(envelope, LifecycleStage.PrePerspectiveDetached, context, cancellationToken);
+              _fireDetachedStage(envelope, LifecycleStage.PrePerspectiveDetached, context, cancellationToken);
               // Inline: blocks pipeline
               await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PrePerspectiveInline,
                 context with { CurrentStage = LifecycleStage.PrePerspectiveInline }, cancellationToken);
@@ -4061,7 +4061,7 @@ public partial class PerspectiveWorker(
   /// <summary>
   /// Fires a Detached lifecycle stage as fire-and-forget with its own DI scope.
   /// </summary>
-  private void _fireDetachedStageAsync(
+  private void _fireDetachedStage(
       MessageEnvelope<IEvent> envelope, LifecycleStage stage,
       LifecycleExecutionContext context, CancellationToken ct) {
     var task = Task.Run(async () => {

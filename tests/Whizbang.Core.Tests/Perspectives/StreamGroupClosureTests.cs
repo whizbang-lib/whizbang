@@ -26,7 +26,7 @@ public class StreamGroupClosureTests {
     new(key, announce, follow, bridge);
 
   private static Dictionary<Type, IReadOnlyList<StreamGroupMembership>> _scenario(bool bBridgesG2 = false, bool bBridgesG1 = false) =>
-    new Dictionary<Type, IReadOnlyList<StreamGroupMembership>> {
+    new() {
       [typeof(A)] = [_m("g1")],
       [typeof(B)] = [_m("g1", bridge: bBridgesG1), _m("g2", bridge: bBridgesG2)],
       [typeof(D)] = [_m("g2")],

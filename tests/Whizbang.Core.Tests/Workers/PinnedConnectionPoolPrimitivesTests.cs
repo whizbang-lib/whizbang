@@ -222,7 +222,7 @@ public class PinnedConnectionPoolPrimitivesTests {
   public async Task Registry_AddOptIn_NullWorkerType_ThrowsAsync() {
     var registry = new PinnedWorkerRegistry();
 
-    Action act = () => registry.AddOptIn(workerType: null!);
+    void act() => registry.AddOptIn(workerType: null!);
 
     await Assert.That(act).Throws<ArgumentNullException>();
   }

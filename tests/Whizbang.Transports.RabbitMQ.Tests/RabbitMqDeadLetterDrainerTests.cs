@@ -16,8 +16,8 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// <code-under-test>src/Whizbang.Transports.RabbitMQ/RabbitMqDeadLetterDrainer.cs</code-under-test>
 public class RabbitMqDeadLetterDrainerTests {
 
-  private static readonly string _id1 = "00000000-0000-0000-0000-000000000001";
-  private static readonly string _id2 = "00000000-0000-0000-0000-000000000002";
+  private const string ID1 = "00000000-0000-0000-0000-000000000001";
+  private const string ID2 = "00000000-0000-0000-0000-000000000002";
 
   private static Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _noopImport =>
     (_, _) => Task.FromResult(true);
@@ -62,12 +62,12 @@ public class RabbitMqDeadLetterDrainerTests {
   public async Task TryBuildImport_WhizbangMessage_MapsFieldsWithoutDeserializingAsync() {
     var headers = _xDeathHeaders(reason: "rejected", count: 4L);
     headers["EnvelopeType"] = System.Text.Encoding.UTF8.GetBytes("Whizbang.Test.Envelope");
-    var result = _dlqResult(deliveryTag: 7, headers: headers, messageId: _id1, body: """{"v":1}""");
+    var result = _dlqResult(deliveryTag: 7, headers: headers, messageId: ID1, body: """{"v":1}""");
 
     var ok = RabbitMqDeadLetterDrainer.TryBuildImport(result, "orders.dlq", out var import);
 
     await Assert.That(ok).IsTrue();
-    await Assert.That(import.MessageId).IsEqualTo(Guid.Parse(_id1));
+    await Assert.That(import.MessageId).IsEqualTo(Guid.Parse(ID1));
     await Assert.That(import.MessageType).IsEqualTo("Whizbang.Test.Envelope");
     await Assert.That(import.Destination).IsEqualTo("orders.dlq");
     await Assert.That(import.EnvelopeJson).IsEqualTo("""{"v":1}""")
@@ -79,7 +79,7 @@ public class RabbitMqDeadLetterDrainerTests {
   [Test]
   public async Task TryBuildImport_EnvelopeTypeAsString_AlsoMapsAsync() {
     var headers = new Dictionary<string, object?> { ["EnvelopeType"] = "String.Envelope" };
-    var result = _dlqResult(1, headers, messageId: _id1);
+    var result = _dlqResult(1, headers, messageId: ID1);
 
     var ok = RabbitMqDeadLetterDrainer.TryBuildImport(result, "q.dlq", out var import);
 
@@ -149,8 +149,8 @@ public class RabbitMqDeadLetterDrainerTests {
   public async Task Drain_MessagesAvailable_ImportsAndAcksEachAsync() {
     var channel = new DrainFakeChannel();
     var imports = new List<BrokerDeadLetterImport>();
-    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: _id1, body: "payload-1"));
-    channel.GetResults.Enqueue(_dlqResult(2, _withEnvelopeType(), messageId: _id2, body: "payload-2"));
+    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: ID1, body: "payload-1"));
+    channel.GetResults.Enqueue(_dlqResult(2, _withEnvelopeType(), messageId: ID2, body: "payload-2"));
     var drainer = new RabbitMqDeadLetterDrainer(
       _connectionFor(channel), "orders.dlq",
       (import, _) => { imports.Add(import); return Task.FromResult(true); },
@@ -160,7 +160,7 @@ public class RabbitMqDeadLetterDrainerTests {
 
     await Assert.That(drained).IsEqualTo(2);
     await Assert.That(imports).Count().IsEqualTo(2);
-    await Assert.That(imports[0].MessageId).IsEqualTo(Guid.Parse(_id1));
+    await Assert.That(imports[0].MessageId).IsEqualTo(Guid.Parse(ID1));
     await Assert.That(imports[0].EnvelopeJson).IsEqualTo("payload-1");
     await Assert.That(channel.AckedTags).Count().IsEqualTo(2);
     await Assert.That(channel.NackedTags).IsEmpty();
@@ -169,7 +169,7 @@ public class RabbitMqDeadLetterDrainerTests {
   [Test]
   public async Task Drain_DuplicateImport_StillAcksAndCountsAsync() {
     var channel = new DrainFakeChannel();
-    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: _id1));
+    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: ID1));
     var drainer = new RabbitMqDeadLetterDrainer(
       _connectionFor(channel), "orders.dlq",
       (_, _) => Task.FromResult(false),   // duplicate — custody already exists
@@ -185,8 +185,8 @@ public class RabbitMqDeadLetterDrainerTests {
   [Test]
   public async Task Drain_ImportFails_RequeuesAndEndsPassAsync() {
     var channel = new DrainFakeChannel();
-    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: _id1));
-    channel.GetResults.Enqueue(_dlqResult(2, _withEnvelopeType(), messageId: _id2));
+    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: ID1));
+    channel.GetResults.Enqueue(_dlqResult(2, _withEnvelopeType(), messageId: ID2));
     var drainer = new RabbitMqDeadLetterDrainer(
       _connectionFor(channel), "orders.dlq",
       (_, _) => Task.FromException<bool>(new InvalidOperationException("import failed")),
@@ -219,8 +219,8 @@ public class RabbitMqDeadLetterDrainerTests {
   [Test]
   public async Task Drain_MaxCountReached_StopsPollingAsync() {
     var channel = new DrainFakeChannel();
-    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: _id1));
-    channel.GetResults.Enqueue(_dlqResult(2, _withEnvelopeType(), messageId: _id2));
+    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: ID1));
+    channel.GetResults.Enqueue(_dlqResult(2, _withEnvelopeType(), messageId: ID2));
     var drainer = _newDrainer(_connectionFor(channel));
 
     var drained = await drainer.DrainDeadLetterQueueAsync(1);
@@ -233,8 +233,8 @@ public class RabbitMqDeadLetterDrainerTests {
   public async Task Drain_CanceledAfterAck_ReturnsPartialCountAsync() {
     using var cts = new CancellationTokenSource();
     var channel = new DrainFakeChannel { OnAck = () => cts.Cancel() };
-    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: _id1));
-    channel.GetResults.Enqueue(_dlqResult(2, _withEnvelopeType(), messageId: _id2));
+    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: ID1));
+    channel.GetResults.Enqueue(_dlqResult(2, _withEnvelopeType(), messageId: ID2));
     var drainer = _newDrainer(_connectionFor(channel));
 
     var drained = await drainer.DrainDeadLetterQueueAsync(10, cts.Token);

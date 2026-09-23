@@ -53,7 +53,7 @@ public class EventStoreOrderingInvariantTests {
 
     var inversions = 0;
     for (var i = 1; i < retrievedIds.Length; i++) {
-      if (string.Compare(retrievedIds[i].ToString("D"), retrievedIds[i - 1].ToString("D"), StringComparison.Ordinal) <= 0) {
+      if (string.CompareOrdinal(retrievedIds[i].ToString("D"), retrievedIds[i - 1].ToString("D")) <= 0) {
         inversions++;
       }
     }

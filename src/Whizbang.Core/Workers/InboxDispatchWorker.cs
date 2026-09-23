@@ -467,7 +467,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
       if (!stateOnly) {
         await InvokeInboxLifecycleStageAsync(
-          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+          work, typedEnvelope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
           "PreInbox", ct, detachedCancellationToken: stoppingToken);
         LogDiagPreInboxReturned(_logger, work.MessageId);
       }
@@ -481,7 +481,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // PostInbox lands AFTER event storage.
       if (!stateOnly) {
         await InvokeInboxLifecycleStageAsync(
-          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+          work, typedEnvelope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
           "PostInbox", ct, detachedCancellationToken: stoppingToken);
         LogDiagPostInboxReturned(_logger, work.MessageId);
       }
@@ -490,10 +490,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
       if (!stateOnly && _hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
         await InvokeInboxLifecycleStageAsync(
-          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
+          work, typedEnvelope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
           "PostAllPerspectives", ct, detachedCancellationToken: stoppingToken);
         await InvokeInboxLifecycleStageAsync(
-          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
+          work, typedEnvelope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
           "PostLifecycle", ct, detachedCancellationToken: stoppingToken);
       }
     });
@@ -858,7 +858,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   internal async Task InvokeInboxLifecycleStageAsync(
       InboxWork work,
       IMessageEnvelope? typedEnvelope,
-      AsyncServiceScope scope,
       IReceptorInvoker? receptorInvoker,
       LifecycleStage detachedStage,
       LifecycleStage inlineStage,

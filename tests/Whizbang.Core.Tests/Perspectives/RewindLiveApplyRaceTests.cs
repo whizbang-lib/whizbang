@@ -7,8 +7,7 @@ using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Tests.Perspectives;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// <para>
@@ -143,7 +142,7 @@ public class RewindLiveApplyRaceTests {
     // gate still pauses an in-flight persist — the test still exercises the
     // same critical-section interleaving, but now the second writer waits on
     // the semaphore instead of racing past.
-    var apply = async () => {
+    async Task apply() {
       var model = seedFromEmpty
         ? new CountModel { Id = streamId, CompletedItems = 0 }
         : (await store.GetByStreamIdAsync(streamId, ct).ConfigureAwait(false))
@@ -152,7 +151,7 @@ public class RewindLiveApplyRaceTests {
         model.CompletedItems++;
       }
       await store.UpsertAsync(streamId, model, ct).ConfigureAwait(false);
-    };
+    }
 
     if (coordinator is null) {
       await apply().ConfigureAwait(false);

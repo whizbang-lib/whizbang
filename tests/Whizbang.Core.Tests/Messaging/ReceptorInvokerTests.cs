@@ -61,9 +61,8 @@ public class ReceptorInvokerTests {
   /// Tracks which receptors were invoked and at which stages.
   /// </summary>
   private sealed class InvocationTracker {
-    private readonly List<(string ReceptorId, LifecycleStage Stage)> _invocations = [];
-    public List<(string ReceptorId, LifecycleStage Stage)> Invocations => _invocations;
-    public void RecordInvocation(string receptorId, LifecycleStage stage) => _invocations.Add((receptorId, stage));
+    public List<(string ReceptorId, LifecycleStage Stage)> Invocations { get; } = [];
+    public void RecordInvocation(string receptorId, LifecycleStage stage) => Invocations.Add((receptorId, stage));
   }
 
   /// <summary>
@@ -1723,11 +1722,9 @@ public class ReceptorInvokerTests {
     // Arrange
     var invoker = new NullReceptorInvoker();
     var envelope = _wrapInEnvelope(new TestMessage("null-test"));
-
-    // Act - should not throw and complete successfully
-    var completed = false;
     await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
-    completed = true;
+    // Act - should not throw and complete successfully
+    var completed = true;
 
     // Assert - completed without throwing
     await Assert.That(completed).IsTrue();

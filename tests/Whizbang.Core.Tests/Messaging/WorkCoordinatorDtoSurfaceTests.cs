@@ -75,7 +75,7 @@ public class WorkCoordinatorDtoSurfaceTests {
 
     await Assert.That(work.PartitionNumber).IsEqualTo(17);
     await Assert.That(work.Flags).IsEqualTo(WorkBatchOptions.Orphaned);
-    var workMetadata = work.Metadata ?? new Dictionary<string, JsonElement>();
+    var workMetadata = work.Metadata ?? [];
     await Assert.That(workMetadata.ContainsKey("outbox_completions_processed")).IsTrue();
     await Assert.That(work.StreamId).IsEqualTo(streamId);
     await Assert.That(work.Attempts).IsEqualTo(3);
@@ -101,7 +101,7 @@ public class WorkCoordinatorDtoSurfaceTests {
 
     await Assert.That(work.PartitionNumber).IsEqualTo(23);
     await Assert.That(work.Flags).IsEqualTo(WorkBatchOptions.RetryAfterFailure);
-    var workMetadata = work.Metadata ?? new Dictionary<string, JsonElement>();
+    var workMetadata = work.Metadata ?? [];
     await Assert.That(workMetadata.ContainsKey("inbox_completions_processed")).IsTrue();
     await Assert.That(work.Error).IsEqualTo("previous handler failure");
   }
@@ -166,7 +166,7 @@ public class WorkCoordinatorDtoSurfaceTests {
     await Assert.That(work.Status).IsEqualTo(PerspectiveProcessingStatus.CatchingUp);
     await Assert.That(work.PartitionNumber).IsEqualTo(11);
     await Assert.That(work.Flags).IsEqualTo(WorkBatchOptions.NewlyStored);
-    var workMetadata = work.Metadata ?? new Dictionary<string, JsonElement>();
+    var workMetadata = work.Metadata ?? [];
     await Assert.That(workMetadata.ContainsKey("perspective_completions_processed")).IsTrue();
   }
 

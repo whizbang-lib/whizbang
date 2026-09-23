@@ -627,7 +627,7 @@ public class PerspectiveWorkerDedupTests {
   // ==================== Test Fakes ====================
 
   private sealed class SpyDedupObserver : IProcessedEventCacheObserver {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly TaskCompletionSource[] _dedupWaiters = new TaskCompletionSource[10];
 
     public List<(IReadOnlyList<Guid> EventIds, string PerspectiveName, Guid StreamId)> DedupCalls { get; } = [];

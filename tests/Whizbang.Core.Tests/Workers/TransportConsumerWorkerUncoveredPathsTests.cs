@@ -1378,7 +1378,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     // The fallback path fans the terminal stages out as concurrent detached tasks, so InvokeAsync
     // is called from several threads at once. Guard the mutations: an unsynchronized List.Add /
     // counter increment races and loses updates under parallelism (intermittent under-count in CI).
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<LifecycleStage> _invokedStages = [];
     public List<LifecycleStage> GetInvokedStages() { lock (_gate) { return [.. _invokedStages]; } }
 

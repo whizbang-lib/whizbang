@@ -105,10 +105,10 @@ public class StartupBuiltInObserversTests {
 
     await observer.OnStepCompletedAsync(_result("Migrate"), CancellationToken.None);
 
-    var entry = logger.Entries.Single();
-    await Assert.That(entry.Level).IsEqualTo(LogLevel.Information);
-    await Assert.That(entry.Message).Contains("Migrate");
-    await Assert.That(entry.Message).Contains("Completed");
+    var (Level, Message) = logger.Entries.Single();
+    await Assert.That(Level).IsEqualTo(LogLevel.Information);
+    await Assert.That(Message).Contains("Migrate");
+    await Assert.That(Message).Contains("Completed");
   }
 
   // A failed step is the record an operator greps for; it carries the reason and logs louder.
@@ -120,9 +120,9 @@ public class StartupBuiltInObserversTests {
     await observer.OnStepCompletedAsync(
       _result("Migrate", StartupStepOutcome.Failed, "schema unreachable"), CancellationToken.None);
 
-    var entry = logger.Entries.Single();
-    await Assert.That(entry.Level).IsEqualTo(LogLevel.Warning);
-    await Assert.That(entry.Message).Contains("schema unreachable");
+    var (Level, Message) = logger.Entries.Single();
+    await Assert.That(Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(Message).Contains("schema unreachable");
   }
 
   // "Skipped(reason)" is a different fact from "Completed" — the log must carry the reason, or the
@@ -149,8 +149,8 @@ public class StartupBuiltInObserversTests {
       _result("Provision", StartupStepOutcome.Failed, "broker down"),
     ]), CancellationToken.None);
 
-    var entry = logger.Entries.Single();
-    await Assert.That(entry.Message).Contains("3");
-    await Assert.That(entry.Message).Contains("1 failed");
+    var (_, Message) = logger.Entries.Single();
+    await Assert.That(Message).Contains("3");
+    await Assert.That(Message).Contains("1 failed");
   }
 }

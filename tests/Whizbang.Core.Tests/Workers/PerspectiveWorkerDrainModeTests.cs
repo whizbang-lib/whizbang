@@ -52,28 +52,29 @@ public class PerspectiveWorkerDrainModeTests {
       }
     ];
 
-    var eventStore = new DrainModeEventStore();
-    eventStore.DeserializedEventsToReturn = [
-      new MessageEnvelope<IEvent> {
-        MessageId = new MessageId(eventId),
-        Payload = new DrainModeTestEvent("drain-test"),
-        Hops = [
-          new MessageHop {
-            Type = HopType.Current,
-            Timestamp = DateTimeOffset.UtcNow,
-            CorrelationId = CorrelationId.New(),
-            CausationId = MessageId.New(),
-            ServiceInstance = new ServiceInstanceInfo {
-              InstanceId = Guid.NewGuid(),
-              ServiceName = "TestService",
-              HostName = "test-host",
-              ProcessId = 1234
+    var eventStore = new DrainModeEventStore {
+      DeserializedEventsToReturn = [
+        new MessageEnvelope<IEvent> {
+          MessageId = new MessageId(eventId),
+          Payload = new DrainModeTestEvent("drain-test"),
+          Hops = [
+            new MessageHop {
+              Type = HopType.Current,
+              Timestamp = DateTimeOffset.UtcNow,
+              CorrelationId = CorrelationId.New(),
+              CausationId = MessageId.New(),
+              ServiceInstance = new ServiceInstanceInfo {
+                InstanceId = Guid.NewGuid(),
+                ServiceName = "TestService",
+                HostName = "test-host",
+                ProcessId = 1234
+              }
             }
-          }
-        ],
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-      }
-    ];
+          ],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+        }
+      ]
+    };
 
     var eventTypeProvider = new FakeEventTypeProvider([typeof(DrainModeTestEvent)]);
 

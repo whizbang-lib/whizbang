@@ -148,7 +148,7 @@ public class MaintenanceWorkerDestructionHookTests {
     await _buildWorker(coord, new RecordingHook(log, DestructionResult.Canceled)).RunMaintenanceOnceAsync(CancellationToken.None);
 
     await Assert.That(coord.Holds.Count).IsEqualTo(1).Because("Cancel holds the whole batch in one call.");
-    await Assert.That(coord.Holds[0].Ids).IsEquivalentTo(new[] { e1, e2 });
+    await Assert.That(coord.Holds[0].Ids).IsEquivalentTo([e1, e2]);
     await Assert.That(coord.Holds[0].Until).IsEqualTo(DateTimeOffset.MaxValue)
       .Because("Cancel = a far-future hold (keep the data — the developer's leak-risk call).");
     await Assert.That(log).DoesNotContain("after:2")
@@ -207,7 +207,7 @@ public class MaintenanceWorkerDestructionHookTests {
       .Because("A PreDestruction hook failure is non-fatal — the maintenance cycle completes.");
     await Assert.That(coord.Failures.Count).IsEqualTo(1)
       .Because("A throwing hook records a destruction failure (retryable) instead of failing open.");
-    await Assert.That(coord.Failures[0].Ids).IsEquivalentTo(new[] { e1 });
+    await Assert.That(coord.Failures[0].Ids).IsEquivalentTo([e1]);
     await Assert.That(coord.Failures[0].Max).IsEqualTo(5)
       .Because("The default MaxDestructionRetries (5) is passed so the coordinator can force-delete past the cap.");
     await Assert.That(coord.Failures[0].Until).IsGreaterThan(DateTimeOffset.UtcNow)

@@ -64,8 +64,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
 
     var taggedTypes = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) =>
-          (node is ClassDeclarationSyntax c && c.AttributeLists.Count > 0)
-          || (node is RecordDeclarationSyntax r && r.AttributeLists.Count > 0),
+          (node is ClassDeclarationSyntax c && c.AttributeLists.Any())
+          || (node is RecordDeclarationSyntax r && r.AttributeLists.Any()),
         transform: static (ctx, ct) => _extractTaggedMessageEntry(ctx, ct)
     ).Where(static name => name is not null);
 

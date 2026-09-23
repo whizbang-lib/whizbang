@@ -85,7 +85,7 @@ public class PerspectiveRebuilderTests {
     var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
 
     // Act
-    var result = await rebuilder.RebuildStreamsAsync("TestPerspective", new[] { sourced1, ephemeral, sourced2 });
+    var result = await rebuilder.RebuildStreamsAsync("TestPerspective", [sourced1, ephemeral, sourced2]);
 
     // Assert — the two Sourced streams rebuild; the ephemeral one is refused and never replayed.
     await Assert.That(result.Success).IsTrue();
