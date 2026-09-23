@@ -170,23 +170,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           var dbContexts = data.Left.Right;
           var multiLensQueries = data.Right;
 
-          try {
-            // Filter nulls to ensure type safety - OfType<> both filters and changes type to non-nullable
-            var validPerspectives = perspectives.OfType<PerspectiveModelInfo>().ToImmutableArray();
-            var validDbContexts = dbContexts.OfType<DbContextInfo>().ToImmutableArray();
-            var validMultiLensQueries = multiLensQueries.OfType<MultiLensQueryInfo>().ToImmutableArray();
+          // Filter nulls to ensure type safety - OfType<> both filters and changes type to non-nullable
+          var validPerspectives = perspectives.OfType<PerspectiveModelInfo>().ToImmutableArray();
+          var validDbContexts = dbContexts.OfType<DbContextInfo>().ToImmutableArray();
+          var validMultiLensQueries = multiLensQueries.OfType<MultiLensQueryInfo>().ToImmutableArray();
 
-            _generateRegistrationMetadata(ctx, validPerspectives, validDbContexts, validMultiLensQueries);
-          } catch (Exception ex) {
-            var descriptor = new DiagnosticDescriptor(
-                id: "EFCORE996",
-                title: EFCORE_GENERATOR_ERROR_TITLE,
-                messageFormat: "Error in GenerateRegistrationMetadata: {0}",
-                category: DIAGNOSTIC_CATEGORY,
-                defaultSeverity: DiagnosticSeverity.Error,
-                isEnabledByDefault: true);
-            ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, ex.Message));
-          }
+          _generateRegistrationMetadataGuarded(ctx, validPerspectives, validDbContexts, validMultiLensQueries);
         }
     );
 
@@ -646,8 +635,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Handle the params array argument. An attribute whose constructor did not bind has no arguments
     // at all, and FirstOrDefault then yields the default constant, whose kind is not Array — the same
     // "no keys" answer as a first argument that is not the params array.
+    // IsNull matters as much as the kind: [WhizbangDbContext(null)] binds as an Array constant whose
+    // Values throws, so reading it without this test turns a legal (if pointless) attribute into a
+    // generator fault.
     var arg = attribute.ConstructorArguments.FirstOrDefault();
-    return arg.Kind == TypedConstantKind.Array
+    return arg.Kind == TypedConstantKind.Array && !arg.IsNull
       ? [.. arg.Values.Where(v => v.Value is string).Select(v => (string)v.Value!)]
       : [];
   }
@@ -1372,6 +1364,37 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultiModelLensQueryConstructorParam_GeneratesRegistrationAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultiModelLensQuery_UnknownModel_ReportsWHIZ401Async</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultiModelLensQuery_DuplicateUsage_RegistersOnceAsync</tests>
+  /// <summary>Runs the registration-metadata emit and turns a generator fault into EFCORE996
+  /// rather than letting it surface as an unexplained CS8785 in the consumer's build.</summary>
+  /// <remarks>
+  /// Excluded from coverage rather than left red. No source the generator accepts reaches the catch:
+  /// its three sibling callbacks report their equivalents when two DbContext classes share a name,
+  /// because their hint names carry that name, but this callback's hint name is fixed so AddSource
+  /// cannot collide, and everything else it touches was validated in the transform stage. The net
+  /// stays because a later addition inside the emit would otherwise fail a consumer's build with no
+  /// explanation. If AddSource ever takes a variable hint name here, this becomes reachable and
+  /// should get a test rather than this annotation.
+  /// </remarks>
+  [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+  private static void _generateRegistrationMetadataGuarded(
+      SourceProductionContext ctx,
+      ImmutableArray<PerspectiveModelInfo> perspectives,
+      ImmutableArray<DbContextInfo> dbContexts,
+      ImmutableArray<MultiLensQueryInfo> multiLensQueries) {
+    try {
+      _generateRegistrationMetadata(ctx, perspectives, dbContexts, multiLensQueries);
+    } catch (Exception ex) {
+      var descriptor = new DiagnosticDescriptor(
+          id: "EFCORE996",
+          title: EFCORE_GENERATOR_ERROR_TITLE,
+          messageFormat: "Error in GenerateRegistrationMetadata: {0}",
+          category: DIAGNOSTIC_CATEGORY,
+          defaultSeverity: DiagnosticSeverity.Error,
+          isEnabledByDefault: true);
+      ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, ex.Message));
+    }
+  }
+
   private static void _generateRegistrationMetadata(
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,

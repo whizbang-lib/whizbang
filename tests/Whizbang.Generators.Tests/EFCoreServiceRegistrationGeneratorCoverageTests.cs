@@ -39,6 +39,31 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
     await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
   }
 
+  /// <summary>
+  /// A null argument to the params-array constructor is legal C# and binds as a null array
+  /// constant. Reading its Values throws, so the generator used to fault on it; it now reads as
+  /// no keys and generation proceeds.
+  /// </summary>
+  [Test]
+  public async Task Generator_WithNullKeysArgument_GeneratesWithoutFaultingAsync() {
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace NullKeysApp {
+        [WhizbangDbContext(null)]
+        public class NullKeysDbContext : DbContext { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    await Assert.That(result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)).IsEmpty()
+      .Because("a null keys argument names no keys; it is not a generator fault");
+    var partialClass = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("NullKeysDbContext.Generated"));
+    await Assert.That(partialClass).IsNotNull();
+  }
+
   /// <summary>The same loader reads this generator's own snippets, which is the path every
   /// generated registration file takes.</summary>
   [Test]
