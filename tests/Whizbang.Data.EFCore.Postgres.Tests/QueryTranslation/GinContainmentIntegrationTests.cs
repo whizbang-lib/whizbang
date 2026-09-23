@@ -210,26 +210,31 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
   }
 
   /// <summary>
-  /// The containment filter returns exactly the rows the equality filter returns. Without this the
-  /// rewrite would be faster and wrong.
+  /// The containment filter returns exactly the rows the extraction it replaced returns. Without
+  /// this the rewrite would be faster and wrong.
   /// </summary>
+  /// <remarks>
+  /// The extraction side is read as SQL rather than as a second LINQ query. Both spellings of the
+  /// filter are the same expression tree, so the rewrite claims both and a comparison between them
+  /// would be a comparison of one form with itself: the assertion would hold however wrong the
+  /// rewrite was. Naming the extraction in SQL is what makes the two sides actually differ.
+  /// </remarks>
   [Test]
   [Timeout(120000)]
   public async Task ContainmentFilter_ReturnsTheSameRowsAsEqualityAsync(CancellationToken cancellationToken) {
     var needle = "needle";
 
-    var byEquality = await _context!.Set<PerspectiveRow<CatalogModel>>()
+    var byContainment = await _context!.Set<PerspectiveRow<CatalogModel>>()
       .Where(r => r.Data.Title == needle)
       .Select(r => r.Id)
       .ToListAsync(cancellationToken);
 
-    var byContainment = await _context.Set<PerspectiveRow<CatalogModel>>()
-      .Where(r => r.Data.Title == needle)
-      .Select(r => r.Id)
-      .ToListAsync(cancellationToken);
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    var byExtraction = await _idsWhereAsync(db, "data ->> 'Title' = @p", needle, cancellationToken);
 
-    await Assert.That(byEquality).Count().IsEqualTo(1);
-    await Assert.That(byContainment).IsEquivalentTo(byEquality);
+    await Assert.That(byContainment).Count().IsEqualTo(1);
+    await Assert.That(byContainment).IsEquivalentTo(byExtraction);
   }
 
   /// <summary>
@@ -264,23 +269,24 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
   }
 
   /// <summary>A Guid survives the round trip through jsonb_build_object, casing included.</summary>
+  /// <remarks>The extraction side is read as SQL, for the reason given on the case above.</remarks>
   [Test]
   [Timeout(120000)]
   public async Task ContainmentFilter_MatchesAGuidValueAsync(CancellationToken cancellationToken) {
     var tenant = _needleTenant;
 
-    var byEquality = await _context!.Set<PerspectiveRow<CatalogModel>>()
+    var byContainment = await _context!.Set<PerspectiveRow<CatalogModel>>()
       .Where(r => r.Data.TenantId == tenant)
       .Select(r => r.Id)
       .ToListAsync(cancellationToken);
 
-    var byContainment = await _context.Set<PerspectiveRow<CatalogModel>>()
-      .Where(r => r.Data.TenantId == tenant)
-      .Select(r => r.Id)
-      .ToListAsync(cancellationToken);
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    var byExtraction = await _idsWhereAsync(
+      db, "data ->> 'TenantId' = @p", tenant.ToString(), cancellationToken);
 
-    await Assert.That(byEquality).Count().IsEqualTo(1);
-    await Assert.That(byContainment).IsEquivalentTo(byEquality);
+    await Assert.That(byContainment).Count().IsEqualTo(1);
+    await Assert.That(byContainment).IsEquivalentTo(byExtraction);
   }
 
   /// <summary>
@@ -804,6 +810,25 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       .Because($"built from the stored key, not the property name. SQL was:\n{scopeSql}");
     await Assert.That(metadataSql).Contains("@>", StringComparison.Ordinal)
       .Because($"same routing for metadata. SQL was:\n{metadataSql}");
+  }
+
+  /// <summary>The ids a raw predicate selects, which is how the extraction form is named.</summary>
+  /// <param name="db">An open connection.</param>
+  /// <param name="whereSql">The predicate, using <c>@p</c> for its bound value.</param>
+  /// <param name="parameter">The bound value.</param>
+  /// <param name="cancellationToken">The token.</param>
+  private static async Task<List<Guid>> _idsWhereAsync(
+      NpgsqlConnection db, string whereSql, string parameter, CancellationToken cancellationToken) {
+    await using var command = new NpgsqlCommand($"SELECT id FROM {TABLE} WHERE {whereSql}", db);
+    command.Parameters.AddWithValue("p", parameter);
+
+    var ids = new List<Guid>();
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      ids.Add(reader.GetGuid(0));
+    }
+
+    return ids;
   }
 
   private static async Task<string> _explainAsync(NpgsqlConnection db, string sql, string parameter) {
