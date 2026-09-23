@@ -4112,13 +4112,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT {functionName}(@p_stream_ids)";
-    var p = cmd.CreateParameter();
-    p.ParameterName = P_STREAM_IDS;
-    p.Value = streamIds.ToArray();
-    if (p is Npgsql.NpgsqlParameter np) {
-      np.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid;
-    }
-    cmd.Parameters.Add(p);
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = streamIds.ToArray(),
+    });
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
     return result is int evicted ? evicted : 0;
   }

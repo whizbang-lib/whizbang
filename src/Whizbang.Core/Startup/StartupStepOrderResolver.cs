@@ -41,6 +41,7 @@ public static class StartupStepOrderResolver {
   /// Two steps share a name; a dependency names no registered step; an enabled step depends on a
   /// disabled one; or the dependencies form a cycle.
   /// </exception>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3267:Loops should be simplified with LINQ", Justification = "The condition is the work: TryAdd inserts and reports the duplicate in one call. Moving it into a Where clause would hide that the collection is being built, and the loop would read as a filter over something already assembled.")]
   public static IReadOnlyList<StartupStepDescriptor> Resolve(
       IReadOnlyCollection<StartupStepDescriptor> steps) {
     ArgumentNullException.ThrowIfNull(steps);
@@ -61,7 +62,7 @@ public static class StartupStepOrderResolver {
     ordered.Sort(StringComparer.Ordinal);
 
     var result = new List<StartupStepDescriptor>(byName.Count);
-    var state = new Dictionary<string, _visitState>(byName.Count, StringComparer.Ordinal);
+    var state = new Dictionary<string, VisitState>(byName.Count, StringComparer.Ordinal);
     var path = new List<string>();
 
     foreach (var name in ordered) {
@@ -71,17 +72,17 @@ public static class StartupStepOrderResolver {
     return result;
   }
 
-  private enum _visitState { InProgress, Done }
+  private enum VisitState { InProgress, Done }
 
   private static void _visit(
       string name,
       Dictionary<string, StartupStepDescriptor> byName,
-      Dictionary<string, _visitState> state,
+      Dictionary<string, VisitState> state,
       List<string> path,
       List<StartupStepDescriptor> result) {
 
     if (state.TryGetValue(name, out var seen)) {
-      if (seen == _visitState.InProgress) {
+      if (seen == VisitState.InProgress) {
         var cycle = string.Join(" → ", path) + " → " + name;
         throw new StartupPipelineConfigurationException(
           $"Startup steps form a dependency cycle: {cycle}. No order satisfies it.");
@@ -94,11 +95,11 @@ public static class StartupStepOrderResolver {
     // A disabled step contributes nothing to the order, and nothing may depend on it — that is
     // checked at the dependent, where the error can name both sides.
     if (!step.Enabled) {
-      state[name] = _visitState.Done;
+      state[name] = VisitState.Done;
       return;
     }
 
-    state[name] = _visitState.InProgress;
+    state[name] = VisitState.InProgress;
     path.Add(name);
 
     // Dependencies are visited in name order for the same reason the roots are: so the resolved
@@ -125,7 +126,7 @@ public static class StartupStepOrderResolver {
     }
 
     path.RemoveAt(path.Count - 1);
-    state[name] = _visitState.Done;
+    state[name] = VisitState.Done;
     result.Add(step);
   }
 }

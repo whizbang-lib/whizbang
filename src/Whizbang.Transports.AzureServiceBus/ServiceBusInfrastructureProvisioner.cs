@@ -210,17 +210,19 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
   private async Task _checkOwnershipDriftAsync(
       string topicName, string ownSubscriptionName, CancellationToken cancellationToken) {
     try {
-      await foreach (var existing in _adminClient.GetSubscriptionsAsync(topicName, cancellationToken)) {
-        if (string.Equals(existing.SubscriptionName, ownSubscriptionName, StringComparison.OrdinalIgnoreCase)) {
+      await foreach (var subscriptionName in _adminClient
+          .GetSubscriptionsAsync(topicName, cancellationToken)
+          .Select(existing => existing.SubscriptionName)) {
+        if (string.Equals(subscriptionName, ownSubscriptionName, StringComparison.OrdinalIgnoreCase)) {
           continue;
         }
         _logger.LogError(
           "Topology ownership drift: command inbox '{TopicName}' already carries a second service's subscription '{ForeignSubscription}' — one service owns a command namespace; a duplicate subscriber receives (and may double-handle) every command on it",
           topicName,
-          existing.SubscriptionName);
+          subscriptionName);
         _driftState?.Record(new TopologyDriftFinding(
           topicName,
-          existing.SubscriptionName,
+          subscriptionName,
           "second service's subscription observed on an owned command inbox during provisioning"));
       }
     } catch (RequestFailedException ex) {

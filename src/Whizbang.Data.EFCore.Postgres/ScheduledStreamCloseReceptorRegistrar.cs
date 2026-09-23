@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// present (schema-only / diagnostic hosts still boot).
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the logger for the receptor it constructs and hands it straight over, so the category names the type that actually writes the entries.")]
 internal sealed class ScheduledStreamCloseReceptorRegistrar(
     IServiceProvider services,
     IServiceScopeFactory scopeFactory,

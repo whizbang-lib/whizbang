@@ -280,10 +280,8 @@ public class PerspectiveScope {
     }
 
     var mergedPrincipals = new List<string>(AllowedPrincipals);
-    foreach (var p in other.AllowedPrincipals) {
-      if (!mergedPrincipals.Contains(p)) {
-        mergedPrincipals.Add(p);
-      }
+    foreach (var p in other.AllowedPrincipals.Where(p => !mergedPrincipals.Contains(p))) {
+      mergedPrincipals.Add(p);
     }
 
     return new PerspectiveScope {

@@ -139,9 +139,9 @@ public sealed class SlidingWindowBatcher<T> {
         }
       }
 
-      if (batch.Count > 0) {
-        yield return batch;
-      }
+      // The batch is never empty here: the drain above continues the outer loop when it reads
+      // nothing, and only the loop's own exits reach this point, none of which remove items.
+      yield return batch;
     }
   }
 }

@@ -193,6 +193,9 @@ public partial class PerspectiveWorker(
 
   private readonly IPerspectiveSnapshotStore _snapshotStore = snapshotStore;
   private readonly PerspectiveRewindOptions _rewindOptions = rewindOptions.Value;
+  // A second logger, deliberately on its own category so an operator can turn the startup scan's
+  // chatter up or down without touching the worker's own level.
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S6669:Logger fields should be named \"logger\"", Justification = "The name distinguishes this logger from the worker's own _logger; the rule assumes one logger per type.")]
   private readonly ILogger _startupScanLog = scopeFactory.CreateScope().ServiceProvider
     .GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Workers.PerspectiveStartupScan")
     ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
@@ -3537,10 +3540,10 @@ public partial class PerspectiveWorker(
     var needsRewind = cursorStatus.HasFlag(PerspectiveProcessingStatus.RewindRequired);
     var rewindTriggerEventId = checkpoint?.RewindTriggerEventId;
 
-    if (needsRewind && rewindTriggerEventId.HasValue) {
+    if (needsRewind && checkpoint is not null && rewindTriggerEventId.HasValue) {
       var eventsBehind = group.Count();
       LogRewindRequired(_logger, streamCtx.PerspectiveName, streamCtx.StreamId,
-        checkpoint?.LastEventId ?? Guid.Empty, rewindTriggerEventId.Value, eventsBehind);
+        checkpoint.LastEventId ?? Guid.Empty, rewindTriggerEventId.Value, eventsBehind);
       _metrics?.RewindEventsBehind.Record(eventsBehind,
         new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, streamCtx.PerspectiveName));
 

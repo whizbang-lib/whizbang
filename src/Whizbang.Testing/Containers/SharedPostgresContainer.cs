@@ -404,6 +404,7 @@ public static class SharedPostgresContainer {
     using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, retryTimeout.Token);
 
     Exception? lastException = null;
+    var lastError = "none recorded";
     for (var attempt = 1; attempt <= 15; attempt++) {
       try {
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -414,6 +415,7 @@ public static class SharedPostgresContainer {
         throw; // Propagate if main token canceled
       } catch (Exception ex) {
         lastException = ex;
+        lastError = ex.Message;
         Console.WriteLine($"[SharedPostgresContainer] Connection attempt {attempt} failed: {ex.Message}");
       }
 
@@ -423,7 +425,7 @@ public static class SharedPostgresContainer {
     }
 
     throw new InvalidOperationException(
-      $"Could not verify connection to PostgreSQL container after 15 attempts. Last error: {lastException?.Message}",
+      $"Could not verify connection to PostgreSQL container after 15 attempts. Last error: {lastError}",
       lastException);
   }
 

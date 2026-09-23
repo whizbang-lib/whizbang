@@ -34,6 +34,7 @@ public sealed class VersionedJsonSerializerRegistry : IVersionedJsonSerializerRe
   /// <summary>Builds the registry from the registered serializers.</summary>
   /// <param name="serializers">All registered versioned serializers (at least one).</param>
   /// <exception cref="ArgumentException">When no serializers are supplied, or two share a version.</exception>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3267:Loops should be simplified with LINQ", Justification = "The condition is the work: TryAdd inserts and reports the duplicate in one call. Moving it into a Where clause would hide that the dictionary is being built, and the loop would read as a filter over something already assembled.")]
   public VersionedJsonSerializerRegistry(IEnumerable<IVersionedJsonSerializer> serializers) {
     ArgumentNullException.ThrowIfNull(serializers);
 

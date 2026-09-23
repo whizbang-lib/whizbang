@@ -45,15 +45,15 @@ public static class TagPolicyValidator {
   }
 
   private static void _validateReservedPrefix(IReadOnlyList<MessageTagRegistration> all) {
-    foreach (var registration in all) {
-      if (registration.Tag.StartsWith(SystemTags.RESERVED_PREFIX, StringComparison.Ordinal)
-          && !SystemTags.IsFrameworkTag(registration.Tag)) {
-        throw new TagPolicyConfigurationException(
-          $"Message type '{TypeNameFormatter.DisplayName(registration.MessageType)}' declares tag '{registration.Tag}', which mints a new "
-          + $"tag under the reserved '{SystemTags.RESERVED_PREFIX}' prefix. That namespace belongs to framework tags "
-          + "(see SystemTags) so framework and application vocabularies can never collide — rename the tag (for "
-          + "example, drop the prefix), or use an existing SystemTags value to opt into that framework policy.");
-      }
+    var offender = all.FirstOrDefault(r =>
+      r.Tag.StartsWith(SystemTags.RESERVED_PREFIX, StringComparison.Ordinal)
+      && !SystemTags.IsFrameworkTag(r.Tag));
+    if (offender is not null) {
+      throw new TagPolicyConfigurationException(
+        $"Message type '{TypeNameFormatter.DisplayName(offender.MessageType)}' declares tag '{offender.Tag}', which mints a new "
+        + $"tag under the reserved '{SystemTags.RESERVED_PREFIX}' prefix. That namespace belongs to framework tags "
+        + "(see SystemTags) so framework and application vocabularies can never collide — rename the tag (for "
+        + "example, drop the prefix), or use an existing SystemTags value to opt into that framework policy.");
     }
   }
 
