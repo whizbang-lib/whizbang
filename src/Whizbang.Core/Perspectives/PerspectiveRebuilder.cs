@@ -49,6 +49,7 @@ public sealed partial class PerspectiveRebuilder(
     return Task.FromResult(status);
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The rebuild separates state-based models from event-sourced ones, because a state-based model is repopulated by its guard rather than replayed, and then replays the rest stream by stream with per-stream failure containment.")]
   private async Task<RebuildResult> _rebuildCoreAsync(
       string perspectiveName, RebuildMode mode, List<Guid>? streamIds, CancellationToken ct) {
 
@@ -239,6 +240,7 @@ public sealed partial class PerspectiveRebuilder(
     await coordinator.ReconcileFollowerPresenceAsync(followerTable, announcerTables, ct).ConfigureAwait(false);
   }
 
+  [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Replays one stream inside a rebuild that is already in progress: the runner and stream to replay, the completion seam and its pending batch, and the running totals the caller keeps across streams. The totals are the caller's loop state, threaded through rather than held in a field the rebuild would share.")]
   private async Task<(int StreamsProcessed, int EventsReplayed)> _replayStreamAsync(
       IPerspectiveRunner runner,
       string perspectiveName,

@@ -104,7 +104,7 @@ public sealed class SyncEventTracker : ISyncEventTracker {
         .Where(id => _trackedEvents.Keys.Any(k => k.EventId == id))
         .ToList();
 
-    return _waitForCompletionAsync(
+    return WaitForCompletionAsync(
         _eventWaiters,
         pendingKeys,
         key => _trackedEvents.Keys.Any(k => k.EventId == key),
@@ -156,7 +156,7 @@ public sealed class SyncEventTracker : ISyncEventTracker {
         .Select(id => (id, perspectiveName))
         .ToList();
 
-    return _waitForCompletionAsync(
+    return WaitForCompletionAsync(
         _perspectiveWaiters,
         pendingKeys,
         key => _trackedEvents.ContainsKey(key),
@@ -180,7 +180,7 @@ public sealed class SyncEventTracker : ISyncEventTracker {
         .Where(id => _trackedEvents.Keys.Any(k => k.EventId == id))
         .ToList();
 
-    return _waitForCompletionAsync(
+    return WaitForCompletionAsync(
         _allPerspectivesWaiters,
         pendingKeys,
         key => _trackedEvents.Keys.Any(k => k.EventId == key),
@@ -200,7 +200,11 @@ public sealed class SyncEventTracker : ISyncEventTracker {
   /// Shared helper that registers TCS entries keyed by awaiter ID, waits for completion,
   /// and cleans up on cancellation/timeout.
   /// </summary>
-  private async Task<bool> _waitForCompletionAsync<TKey>(
+  /// <remarks>
+  /// Internal rather than private so the post-registration re-check can be driven with a predicate
+  /// that changes its answer between the two calls, which is the race it exists for.
+  /// </remarks>
+  internal async Task<bool> WaitForCompletionAsync<TKey>(
       ConcurrentDictionary<TKey, ConcurrentDictionary<Guid, TaskCompletionSource<bool>>> waiters,
       IReadOnlyList<TKey> pendingKeys,
       Func<TKey, bool> isPending,

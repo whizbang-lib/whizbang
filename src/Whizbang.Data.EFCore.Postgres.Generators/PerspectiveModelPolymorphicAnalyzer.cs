@@ -220,15 +220,16 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>
-  /// Gets the element type if the type is a collection (List, IEnumerable, array, etc.).
+  /// Gets the element type if the type is a generic collection (List, IEnumerable, ImmutableArray, ...).
   /// Returns null if not a collection.
   /// </summary>
+  /// <remarks>
+  /// Array-typed properties never arrive here: the caller drops any property whose type is not an
+  /// <see cref="INamedTypeSymbol"/>, and a Roslyn array type is an <c>IArrayTypeSymbol</c>, which is
+  /// never an <c>INamedTypeSymbol</c>. An array of a polymorphic type is therefore not reported today;
+  /// widening that is a behavior change for WHIZ811, not an element-type lookup.
+  /// </remarks>
   private static INamedTypeSymbol? _getCollectionElementType(INamedTypeSymbol type) {
-    // Check for array
-    if (type is IArrayTypeSymbol arrayType) {
-      return arrayType.ElementType as INamedTypeSymbol;
-    }
-
     // Check for generic collection types
     if (!type.IsGenericType || type.TypeArguments.Length == 0) {
       return null;
@@ -251,11 +252,11 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
     return null;
   }
 
+  /// <summary>True for the handful of System types that never hold anything worth walking into.</summary>
+  /// <remarks>A type with no containing namespace is not in System either, so it answers false
+  /// through the same comparison instead of needing a guard on a line of its own.</remarks>
   private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
     var ns = type.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : null;
-    if (ns == null) {
-      return false;
-    }
 
     // Skip common system types that definitely won't contain polymorphic properties
     if (ns == "System") {

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -30,6 +31,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     ILogger<IntegrityCheckpointReceptor> logger) : IReceptor<IntegrityCheckpoint> {
 
   /// <inheritdoc />
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A checkpoint is actionable only when every collaborator is wired, it did not come from this service, and the store can measure counts. After that each pending bucket is recounted, confirmed or left alone, under a report cap and an optional auto-repair. The branches are the preconditions and the per-bucket verdicts.")]
   public async ValueTask HandleAsync(IntegrityCheckpoint message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
     await using var scope = scopeFactory.CreateAsyncScope();
@@ -340,6 +342,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     Message = "CONFIRMED integrity gap: {EventType} (tenant {TenantScope}) from origin '{OriginServiceName}' " +
               "window ({FromCommitSequence}, {ToCommitSequence}] — expected {ExpectedCount}, have {ActualCount} " +
               "(autoRepair={AutoRepairRequested})")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source-generated method: the parameter list mirrors the structured log template's placeholders and cannot be grouped without losing structured-logging semantics.")]
   static partial void LogGapConfirmed(ILogger logger, string eventType, string? tenantScope, string originServiceName,
     long fromCommitSequence, long toCommitSequence, int expectedCount, int actualCount, bool autoRepairRequested);
 
@@ -377,7 +380,7 @@ public sealed partial class IntegrityCheckpointReceptor(
   static partial void LogRepairSkipped(ILogger logger, string originServiceName,
     bool transportMissing, bool serializerMissing, bool requesterMissing, bool topicMissing);
 
-  [LoggerMessage(EventId = 58, Level = LogLevel.Information,
+  [LoggerMessage(EventId = 64, Level = LogLevel.Information,
     Message = "Repair request to '{OriginServiceName}' withheld ({EventType}) — no origin-carried " +
               "request address yet; the origin's next checkpoint teaches it")]
   static partial void LogRepairSkippedNoOriginTopic(ILogger logger, string originServiceName, string eventType);

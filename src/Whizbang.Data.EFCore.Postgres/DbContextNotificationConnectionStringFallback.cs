@@ -56,20 +56,22 @@ public sealed class DbContextNotificationConnectionStringFallback
       return _cached;
     }
     lock (_gate) {
-      if (_resolved) {
-        return _cached;
+      // One return for both arms of the double-check: a second caller that queued on the gate while
+      // the first resolved reads the same field, and giving that arm its own `return _cached` only
+      // produced a line no single-threaded test can reach.
+      if (!_resolved) {
+        using var scope = _serviceProvider.CreateScope();
+        var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
+        try {
+          _cached = _resolveCredentialBearingConnectionString(dbContext);
+        } catch (InvalidOperationException) {
+          // Non-relational provider (e.g., InMemory) — GetConnectionString throws. Treat as
+          // "no fallback available" so the listener/stamper falls back to disabled rather than
+          // crashing the host.
+          _cached = null;
+        }
+        _resolved = true;
       }
-      using var scope = _serviceProvider.CreateScope();
-      var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
-      try {
-        _cached = _resolveCredentialBearingConnectionString(dbContext);
-      } catch (InvalidOperationException) {
-        // Non-relational provider (e.g., InMemory) — GetConnectionString throws. Treat as
-        // "no fallback available" so the listener/stamper falls back to disabled rather than
-        // crashing the host.
-        _cached = null;
-      }
-      _resolved = true;
       return _cached;
     }
   }
@@ -86,18 +88,18 @@ public sealed class DbContextNotificationConnectionStringFallback
       return _cachedSearchPath;
     }
     lock (_gate) {
-      if (_searchPathResolved) {
-        return _cachedSearchPath;
+      // One return for both arms of the double-check — see GetConnectionString.
+      if (!_searchPathResolved) {
+        using var scope = _serviceProvider.CreateScope();
+        var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
+        try {
+          _cachedSearchPath = dbContext.Model.GetDefaultSchema();
+        } catch (InvalidOperationException) {
+          // Non-relational provider — treat as "no schema known".
+          _cachedSearchPath = null;
+        }
+        _searchPathResolved = true;
       }
-      using var scope = _serviceProvider.CreateScope();
-      var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
-      try {
-        _cachedSearchPath = dbContext.Model.GetDefaultSchema();
-      } catch (InvalidOperationException) {
-        // Non-relational provider — treat as "no schema known".
-        _cachedSearchPath = null;
-      }
-      _searchPathResolved = true;
       return _cachedSearchPath;
     }
   }

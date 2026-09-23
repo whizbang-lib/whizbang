@@ -61,9 +61,8 @@ public class ReceptorInvokerTests {
   /// Tracks which receptors were invoked and at which stages.
   /// </summary>
   private sealed class InvocationTracker {
-    private readonly List<(string ReceptorId, LifecycleStage Stage)> _invocations = [];
-    public List<(string ReceptorId, LifecycleStage Stage)> Invocations => _invocations;
-    public void RecordInvocation(string receptorId, LifecycleStage stage) => _invocations.Add((receptorId, stage));
+    public List<(string ReceptorId, LifecycleStage Stage)> Invocations { get; } = [];
+    public void RecordInvocation(string receptorId, LifecycleStage stage) => Invocations.Add((receptorId, stage));
   }
 
   /// <summary>
@@ -410,13 +409,12 @@ public class ReceptorInvokerTests {
   /// Tracks which messages were cascaded (for testing purposes).
   /// </summary>
   private sealed class CascadeTracker : IEventCascader {
-    private readonly List<IMessage> _cascadedMessages = [];
-    public List<IMessage> CascadedMessages => _cascadedMessages;
+    public List<IMessage> CascadedMessages { get; } = [];
 
     public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchModes? receptorDefault = null, CancellationToken cancellationToken = default) {
       // Extract messages from result (using same logic as DispatcherEventCascader)
       foreach (var (message, _) in MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
-        _cascadedMessages.Add(message);
+        CascadedMessages.Add(message);
       }
       return Task.CompletedTask;
     }
@@ -1723,11 +1721,9 @@ public class ReceptorInvokerTests {
     // Arrange
     var invoker = new NullReceptorInvoker();
     var envelope = _wrapInEnvelope(new TestMessage("null-test"));
-
-    // Act - should not throw and complete successfully
-    var completed = false;
     await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
-    completed = true;
+    // Act - should not throw and complete successfully
+    var completed = true;
 
     // Assert - completed without throwing
     await Assert.That(completed).IsTrue();

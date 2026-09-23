@@ -89,8 +89,8 @@ public class IntegrityAuditWorkerTests {
       .Because("directed or not at all — an origin that never announced a request address is " +
                "SKIPPED, not broadcast to: the legacy own-topic fallback fanned requests out to " +
                "every service on the shared topic (and back to the requester itself).");
-    var toA = transport.Published.Single(p => p.Envelope.Target == "origin-a");
-    await Assert.That(toA.Destination.Address).IsEqualTo("origin-a.requests")
+    var (_, Destination, _) = transport.Published.Single(p => p.Envelope.Target == "origin-a");
+    await Assert.That(Destination.Address).IsEqualTo("origin-a.requests")
       .Because("a DIRECTED request must publish to the ORIGIN-carried address — a topic the " +
                "origin actually consumes; publishing to the requester's own destination sent " +
                "requests where no origin listens (observed live: six requests, zero receipts).");

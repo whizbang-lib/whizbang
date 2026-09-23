@@ -117,6 +117,26 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
     await FlushAndStopAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
+  /// <summary>
+  /// Test seam: runs one idle-sweep pass synchronously and awaits it. Production relies on the
+  /// periodic timer, whose callback is fire-and-forget — so the only way to observe what a sweep
+  /// did (or refused to do after shutdown) is to drive one directly. Mirrors
+  /// <see cref="SlidingWindowOutboxBatchStrategy.RunIdleSweepNowForTestAsync"/>.
+  /// </summary>
+  internal Task RunIdleSweepNowForTestAsync() => _runIdleSweepAsync();
+
+  /// <summary>
+  /// Test seam: the drain workers of every mapped stream buffer.
+  /// </summary>
+  /// <remarks>
+  /// How a worker's loop ENDED is invisible from outside: a shutdown absorbed by the loop's own
+  /// catch and one that escapes it both stop draining, and <see cref="FlushAndStopAsync"/> folds a
+  /// faulted worker into the same catch it uses for a caller-canceled shutdown, so it swallows the
+  /// difference in production too. The task's final state is the only evidence, and a worker that
+  /// faults instead of returning is an unobserved exception nobody ever sees.
+  /// </remarks>
+  internal Task WhenWorkersStoppedForTests() => Task.WhenAll(_streams.Values.Select(b => b.Worker));
+
   private StreamBuffer _createStreamBuffer(Guid key) {
     var channel = Channel.CreateBounded<InboxMessage>(new BoundedChannelOptions(_options.MaxSize * 4) {
       SingleReader = true,

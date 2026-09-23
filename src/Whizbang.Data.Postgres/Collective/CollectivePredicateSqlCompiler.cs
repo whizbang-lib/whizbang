@@ -197,6 +197,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   };
 
   // <values>.Contains(row.Data.X) → row.data->>'X' IN (@p0, @p1, …).
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Contains arrives in three shapes (the two-argument and three-argument static forms and the instance form) and only the three-argument form with a null comparer is translatable. The shapes are the overload set.")]
   private static void _compileContains(
       MethodCallExpression mc, Ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
       List<ReferencedJsonPath> refs) {
@@ -391,11 +392,13 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
 
   private static object? _readMember(MemberExpression m) {
     var instance = m.Expression is null ? null : _evaluateValue(m.Expression);
-    return m.Member switch {
-      FieldInfo f => f.GetValue(instance),
-      PropertyInfo p => p.GetValue(instance),
-      _ => throw new NotSupportedException(
-        $"Unsupported member '{m.Member.Name}' in collective scope-filter value."),
-    };
+    if (m.Member is FieldInfo f) {
+      return f.GetValue(instance);
+    }
+    // Not a field, so it is a property: the expression factory validates that a member access is
+    // built over a FieldInfo or a PropertyInfo and rejects anything else, so the cast cannot fail.
+    // Writing it as a cast rather than a third switch arm keeps the compiler from demanding a
+    // fallback arm no caller can reach.
+    return ((PropertyInfo)m.Member).GetValue(instance);
   }
 }

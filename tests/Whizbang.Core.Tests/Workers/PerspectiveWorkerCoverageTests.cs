@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
@@ -2101,6 +2103,361 @@ public class PerspectiveWorkerCoverageTests {
     await Assert.That(cooled.Count).IsEqualTo(1)
       .Because("the sibling perspective's raw row must be skipped entirely, not consulted");
     await Assert.That(fresh.Count).IsEqualTo(0);
+  }
+
+  #endregion
+
+  #region Defensive and shutdown paths
+
+  /// <summary>
+  /// Builds a worker wired to the harness, with every collaborator overridable. Mirrors the
+  /// construction the tests above repeat, so the new tests differ only in the collaborator that
+  /// matters to them.
+  /// </summary>
+  private static PerspectiveWorker _buildWorker(
+      PerspectiveWorkerTestHarness harness,
+      IServiceProvider serviceProvider,
+      IServiceInstanceProvider instanceProvider,
+      IPerspectiveCompletionStrategy? completionStrategy = null,
+      IProcessedEventCacheObserver? processedEventCacheObserver = null,
+      ILogger<PerspectiveWorker>? logger = null,
+      PerspectiveStreamAffinityOptions? streamAffinityOptions = null,
+      IPerspectiveStreamLocker? streamLocker = null) {
+    var options = new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 };
+    return new PerspectiveWorker(
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: completionStrategy
+        ?? new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: NullEventTypeProvider.Instance,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: logger ?? NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: streamLocker ?? NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(streamAffinityOptions ?? new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: processedEventCacheObserver ?? NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: harness.LeaseRenewalCapture,
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor(options));
+  }
+
+  private static ServiceProvider _buildServiceProvider(
+      IWorkCoordinator coordinator, IServiceInstanceProvider instanceProvider) {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton(coordinator);
+    services.AddSingleton(instanceProvider);
+    services.AddLogging();
+    return services.BuildServiceProvider();
+  }
+
+  // A failure the batch buffered has to reach the failure channel, because that channel is the ONLY
+  // route by which a perspective failure becomes a durable row the recovery path can see. If the
+  // enqueue dropped a field the row is written wrong: the wrong message id makes the failure
+  // unattributable, and a missing error string leaves an operator a failed row with no reason on it.
+  [Test]
+  public async Task ProcessChannelBatch_BufferedFailures_ReachTheFailureChannelWithTheirDetailAsync() {
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var serviceProvider = _buildServiceProvider(coordinator, instanceProvider);
+    var strategy = new BatchedCompletionStrategy();
+    var harness = new PerspectiveWorkerTestHarness();
+    var worker = _buildWorker(harness, serviceProvider, instanceProvider, completionStrategy: strategy);
+
+    var failedEventId = Guid.CreateVersion7();
+    await strategy.ReportFailureAsync(
+      new PerspectiveCursorFailure {
+        StreamId = Guid.NewGuid(),
+        PerspectiveName = "Test.FailingPerspective",
+        LastEventId = failedEventId,
+        Status = PerspectiveProcessingStatus.Failed,
+        Error = "runner refused the event"
+      },
+      coordinator,
+      CancellationToken.None);
+
+    // An empty batch still flushes what the previous one buffered — that is the whole point of the
+    // idle flush, and it is the path a low-traffic service takes.
+    await worker.ProcessChannelBatchAsync([], CancellationToken.None);
+
+    await Assert.That(harness.FailureCapture.Items.Count).IsEqualTo(1)
+      .Because("a buffered failure that never reaches the channel is a failure nothing records; "
+        + "the recovery path only sees what the channel wrote");
+    harness.FailureCapture.Items.TryPeek(out var enqueued);
+    await Assert.That(enqueued.category).IsEqualTo(WorkCategory.PerspectiveEvent)
+      .Because("the category picks the table the failure row lands in");
+    await Assert.That(enqueued.failure.MessageId).IsEqualTo(failedEventId)
+      .Because("the failed event's id is what attributes the row; anything else makes it unattributable");
+    await Assert.That(enqueued.failure.Error).IsEqualTo("runner refused the event")
+      .Because("the error text is the only thing that tells an operator why the event failed");
+    await Assert.That(enqueued.failure.Reason).IsEqualTo(MessageFailureReason.Unknown)
+      .Because("a perspective failure carries no classified reason, and claiming one would route it "
+        + "down a recovery path chosen for a different cause");
+    await Assert.That(enqueued.failure.CompletedStatus).IsEqualTo(MessageProcessingStatus.None)
+      .Because("the row did not complete, so recording any completed status would mark failed work done");
+  }
+
+  // Admission and marking are one atomic step precisely so a redelivery arriving inside the
+  // claim-to-apply span cannot be admitted a second time. Two items carrying the same work id in a
+  // single batch is that redelivery in its simplest form: the second must be deduped, or the same
+  // event applies twice to the same perspective.
+  [Test]
+  public async Task ProcessChannelBatch_SameWorkIdTwiceInOneBatch_AdmitsOnceAndReportsTheOtherDedupedAsync() {
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var serviceProvider = _buildServiceProvider(coordinator, instanceProvider);
+    var observer = new RecordingProcessedEventCacheObserver();
+    var harness = new PerspectiveWorkerTestHarness();
+    var worker = _buildWorker(harness, serviceProvider, instanceProvider, processedEventCacheObserver: observer);
+
+    var streamId = Guid.NewGuid();
+    var workId = Guid.CreateVersion7();
+    var redelivered = new PerspectiveWork {
+      WorkId = workId,
+      StreamId = streamId,
+      PerspectiveName = "Test.DedupPerspective",
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    };
+
+    await worker.ProcessChannelBatchAsync([redelivered, redelivered with { }], CancellationToken.None);
+
+    await Assert.That(observer.Deduped.Count).IsEqualTo(1)
+      .Because("exactly one of the two copies must be turned away; reporting neither means both were "
+        + "admitted and the event applies twice");
+    await Assert.That(observer.Deduped[0].EventIds).IsEquivalentTo([workId])
+      .Because("the deduped report names the work id that lost the test-and-set, which is what a "
+        + "duplicate-suppression audit is read from");
+    await Assert.That(observer.Deduped[0].StreamId).IsEqualTo(streamId)
+      .Because("the report is grouped by stream and perspective so an operator can see which stream "
+        + "redelivered");
+  }
+
+  // The gate dictionary is swept from every applier that releases, so several can find the interval
+  // elapsed at once. The compare-and-swap is what makes exactly one of them sweep. A loser that
+  // swept anyway would dispose gate entries a concurrent applier is about to acquire, and two
+  // appliers on one stream is the exact invariant the gate exists to hold.
+  [Test]
+  public async Task SweepStreamAffinityGatesIfRaceWon_LosesTheCompareAndSwap_DisposesNothingAsync() {
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var serviceProvider = _buildServiceProvider(coordinator, instanceProvider);
+    var harness = new PerspectiveWorkerTestHarness();
+    var worker = _buildWorker(harness, serviceProvider, instanceProvider);
+
+    // Act — a prior-sweep value the worker never held, so the compare-and-swap cannot match.
+    // Nothing to assert about gates here beyond the sweep being skipped: the loser must return
+    // before it reads the gate dictionary at all.
+    worker.SweepStreamAffinityGatesIfRaceWon(DateTimeOffset.UtcNow.Ticks, prevSweepTicks: -1);
+
+    // A subsequent real batch must still be able to acquire a gate for its stream, which it cannot
+    // do if the losing caller had torn entries down or corrupted the sweep timestamp.
+    var completed = worker.ProcessChannelBatchAsync([
+      new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = Guid.NewGuid(),
+        PerspectiveName = "Test.AfterLostSweep",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ], CancellationToken.None);
+
+    await completed;
+
+    await Assert.That(completed.IsCompletedSuccessfully).IsTrue()
+      .Because("a caller that lost the sweep must leave the gate dictionary usable for the next batch");
+  }
+
+  // The cursor cache raises this only when it evicted something, so an empty pass cannot arrive
+  // through the subscription. The guard is what keeps such a pass from allocating a set and walking
+  // every live gate to match nothing — on a worker with thousands of resident (stream, perspective)
+  // gates that is a full scan per spurious notification.
+  [Test]
+  public async Task OnCursorCacheStreamsEvicted_EmptyList_LeavesTheGatesAloneAsync() {
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var serviceProvider = _buildServiceProvider(coordinator, instanceProvider);
+    var harness = new PerspectiveWorkerTestHarness();
+    var worker = _buildWorker(harness, serviceProvider, instanceProvider);
+    var streamId = Guid.NewGuid();
+
+    // Create a live gate for the stream by running a batch through it.
+    await worker.ProcessChannelBatchAsync([
+      new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = streamId,
+        PerspectiveName = "Test.EvictionPerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ], CancellationToken.None);
+
+    worker.OnCursorCacheStreamsEvicted([]);
+
+    // The gate survived: a second batch for the same stream still runs. A disposed gate would
+    // throw ObjectDisposedException out of the semaphore wait instead.
+    var afterEmptyEviction = worker.ProcessChannelBatchAsync([
+      new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = streamId,
+        PerspectiveName = "Test.EvictionPerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ], CancellationToken.None);
+
+    await afterEmptyEviction;
+
+    await Assert.That(afterEmptyEviction.IsCompletedSuccessfully).IsTrue()
+      .Because("an eviction pass carrying nothing must not disturb a gate the next batch needs");
+  }
+
+  // The only call site checks the batch first, so an empty batch cannot reach this through the
+  // worker loop. The guard still matters: a batch that processed no events has nothing to advance,
+  // and firing the stage anyway would register a when-all gate nothing will ever complete.
+  [Test]
+  public async Task FirePostLifecycleDetached_EmptyBatch_FiresNoStageAsync() {
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var serviceProvider = _buildServiceProvider(coordinator, instanceProvider);
+    var harness = new PerspectiveWorkerTestHarness();
+    var worker = _buildWorker(harness, serviceProvider, instanceProvider);
+    var invoker = new RecordingInvocationCountingInvoker();
+
+    await worker.FirePostLifecycleDetachedAsync(
+      new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>(),
+      lifecycleCoordinator: null,
+      invoker,
+      [],
+      serviceProvider,
+      CancellationToken.None);
+
+    await Assert.That(invoker.Invocations).IsEqualTo(0)
+      .Because("a batch that processed no events has no event to fire a post-lifecycle stage for; "
+        + "firing one anyway would advance the lifecycle of nothing and leave a gate open");
+  }
+
+  // The keepalive renews a lock the worker holds. Its only caller starts it after a lock was
+  // acquired, which an unconfigured locker never grants — but a keepalive that ran anyway would sit
+  // in a renewal loop calling a locker that does no locking, and every renewal would look like
+  // evidence the stream was held when it was not.
+  [Test]
+  public async Task StartLockKeepalive_LockerNotConfigured_ReturnsWithoutRenewingAsync() {
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var serviceProvider = _buildServiceProvider(coordinator, instanceProvider);
+    var harness = new PerspectiveWorkerTestHarness();
+    // The default locker reports IsConfigured false and throws on every call, so a keepalive that
+    // got past the guard would fault this task rather than merely do useless work.
+    var worker = _buildWorker(harness, serviceProvider, instanceProvider,
+      streamLocker: NullPerspectiveStreamLocker.Instance);
+
+    using var cts = new CancellationTokenSource();
+    var keepalive = worker.StartLockKeepaliveAsync(Guid.NewGuid(), "Test.KeepalivePerspective", cts.Token);
+
+    await keepalive;
+
+    await Assert.That(keepalive.IsCompletedSuccessfully).IsTrue()
+      .Because("with no locker configured there is nothing to keep alive, so the task has to finish "
+        + "immediately rather than park in a renewal loop calling a locker that refuses every call");
+  }
+
+  // A detached stage runs on a task nobody awaits, in its own scope, after the work scope is gone.
+  // Anything that throws BEFORE the receptor's own telemetry — a scope that cannot be built, a
+  // security context that will not establish — would otherwise fail completely silently. This log,
+  // written from a fresh scope, is the only evidence such a stage ever ran.
+  [Test]
+  public async Task FireDetachedStageStatic_InvokerThrows_RecordsTheFailureFromAFreshScopeAsync() {
+    var logger = new Whizbang.Core.Tests.Helpers.CapturingLogger<PerspectiveWorker>();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<ILogger<PerspectiveWorker>>(logger);
+    services.AddScoped<IReceptorInvoker>(_ => new ThrowingReceptorInvoker("receptor scope blew up"));
+    var serviceProvider = services.BuildServiceProvider();
+
+    var messageId = MessageId.New();
+    var envelope = new MessageEnvelope<IEvent> {
+      MessageId = messageId,
+      Payload = new TestCoverageEvent("detached"),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    await PerspectiveWorker.FireDetachedStageStaticAsync(
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      envelope,
+      LifecycleStage.PostLifecycleDetached,
+      new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.PostLifecycleDetached,
+        MessageSource = MessageSource.Local,
+        AttemptNumber = 1
+      });
+
+    var recorded = logger.Snapshot();
+    await Assert.That(recorded.Any(e => e.Exception?.Message == "receptor scope blew up")).IsTrue()
+      .Because("nothing awaits this task, so a failure it does not log is a stage that silently "
+        + "never ran — the one outcome the fresh-scope logger exists to prevent");
+    await Assert.That(recorded.Any(e =>
+      e.Message.Contains("PostLifecycleDetached", StringComparison.Ordinal)
+      && e.Message.Contains(messageId.Value.ToString(), StringComparison.Ordinal))).IsTrue()
+      .Because("the stage and the message id are what let an operator find which delivery lost its "
+        + "detached stage");
+  }
+
+  private sealed class RecordingProcessedEventCacheObserver : IProcessedEventCacheObserver {
+    private readonly List<(IReadOnlyList<Guid> EventIds, string PerspectiveName, Guid StreamId)> _deduped = [];
+
+    public IReadOnlyList<(IReadOnlyList<Guid> EventIds, string PerspectiveName, Guid StreamId)> Deduped {
+      get { lock (_deduped) { return [.. _deduped]; } }
+    }
+
+    public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) {
+      lock (_deduped) { _deduped.Add((dedupedEventIds, perspectiveName, streamId)); }
+    }
+
+    public void OnEventsMarkedInFlight(IReadOnlyList<Guid> eventIds) { }
+    public void OnRetentionActivated(int count) { }
+    public void OnEvicted(int count) { }
+    public void OnEventsRemoved(IReadOnlyList<Guid> eventIds) { }
+  }
+
+  private sealed class ThrowingReceptorInvoker(string message) : IReceptorInvoker {
+    public ValueTask InvokeAsync(
+        IMessageEnvelope envelope,
+        LifecycleStage stage,
+        ILifecycleContext? context = null,
+        CancellationToken cancellationToken = default)
+      => throw new InvalidOperationException(message);
+  }
+
+  private sealed class RecordingInvocationCountingInvoker : IReceptorInvoker {
+    private int _invocations;
+
+    public int Invocations => Volatile.Read(ref _invocations);
+
+    public ValueTask InvokeAsync(
+        IMessageEnvelope envelope,
+        LifecycleStage stage,
+        ILifecycleContext? context = null,
+        CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _invocations);
+      return ValueTask.CompletedTask;
+    }
   }
 
   #endregion

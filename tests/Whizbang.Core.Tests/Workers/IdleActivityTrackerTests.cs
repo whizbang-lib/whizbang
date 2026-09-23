@@ -6,8 +6,7 @@ using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Slice 4a of zero-idle-polling — locks the

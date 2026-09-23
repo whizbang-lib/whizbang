@@ -1414,8 +1414,8 @@ public class RewindScenarioTests {
       IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
       var arrived = _coordinator.Arrived;
       var filtered = _allEvents
-        .Where(e => arrived.Contains(e.MessageId.Value))
-        .Where(e => (afterEventId is null || _uuidV7Comparer.Compare(e.MessageId.Value, afterEventId.Value) > 0)
+        .Where(e => arrived.Contains(e.MessageId.Value)
+                 && (afterEventId is null || _uuidV7Comparer.Compare(e.MessageId.Value, afterEventId.Value) > 0)
                  && (upToEventId == Guid.Empty || _uuidV7Comparer.Compare(e.MessageId.Value, upToEventId) <= 0))
         .OrderBy(e => e.MessageId.Value, _uuidV7Comparer)
         .ToList();

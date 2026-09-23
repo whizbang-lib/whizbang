@@ -41,6 +41,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
 /// <tests>tests/Whizbang.Core.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
 public sealed partial class PgCommitOrderStamperWorker(
   IOptions<WhizbangNotificationOptions> notificationOptions,
   IOptions<CommitOrderStamperOptions> stamperOptions,
@@ -301,7 +302,7 @@ public sealed partial class PgCommitOrderStamperWorker(
 #pragma warning disable CS0618 // Honoring the Slice 1 knob for backward compat until the stamper backstop loop retires in a follow-up slice.
     var relaxed = options.NotifyHealthyPollingInterval;
 #pragma warning restore CS0618
-    if (relaxed.HasValue && relaxed.Value > options.PollingInterval) {
+    if (relaxed > options.PollingInterval) {
       return relaxed.Value;
     }
     return options.PollingInterval;
@@ -413,6 +414,6 @@ public sealed partial class PgCommitOrderStamperWorker(
     bool hasUsername,
     bool hasSecret);
 
-  [LoggerMessage(EventId = 7, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker stopped")]
+  [LoggerMessage(EventId = 14, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker stopped")]
   static partial void LogStopped(ILogger logger);
 }

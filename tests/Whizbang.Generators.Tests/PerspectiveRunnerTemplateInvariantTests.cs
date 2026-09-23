@@ -157,7 +157,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     var idx = 0;
     while ((idx = template.IndexOf("_applyCoordinator.AcquireAsync", idx, StringComparison.Ordinal)) >= 0) {
       acquisitions++;
-      idx += 1;
+      idx++;
     }
     await Assert.That(acquisitions).IsEqualTo(2)
       .Because("only the two public entry points acquire the apply lock; the shared core assumes it is held");

@@ -229,7 +229,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     var oversizedResult = results.Single(r => r.MessageId == oversized.MessageId.Value);
     await Assert.That(oversizedResult.Success).IsFalse();
     await Assert.That(oversizedResult.Error).IsNotNull();
-    await Assert.That(oversizedResult.Error!).Contains("exceeds maximum batch message size");
+    await Assert.That(oversizedResult.Error).Contains("exceeds maximum batch message size");
 
     await Assert.That(results.Single(r => r.MessageId == goodBefore.MessageId.Value).Success).IsTrue();
     await Assert.That(results.Single(r => r.MessageId == goodAfter.MessageId.Value).Success).IsTrue();

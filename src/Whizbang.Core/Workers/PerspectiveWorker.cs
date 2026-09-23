@@ -193,6 +193,9 @@ public partial class PerspectiveWorker(
 
   private readonly IPerspectiveSnapshotStore _snapshotStore = snapshotStore;
   private readonly PerspectiveRewindOptions _rewindOptions = rewindOptions.Value;
+  // A second logger, deliberately on its own category so an operator can turn the startup scan's
+  // chatter up or down without touching the worker's own level.
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S6669:Logger fields should be named \"logger\"", Justification = "The name distinguishes this logger from the worker's own _logger; the rule assumes one logger per type.")]
   private readonly ILogger _startupScanLog = scopeFactory.CreateScope().ServiceProvider
     .GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Workers.PerspectiveStartupScan")
     ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
@@ -588,6 +591,7 @@ public partial class PerspectiveWorker(
   /// each batch via <see cref="ProcessChannelBatchAsync"/>. Replaces the legacy SQL polling loop
   /// when channels are wired.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The consumer loop reads from two channels, coalesces each into its own batch under its own bound, decides whether the result is worth processing, and distinguishes shutdown, disposal and failure. The guarantee that PostLifecycle runs once per batch is what ties the two readers together.")]
   private async Task _runChannelConsumerLoopAsync(CancellationToken stoppingToken) {
     var workReader = _perspectiveChannelWriter.Reader;
     var drainReader = _perspectiveDrainChannel.Reader;
@@ -1083,6 +1087,7 @@ public partial class PerspectiveWorker(
   /// (batched fetch + RunWithEventsAsync) before per-event work is processed — same ordering
   /// as the legacy poll path.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One channel batch handles drain-mode stream ids and per-event work under one activity, and per group it resolves the runner, chooses between the normal, replay and rewind paths, tracks which events were newly applied, and separates cancellation from failure at two levels. The paths share the batch's activity, its completion bookkeeping and its ordering guarantee, which is what keeps them in one method.")]
   internal async Task ProcessChannelBatchAsync(
     List<PerspectiveWork> workItems, List<Guid> drainStreamIds, CancellationToken cancellationToken) {
 
@@ -1352,7 +1357,7 @@ public partial class PerspectiveWorker(
             }
             _metrics?.Errors.Add(1);
             if (upcomingEvents is { Count: > 0 }) {
-              var failedEventIds = upcomingEvents.Select(e => e.MessageId.Value).ToList();
+              var failedEventIds = upcomingEvents.ConvertAll(e => e.MessageId.Value);
               _syncEventTracker.MarkProcessedByPerspective(failedEventIds, perspectiveName);
             }
             var failure = new PerspectiveCursorFailure {
@@ -1390,7 +1395,7 @@ public partial class PerspectiveWorker(
       _pendingPostLifecycle = BackgroundStageDispatch.StartLongRunning(async () => {
         await using var bgScope = _scopeFactory.CreateAsyncScope();
         var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
-        await _firePostLifecycleDetached(
+        await FirePostLifecycleDetachedAsync(
           bgProcessedEvents, bgCoordinator, bgReceptorInvoker, bgGroupedWork,
           bgScope.ServiceProvider, bgCt, bgIsNew);
       }, cancellationToken);
@@ -1416,7 +1421,7 @@ public partial class PerspectiveWorker(
     if (Interlocked.CompareExchange(ref _cursorCacheEvictionSubscribed, 1, 0) != 0) {
       return;
     }
-    _cursorCache.OnStreamsEvicted += _onCursorCacheStreamsEvicted;
+    _cursorCache.OnStreamsEvicted += OnCursorCacheStreamsEvicted;
   }
 
   /// <summary>
@@ -1429,7 +1434,13 @@ public partial class PerspectiveWorker(
   /// re-stamped the cache's per-stream activity tick first, which would have disqualified
   /// the stream from this very eviction pass.
   /// </summary>
-  private void _onCursorCacheStreamsEvicted(IReadOnlyList<Guid> evictedStreams) {
+  /// <remarks>
+  /// Internal rather than private so the empty-list answer can be asserted: the cache raises this
+  /// only when it evicted something, so a pass carrying nothing cannot arrive through the
+  /// subscription — and the guard is what keeps such a pass from building a set and walking every
+  /// live gate to match nothing.
+  /// </remarks>
+  internal void OnCursorCacheStreamsEvicted(IReadOnlyList<Guid> evictedStreams) {
     if (evictedStreams.Count == 0) {
       return;
     }
@@ -1601,6 +1612,18 @@ public partial class PerspectiveWorker(
     if (nowTicks - prevSweepTicks < sweepIntervalTicks) {
       return;
     }
+    SweepStreamAffinityGatesIfRaceWon(nowTicks, prevSweepTicks);
+  }
+
+  /// <summary>
+  /// Performs the affinity-gate sweep only for the caller that wins the interval.
+  /// </summary>
+  /// <remarks>
+  /// Internal rather than private so the losing side can be driven with a stale expected value
+  /// instead of a real race between two releasers. A loser that swept anyway would dispose gates a
+  /// concurrent applier is about to acquire.
+  /// </remarks>
+  internal void SweepStreamAffinityGatesIfRaceWon(long nowTicks, long prevSweepTicks) {
     // Single CAS so only one releaser performs the sweep this cycle; all others observe the
     // updated timestamp and short-circuit on their next release.
     if (Interlocked.CompareExchange(ref _lastStreamAffinitySweepTicks, nowTicks, prevSweepTicks) != prevSweepTicks) {
@@ -1664,7 +1687,7 @@ public partial class PerspectiveWorker(
   /// Drain mode: processes perspective events for leased streams via batch-fetch + RunWithEventsAsync.
   /// Single SQL round-trip for all events, pre-deserialized, perspectives run with pre-fetched events.
   /// Full lifecycle chain: PrePerspective → RunWithEvents → PostPerspective → signal coordinator.
-  /// PostAllPerspectives + PostLifecycle fire via _firePostLifecycleDetached after this returns.
+  /// PostAllPerspectives + PostLifecycle fire via FirePostLifecycleDetachedAsync after this returns.
   /// </summary>
   /// <docs>fundamentals/perspectives/drain-mode</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.cs</tests>
@@ -2351,7 +2374,7 @@ public partial class PerspectiveWorker(
         await _completionStrategy.ReportCompletionAsync(result, groupWorkCoordinator, leaseCt);
 
         if (filteredEvents.Count > 0) {
-          var processedEventIds = filteredEvents.Select(e => e.MessageId.Value).ToList();
+          var processedEventIds = filteredEvents.ConvertAll(e => e.MessageId.Value);
           _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
         }
 
@@ -3066,6 +3089,7 @@ public partial class PerspectiveWorker(
   /// Phase 1: Resolves runner, event store, loads upcoming events, and extracts trace context
   /// for a single perspective group. Returns null runner if resolution fails (caller should skip).
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Resolves one perspective group's dependencies inside a scope the caller owns. The scope, the coordinator and the invoker come from the caller's lifetime and cannot be re-resolved here; the rest names the group and the trace parent its work belongs under.")]
   private async Task<(PerspectiveCursorInfo? Checkpoint, IPerspectiveRunner? Runner, IEventStore? EventStore,
                        List<MessageEnvelope<IEvent>>? UpcomingEvents, ActivityContext PerspectiveParentContext)>
     _resolveDependenciesAndLoadEventsAsync(
@@ -3501,7 +3525,7 @@ public partial class PerspectiveWorker(
                 AttemptNumber = 1
               };
               // Detached: fire-and-forget with own DI scope
-              _fireDetachedStageAsync(envelope, LifecycleStage.PrePerspectiveDetached, context, cancellationToken);
+              _fireDetachedStage(envelope, LifecycleStage.PrePerspectiveDetached, context, cancellationToken);
               // Inline: blocks pipeline
               await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PrePerspectiveInline,
                 context with { CurrentStage = LifecycleStage.PrePerspectiveInline }, cancellationToken);
@@ -3537,10 +3561,10 @@ public partial class PerspectiveWorker(
     var needsRewind = cursorStatus.HasFlag(PerspectiveProcessingStatus.RewindRequired);
     var rewindTriggerEventId = checkpoint?.RewindTriggerEventId;
 
-    if (needsRewind && rewindTriggerEventId.HasValue) {
+    if (needsRewind && checkpoint is not null && rewindTriggerEventId.HasValue) {
       var eventsBehind = group.Count();
       LogRewindRequired(_logger, streamCtx.PerspectiveName, streamCtx.StreamId,
-        checkpoint?.LastEventId ?? Guid.Empty, rewindTriggerEventId.Value, eventsBehind);
+        checkpoint.LastEventId ?? Guid.Empty, rewindTriggerEventId.Value, eventsBehind);
       _metrics?.RewindEventsBehind.Record(eventsBehind,
         new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, streamCtx.PerspectiveName));
 
@@ -3593,7 +3617,7 @@ public partial class PerspectiveWorker(
       // Start keepalive if lock was acquired
       using var keepaliveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
       var keepaliveTask = lockAcquired
-        ? _startLockKeepaliveAsync(streamId, perspectiveName, keepaliveCts.Token)
+        ? StartLockKeepaliveAsync(streamId, perspectiveName, keepaliveCts.Token)
         : Task.CompletedTask;
 
       using (var activity = enablePerspectiveSpans ? WhizbangActivitySource.Tracing.StartActivity("Perspective RewindAndRunAsync", ActivityKind.Internal) : null) {
@@ -3783,7 +3807,7 @@ public partial class PerspectiveWorker(
     // This signals any WaitForPerspectiveEventsAsync callers that this perspective has processed these events
     // Note: Uses MarkProcessedByPerspective to only remove THIS perspective's entry, not all perspectives
     if (processedEvents.Count > 0) {
-      var processedEventIds = processedEvents.Select(e => e.MessageId.Value).ToList();
+      var processedEventIds = processedEvents.ConvertAll(e => e.MessageId.Value);
 #pragma warning disable CA1848
       if (_logger.IsEnabled(LogLevel.Debug)) {
         _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessedByPerspective: Perspective={Perspective}, StreamId={StreamId}, EventCount={Count}, EventIds=[{Ids}]",
@@ -3912,7 +3936,12 @@ public partial class PerspectiveWorker(
   /// The coordinator guarantees exactly-once PostLifecycle via stage guards + perspective WhenAll.
   /// Falls back to direct invocation when coordinator is not registered.
   /// </summary>
-  private async Task _firePostLifecycleDetached(
+  /// <remarks>
+  /// Internal rather than private so the empty-batch answer can be asserted: the only call site
+  /// checks the batch first, and the guard is what keeps a batch that processed nothing from
+  /// registering a when-all gate no perspective will ever complete.
+  /// </remarks>
+  internal async Task FirePostLifecycleDetachedAsync(
       ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
       ILifecycleCoordinator? lifecycleCoordinator,
       IReceptorInvoker? receptorInvoker,
@@ -4048,7 +4077,7 @@ public partial class PerspectiveWorker(
       await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
       // Detached: fire-and-forget with own DI scope
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
-      var detachedTask = _fireDetachedStageStaticAsync(scopeFactory, envelope, LifecycleStage.PostLifecycleDetached, context);
+      var detachedTask = FireDetachedStageStaticAsync(scopeFactory, envelope, LifecycleStage.PostLifecycleDetached, context);
       trackDetachedTask?.Invoke(detachedTask);
       // Inline: blocks pipeline
       await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
@@ -4061,7 +4090,7 @@ public partial class PerspectiveWorker(
   /// <summary>
   /// Fires a Detached lifecycle stage as fire-and-forget with its own DI scope.
   /// </summary>
-  private void _fireDetachedStageAsync(
+  private void _fireDetachedStage(
       MessageEnvelope<IEvent> envelope, LifecycleStage stage,
       LifecycleExecutionContext context, CancellationToken ct) {
     var task = Task.Run(async () => {
@@ -4093,7 +4122,17 @@ public partial class PerspectiveWorker(
     await Task.WhenAll(_detachedTasks).ConfigureAwait(false);
   }
 
-  private static Task _fireDetachedStageStaticAsync(
+  /// <summary>
+  /// Fires a detached lifecycle stage on its own scope, with no ambient cancellation.
+  /// </summary>
+  /// <remarks>
+  /// Internal rather than private so the last-resort error path can be asserted. Everything this
+  /// runs normally reports its own failures through receptor telemetry; what is left is a throw
+  /// BEFORE telemetry — a scope that cannot be created, a security context that will not
+  /// establish — and the log written here from a fresh scope is then the only trace that the stage
+  /// ran at all, on a task nobody awaits.
+  /// </remarks>
+  internal static Task FireDetachedStageStaticAsync(
       IServiceScopeFactory scopeFactory, MessageEnvelope<IEvent> envelope,
       LifecycleStage stage, LifecycleExecutionContext context) {
     return Task.Run(async () => {
@@ -4175,7 +4214,12 @@ public partial class PerspectiveWorker(
   /// Starts a background keepalive task that periodically renews a stream lock.
   /// The task runs until the cancellation token is canceled.
   /// </summary>
-  private async Task _startLockKeepaliveAsync(Guid streamId, string perspectiveName, CancellationToken ct) {
+  /// <remarks>
+  /// Internal rather than private so the unconfigured answer can be asserted: the only call site
+  /// starts a keepalive after a lock was acquired, which an unconfigured locker never grants, and
+  /// the guard is what keeps a keepalive loop from renewing a lock that does not exist.
+  /// </remarks>
+  internal async Task StartLockKeepaliveAsync(Guid streamId, string perspectiveName, CancellationToken ct) {
     if (!_streamLocker.IsConfigured) {
       return;
     }

@@ -79,6 +79,7 @@ public static class SagaApplyHelper {
   /// <see cref="TrackFailedFast"/> for sagas where partial completion is
   /// unrecoverable.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Records one item's failure on the saga: the saga and its item list, the identity of both, the message and the time. TrackFailedFast takes the same shape and the two are chosen between at the call site.")]
   public static void TrackFailed<TItem>(
       BaseSagaModel saga,
       List<TItem> items,
@@ -129,6 +130,7 @@ public static class SagaApplyHelper {
   /// <see cref="BaseSagaModel.TryFailFast"/> — aborts the saga
   /// immediately without waiting for remaining items.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Records one item's failure on the saga: the saga and its item list, the identity of both, the message and the time. Callers pass these straight through from the receptor's own arguments, so a parameter object would be built at every call site and read only here.")]
   public static void TrackFailedFast<TItem>(
       BaseSagaModel saga,
       List<TItem> items,

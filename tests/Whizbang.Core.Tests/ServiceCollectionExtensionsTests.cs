@@ -1635,4 +1635,46 @@ public class ServiceCollectionExtensionsTests {
       });
 
   }
+
+  // Tracing options are bound from IConfiguration through a PostConfigure hook that is registered
+  // unconditionally, because IConfiguration is optional. A host with no configuration at all — a
+  // worker composed in code, or a test host — resolves the same hook with nothing to read from.
+  // Without the null guard that resolve throws, and the failure lands on the first resolve of
+  // IOptions<TracingOptions>, which is inside the dispatcher's own construction: the service
+  // fails to start, for the sin of not having an IConfiguration.
+  [Test]
+  public async Task TracingOptions_ResolvedWithNoConfigurationRegistered_KeepsTheCodeConfiguredValuesAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbang(options => options.Tracing.Verbosity = TraceVerbosity.Verbose);
+    await using var provider = services.BuildServiceProvider();
+
+    var options = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
+
+    await Assert.That(options.Verbosity).IsEqualTo(TraceVerbosity.Verbose)
+      .Because("with no IConfiguration to read, the post-configure step has nothing to bind and "
+             + "must leave the code-configured value alone rather than throw on the way out");
+  }
+
+  // The control: the same hook with configuration present does bind, so the assertion above is
+  // about the missing-configuration guard and not about binding being broken.
+  [Test]
+  public async Task TracingOptions_ResolvedWithConfiguration_BindsTheConfiguredVerbosityAsync() {
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["Whizbang:Tracing:Verbosity"] = nameof(TraceVerbosity.Minimal),
+      })
+      .Build();
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(configuration);
+    services.AddWhizbang(options => options.Tracing.Verbosity = TraceVerbosity.Verbose);
+    await using var provider = services.BuildServiceProvider();
+
+    var options = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
+
+    await Assert.That(options.Verbosity).IsEqualTo(TraceVerbosity.Minimal)
+      .Because("configuration is the later word on verbosity — an operator raising or lowering it "
+             + "without a redeploy is the whole point of the post-configure hook");
+  }
 }

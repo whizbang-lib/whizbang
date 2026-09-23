@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -41,6 +42,7 @@ public sealed partial class TypeDefinitionReconciler(
   private readonly IMessageTypeCatalog _catalog = catalog;
 
   /// <summary>Runs one reconciliation pass over the catalog. Returns a summary of what it found/did.</summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One reconciliation pass is several passes over the same catalog: collect the ephemeral and retention registrations, register what is new, then compare each entry's settings and schema hashes against the previous definition and reclassify or rebuild accordingly. Splitting it would hand each pass a copy of the state the next one narrows, and the order between them is the contract.")]
   public async Task<TypeDefinitionReconcileSummary> ReconcileAsync(CancellationToken cancellationToken = default) {
     if (!_catalog.IsAvailable) {
       return TypeDefinitionReconcileSummary.Empty;

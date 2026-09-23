@@ -69,11 +69,10 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol typeSymbol) {
-      return null;
-    }
-
-    if (typeSymbol.IsAbstract) {
+    // The bind guard shares the abstract-type exit: neither an unbound declaration nor an abstract
+    // type is a message the catalog can name a constructible type for.
+    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol typeSymbol
+        || typeSymbol.IsAbstract) {
       return null;
     }
 
@@ -103,7 +102,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     // registry/rename-tool comparison instead of the C# '.' display form.
     var clrTypeName = TypeNameUtilities.BuildClrTypeName(typeSymbol);
 
-    var messageKind = isCommand ? "command" : "event";
+    var messageKind = isCommand ? COMMAND_KIND : EVENT_KIND;
     var kind = isPerspective ? "perspective" : messageKind;
 
     var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
@@ -120,9 +119,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     // Ephemeral mode is an EVENT property. Commands are never ephemeral, and a perspective's effective
     // mode is DERIVED from the events it applies (a separate step), not read from an attribute here.
     // EphemeralResolver is the single source of truth shared with the analyzer.
-    (string Destruction, string Storage)? ephemeral = kind == "event" ? EphemeralResolver.Resolve(typeSymbol) : null;
-    var rewindGrace = kind == "event" ? EphemeralResolver.ResolveRewindGraceSeconds(typeSymbol) : -1;
-    var ttlSeconds = kind == "event" ? EphemeralResolver.ResolveTtlSeconds(typeSymbol) : -1;
+    (string Destruction, string Storage)? ephemeral = kind == EVENT_KIND ? EphemeralResolver.Resolve(typeSymbol) : null;
+    var rewindGrace = kind == EVENT_KIND ? EphemeralResolver.ResolveRewindGraceSeconds(typeSymbol) : -1;
+    var ttlSeconds = kind == EVENT_KIND ? EphemeralResolver.ResolveTtlSeconds(typeSymbol) : -1;
 
     return new MessageTypeCatalogEntryInfo(
         TypeName: fullTypeName,
@@ -146,6 +145,10 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   private const string COLLECTIVE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICollectiveEvent";
   private const string COMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Minting.ICompositeEvent";
   private const string COMPACTED_EVENT_INTERFACE = "global::Whizbang.Core.ICompactedEvent";
+
+  // The two kinds the catalog records, spelled as they appear in the emitted metadata.
+  private const string COMMAND_KIND = "command";
+  private const string EVENT_KIND = "event";
 
   private static bool _implementsInterface(INamedTypeSymbol typeSymbol, string fullyQualifiedInterface)
     => typeSymbol.AllInterfaces.Any(i =>

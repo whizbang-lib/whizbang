@@ -33,7 +33,7 @@ public static class JsonContextRegistry {
   /// scopes it to that profile only. Higher <paramref name="Priority"/> is consulted first; equal
   /// priorities preserve registration order via <paramref name="Seq"/>.
   /// </summary>
-  private readonly record struct ResolverEntry(IJsonTypeInfoResolver Resolver, int Priority, SerializationProfile? Profile, long Seq);
+  internal readonly record struct ResolverEntry(IJsonTypeInfoResolver Resolver, int Priority, SerializationProfile? Profile, long Seq);
 
   private readonly record struct ConverterEntry(JsonConverter Converter, int Priority, SerializationProfile? Profile, long Seq);
 
@@ -249,8 +249,24 @@ public static class JsonContextRegistry {
   /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_DefaultProfileAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_PersistenceProfileAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:NestedPolymorphic_ShortKey_JsonbReordered_RoundTripsThroughCombinedOptionsAsync</tests>
-  public static JsonSerializerOptions CreateCombinedOptions(SerializationProfile profile) {
-    if (_resolvers.IsEmpty) {
+  public static JsonSerializerOptions CreateCombinedOptions(SerializationProfile profile)
+    => CreateCombinedOptions(profile, _resolvers);
+
+  /// <summary>
+  /// The body of <see cref="CreateCombinedOptions(SerializationProfile)"/> against a caller-supplied
+  /// provider set.
+  /// </summary>
+  /// <remarks>
+  /// Internal with the set as a parameter because the real one is process-global and filled by
+  /// module initializers before any code runs. "Nothing registered" is therefore the state a host
+  /// is in when the generated contexts were trimmed away or the wrong assemblies were deployed —
+  /// a real and badly confusing failure, whose whole diagnosis is the message below — and it
+  /// cannot be produced through the public entry point without emptying a queue every other caller
+  /// in the process shares.
+  /// </remarks>
+  internal static JsonSerializerOptions CreateCombinedOptions(
+      SerializationProfile profile, IReadOnlyCollection<ResolverEntry> resolvers) {
+    if (resolvers.Count == 0) {
       throw new InvalidOperationException(
         "No JsonSerializerContext instances registered. " +
         "Ensure Whizbang.Core and application assemblies are loaded before calling CreateCombinedOptions().");
@@ -258,7 +274,7 @@ public static class JsonContextRegistry {
 
     // Highest priority first; registration order (Seq) breaks ties. JsonTypeInfoResolver.Combine is
     // first-match-wins, so the ordered list makes the winning provider deterministic.
-    var orderedResolvers = _resolvers
+    var orderedResolvers = resolvers
       .Where(e => _appliesTo(e.Profile, profile))
       .OrderByDescending(e => e.Priority)
       .ThenBy(e => e.Seq)
@@ -785,6 +801,31 @@ public static class JsonContextRegistry {
   private static bool _inTrialConfigure;
 
   /// <summary>
+  /// Puts the calling thread into trial-configure mode until the returned scope is disposed.
+  /// </summary>
+  /// <remarks>
+  /// The flag is thread-static and production sets it only on the private thread
+  /// <see cref="_survivesTrialConfigure"/> spins. That thread configures a candidate and never
+  /// serializes anything, so the scratch-bound metadata the trial branches build — including the
+  /// list metadata's object creator — is constructed and then thrown away without ever running.
+  /// Internal so those branches can be driven directly: a trial that produced metadata which
+  /// cannot materialize a list would pass its candidate and fail later, on the wire.
+  /// </remarks>
+  internal static IDisposable EnterTrialConfigureForTests() {
+    var previous = _inTrialConfigure;
+    _setTrialConfigure(true);
+    return new TrialConfigureScope(previous);
+  }
+
+  private static void _setTrialConfigure(bool value) => _inTrialConfigure = value;
+
+  private sealed class TrialConfigureScope(bool previous) : IDisposable {
+    private readonly bool _previous = previous;
+
+    public void Dispose() => _setTrialConfigure(_previous);
+  }
+
+  /// <summary>
   /// Every derived type currently excluded from polymorphic serialization because its property
   /// graph cannot configure (missing source-generated metadata for a property type). Empty in a
   /// healthy deployment — a non-empty reading names a contract defect precisely, instead of the
@@ -891,7 +932,6 @@ public static class JsonContextRegistry {
       _options,
       "Payload",
       (MessageEnvelope<TBase> obj) => obj.Payload,
-      null,
       _payloadTypeInfo);
 
     properties[2] = _createProperty<List<MessageHop>, MessageEnvelope<TBase>>(
@@ -961,8 +1001,8 @@ public static class JsonContextRegistry {
       IsPublic = true,
       IsVirtual = false,
       DeclaringType = typeof(TDeclaringType),
-      Getter = obj => _getter((TDeclaringType)obj!),
-      Setter = _setter != null ? (obj, value) => _setter((TDeclaringType)obj!, value!) : null,
+      Getter = obj => _getter((TDeclaringType)obj),
+      Setter = _setter != null ? (obj, value) => _setter((TDeclaringType)obj, value!) : null,
       JsonPropertyName = _propertyName,
       PropertyName = _propertyName
     };
@@ -975,19 +1015,23 @@ public static class JsonContextRegistry {
   /// This is critical for polymorphic properties where we need to use
   /// a custom polymorphic type info instead of the default.
   /// </summary>
+  /// <remarks>
+  /// No setter parameter: the only property built this way is the envelope's payload, which is a
+  /// constructor parameter rather than a settable member. A setter hook here would be metadata
+  /// nothing could ever invoke.
+  /// </remarks>
   private static JsonPropertyInfo _createPropertyWithTypeInfo<TProperty, TDeclaringType>(
     JsonSerializerOptions _options,
     string _propertyName,
     Func<TDeclaringType, TProperty> _getter,
-    Action<TDeclaringType, TProperty>? _setter,
     JsonTypeInfo<TProperty> _propertyTypeInfo) {
     var propertyInfo = new JsonPropertyInfoValues<TProperty> {
       IsProperty = true,
       IsPublic = true,
       IsVirtual = false,
       DeclaringType = typeof(TDeclaringType),
-      Getter = obj => _getter((TDeclaringType)obj!),
-      Setter = _setter != null ? (obj, value) => _setter((TDeclaringType)obj!, value!) : null,
+      Getter = obj => _getter((TDeclaringType)obj),
+      Setter = null,
       JsonPropertyName = _propertyName,
       PropertyName = _propertyName,
       PropertyTypeInfo = _propertyTypeInfo // CRITICAL: Use the custom polymorphic type info

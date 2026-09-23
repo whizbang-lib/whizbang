@@ -23,6 +23,14 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   private const string POPULATE_FROM_CONTEXT_ATTRIBUTE = "Whizbang.Core.Attributes.PopulateFromContextAttribute";
   private const string POPULATE_FROM_SERVICE_ATTRIBUTE = "Whizbang.Core.Attributes.PopulateFromServiceAttribute";
   private const string POPULATE_FROM_IDENTIFIER_ATTRIBUTE = "Whizbang.Core.Attributes.PopulateFromIdentifierAttribute";
+
+  // The PerspectiveScope properties this generator populates from. The names are also the
+  // default JSON aliases, which is why each one is handed to the alias resolver twice.
+  private const string USER_ID_PROPERTY = "UserId";
+  private const string TENANT_ID_PROPERTY = "TenantId";
+
+  // Emitted closing brace, named the way the other generators name theirs.
+  private const string CLOSE_BRACE_ONLY_INDENT_4 = "    }";
   private const string POPULATE_FROM_HTTP_HEADER_ATTRIBUTE = "Whizbang.Core.Attributes.PopulateFromHttpHeaderAttribute";
 
   private const string POPULATE_KIND_TIMESTAMP = "Timestamp";
@@ -50,13 +58,21 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     // Generate registry with unique class name per assembly
     context.RegisterSourceOutput(
         populatedProperties.Collect().Combine(assemblyName),
+        // The bang is the element-nullability conversion the compiler requires (CS8620 without it):
+        // the collected array is of the nullable element type, the callee takes the non-nullable one.
+#pragma warning disable S8969
         static (ctx, data) => _generateRegistry(ctx, data.Left!, data.Right)
+#pragma warning restore S8969
     );
 
     // Generate populator (record 'with' + class in-place population)
     context.RegisterSourceOutput(
         populatedProperties.Collect().Combine(assemblyName).Combine(scopeAliases),
+        // The bang is the element-nullability conversion the compiler requires (CS8620 without it):
+        // the collected array is of the nullable element type, the callee takes the non-nullable one.
+#pragma warning disable S8969
         static (ctx, data) => _generatePopulator(ctx, data.Left.Left!, data.Left.Right, data.Right)
+#pragma warning restore S8969
     );
   }
 
@@ -67,8 +83,8 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   private static ScopeAliases _resolveScopeAliases(Compilation compilation) {
     var scopeType = compilation.GetTypeByMetadataName("Whizbang.Core.Lenses.PerspectiveScope");
     return new ScopeAliases(
-        _resolveJsonAlias(scopeType, "UserId", "UserId"),
-        _resolveJsonAlias(scopeType, "TenantId", "TenantId"));
+        _resolveJsonAlias(scopeType, USER_ID_PROPERTY, USER_ID_PROPERTY),
+        _resolveJsonAlias(scopeType, TENANT_ID_PROPERTY, TENANT_ID_PROPERTY));
   }
 
   private static string _resolveJsonAlias(INamedTypeSymbol? type, string propertyName, string fallback) {
@@ -105,14 +121,11 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       CancellationToken ct) {
 
     var typeDecl = (TypeDeclarationSyntax)context.Node;
-    var typeSymbol = context.SemanticModel.GetDeclaredSymbol(typeDecl, ct);
 
-    if (typeSymbol is null) {
-      yield break;
-    }
-
-    // Only process public types
-    if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+    // Only process public types. The bind guard shares that exit: a declaration Roslyn bound no
+    // symbol for has no declared accessibility to inspect either.
+    if (context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) is not { } typeSymbol
+        || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
       yield break;
     }
 
@@ -193,9 +206,9 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
     var kindValue = (int)kindArg.Value;
     var kindName = kindValue switch {
-      0 => "UserId",
-      1 => "TenantId",
-      _ => "UserId"
+      0 => USER_ID_PROPERTY,
+      1 => TENANT_ID_PROPERTY,
+      _ => USER_ID_PROPERTY
     };
 
     return new AutoPopulateInfo(
@@ -350,7 +363,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("      if (registration.MessageType == messageType) {");
     sb.AppendLine("        yield return registration;");
     sb.AppendLine("      }");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine("  }");
     sb.AppendLine();
     sb.AppendLine("  /// <inheritdoc />");
@@ -384,21 +397,19 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine($"      PropertyType = typeof({info.PropertyTypeFullName}),");
     sb.AppendLine($"      PopulateKind = PopulateKind.{info.PopulateKind},");
 
-    // Add the specific kind based on PopulateKind. Header carries a string key (not an enum).
+    // Add the specific kind based on PopulateKind. Header carries a string key, so it is quoted; the
+    // rest name an enum member and are emitted bare. A kind matching none of the five appends
+    // nothing, which is what falling off the end of this chain does — no dead default arm needed.
     if (info.PopulateKind == POPULATE_KIND_HEADER) {
       sb.AppendLine($"      HttpHeaderName = \"{info.SpecificKind}\",");
-    } else {
-      var specificKindProperty = info.PopulateKind switch {
-        POPULATE_KIND_TIMESTAMP => "TimestampKind",
-        POPULATE_KIND_CONTEXT => "ContextKind",
-        POPULATE_KIND_SERVICE => "ServiceKind",
-        POPULATE_KIND_IDENTIFIER => "IdentifierKind",
-        _ => null
-      };
-
-      if (specificKindProperty is not null) {
-        sb.AppendLine($"      {specificKindProperty} = {info.SpecificKind},");
-      }
+    } else if (info.PopulateKind == POPULATE_KIND_TIMESTAMP) {
+      sb.AppendLine($"      TimestampKind = {info.SpecificKind},");
+    } else if (info.PopulateKind == POPULATE_KIND_CONTEXT) {
+      sb.AppendLine($"      ContextKind = {info.SpecificKind},");
+    } else if (info.PopulateKind == POPULATE_KIND_SERVICE) {
+      sb.AppendLine($"      ServiceKind = {info.SpecificKind},");
+    } else if (info.PopulateKind == POPULATE_KIND_IDENTIFIER) {
+      sb.AppendLine($"      IdentifierKind = {info.SpecificKind},");
     }
 
     sb.AppendLine("    },");
@@ -506,7 +517,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
     sb.AppendLine("      default:");
     sb.AppendLine("        return null;");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine("  }");
     sb.AppendLine();
   }
@@ -530,7 +541,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
     sb.AppendLine("      default:");
     sb.AppendLine("        return null;");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine("  }");
     sb.AppendLine();
   }
@@ -643,7 +654,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("  private static string? _extractScopeValue(MessageHop hop, params string[] aliases) {");
     sb.AppendLine("    if (hop.Scope?.Values == null) {");
     sb.AppendLine("      return null;");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine();
     sb.AppendLine("    // Look inside each scope object for the value under any of its known JSON aliases.");
     sb.AppendLine("    foreach (var kvp in hop.Scope.Values) {");
@@ -654,7 +665,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("          }");
     sb.AppendLine("        }");
     sb.AppendLine("      }");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine();
     sb.AppendLine("    return null;");
     sb.AppendLine("  }");
@@ -666,7 +677,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("  private static string? _extractExtensionValue(MessageHop hop, string headerKey) {");
     sb.AppendLine("    if (hop.Scope?.Values == null) {");
     sb.AppendLine("      return null;");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine();
     sb.AppendLine("    // Header values ride the scope 'ex' extension list ([{\"k\":key,\"v\":value}]).");
     sb.AppendLine("    foreach (var kvp in hop.Scope.Values) {");
@@ -681,7 +692,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("          }");
     sb.AppendLine("        }");
     sb.AppendLine("      }");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_4);
     sb.AppendLine();
     sb.AppendLine("    return null;");
     sb.AppendLine("  }");

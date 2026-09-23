@@ -170,6 +170,12 @@ public class RecentlyProcessedEventCacheSweepWorkerTests {
       .Because("disabled means the cache is never swept at all, not merely swept less often");
 
     await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the park ends by the stopping token cancelling the infinite delay, and a deliberately "
+             + "disabled worker must absorb that and return; letting the cancellation escape leaves a "
+             + "faulted execute task that StopAsync never observes, so it surfaces only as an "
+             + "unobserved exception long after the shutdown that caused it");
   }
 
   [Test]

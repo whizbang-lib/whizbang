@@ -232,7 +232,7 @@ public partial class LifecycleExceptionInvariantTests {
     await using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
 
     await worker.InvokeInboxLifecycleStageAsync(
-      work, envelope, scope,
+      work, envelope,
       new ThrowingReceptorInvoker(thrown),
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
       "PreInbox", CancellationToken.None);
@@ -293,7 +293,7 @@ public partial class LifecycleExceptionInvariantTests {
     await using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
 
     await worker.InvokeInboxLifecycleStageAsync(
-      work, envelope, scope,
+      work, envelope,
       new ThrowingReceptorInvoker(thrown),
       LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
       "PostInbox", CancellationToken.None);

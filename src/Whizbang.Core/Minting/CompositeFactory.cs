@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 namespace Whizbang.Core.Minting;
@@ -17,6 +18,7 @@ namespace Whizbang.Core.Minting;
 /// <tests>tests/Whizbang.Core.Tests/Minting/CompositeFactoryTests.cs</tests>
 public sealed class CompositeFactory : ICompositeFactory {
   /// <inheritdoc />
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Validates the two bounds, then chunks each group until a count or a byte bound trips. The bound checks are interleaved with the chunking because a chunk closes on whichever bound is reached first.")]
   public IReadOnlyList<CompositeEnvelopePlan<TConstituent>> Create<TConstituent>(
       CompositeMintRequest<TConstituent> request) {
     ArgumentNullException.ThrowIfNull(request);

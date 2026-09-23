@@ -252,7 +252,7 @@ public class TransportPublishStrategyHookChainTests {
       LastBulkItems = items;
       LastDestination = destination;
       IReadOnlyList<BulkPublishItemResult> results =
-        items.Select(i => new BulkPublishItemResult { MessageId = i.MessageId, Success = true }).ToList();
+        [.. items.Select(i => new BulkPublishItemResult { MessageId = i.MessageId, Success = true })];
       return Task.FromResult(results);
     }
 

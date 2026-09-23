@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -25,6 +26,15 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs</tests>
+/// <summary>
+/// Metric dimension names shared by the manifest receptors in this file. Only the ones that
+/// recur are named here; a dimension used once reads better spelled at its use.
+/// </summary>
+internal static class IntegrityManifestTags {
+  /// <summary>Names the service a manifest message came from.</summary>
+  internal const string ORIGIN = "origin";
+}
+
 public sealed partial class IntegrityManifestRequestReceptor(
     IServiceScopeFactory scopeFactory,
     ILogger<IntegrityManifestRequestReceptor> logger) : IReceptor<RequestIntegrityManifest> {
@@ -48,6 +58,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
     }
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Answering a request chooses between the windowed digest path, a full recompute and the stored digests, each of which can come back empty and fall through to the next, then pages the answer. The fall-through order is the method.")]
   private async Task _handleCoreAsync(RequestIntegrityManifest message, CancellationToken cancellationToken) {
     var answerTimer = System.Diagnostics.Stopwatch.StartNew();
     await using var scope = scopeFactory.CreateAsyncScope();
@@ -223,7 +234,7 @@ public sealed partial class IntegrityManifestReceptor(
     if (!await _compareGate.WaitAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false)) {
       LogCompareBusySkipped(logger, message.OriginServiceName, message.Digests.Count);
       _declinedMetrics()?.ComparesDeclined.Add(1,
-        new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+        new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
       return;
     }
     var compareTimer = System.Diagnostics.Stopwatch.StartNew();
@@ -252,6 +263,7 @@ public sealed partial class IntegrityManifestReceptor(
     return _gateMetrics;
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Comparing a manifest decides first whether to act at all (collaborators wired, not our own manifest, generation coherent, the level), then per digest whether it matches, whether it falls inside the settle window, and whether the difference is a deficit worth stamping for repair. Each stage narrows the set the next one walks, and the settle rule needs both sides' timestamps.")]
   private async Task _handleCoreAsync(IntegrityManifest message, CancellationToken cancellationToken) {
     await using var scope = scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
@@ -444,7 +456,7 @@ public sealed partial class IntegrityManifestReceptor(
     for (var i = 0; i < divergent.Count; i++) {
       var (origin, mine, _, reason) = divergent[i];
       metrics?.DivergencesDetected.Add(1,
-        new KeyValuePair<string, object?>("origin", message.OriginServiceName),
+        new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName),
         new KeyValuePair<string, object?>("event_type", origin.EventType),
         new KeyValuePair<string, object?>("reason", reason));
       var shouldReport = i < reportFlags.Count && reportFlags[i];
@@ -452,7 +464,7 @@ public sealed partial class IntegrityManifestReceptor(
       if (autoRepair) {
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "audit"),
-          new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+          new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
         if (!repairBatches.TryGetValue((origin.TenantScope, origin.EventType), out var streams)) {
           repairBatches[(origin.TenantScope, origin.EventType)] = streams = [];
         }
@@ -567,7 +579,7 @@ public sealed partial class IntegrityManifestReceptor(
     if (Pages >= Math.Max(0, options.MaxManifestPagesPerAudit)) {
       LogCursorFollowCapped(logger, message.OriginServiceName, Pages);
       services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestPagesCapped.Add(1,
-        new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+        new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
       return;   // the rest of the lane re-audits from the seal next cycle.
     }
 
@@ -589,7 +601,7 @@ public sealed partial class IntegrityManifestReceptor(
 
     _pagesFollowed[key] = (Pages + 1, now);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestPagesFollowed.Add(1,
-      new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+      new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
     if (_pagesFollowed.Count > 256) {
       _pagesFollowed.Clear();   // windows advance; stale keys are waste, not state.
     }
@@ -629,6 +641,7 @@ public sealed partial class IntegrityManifestReceptor(
   /// type complete — one comparison instead of thousands. Mismatched types escalate (capped) to a
   /// DIRECTED stream-level manifest request; reports only ever come from the stream-level compare.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The type-level compare matches each type's roll-up, applies the settle window, sorts the mismatches into bulk-backfill candidates and drill-down requests, applies the repair grant cap over the candidates, and addresses each drill-down to its origin's request topic. The stages share the mismatch set they narrow.")]
   private async Task _handleTypeLevelAsync(
       IServiceProvider services, StreamIntegrityOptions options, IntegrityManifest message,
       List<string> types, TimeSpan settle, CancellationToken cancellationToken) {
@@ -697,6 +710,7 @@ public sealed partial class IntegrityManifestReceptor(
     if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;   // no drill-down infrastructure — the mismatch re-audits next cycle.
     }
+    var sender = new ControlPlaneSender(transport, serializer, instanceProvider, requester, topic);
 
     // Bulk-deficit escalation: a windowed (tenant, type) deficit at or past the threshold skips
     // the stream drill-down entirely — one state-only, range-bounded redelivery of the whole
@@ -741,8 +755,8 @@ public sealed partial class IntegrityManifestReceptor(
         bulkEscalated.Add(origin.EventType);
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "bulk"),
-          new KeyValuePair<string, object?>("origin", message.OriginServiceName));
-        await _sendBulkBackfillRequestAsync(services, options, message, origin.TenantScope, origin.EventType, cancellationToken)
+          new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
+        await _sendBulkBackfillRequestAsync(services, sender, message, origin.TenantScope, origin.EventType, cancellationToken)
           .ConfigureAwait(false);
         LogBulkBackfillRequested(logger, origin.EventType, origin.TenantScope, deficit, message.OriginServiceName);
       }
@@ -799,7 +813,7 @@ public sealed partial class IntegrityManifestReceptor(
       Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.DrillDownsRequested.Add(1,
-      new KeyValuePair<string, object?>("origin", message.OriginServiceName));
+      new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
     LogDrillDown(logger, drillDown.Count, mismatched.Count, message.OriginServiceName);
   }
 
@@ -828,19 +842,23 @@ public sealed partial class IntegrityManifestReceptor(
   /// per-stream path can drip through in any reasonable number of cycles. State-only is
   /// load-bearing: backfilled history builds state and never re-fires trigger receptors.
   /// </summary>
+  /// <summary>
+  /// The control-plane essentials an outbound integrity request publishes with, taken as a unit so
+  /// the "is the infrastructure here at all?" question is answered once, by the caller that already
+  /// had to ask it, instead of being re-asked of the same provider and re-answered the same way.
+  /// </summary>
+  private sealed record ControlPlaneSender(
+    ITransport Transport,
+    IEnvelopeSerializer Serializer,
+    IServiceInstanceProvider? InstanceProvider,
+    string Requester,
+    string Topic);
+
   private async Task _sendBulkBackfillRequestAsync(
-      IServiceProvider services, StreamIntegrityOptions options,
+      IServiceProvider services, ControlPlaneSender sender,
       IntegrityManifest manifest, string? tenantScope, string eventType,
       CancellationToken cancellationToken) {
-    var transport = services.GetService<ITransport>();
-    var serializer = services.GetService<IEnvelopeSerializer>();
-    var instanceProvider = services.GetService<IServiceInstanceProvider>();
-    var requester = instanceProvider?.ServiceName;
-    var topic = options.RepairTopic
-      ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
-    if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
-      return;
-    }
+    var (transport, serializer, instanceProvider, requester, topic) = sender;
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(manifest.OriginServiceId);
     if (string.IsNullOrEmpty(originRequestTopic)) {
       LogRepairSkippedNoOriginTopic(logger, manifest.OriginServiceName, eventType, 0);
@@ -945,6 +963,7 @@ public sealed partial class IntegrityManifestReceptor(
     Message = "AUDIT divergence: {EventType} (tenant {TenantScope}) — {DivergentStreams} stream(s) vs origin " +
               "'{OriginServiceName}' (e.g. {SampleStreamId}); origin {OriginTotal}, local {LocalTotal} " +
               "(autoRepair={AutoRepairRequested})")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source-generated method: the parameter list mirrors the structured log template's placeholders and cannot be grouped without losing structured-logging semantics.")]
   static partial void LogDivergence(ILogger logger, string eventType, string? tenantScope, int divergentStreams,
     Guid sampleStreamId, string originServiceName, long originTotal, long localTotal, bool autoRepairRequested);
 
@@ -1014,6 +1033,7 @@ public sealed partial class IntegrityManifestReceptor(
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.cs</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the logger for the receptor it constructs and hands it straight over, so the category names the type that actually writes the entries.")]
 internal sealed class IntegrityManifestReceptorRegistrar(
     IServiceProvider services,
     IServiceScopeFactory scopeFactory,

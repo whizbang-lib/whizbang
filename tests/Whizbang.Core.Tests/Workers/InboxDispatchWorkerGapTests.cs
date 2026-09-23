@@ -916,7 +916,7 @@ public class InboxDispatchWorkerGapTests {
     await using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
 
     await worker.InvokeInboxLifecycleStageAsync(
-      work, work.Envelope, scope, new CapturingReceptorInvoker(),
+      work, work.Envelope, new CapturingReceptorInvoker(),
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
       "PreInbox", CancellationToken.None);
 
@@ -972,7 +972,7 @@ public class InboxDispatchWorkerGapTests {
     await using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
 
     await worker.InvokeInboxLifecycleStageAsync(
-      work, work.Envelope, scope, inlineInvoker,
+      work, work.Envelope, inlineInvoker,
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
       "PreInbox", CancellationToken.None);
 

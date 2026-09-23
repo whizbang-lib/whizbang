@@ -66,11 +66,6 @@ public enum MessageFailureReason {
   Throttled = 8,
 
   /// <summary>
-  /// Unclassified error - reason not determined.
-  /// </summary>
-  Unknown = 99,
-
-  /// <summary>
   /// Establishing the message security context (via
   /// <see cref="Whizbang.Core.Security.IMessageSecurityContextProvider"/>.EstablishContextAsync)
   /// hung past the worker's configured timeout. Distinguishes upstream
@@ -182,5 +177,11 @@ public enum MessageFailureReason {
   /// Fix by registering the matching <c>AddWhizbangMessageBodyCipher</c> /
   /// <c>AddWhizbangAesGcmBodyCipher</c> on the receiver with the same name and key.
   /// </summary>
-  BodyClaimCipherUnknown = 19
+  BodyClaimCipherUnknown = 19,
+
+  /// <summary>
+  /// Unclassified error - reason not determined. Numbered far above the classified reasons so a
+  /// new one can be appended without moving it, and last so the members read in value order.
+  /// </summary>
+  Unknown = 99
 }

@@ -552,4 +552,32 @@ public class ClaimWorkerCoverageTests {
              + "stream-id path stays blind to the condition the window exists to correct, and the "
              + "window would only have kept growing");
   }
+
+  // A wake runs from a notification callback and from the channel writer. The nap it cancels is
+  // disposed by the loop the moment the nap ends, so a wake that lands in that window finds a
+  // disposed source. Throwing there would propagate out of a PostgreSQL notification callback —
+  // taking down the listener that delivers every subsequent doorbell — over a nap that had
+  // already ended and needed no cancelling: the permit released just before this covers the wake.
+  [Test]
+  public async Task CancelNapIgnoringDisposal_NapAlreadyEnded_DoesNotThrowAsync() {
+    var endedNap = new CancellationTokenSource();
+    endedNap.Dispose();
+
+    await Assert.That(() => ClaimWorker.CancelNapIgnoringDisposal(endedNap)).ThrowsNothing()
+      .Because("a wake must never fault its caller; a nap that already ended needs no cancel");
+    await Assert.That(() => ClaimWorker.CancelNapIgnoringDisposal(null)).ThrowsNothing()
+      .Because("there is no nap in progress between poll cycles, and a wake then is still valid");
+  }
+
+  // The control: a nap that IS in progress gets canceled, so the silence above is the disposed
+  // case being absorbed rather than the wake having stopped waking anything.
+  [Test]
+  public async Task CancelNapIgnoringDisposal_NapInProgress_CancelsItAsync() {
+    using var nap = new CancellationTokenSource();
+
+    ClaimWorker.CancelNapIgnoringDisposal(nap);
+
+    await Assert.That(nap.IsCancellationRequested).IsTrue()
+      .Because("the spacing nap is one of the two waits a wake has to break out of");
+  }
 }

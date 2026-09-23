@@ -7,7 +7,13 @@ namespace Whizbang.Generators.Tests;
 /// Tests for EFCoreServiceRegistrationGenerator attribute-based DbContext discovery.
 /// Validates attribute discovery, key matching, and generated code structure.
 /// </summary>
-public class EFCoreServiceRegistrationGeneratorTests {
+public partial class EFCoreServiceRegistrationGeneratorTests {
+  [System.Text.RegularExpressions.GeneratedRegex(@"services\.AddDbContext<")]
+  private static partial System.Text.RegularExpressions.Regex _addDbContextPattern();
+
+  [System.Text.RegularExpressions.GeneratedRegex(@"UseWhizbangFunctions\(\)")]
+  private static partial System.Text.RegularExpressions.Regex _useWhizbangFunctionsPattern();
+
 
   // Perspective boilerplate required for generator to produce output
   // NOTE: The perspective MUST implement IPerspectiveFor<TModel, TEvent> interface(s)
@@ -385,12 +391,12 @@ public class EFCoreServiceRegistrationGeneratorTests {
     foreach (var generated in result.GeneratedSources) {
       var text = generated.SourceText.ToString();
       // Match real registrations only (services.AddDbContext<...>), not doc-comment mentions.
-      var addCount = System.Text.RegularExpressions.Regex.Count(text, @"services\.AddDbContext<");
+      var addCount = _addDbContextPattern().Count(text);
       if (addCount == 0) {
         continue;
       }
       sawRegistration = true;
-      var useCount = System.Text.RegularExpressions.Regex.Count(text, @"UseWhizbangFunctions\(\)");
+      var useCount = _useWhizbangFunctionsPattern().Count(text);
       await Assert.That(useCount).IsGreaterThanOrEqualTo(addCount)
         .Because($"every AddDbContext registration in {generated.HintName} must call UseWhizbangFunctions() so the "
           + $"JsonbSet translator is wired for collective-apply ExecuteUpdate. Found {addCount} AddDbContext vs {useCount} UseWhizbangFunctions.");
@@ -2426,7 +2432,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithMultiModelLensQuery_UnknownModel_ReportsWHIZ401Async() {
     // Arrange - UnknownModel has no perspective
-    var source = $$"""
+    var source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;

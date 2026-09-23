@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryRequestReceptorTests.cs</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the logger for the receptor it constructs and hands it straight over, so the category names the type that actually writes the entries.")]
 internal sealed class RedeliveryRequestReceptorRegistrar(
     IServiceProvider services,
     IServiceScopeFactory scopeFactory,

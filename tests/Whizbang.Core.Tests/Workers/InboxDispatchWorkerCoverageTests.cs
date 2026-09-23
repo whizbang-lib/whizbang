@@ -15,6 +15,7 @@ using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Workers;
@@ -810,5 +811,117 @@ public class InboxDispatchWorkerCoverageTests {
       _entered.TrySetResult();
       return _ready.Task.WaitAsync(cancellationToken);
     }
+  }
+
+  // ============================================================
+  // The runtime-receptor lookup and the discard gate's empty-type answer
+  // ============================================================
+
+  // The worker asks the runtime registry about a type it resolved from the wire type name, and
+  // that resolution returns null whenever the producing assembly is not loaded here — an ordinary
+  // situation for cross-service traffic. Without the null guard every such message would
+  // ArgumentNullException inside the registry lookup instead of simply being treated as having no
+  // runtime receptors, turning an unknown type into a dispatch-loop fault.
+  [Test]
+  public async Task RuntimeHasReceptors_UnresolvedMessageType_ReportsNoReceptorsWithoutAskingTheRegistryAsync() {
+    var runtimeRegistry = new AlwaysReceptorRegistry();
+    var worker = _buildWorkerWithRuntimeRegistry(runtimeRegistry);
+
+    var forUnresolvedType = worker.RuntimeHasReceptors(null, LifecycleStage.PreInboxInline);
+
+    await Assert.That(forUnresolvedType).IsFalse()
+      .Because("a wire type name this service cannot resolve has no runtime receptors by definition");
+    await Assert.That(runtimeRegistry.Questions).IsEmpty()
+      .Because("the guard has to answer before the registry is asked; this registry throws on a null "
+        + "type, which is exactly what the callers would hit without it");
+
+    // Control: a type that DID resolve is passed through, so the false above is the guard's answer
+    // and not this registry having nothing to say.
+    var forResolvedType = worker.RuntimeHasReceptors(typeof(InboxDispatchWorkerCoverageTests), LifecycleStage.PreInboxInline);
+    await Assert.That(forResolvedType).IsTrue()
+      .Because("the registry reports a receptor for every type it is asked about");
+    await Assert.That(runtimeRegistry.Questions.Count).IsEqualTo(1)
+      .Because("exactly one lookup reached the registry — the resolved one");
+  }
+
+  // The discard gate turns "nobody consumes this type any more" into a terminal row instead of a
+  // dispatch. An inbox row with no recorded type name cannot be classified, so discarding it would
+  // be a guess; the gate has to fall through to ordinary dispatch and let the rest of the pipeline
+  // decide, rather than ask a policy that can only answer about a named type.
+  [Test]
+  public async Task ShouldSkipInbox_RowWithNoMessageType_DoesNotDiscardAndDoesNotConsultThePolicyAsync() {
+    var policy = new RecordingDiscardPolicy();
+
+    var skipped = InboxDispatchWorker.ShouldSkipInbox(policy, "", Guid.CreateVersion7());
+
+    await Assert.That(skipped).IsFalse()
+      .Because("a row whose type name is missing must still be dispatched; discarding it would drop "
+        + "work on the strength of a classification nobody could make");
+    await Assert.That(policy.Evaluated).IsEmpty()
+      .Because("the policy answers questions about a named type; asking it about an empty name is "
+        + "what the guard exists to prevent");
+
+    // Control: a named type does reach the policy.
+    var namedSkipped = InboxDispatchWorker.ShouldSkipInbox(policy, "Coverage.Events.Gone, Coverage", Guid.CreateVersion7());
+    await Assert.That(namedSkipped).IsFalse()
+      .Because("this policy discards nothing, so the answer is false for a different reason than above");
+    string[] expectedEvaluations = ["Coverage.Events.Gone, Coverage"];
+    await Assert.That(policy.Evaluated).IsEquivalentTo(expectedEvaluations)
+      .Because("a named type is the case the policy is for");
+  }
+
+  private static InboxDispatchWorker _buildWorkerWithRuntimeRegistry(IReceptorRegistry runtimeRegistry) {
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    return new InboxDispatchWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: new FakeHandlerCommitChannel(),
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(
+        new PermissiveReceptorRegistryQuery(),
+        NullLogger<MessageDiscardPolicy>.Instance,
+        new System.Diagnostics.Metrics.Meter("test"),
+        Options.Create(new RoutingOptions()),
+        new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: runtimeRegistry,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
+  }
+
+  /// <summary>A discard policy that records every type it is asked about and discards none.</summary>
+  private sealed class RecordingDiscardPolicy : IMessageDiscardPolicy {
+    private readonly List<string> _evaluated = [];
+    public IReadOnlyList<string> Evaluated { get { lock (_evaluated) { return [.. _evaluated]; } } }
+
+    public MessageDiscardDecision EvaluateInbox(string payloadClrType) {
+      lock (_evaluated) { _evaluated.Add(payloadClrType); }
+      return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
+    }
+
+    // The inbox gate is the only one this test drives; the other two would make the recording
+    // ambiguous, so they refuse rather than quietly join the same list.
+    public MessageDiscardDecision EvaluateReceive(string payloadClrType, string topic, string subscription)
+      => throw new NotSupportedException("This policy records inbox evaluations only.");
+
+    public MessageDiscardDecision EvaluateOutbox(string payloadClrType)
+      => throw new NotSupportedException("This policy records inbox evaluations only.");
+
+    public void RecordDiscard(
+        MessageDiscardGate gate,
+        MessageDiscardDecision decision,
+        string payloadClrType,
+        IReadOnlyDictionary<string, object?>? additionalTags = null) { }
   }
 }

@@ -138,24 +138,26 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     var methodDeclaration = (MethodDeclarationSyntax)context.Node;
     var methodSymbol = context.SemanticModel.GetDeclaredSymbol(methodDeclaration, context.CancellationToken);
 
-    if (methodSymbol is null) {
-      return;
-    }
-
     // Collective-apply replay purity (WHIZ106): a [CollectiveApplyFor] spec is folded per-row against a
     // single stream in isolation during replay/rebuild, so it must not query sibling perspectives at apply
     // time. This is independent of the Apply-name / perspective-interface gating below.
-    var isCollectiveApply = _isCollectiveApply(methodSymbol);
-    if (isCollectiveApply) {
-      _analyzeCollectiveApply(context, methodDeclaration, methodSymbol);
-    }
+    var isCollectiveApply = methodSymbol is not null && _isCollectiveApply(methodSymbol);
 
     // The determinism checks (async/await, DB/HTTP I/O, DateTime.UtcNow) apply to BOTH perspective Apply
     // methods and collective applies — both are folded during replay and must be deterministic.
-    var isPerspectiveApply = methodSymbol.Name == "Apply"
+    var isPerspectiveApply = methodSymbol is { Name: "Apply" }
         && _implementsPerspectiveInterface(methodSymbol.ContainingType);
-    if (!isPerspectiveApply && !isCollectiveApply) {
+
+    // A declaration Roslyn bound no symbol for is neither of those, so the bind guard shares this
+    // exit instead of standing on a line of its own that no input reaches. Nothing below this point
+    // runs for a null symbol, and the collective-apply analysis moves under the same gate — it only
+    // ever ran when isCollectiveApply was true, which cannot be true for a null symbol.
+    if (methodSymbol is null || (!isPerspectiveApply && !isCollectiveApply)) {
       return;
+    }
+
+    if (isCollectiveApply) {
+      _analyzeCollectiveApply(context, methodDeclaration, methodSymbol);
     }
 
     // Check 1: Apply method must not return Task
@@ -256,17 +258,15 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
   private static void _analyzeConstructor(SyntaxNodeAnalysisContext context) {
     var constructorDeclaration = (ConstructorDeclarationSyntax)context.Node;
-    var constructorSymbol = context.SemanticModel.GetDeclaredSymbol(constructorDeclaration, context.CancellationToken);
-
-    if (constructorSymbol is null) {
+    // Check if constructor is in a type implementing IPerspectiveFor or IGlobalPerspectiveFor. The
+    // bind guard shares that exit: a declaration Roslyn bound no symbol for has no containing type to
+    // test, so it leaves here without the symbol ever being dereferenced.
+    if (context.SemanticModel.GetDeclaredSymbol(constructorDeclaration, context.CancellationToken) is not { } constructorSymbol
+        || !_implementsPerspectiveInterface(constructorSymbol.ContainingType)) {
       return;
     }
 
-    // Check if constructor is in a type implementing IPerspectiveFor or IGlobalPerspectiveFor
     var containingType = constructorSymbol.ContainingType;
-    if (!_implementsPerspectiveInterface(containingType)) {
-      return;
-    }
 
     // Check each constructor parameter for [PureService] attribute
     foreach (var parameter in constructorSymbol.Parameters) {

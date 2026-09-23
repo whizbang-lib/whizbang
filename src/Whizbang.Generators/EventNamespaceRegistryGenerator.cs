@@ -73,14 +73,10 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    if (semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
-      return null;
-    }
-
-    // Use shared discovery helper for consistent perspective interface scanning
-    var eventTypes = Utilities.PerspectiveDiscoveryHelper.ExtractEventTypes(classSymbol);
-
-    if (eventTypes.Count == 0) {
+    // Use shared discovery helper for consistent perspective interface scanning. The bind guard
+    // shares the "no events" exit: a declaration Roslyn bound no symbol for applies no events either.
+    if (semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol
+        || Utilities.PerspectiveDiscoveryHelper.ExtractEventTypes(classSymbol) is not { Count: > 0 } eventTypes) {
       return null;
     }
 
@@ -119,12 +115,10 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    if (semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
-      return null;
-    }
-
-    // Skip generic open types
-    if (classSymbol.IsGenericType && classSymbol.TypeParameters.Length > 0) {
+    // Skip generic open types. The bind guard shares that exit: a declaration Roslyn bound no symbol
+    // for names no closed receptor type the registry can list.
+    if (semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol
+        || (classSymbol.IsGenericType && classSymbol.TypeParameters.Length > 0)) {
       return null;
     }
 

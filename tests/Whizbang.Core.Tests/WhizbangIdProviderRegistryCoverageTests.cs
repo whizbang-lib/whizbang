@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 
 namespace Whizbang.Core.Tests;
@@ -15,18 +16,15 @@ namespace Whizbang.Core.Tests;
 /// race against and no <c>[NotInParallel]</c> is needed here.
 ///
 /// <para>
-/// <c>WhizbangIdProviderRegistry.InvokeDICallbacks</c>'s <c>_diRegistrations.Count == 0</c> guard
-/// (the method's first few lines) is a second uncovered branch in this class, but it is left
-/// untested here on purpose: this test assembly's own generated
-/// <c>WhizbangIdProviderRegistration.g.cs</c> module initializer calls
-/// <c>RegisterDICallback</c> unconditionally before any test runs, so the shared registration list
-/// is never empty in this process. The only way to force it empty is to reach into the private
-/// static list and clear it, which would race every other test in the assembly that calls
-/// <c>RegisterAllWithDI</c>/<c>InvokeDICallbacks</c> without a <c>[NotInParallel]</c> guard of its
-/// own (e.g. <c>WhizbangIdProviderRegistryTests.RegisterAllWithDI_CallsAllRegisteredCallbacksAsync</c>,
-/// a file this effort must not touch) — an unacceptable stability cost for one line.
+/// <c>InvokeDICallbacks</c>'s <c>_diRegistrations.Count == 0</c> guard needs the shared
+/// registration list to be empty, which it never is in this process: this assembly's generated
+/// <c>WhizbangIdProviderRegistration.g.cs</c> module initializer calls <c>RegisterDICallback</c>
+/// before any test runs. The test below empties the list through the registry's own
+/// take/restore seam and puts it back in a <c>finally</c>; it and everything else that touches
+/// these registrations share the <c>WhizbangIdProviderRegistry</c> parallel key.
 /// </para>
 /// </remarks>
+[NotInParallel("WhizbangIdProviderRegistry")]
 public class WhizbangIdProviderRegistryCoverageTests {
   // A plain, un-attributed struct: it satisfies CreateProvider<TId>'s `where TId : struct`
   // constraint but carries no [WhizbangId] attribute, so no generated ModuleInitializer ever
@@ -44,5 +42,47 @@ public class WhizbangIdProviderRegistryCoverageTests {
     await Assert.That(() => WhizbangIdProviderRegistry.CreateProvider<UnregisteredCoverageId>(baseProvider))
       .Throws<InvalidOperationException>()
       .WithMessageContaining(nameof(UnregisteredCoverageId));
+  }
+
+  // AddWhizbang calls this on every startup. A host that declares no [WhizbangId] struct anywhere
+  // has no registrations, and must come up with no id provider registered at all — the guard is
+  // what keeps the call from adding a Uuid7 base provider that nothing asked for and that would
+  // then win over one the host registers itself later.
+  [Test]
+  public async Task InvokeDICallbacks_WithNoRegistrationsAtAll_RegistersNothingAsync() {
+    var taken = WhizbangIdProviderRegistry.TakeDICallbacksForTests();
+    try {
+      var services = new ServiceCollection();
+
+      WhizbangIdProviderRegistry.InvokeDICallbacks(services);
+
+      await Assert.That(services.Count).IsEqualTo(0)
+        .Because("with nothing registered there is no base provider to choose and no typed "
+          + "provider to build, so the collection must be left exactly as it was found");
+    } finally {
+      WhizbangIdProviderRegistry.RestoreDICallbacksForTests(taken);
+    }
+  }
+
+  // The control: with a registration present the same call does add the base provider and run the
+  // callback, so the empty result above is the guard's answer rather than the method doing
+  // nothing in general.
+  [Test]
+  public async Task InvokeDICallbacks_WithARegistration_AddsTheBaseProviderAndRunsItAsync() {
+    var taken = WhizbangIdProviderRegistry.TakeDICallbacksForTests();
+    try {
+      var ran = 0;
+      WhizbangIdProviderRegistry.RegisterDICallback((_, _) => ran++);
+      var services = new ServiceCollection();
+
+      WhizbangIdProviderRegistry.InvokeDICallbacks(services);
+
+      await Assert.That(ran).IsEqualTo(1)
+        .Because("the registered callback is what wires the typed providers");
+      await Assert.That(services.Any(d => d.ServiceType == typeof(IWhizbangIdProvider))).IsTrue()
+        .Because("the typed providers are built on a base provider, so one has to be registered");
+    } finally {
+      WhizbangIdProviderRegistry.RestoreDICallbacksForTests(taken);
+    }
   }
 }

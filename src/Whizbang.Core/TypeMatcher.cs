@@ -107,10 +107,9 @@ public static class TypeMatcher {
   /// To: "Type, Assembly"
   /// </remarks>
   private static string _stripVersionInfo(string typeString) {
-    if (string.IsNullOrEmpty(typeString)) {
-      return typeString;
-    }
-
+    // The emptiness guard that used to open this method returned the input, which is what the split
+    // below already answers for an empty string: one part, so the length test returns typeString.
+    // Every caller tests for empty first in any case, so it was redundant twice over.
     // Split by comma and take parts before version info
     var parts = typeString.Split(',').Select(p => p.Trim()).ToArray();
 
@@ -133,10 +132,8 @@ public static class TypeMatcher {
   /// To: "Namespace.Type"
   /// </remarks>
   private static string _stripAssembly(string typeString) {
-    if (string.IsNullOrEmpty(typeString)) {
-      return typeString;
-    }
-
+    // Same as above: splitting an empty string yields one empty part, so the general path already
+    // returns the input, and every caller tests for empty before it gets here.
     // Split by comma and take only the first part (type name with namespace)
     var parts = typeString.Split(',');
     return parts[0].Trim();

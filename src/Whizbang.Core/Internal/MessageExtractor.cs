@@ -63,18 +63,11 @@ public static class MessageExtractor {
   }
 
   private static bool _tryExtractFromTypedEnumerable(object result, out IEnumerable<IMessage> messages) {
+    // One test covers all three sequence shapes: IEnumerable<T> is covariant and both IEvent and
+    // ICommand derive from IMessage, so an IEnumerable<IEvent> or IEnumerable<ICommand> already
+    // matches here and a second test would never see anything the first did not.
     if (result is IEnumerable<IMessage> messageEnumerable) {
       messages = messageEnumerable;
-      return true;
-    }
-
-    if (result is IEnumerable<IEvent> eventEnumerable) {
-      messages = eventEnumerable.Cast<IMessage>();
-      return true;
-    }
-
-    if (result is IEnumerable<ICommand> commandEnumerable) {
-      messages = commandEnumerable.Cast<IMessage>();
       return true;
     }
 

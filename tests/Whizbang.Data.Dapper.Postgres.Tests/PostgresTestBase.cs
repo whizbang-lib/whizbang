@@ -125,7 +125,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
     );
     var schemaSql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
 
-    using var schemaCommand = (NpgsqlCommand)connection.CreateCommand();
+    await using var schemaCommand = (NpgsqlCommand)connection.CreateCommand();
     schemaCommand.CommandText = schemaSql;
     await schemaCommand.ExecuteNonQueryAsync();
 
@@ -165,7 +165,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       // that applies migrations differently from the runner can reject what production accepts, and
       // accept what production rejects; both directions cost a day.
       await using var transaction = (NpgsqlTransaction)connection.BeginTransaction();
-      using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
+      await using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
       functionCommand.Transaction = transaction;
       functionCommand.CommandText = functionSql;
       try {

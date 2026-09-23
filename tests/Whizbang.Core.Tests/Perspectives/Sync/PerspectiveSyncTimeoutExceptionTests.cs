@@ -103,7 +103,7 @@ public class PerspectiveSyncTimeoutExceptionTests {
   [Test]
   public async Task Exception_PreservesStackTraceAsync() {
     // Arrange
-    PerspectiveSyncTimeoutException? caught = null;
+    PerspectiveSyncTimeoutException? caught;
 
     // Act
     try {

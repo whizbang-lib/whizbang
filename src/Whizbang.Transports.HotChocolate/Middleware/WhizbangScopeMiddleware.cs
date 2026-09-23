@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
@@ -65,7 +66,7 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
   private void _seedInboundCorrelation(HttpContext context) {
     if (context.Request.Headers.TryGetValue(_options.CorrelationIdHeaderName, out var header) &&
         !string.IsNullOrEmpty(header) &&
-        Guid.TryParse(header!, out var correlationGuid)) {
+        Guid.TryParse(header, out var correlationGuid)) {
       // FromExternal accepts any 128-bit token (a client v4 UUID, a W3C trace-id) without UUIDv7 validation —
       // a correlation id can originate outside the system.
       InboundCorrelationAccessor.Current = CorrelationId.FromExternal(correlationGuid);
@@ -89,7 +90,7 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
     foreach (var (headerName, extensionKey) in _options.ExtensionHeaderMappings) {
       if (context.Request.Headers.TryGetValue(headerName, out var headerValue) &&
           !string.IsNullOrEmpty(headerValue)) {
-        extensions.Add(new ScopeExtension { Key = extensionKey, Value = headerValue! });
+        extensions.Add(new ScopeExtension { Key = extensionKey, Value = headerValue });
       }
     }
 
@@ -118,7 +119,7 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
     // Then try header
     if (context.Request.Headers.TryGetValue(headerName, out var headerValue) &&
         !string.IsNullOrEmpty(headerValue)) {
-      return headerValue!;
+      return headerValue;
     }
 
     return null;
@@ -143,6 +144,7 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
   /// name that yields any values wins), or <c>Aggregate</c> (union across all configured
   /// claim names, deduplicated).
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Extracts across several claim names under two aggregation strategies, where FirstMatch stops at the first name that yields anything and Aggregate unions and deduplicates across all of them. The branches are the two strategies.")]
   private static IEnumerable<string> _extractMultiValuedClaim(
       HttpContext context, List<string> claimTypes, ClaimAggregation aggregation) {
     if (context.User is null || claimTypes.Count == 0) {

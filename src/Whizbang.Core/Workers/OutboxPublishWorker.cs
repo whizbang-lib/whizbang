@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -153,6 +154,7 @@ public sealed partial class OutboxPublishWorker(
   // Singular path
   // ============================================================
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Each item waits on transport readiness, consults the occurrence gate (which can proceed, drop or defer), and on failure tries the dead-letter promotion before giving up. Shutdown cancellation is separated from a genuine publish failure at both points.")]
   private async Task _singularLoopAsync(CancellationToken stoppingToken) {
     await foreach (var work in _workChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
       try {
@@ -244,6 +246,7 @@ public sealed partial class OutboxPublishWorker(
   // Bulk path
   // ============================================================
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The bulk loop coalesces a batch, checks readiness once, builds a context per item, and then maps one bulk outcome back onto every item, including promoting each to the dead-letter queue when the batch failed. The per-item passes are what make a single call attributable.")]
   private async Task _bulkLoopAsync(CancellationToken stoppingToken) {
     var maxBatchSize = _options.MaxBulkPublishBatchSize;
     await foreach (var firstWork in _workChannelWriter.Reader.ReadAllAsync(stoppingToken)) {

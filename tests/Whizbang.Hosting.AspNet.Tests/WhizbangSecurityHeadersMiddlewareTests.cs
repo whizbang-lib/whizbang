@@ -8,6 +8,11 @@ using Whizbang.Hosting.AspNet;
 
 namespace Whizbang.Hosting.AspNet.Tests;
 
+// ASP0015 asks these assertions to read the typed header properties instead of indexing by name.
+// The wire name is what this file exists to pin: the middleware's contract is the literal header a
+// browser receives, and asserting through the typed property would test ASP.NET's own mapping.
+#pragma warning disable ASP0015 // Suggest using IHeaderDictionary properties
+
 /// <summary>
 /// Verifies the security-headers middleware applies hardened response headers (HSTS only over TLS or
 /// forwarded-TLS), never overwrites headers already present (edge wins), and short-circuits disallowed
@@ -242,3 +247,4 @@ public class WhizbangSecurityHeadersMiddlewareTests {
       .Because("Method filtering is opt-in so turnkey wiring never 405s PUT/PATCH/DELETE by default.");
   }
 }
+#pragma warning restore ASP0015

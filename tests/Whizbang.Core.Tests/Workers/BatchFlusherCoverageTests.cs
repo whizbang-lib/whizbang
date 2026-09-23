@@ -11,22 +11,15 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Two of the five requested target lines were investigated and are reported here rather than
-/// driven by a flaky or impossible test:
+/// Two of the five requested target lines could not be driven through the public surface. One
+/// moved behind a narrow seam; the other is reported as unreachable:
 /// </para>
 /// <para>
-/// <b>Line 70</b> (<c>break;</c> in the <c>catch (OperationCanceledException)</c> around
-/// <c>await _channel.Reader.ReadAsync(ct)</c>) needs the loop's internal stop token to be
-/// canceled while a read is genuinely still pending. The only place that token is ever canceled
-/// is inside <c>DisposeAsync</c>, which ALWAYS completes the channel writer first, synchronously,
-/// before any cancellation. An idle pending read normally resolves via
-/// <c>ChannelClosedException</c> (the other catch, one line down) essentially immediately once
-/// the writer completes; forcing the cancellation branch instead would require the
-/// writer-completion continuation to lose a race against <c>DisposeAsync</c>'s own drain-timeout
-/// cancellation by a wide margin (the default drain path only cancels the token AFTER the loop
-/// has already finished, and the timeout path only fires after <c>DrainTimeoutMs</c> — which is
-/// long enough that a merely-idle read would have already unblocked via channel completion).
-/// There is no seam to force that ordering deterministically.
+/// <b>The loop's head read</b> ends the loop two ways — the channel closing and the stop token
+/// firing — and only the first is producible through <c>DisposeAsync</c>, which always completes
+/// the writer first, synchronously, before any cancellation. Rather than leave the canceled
+/// answer untested, the read moved into <c>BatchFlusherChannelRead.TryReadNextAsync</c>, and both
+/// answers are asserted there directly.
 /// </para>
 /// <para>
 /// <b>Line 142</b> (the empty body of the <c>catch (OperationCanceledException)</c> around the
@@ -103,5 +96,48 @@ public class BatchFlusherCoverageTests {
              + "allowed to stop every completion this flusher handles for the rest of the process");
     await Assert.That(attempts).IsGreaterThanOrEqualTo(2)
       .Because("a single attempt would mean the failure was never retried at all");
+  }
+
+  // Five workers share one flusher (lease renewals, inbox handler commits, perspective and outbox
+  // completions, message failures). The head read is where the loop ends, and it has to end
+  // quietly whichever way it ends: an exception escaping here faults a task nobody awaits and
+  // silently stops all five at once, with nothing in the log to say so.
+  [Test]
+  public async Task TryReadNext_StopTokenAlreadyCanceled_ReportsTheLoopIsOverAsync() {
+    var channel = System.Threading.Channels.Channel.CreateUnbounded<int>();
+    using var stopped = new CancellationTokenSource();
+    await stopped.CancelAsync();
+
+    var (ok, _) = await BatchFlusherChannelRead.TryReadNextAsync(channel.Reader, stopped.Token);
+
+    await Assert.That(ok).IsFalse()
+      .Because("a forced shutdown past the drain timeout cancels this read, and the loop has to "
+             + "end on that answer rather than let the cancellation escape");
+  }
+
+  [Test]
+  public async Task TryReadNext_ChannelCompletedAndDrained_ReportsTheLoopIsOverAsync() {
+    var channel = System.Threading.Channels.Channel.CreateUnbounded<int>();
+    channel.Writer.Complete();
+
+    var (ok, _) = await BatchFlusherChannelRead.TryReadNextAsync(channel.Reader, CancellationToken.None);
+
+    await Assert.That(ok).IsFalse()
+      .Because("a graceful shutdown completes the writer, and the loop ends once the channel is "
+             + "drained — this is the ordinary way the flusher stops");
+  }
+
+  // The control: an available item is handed back, so the two answers above are the loop's exits
+  // and not the read having stopped reading.
+  [Test]
+  public async Task TryReadNext_ItemAvailable_HandsItBackAsync() {
+    var channel = System.Threading.Channels.Channel.CreateUnbounded<int>();
+    channel.Writer.TryWrite(42);
+
+    var (ok, item) = await BatchFlusherChannelRead.TryReadNextAsync(channel.Reader, CancellationToken.None);
+
+    await Assert.That(ok).IsTrue();
+    await Assert.That(item).IsEqualTo(42)
+      .Because("the item read here is the first of the batch the flusher coalesces around");
   }
 }

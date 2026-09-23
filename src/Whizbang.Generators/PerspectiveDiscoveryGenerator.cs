@@ -233,18 +233,11 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Searches the type hierarchy to find [StreamId] on inherited properties.
   /// </summary>
   private static string? _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {
-    // If this is an array type, extract from the element type instead
-    var typeToExtract = eventTypeSymbol;
-    if (eventTypeSymbol is IArrayTypeSymbol arrayType) {
-      typeToExtract = arrayType.ElementType;
-    }
-
-    if (typeToExtract is not INamedTypeSymbol namedType) {
-      return null;
-    }
-
-    var streamIdProperty = namedType.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-    return streamIdProperty?.Name;
+    // If this is an array type, look at the element type instead. A symbol that is not a named type
+    // after that — a type parameter, say — declares no properties at all, so it produces the same
+    // "no [StreamId] here" answer through the same null-propagating lookup.
+    var namedType = (eventTypeSymbol is IArrayTypeSymbol arrayType ? arrayType.ElementType : eventTypeSymbol) as INamedTypeSymbol;
+    return namedType?.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE)?.Name;
   }
 
   /// <summary>
@@ -393,10 +386,6 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       ImmutableArray<PerspectiveInfo> perspectives,
       string serviceName) {
 
-    if (perspectives.IsEmpty) {
-      return "return Array.Empty<PerspectiveAssociationInfo<TModel, TEvent>>();";
-    }
-
     var sb = new StringBuilder();
 
     // Generate type checks for each model/event combination
@@ -437,7 +426,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-    // Default: return empty array
+    // Default: return empty array. This is also what an empty perspective list produces — the loop
+    // above simply appends nothing — so no separate early return is needed for that case.
     sb.AppendLine("    return Array.Empty<PerspectiveAssociationInfo<TModel, TEvent>>();");
 
     return sb.ToString();

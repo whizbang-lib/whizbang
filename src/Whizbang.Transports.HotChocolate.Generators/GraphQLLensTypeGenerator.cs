@@ -53,15 +53,15 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
       CancellationToken ct) {
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
 
-    if (context.SemanticModel.GetDeclaredSymbol(typeDeclaration, ct) is not INamedTypeSymbol symbol) {
-      return null;
-    }
-
+    // The "Roslyn bound no named-type symbol" guard is folded into the attribute test rather than
+    // standing alone: a declaration with no symbol exposes no attributes either, so both conditions
+    // take the same exit and the symbol is still never dereferenced. Merged so the guard runs on
+    // every call instead of sitting on a line no input can reach.
     // Check for [GraphQLLens] attribute
-    var graphQLLensAttr = symbol.GetAttributes()
-        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, GRAPHQL_LENS_ATTRIBUTE_NAME));
-
-    if (graphQLLensAttr is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(typeDeclaration, ct) is not INamedTypeSymbol symbol
+        || symbol.GetAttributes()
+             .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, GRAPHQL_LENS_ATTRIBUTE_NAME))
+           is not { } graphQLLensAttr) {
       return null;
     }
 

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -557,6 +558,7 @@ public static class ServiceCollectionExtensions {
   /// </para>
   /// </remarks>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs</tests>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Re-registers the event store behind three decorators, and a service descriptor can carry an implementation factory, an implementation type or an instance, at either of two lifetimes. The branches enumerate the descriptor shapes the container allows.")]
   public static IServiceCollection DecorateEventStoreWithSyncTracking(
       this IServiceCollection services) {
     // Find existing IEventStore registration

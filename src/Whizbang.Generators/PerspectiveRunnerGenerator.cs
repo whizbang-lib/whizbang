@@ -20,6 +20,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
   private const string PERSPECTIVE_SCOPE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveScopeFor";
+
+  /// <summary>
+  /// Spells a bool the way C# source does. ToString() would emit "True"/"False", which does not
+  /// compile in the generated file.
+  /// </summary>
+  private static string _csharpBool(bool value) => value ? "true" : "false";
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
   /// <inheritdoc/>
@@ -91,27 +97,21 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var withActionsInterfaces = _extractWithActionsInterfaces(classSymbol);
     var globalInterfaces = _extractGlobalInterfaces(classSymbol);
 
-    if (singleStreamInterfaces.Count == 0 && withActionsInterfaces.Count == 0 && globalInterfaces.Count == 0) {
-      return null;
-    }
-
     // Combine single-stream and with-actions interfaces (both use same model/event pattern)
     var combinedSingleStreamInterfaces = singleStreamInterfaces.Concat(withActionsInterfaces).ToList();
 
-    // Extract model type (from combined single-stream interfaces)
+    // Extract model type (from combined single-stream interfaces) and the event types from all of
+    // them. A class carrying none of the three interface shapes has no model type and no events, so
+    // "not a perspective at all", "no model type" and "no event types" are one and the same test —
+    // written once rather than as three exits, only the first of which any input reaches.
     var modelType = _extractModelType(combinedSingleStreamInterfaces, globalInterfaces);
-    if (modelType is null) {
+    var (eventTypes, eventTypeSymbols) = _extractEventTypesFromInterfaces(combinedSingleStreamInterfaces, globalInterfaces);
+
+    if (modelType is null || eventTypes.Count == 0) {
       return null;
     }
 
     var modelTypeName = TypeNameUtilities.FullyQualified(modelType);
-
-    // Extract event types from all interfaces (using combined interfaces)
-    var (eventTypes, eventTypeSymbols) = _extractEventTypesFromInterfaces(combinedSingleStreamInterfaces, globalInterfaces);
-
-    if (eventTypes.Count == 0) {
-      return null;
-    }
 
     // A perspective is ephemeral-tainted (viral) if it applies ANY ephemeral event. Ephemeral perspectives
     // snapshot on their own aggressive, single-slot cadence so a fresh rewind floor exists within the grace
@@ -541,7 +541,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         ? "var snapshotThreshold = _snapshotOptions.Value.EphemeralSnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.EphemeralMaxSnapshotsPerStream;"
         : "var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;");
     result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
-        $"private const bool _isEphemeralPerspective = {(perspective.IsEphemeral ? "true" : "false")};");
+        $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};");
     // E2-4d: a TtlRow perspective registers its row TTL via a [ModuleInitializer] so the upsert stamps
     // expires_at. Non-TtlRow perspectives emit nothing (their rows never expire).
     result = TemplateUtilities.ReplaceRegion(result, "TTL_REGISTRATION", perspective.TtlRowSeconds >= 0
@@ -583,7 +583,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         continue;
       }
       registrations.Add(
-        $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerStreamGroup{i}() =>\n      global::Whizbang.Core.Perspectives.PerspectiveStreamGroupRegistry.Register(typeof({modelTypeName}), \"{parts[0]}\", {(parts[1] == "1" ? "true" : "false")}, {(parts[2] == "1" ? "true" : "false")}, {(parts[3] == "1" ? "true" : "false")});");
+        $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerStreamGroup{i}() =>\n      global::Whizbang.Core.Perspectives.PerspectiveStreamGroupRegistry.Register(typeof({modelTypeName}), \"{parts[0]}\", {_csharpBool(parts[1] == "1")}, {_csharpBool(parts[2] == "1")}, {_csharpBool(parts[3] == "1")});");
     }
     return string.Join("\n\n  ", registrations);
   }
@@ -595,7 +595,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string _generateUpsertCode(PerspectiveInfo perspective) {
     var sb = new StringBuilder();
 
-    if (perspective.PhysicalFields == null || perspective.PhysicalFields!.Length == 0) {
+    if (perspective.PhysicalFields == null || perspective.PhysicalFields.Length == 0) {
       _appendSimpleUpsertCode(sb);
     } else {
       _appendPhysicalFieldsUpsertCode(sb, perspective);
@@ -669,7 +669,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     for (int i = 0; i < perspective.PhysicalFields!.Length; i++) {
       var field = perspective.PhysicalFields[i];
-      var comma = i < perspective.PhysicalFields!.Length - 1 ? "," : "";
+      var comma = i < perspective.PhysicalFields.Length - 1 ? "," : "";
       if (field.IsVectorField) {
         sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} != null ? new Pgvector.Vector(model.{field.PropertyName}) : null }}{comma}");
       } else {
@@ -799,14 +799,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// <summary>
   /// Extracts model type (first type argument) from perspective interfaces.
   /// </summary>
+  /// <remarks>Null when neither list holds an interface, which is how the caller recognizes a class
+  /// that is not a perspective at all.</remarks>
   private static ITypeSymbol? _extractModelType(List<INamedTypeSymbol> singleStreamInterfaces, List<INamedTypeSymbol> globalInterfaces) {
     if (singleStreamInterfaces.Count > 0) {
       return singleStreamInterfaces[0].TypeArguments[0];
     }
-    if (globalInterfaces.Count > 0) {
-      return globalInterfaces[0].TypeArguments[0];
-    }
-    return null;
+    return globalInterfaces.Count > 0 ? globalInterfaces[0].TypeArguments[0] : null;
   }
 
   /// <summary>
@@ -1063,12 +1062,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Extracts the FieldStorageMode from the [PerspectiveStorage] attribute on the model type.
   /// Returns 0 (JsonOnly) if the attribute is not present.
   /// </summary>
+  /// <remarks>A model that is not a named type — an array satisfies the interface's <c>class</c>
+  /// constraint — carries no attributes, so the loop never runs and the answer is the same default.
+  /// </remarks>
   private static int _extractStorageMode(ITypeSymbol modelType) {
-    if (modelType is not INamedTypeSymbol namedModelType) {
-      return 0;
-    }
-
-    foreach (var attribute in namedModelType.GetAttributes()) {
+    foreach (var attribute in (modelType as INamedTypeSymbol)?.GetAttributes() ?? []) {
       if (attribute.AttributeClass?.Name == "PerspectiveStorageAttribute" &&
           attribute.ConstructorArguments.Length > 0 &&
           attribute.ConstructorArguments[0].Value is int mode) {
@@ -1083,14 +1081,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Discovers physical fields (marked with [PhysicalField] or [VectorField]) on model properties.
   /// These fields need to be extracted and passed to UpsertWithPhysicalFieldsAsync.
   /// </summary>
+  /// <remarks>A model that is not a named type — an array satisfies the interface's <c>class</c>
+  /// constraint — declares no properties, so the loop never runs and the result is the same empty
+  /// set.</remarks>
   private static PhysicalFieldInfoCompact[] _discoverPhysicalFields(ITypeSymbol modelType) {
-    if (modelType is not INamedTypeSymbol namedModelType) {
-      return [];
-    }
-
     var physicalFields = new List<PhysicalFieldInfoCompact>();
 
-    foreach (var property in namedModelType.GetAllProperties()) {
+    foreach (var property in (modelType as INamedTypeSymbol)?.GetAllProperties() ?? []) {
       var fieldInfo = _tryExtractPhysicalField(property);
       if (fieldInfo is not null) {
         physicalFields.Add(fieldInfo);

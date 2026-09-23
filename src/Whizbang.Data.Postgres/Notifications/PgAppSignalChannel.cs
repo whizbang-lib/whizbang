@@ -67,14 +67,16 @@ public sealed partial class PgAppSignalChannel(
   }
 
   private void _removeHandler(string topic, Func<string, CancellationToken, Task> handler) {
-    if (!_byTopic.TryGetValue(topic, out var topicSub)) {
-      return;
-    }
-    var stillHasHandlers = topicSub.RemoveHandler(handler);
+    // One condition rather than an early return: the "topic already gone" arm only happens when a
+    // concurrent removal dropped the entry between this handle being taken out and disposed, so a
+    // separate `return` for it is a line nothing single-threaded can reach.
+    //
     // Last handler for this topic — drop the underlying LISTEN by disposing the
     // shared-conn subscription. The next Subscribe for this topic will re-create
     // a fresh TopicSubscription.
-    if (!stillHasHandlers && _byTopic.TryRemove(topic, out var removed)) {
+    if (_byTopic.TryGetValue(topic, out var topicSub) &&
+        !topicSub.RemoveHandler(handler) &&
+        _byTopic.TryRemove(topic, out var removed)) {
       removed.Dispose();
     }
   }

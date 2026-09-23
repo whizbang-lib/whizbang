@@ -110,12 +110,12 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>True when the constructing code lives in <c>Whizbang.Core.Minting</c> or a sub-namespace.</summary>
+  /// <remarks>
+  /// A symbol with no containing namespace has no name to compare, so it is given the empty string
+  /// and falls out of the same comparison rather than needing a guard on a line of its own.
+  /// </remarks>
   private static bool _isInMintingNamespace(ISymbol containingSymbol) {
-    var ns = containingSymbol.ContainingNamespace;
-    if (ns is null) {
-      return false;
-    }
-    var display = TypeNameUtilities.Display(ns);
+    var display = containingSymbol.ContainingNamespace is { } ns ? TypeNameUtilities.Display(ns) : string.Empty;
     return display == MINTING_NAMESPACE_PREFIX
       || display.StartsWith(MINTING_NAMESPACE_PREFIX + ".", System.StringComparison.Ordinal);
   }
@@ -150,12 +150,13 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>True when <paramref name="property"/> is one of the sanctioned builder seams.</summary>
+  /// <remarks>
+  /// A property with no containing type has no name to match, so it is given the empty string and
+  /// fails both comparisons — the same answer a guard on its own line gave.
+  /// </remarks>
   private static bool _isBuilderSeam(IPropertySymbol property) {
     var containingType = property.ContainingType?.OriginalDefinition;
-    if (containingType is null) {
-      return false;
-    }
-    var containingDisplay = $"{TypeNameUtilities.Display(containingType.ContainingNamespace)}.{containingType.Name}";
+    var containingDisplay = containingType is null ? string.Empty : $"{TypeNameUtilities.Display(containingType.ContainingNamespace)}.{containingType.Name}";
     return (property.Name == MINT_REQUEST_BUILDER && containingDisplay == MINT_REQUEST_TYPE)
         || (property.Name == COALESCE_POLICY_BUILDER && containingDisplay == COALESCE_POLICY_OPTIONS_TYPE);
   }

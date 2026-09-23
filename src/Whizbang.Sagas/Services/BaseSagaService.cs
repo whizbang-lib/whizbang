@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using Whizbang.Sagas.Helpers;
 using Whizbang.Sagas.Models;
@@ -324,6 +325,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// not yet at terminal).
   /// </returns>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogAsyncTests.cs</tests>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Recovery tries the in-memory tracker first and falls back to the projection, and the fallback has its own reasons not to run: no loader, the saga gone, completion already dispatched, no items, or counts not yet terminal. The two paths and their exits are the recovery contract the summary describes.")]
   public virtual async Task<bool> TryRecoverViaWatchdogAsync(SagaContext ctx, CancellationToken cancellationToken) {
     cancellationToken.ThrowIfCancellationRequested();
 

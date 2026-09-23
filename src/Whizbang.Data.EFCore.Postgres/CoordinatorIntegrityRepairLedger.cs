@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
@@ -111,6 +112,7 @@ public sealed class CoordinatorIntegrityRepairLedger(
   }
 
   /// <inheritdoc />
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The batch call may be unsupported or answer with the wrong arity, in which case the per-key fallback runs. Either way the grant cap is applied over the results in order, so the cap is enforced in one place.")]
   public async ValueTask<System.Collections.Generic.IReadOnlyList<bool>> TryBeginRepairBatchAsync(
       System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
       DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants,

@@ -243,6 +243,113 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     }
   }
 
+  /// <summary>
+  /// Terminates the backend serving <paramref name="connection"/> and returns once the server has
+  /// acknowledged it. The client still believes the connection is open — Npgsql only finds out on
+  /// its next round trip — which is exactly the state a dropped network or a restarted server
+  /// leaves a long-lived LISTEN connection in.
+  /// </summary>
+  private async Task _terminateBackendAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
+    await using var pidCmd = new NpgsqlCommand("SELECT pg_backend_pid()", connection);
+    var pid = (int)(await pidCmd.ExecuteScalarAsync(cancellationToken))!;
+
+    await using var admin = new NpgsqlConnection(ConnectionString);
+    await admin.OpenAsync(cancellationToken);
+    await using var kill = new NpgsqlCommand("SELECT pg_terminate_backend(@pid)", admin);
+    kill.Parameters.AddWithValue("pid", pid);
+    var terminated = (bool)(await kill.ExecuteScalarAsync(cancellationToken))!;
+    await Assert.That(terminated).IsTrue()
+      .Because("the rest of the test is meaningless unless the session really went away");
+  }
+
+  /// <summary>
+  /// The probe's cleanup issues UNLISTEN on the same connection the round-trip just used, so the
+  /// cases where the round-trip failed are exactly the cases where the cleanup will fail too. An
+  /// exception thrown from a finally block REPLACES the one already in flight, so without the
+  /// swallow the caller would be told "connection is not open" — a statement about the cleanup —
+  /// instead of the database's own account of what happened to the connection, which is the only
+  /// thing <c>LastFailureReason</c> has to show an operator.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task RunProbe_SessionTerminatedBeforeTheRoundTrip_ReportsTheServersFailureNotTheCleanupsAsync(
+      CancellationToken cancellationToken) {
+    var logger = new CapturingLogger();
+    using var shared = _sharedConnection(logger);
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _terminateBackendAsync(conn, cancellationToken);
+
+    // NpgsqlException covers both shapes a killed backend produces (the server's FATAL 57P01 and a
+    // bare I/O failure). The cleanup's own failure is an InvalidOperationException, because by then
+    // Npgsql has marked the connection broken -- so this assertion is what separates the two.
+    await Assert.That(async () => await shared.RunProbeAsync(conn, ConnectionString, cancellationToken))
+      .Throws<NpgsqlException>()
+      .Because("the caller must be told why the connection died, not that the cleanup could not run on it");
+  }
+
+  /// <summary>
+  /// UNLISTEN failing is not a reason to forget the channel. The set of listened channels is what
+  /// the sync pass diffs the registry against; dropping a channel from it while the server still
+  /// has the LISTEN (or while nobody knows what the server has) means a later re-subscribe sees
+  /// "already listened" and issues nothing, and that subscriber never receives a notification
+  /// again. The failure also has to be logged, because a shared connection that quietly stops
+  /// unlistening looks identical to one that never had the channel.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task SyncListens_UnlistenFailsBecauseTheSessionIsGone_LogsItAndKeepsTheChannelListenedAsync(
+      CancellationToken cancellationToken) {
+    var logger = new CapturingLogger();
+    using var shared = _sharedConnection(logger);
+    var channel = $"wh_cov_unlisten_{Guid.NewGuid():N}";
+    var handle = shared.Subscribe(new NoopSubscription(channel));
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await shared.SyncListensAsync(conn, cancellationToken);
+    await Assert.That(shared.ListenedChannelsForTesting).Contains(channel)
+      .Because("the first pass has to have actually issued the LISTEN for the second pass to have anything to undo");
+
+    // The last subscriber goes away, and the session that held the LISTEN goes away with it.
+    handle.Dispose();
+    await _terminateBackendAsync(conn, cancellationToken);
+
+    await shared.SyncListensAsync(conn, cancellationToken);
+
+    var failures = await logger.WaitForCountAsync(10, 1, TimeSpan.FromSeconds(15));
+    await Assert.That(failures[0].Message).Contains(channel)
+      .Because("an operator reading the log has to know which channel was left behind");
+    await Assert.That(shared.ListenedChannelsForTesting).Contains(channel)
+      .Because("a failed UNLISTEN leaves the channel listened as far as anyone knows; forgetting it "
+             + "would make the next subscribe to that channel a no-op and silently deaf");
+  }
+
+  /// <summary>
+  /// Subscribe wakes the dispatch loop by cancelling the handle the loop published. The loop clears
+  /// that handle before disposing it, so the only way to see a disposed one is a sync that threw
+  /// between the publish and the clear — which is precisely when the connection is in trouble and
+  /// a subscriber is most likely to be arriving. Letting that escape would turn a routine Subscribe
+  /// into a throw at a moment that has nothing to do with the caller.
+  /// </summary>
+  [Test]
+  public async Task Subscribe_ResyncHandleAlreadyDisposed_StillRegistersInsteadOfThrowingAsync() {
+    var logger = new CapturingLogger();
+    using var shared = _sharedConnection(logger);
+
+    var stale = new CancellationTokenSource();
+    stale.Dispose();
+    shared.PublishResyncSignalForTesting(stale);
+
+    var channel = $"wh_cov_staleresync_{Guid.NewGuid():N}";
+    using var handle = shared.Subscribe(new NoopSubscription(channel));
+
+    await Assert.That(shared.RegistryForTesting.AllChannels()).Contains(channel)
+      .Because("the subscription is registered before the loop is woken, and a stale wake handle "
+             + "must not undo that or stop the caller getting its handle back");
+  }
+
   private sealed class NoopSubscription(string channel) : INotifySubscription {
     public string ChannelName => channel;
     public void OnNotification(string payload) { }

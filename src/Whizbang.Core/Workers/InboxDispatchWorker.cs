@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
@@ -302,6 +303,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       ? work.Error
       : $"InboxDispatchWorker dead-lettered: attempts={work.Attempts} > max={maxAttempts}";
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Dispatching one inbox row decides, in order, whether the subsystem is disabled, whether attempts are exhausted and the row should be dropped or dead-lettered, whether the discard policy skips it, whether the security context timed out, whether the payload is a composite that repair traffic has turned off, and whether the message is state-only. Each decision ends the row's life differently, so they read as one ladder.")]
   internal async Task ProcessOneInnerAsync(InboxWork work, CancellationToken stoppingToken) {
     // #664: a message whose INNER payload belongs to a subsystem this host has DISABLED is
     // discarded AS its processing — a terminal completion through the normal commit channel
@@ -467,7 +469,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
       if (!stateOnly) {
         await InvokeInboxLifecycleStageAsync(
-          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+          work, typedEnvelope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
           "PreInbox", ct, detachedCancellationToken: stoppingToken);
         LogDiagPreInboxReturned(_logger, work.MessageId);
       }
@@ -481,7 +483,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // PostInbox lands AFTER event storage.
       if (!stateOnly) {
         await InvokeInboxLifecycleStageAsync(
-          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+          work, typedEnvelope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
           "PostInbox", ct, detachedCancellationToken: stoppingToken);
         LogDiagPostInboxReturned(_logger, work.MessageId);
       }
@@ -490,10 +492,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
       if (!stateOnly && _hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
         await InvokeInboxLifecycleStageAsync(
-          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
+          work, typedEnvelope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
           "PostAllPerspectives", ct, detachedCancellationToken: stoppingToken);
         await InvokeInboxLifecycleStageAsync(
-          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
+          work, typedEnvelope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
           "PostLifecycle", ct, detachedCancellationToken: stoppingToken);
       }
     });
@@ -793,9 +795,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
     var runtimeType = typedEnvelope.Payload?.GetType();
     var hasPre = _receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
-      || _runtimeHasReceptors(runtimeType, LifecycleStage.PreInboxInline);
+      || RuntimeHasReceptors(runtimeType, LifecycleStage.PreInboxInline);
     var hasPost = _receptorRegistry.HasReceptors(LifecycleStage.PostInboxInline, work.MessageType)
-      || _runtimeHasReceptors(runtimeType, LifecycleStage.PostInboxInline);
+      || RuntimeHasReceptors(runtimeType, LifecycleStage.PostInboxInline);
     if (!hasPre && !hasPost) {
       return default;
     }
@@ -858,7 +860,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   internal async Task InvokeInboxLifecycleStageAsync(
       InboxWork work,
       IMessageEnvelope? typedEnvelope,
-      AsyncServiceScope scope,
       IReceptorInvoker? receptorInvoker,
       LifecycleStage detachedStage,
       LifecycleStage inlineStage,
@@ -903,10 +904,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var runtimeMessageType = typedEnvelope.Payload?.GetType();
     var hasDetached = !_isGatedStage(detachedStage)
       || _receptorRegistry.HasReceptors(detachedStage, work.MessageType)
-      || _runtimeHasReceptors(runtimeMessageType, detachedStage);
+      || RuntimeHasReceptors(runtimeMessageType, detachedStage);
     var hasInline = !_isGatedStage(inlineStage)
       || _receptorRegistry.HasReceptors(inlineStage, work.MessageType)
-      || _runtimeHasReceptors(runtimeMessageType, inlineStage);
+      || RuntimeHasReceptors(runtimeMessageType, inlineStage);
     if (!hasDetached && !hasInline) {
       return;
     }
@@ -1009,7 +1010,12 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           or LifecycleStage.PostInboxDetached
           or LifecycleStage.PostInboxInline;
 
-  private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
+  /// <summary>
+  /// Whether any receptor was registered at runtime for this message type at this stage. Internal
+  /// so the unresolved-type answer can be asserted directly; the callers pass a type that a wire
+  /// name may not have resolved to.
+  /// </summary>
+  internal bool RuntimeHasReceptors(Type? messageType, LifecycleStage stage) {
     if (messageType is null) {
       return false;
     }
@@ -1146,7 +1152,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Message = "DIAG[5] PostInbox lifecycle returned: message={MessageId}")]
   static partial void LogDiagPostInboxReturned(ILogger logger, Guid messageId);
 
-  [LoggerMessage(EventId = 25, Level = LogLevel.Warning,
+  [LoggerMessage(EventId = 75, Level = LogLevel.Warning,
     Message = "InboxDispatchWorker MaxConcurrentDispatch={Configured} exceeds WorkCoordinatorGate.MaxConcurrent={GateMaxConcurrent}; clamped to {EffectivePartitionCount}. Extra dispatch consumers would idle in the gate queue without delivering throughput. Either raise the gate (WorkCoordinatorGate.FromPoolSize, NpgsqlConfig MaxPoolSize) or lower MaxConcurrentDispatch to match.")]
   static partial void LogPartitionCountClamped(ILogger logger, int configured, int effectivePartitionCount, int gateMaxConcurrent);
 

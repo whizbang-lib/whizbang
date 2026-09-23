@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using Azure;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Routing;
@@ -115,6 +116,7 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
   /// </remarks>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_SecondCall_PerformsZeroManagementOpsAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_OwnedCommandInbox_ForeignSubscription_RecordsDriftAsync</tests>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Provisioning walks topics then subscriptions, and each level is skipped by the per-process existence cache, may race another instance into a conflict that is treated as success, and may carry routing patterns and an ownership check. The nesting is the topology; the conflict arm is what makes the whole thing idempotent across instances.")]
   public async Task ProvisionManifestAsync(
       TopologyManifest manifest,
       CancellationToken cancellationToken = default) {
@@ -210,17 +212,19 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
   private async Task _checkOwnershipDriftAsync(
       string topicName, string ownSubscriptionName, CancellationToken cancellationToken) {
     try {
-      await foreach (var existing in _adminClient.GetSubscriptionsAsync(topicName, cancellationToken)) {
-        if (string.Equals(existing.SubscriptionName, ownSubscriptionName, StringComparison.OrdinalIgnoreCase)) {
+      await foreach (var subscriptionName in _adminClient
+          .GetSubscriptionsAsync(topicName, cancellationToken)
+          .Select(existing => existing.SubscriptionName)) {
+        if (string.Equals(subscriptionName, ownSubscriptionName, StringComparison.OrdinalIgnoreCase)) {
           continue;
         }
         _logger.LogError(
           "Topology ownership drift: command inbox '{TopicName}' already carries a second service's subscription '{ForeignSubscription}' — one service owns a command namespace; a duplicate subscriber receives (and may double-handle) every command on it",
           topicName,
-          existing.SubscriptionName);
+          subscriptionName);
         _driftState?.Record(new TopologyDriftFinding(
           topicName,
-          existing.SubscriptionName,
+          subscriptionName,
           "second service's subscription observed on an owned command inbox during provisioning"));
       }
     } catch (RequestFailedException ex) {

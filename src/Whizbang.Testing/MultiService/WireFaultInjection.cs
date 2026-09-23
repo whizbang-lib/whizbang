@@ -85,11 +85,9 @@ internal sealed class ServiceWireTap(ITransport inner, string serviceName, WireF
       CancellationToken cancellationToken = default) =>
     inner.SubscribeBatchAsync(async (messages, ct) => {
       List<TransportMessage>? kept = null;
-      foreach (var message in messages) {
-        if (!faults.ShouldDrop(serviceName, message)) {
-          kept ??= [];
-          kept.Add(message);
-        }
+      foreach (var message in messages.Where(m => !faults.ShouldDrop(serviceName, m))) {
+        kept ??= [];
+        kept.Add(message);
       }
       if (kept is { Count: > 0 }) {
         await batchHandler(kept, ct).ConfigureAwait(false);

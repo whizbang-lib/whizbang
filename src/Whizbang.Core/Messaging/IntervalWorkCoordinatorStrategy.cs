@@ -24,6 +24,10 @@ namespace Whizbang.Core.Messaging;
 /// Best for: Background workers with high throughput, batch processing.
 /// </summary>
 public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  // Reported as the strategy dimension on every metric this type emits, and passed to the
+  // shared drain helper so its metrics carry the same name.
+  private const string STRATEGY_NAME = "interval";
+
   private readonly IWorkCoordinator? _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
@@ -87,7 +91,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
     // Start the timer for periodic flushing
     _flushTimer = new Timer(
-      _flushTimerCallback,
+      FlushTimerTick,
       state: null,
       dueTime: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds),
       period: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds)
@@ -205,7 +209,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
-      new KeyValuePair<string, object?>("strategy", "interval"),
+      new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
       new KeyValuePair<string, object?>("trigger", "signal"));
     // Interval batches until the timer fires. Nothing to do here beyond the metric.
     return Task.CompletedTask;
@@ -228,7 +232,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, string trigger, bool skipLifecycle, CancellationToken ct) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
-      new KeyValuePair<string, object?>("strategy", "interval"),
+      new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
       new KeyValuePair<string, object?>("trigger", trigger));
 
     // Forced-flush with optional coalescing window
@@ -261,7 +265,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
       var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
         new FlushContext(
-          _coordinator, _scopeFactory, _instanceProvider, _options, "interval",
+          _coordinator, _scopeFactory, _instanceProvider, _options, STRATEGY_NAME,
           snapshot.OutboxMessages, snapshot.InboxMessages,
           snapshot.OutboxCompletions, snapshot.InboxCompletions,
           snapshot.OutboxFailures, snapshot.InboxFailures,
@@ -274,7 +278,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
       LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
 
-      _routeClaimedInboxWorkToChannel(workBatch);
+      RouteClaimedInboxWorkToChannel(workBatch);
       return workBatch;
     } finally {
       lock (_lock) {
@@ -297,7 +301,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
           _queuedOutboxFailures.Count == 0 &&
           _queuedInboxCompletions.Count == 0 &&
           _queuedInboxFailures.Count == 0) {
-        _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"));
+        _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME));
         LogNoQueuedOperations(_logger);
         snapshot = default;
         return false;
@@ -324,7 +328,13 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// <summary>Routes claimed inbox work to the publisher worker via the in-memory channel,
   /// deduplicating by IsInFlight. No-op when no channel writer is configured or the batch has
   /// no inbox rows.</summary>
-  private void _routeClaimedInboxWorkToChannel(WorkBatch workBatch) {
+  /// <remarks>
+  /// Internal rather than private so the dedup itself can be asserted. Since the work-pump
+  /// decomposition a flush only stores rows — claiming moved to the claim worker — so the only
+  /// caller always hands this an empty batch, and the dedup that decides whether a claimed row
+  /// reaches the publisher would otherwise go untested until the day claiming moves back.
+  /// </remarks>
+  internal void RouteClaimedInboxWorkToChannel(WorkBatch workBatch) {
     if (workBatch.InboxWork.Count == 0) {
       return;
     }
@@ -357,7 +367,11 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
-  private void _flushTimerCallback(object? state) {
+  /// <summary>
+  /// One timer tick. Internal rather than private so the disposed guard can be driven
+  /// deterministically; the timer supplies the real cadence.
+  /// </summary>
+  internal void FlushTimerTick(object? state) {
     if (_disposed) {
       return;
     }

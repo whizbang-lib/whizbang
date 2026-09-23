@@ -66,6 +66,36 @@ public static class WhizbangIdProviderRegistry {
   }
 
   /// <summary>
+  /// Test seam: removes every DI registration callback and hands them back so the caller can
+  /// restore them.
+  /// </summary>
+  /// <remarks>
+  /// The callback list is process-global and append-only, and every assembly carrying a
+  /// <c>[WhizbangId]</c> struct fills it from a module initializer before any other code runs.
+  /// That makes the "nothing registered" answer in <see cref="InvokeDICallbacks"/> — the one a
+  /// host with no id types gets, and the only thing that keeps <c>AddWhizbang</c> from adding a
+  /// base provider nobody asked for — unreachable in any process that has one. Callers must
+  /// restore with <see cref="RestoreDICallbacksForTests"/> in a finally, and must serialize
+  /// against anything else that touches this registry.
+  /// </remarks>
+  internal static Action<IServiceCollection, IWhizbangIdProvider>[] TakeDICallbacksForTests() {
+    lock (_lock) {
+      var taken = _diRegistrations.ToArray();
+      _diRegistrations.Clear();
+      return taken;
+    }
+  }
+
+  /// <summary>Puts back the callbacks taken by <see cref="TakeDICallbacksForTests"/>.</summary>
+  internal static void RestoreDICallbacksForTests(Action<IServiceCollection, IWhizbangIdProvider>[] callbacks) {
+    ArgumentNullException.ThrowIfNull(callbacks);
+    lock (_lock) {
+      _diRegistrations.Clear();
+      _diRegistrations.AddRange(callbacks);
+    }
+  }
+
+  /// <summary>
   /// Creates a strongly-typed provider for the specified WhizbangId type.
   /// </summary>
   /// <typeparam name="TId">The WhizbangId struct type</typeparam>

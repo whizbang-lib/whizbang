@@ -30,13 +30,11 @@ public sealed class WhizbangManagedHealthCheck : IHealthCheck {
     // throws takes the pod down in a crash loop instead of reporting the state it exists to
     // surface. Repeated names get a stable [n] suffix so every report stays visible.
     var data = new Dictionary<string, object>(result.Components.Count, StringComparer.Ordinal);
+    var timesSeen = new Dictionary<string, int>(StringComparer.Ordinal);
     foreach (var c in result.Components) {
-      var key = c.Component;
-      var suffix = 2;
-      while (data.ContainsKey(key)) {
-        key = $"{c.Component}[{suffix}]";
-        suffix++;
-      }
+      var seen = timesSeen.TryGetValue(c.Component, out var previous) ? previous + 1 : 1;
+      timesSeen[c.Component] = seen;
+      var key = seen == 1 ? c.Component : $"{c.Component}[{seen}]";
       data[key] = c.Detail is null ? $"{c.State} => {c.Status}" : $"{c.State} => {c.Status} ({c.Detail})";
     }
     var description = string.Join(", ", result.Components.Select(static c => $"{c.Component}={c.State}"));

@@ -40,7 +40,7 @@ public abstract class BasePollSignalSource<TSignal>(
     ArgumentNullException.ThrowIfNull(sink);
     _sink = sink;
     lock (_timerGate) {
-      _timer = _clock.CreateTimer(_onTick, state: null, _interval, _interval);
+      _timer = _clock.CreateTimer(OnTimerTick, state: null, _interval, _interval);
     }
     return Task.CompletedTask;
   }
@@ -81,7 +81,13 @@ public abstract class BasePollSignalSource<TSignal>(
   /// </summary>
   protected abstract ValueTask<bool> DetectAsync(CancellationToken cancellationToken);
 
-  private void _onTick(object? state) {
+  /// <summary>
+  /// One timer tick. Internal rather than private so the not-yet-started answer can be asserted:
+  /// the timer is created inside <see cref="StartAsync"/> after the sink is assigned, so a tick
+  /// can never see a null sink through the production path, and the guard is what keeps a tick
+  /// that somehow arrives first from dereferencing nothing.
+  /// </summary>
+  internal void OnTimerTick(object? state) {
     var sink = _sink;
     if (sink is null) {
       return;

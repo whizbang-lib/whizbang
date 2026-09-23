@@ -12,6 +12,12 @@ namespace Whizbang.Transports.Tests;
 /// Tests for AzureServiceBusHealthCheck implementation.
 /// Validates health check logic for Azure Service Bus transport connectivity.
 /// </summary>
+/// <remarks>
+/// Two tests used to live here that built a throwing health check of their own and asserted against
+/// that, not against AzureServiceBusHealthCheck — they passed whatever the product did. They are
+/// gone, along with the copy they asserted on. The check now inspects the transport's type and
+/// nothing else, so Healthy and Degraded are the whole surface and both are covered below.
+/// </remarks>
 public class AzureServiceBusHealthCheckTests {
 
   [Test]
@@ -46,22 +52,6 @@ public class AzureServiceBusHealthCheckTests {
   }
 
   [Test]
-  public async Task CheckHealthAsync_WithException_ReturnsUnhealthyAsync() {
-    // Arrange - Use a throwing health check to simulate exception
-    _ = new FakeTransport();
-    var healthCheck = new ThrowingHealthCheck();
-    var context = new HealthCheckContext();
-
-    // Act
-    var result = await healthCheck.CheckHealthAsync(context);
-
-    // Assert
-    await Assert.That(result.Status).IsEqualTo(HealthStatus.Unhealthy);
-    await Assert.That(result.Description).IsEqualTo("Azure Service Bus transport is not healthy");
-    await Assert.That(result.Exception).IsNotNull();
-  }
-
-  [Test]
   public async Task CheckHealthAsync_WithNullTransport_ThrowsArgumentNullExceptionAsync() {
     // Act & Assert
     await Assert.That(() => new AzureServiceBusHealthCheck(null!))
@@ -83,23 +73,6 @@ public class AzureServiceBusHealthCheckTests {
 
     // Assert - Health check completes despite cancellation (doesn't use token internally)
     await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);
-  }
-
-  [Test]
-  public async Task CheckHealthAsync_IncludesExceptionInUnhealthyResultAsync() {
-    // Arrange
-    _ = new FakeTransport();
-    var healthCheck = new ThrowingHealthCheck();
-    var context = new HealthCheckContext();
-
-    // Act
-    var result = await healthCheck.CheckHealthAsync(context);
-
-    // Assert
-    await Assert.That(result.Status).IsEqualTo(HealthStatus.Unhealthy);
-    await Assert.That(result.Exception).IsNotNull();
-    await Assert.That(result.Exception).IsTypeOf<InvalidOperationException>();
-    await Assert.That(result.Exception!.Message).IsEqualTo("Test exception");
   }
 
   [Test]
@@ -156,20 +129,5 @@ internal sealed class FakeTransport : ITransport {
     where TRequest : notnull
     where TResponse : notnull {
     throw new NotImplementedException();
-  }
-}
-
-/// <summary>
-/// Test helper class that simulates an exception during health check.
-/// Mimics AzureServiceBusHealthCheck's try-catch behavior.
-/// </summary>
-internal sealed class ThrowingHealthCheck : IHealthCheck {
-
-  public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default) {
-    try {
-      throw new InvalidOperationException("Test exception");
-    } catch (Exception ex) {
-      return Task.FromResult(HealthCheckResult.Unhealthy("Azure Service Bus transport is not healthy", ex));
-    }
   }
 }

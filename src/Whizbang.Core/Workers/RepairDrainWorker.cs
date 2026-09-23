@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -74,6 +75,7 @@ public sealed partial class RepairDrainWorker(
   /// (grouping only ever sends fewer wire requests than rows paid for). Internal for
   /// deterministic tests; the loop above supplies real elapsed time.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One pacing tick refills the token bucket and then, only if a whole token is available and every collaborator is wired, claims ledger rows and dispatches them grouped per origin, tenant and type. The early exits are the pacing.")]
   internal async Task DrainTickAsync(double elapsedSeconds, DateTimeOffset now, CancellationToken cancellationToken) {
     if (_options.RepairMode != IntegrityRepairMode.AutoRepairCapped) {
       // ReportOnly is the operator's explicit opt-DOWN from auto-repair, and the drain is a

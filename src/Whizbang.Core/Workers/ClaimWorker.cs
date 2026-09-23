@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -305,8 +306,23 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerGateCadenceTests.cs:GateFlipsToAvailable_TriggersImmediatePollAsync</tests>
   private void _wakeNow() {
     RequestImmediatePoll();
+    CancelNapIgnoringDisposal(Volatile.Read(ref _napCts));
+  }
+
+  /// <summary>
+  /// Cancels the spacing nap, treating a nap that has already ended as nothing to do.
+  /// </summary>
+  /// <remarks>
+  /// Internal and static rather than inline so the already-disposed answer can be asserted: the
+  /// loop disposes each nap source as the nap ends, so reaching the disposed case needs a waker
+  /// to land in the window between the volatile read and the cancel, which no test can schedule.
+  /// Swallowing it is correct rather than merely convenient — the permit released just above is
+  /// what actually wakes the loop, so a nap that has already ended needs no cancel, and throwing
+  /// here would propagate out of a notification callback.
+  /// </remarks>
+  internal static void CancelNapIgnoringDisposal(CancellationTokenSource? nap) {
     try {
-      Volatile.Read(ref _napCts)?.Cancel();
+      nap?.Cancel();
     } catch (ObjectDisposedException) {
       // The nap ended between the read and the cancel — the permit above covers the wake.
     }
@@ -320,6 +336,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   /// <inheritdoc />
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup is a sequence of preconditions that each have their own reason to skip or stop (the adaptive budget report, the killswitch, the schema gate, instance registration, perspective-only mode), and the poll loop then adapts its cadence on four signals: the startup catch-up, the doorbell, a repeat claim and the drain linger. Every branch carries the comment explaining the policy it implements, and moving them apart would separate each policy from the loop that applies it.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.PollingIntervalMilliseconds, _options.PollingMaxIntervalMilliseconds, _instanceProvider.InstanceId);
 

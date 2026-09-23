@@ -126,10 +126,13 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
     var modelType = perspectiveInterfaces[0].TypeArguments[0];
     var modelClassName = modelType.Name;
-    // Use shared utility to include inherited properties from base model classes
+    // Use shared utility to include inherited properties from base model classes. A model type that
+    // is NOT a named type — an array (IPerspectiveFor<TModel> only constrains TModel to `class`, which
+    // an array satisfies), a type parameter — declares no member symbols at all in Roslyn, so there is
+    // nothing to enumerate and the row is sized at the base JSON overhead alone.
     var modelProperties = modelType is INamedTypeSymbol namedModelType
         ? namedModelType.GetAllProperties().ToList()
-        : [.. modelType.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic)];
+        : [];
 
     var propertyCount = modelProperties.Count;
     var estimatedSize = _estimateJsonSize(propertyCount);

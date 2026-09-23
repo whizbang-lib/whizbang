@@ -806,4 +806,191 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       }
     }
   }
+
+  // ============================================================
+  // RouteClaimedInboxWorkToChannel — the dedup that decides what reaches the publisher
+  // ============================================================
+
+  // A claimed inbox row is handed to the publisher through an in-memory channel, and the same row
+  // can be claimed again while the first copy is still in flight (a lease renewal, a redelivery, a
+  // second claim cycle overlapping the first). Writing it twice would hand the same message to two
+  // handlers concurrently — the duplicate dispatch the in-flight set exists to prevent. Rows that
+  // are NOT in flight must still get through, or claimed work would sit unhandled until its lease
+  // expired.
+  [Test]
+  public async Task RouteClaimedInboxWorkToChannel_SkipsWorkAlreadyInFlightAndWritesTheRestAsync() {
+    var inFlight = Guid.CreateVersion7();
+    var fresh = Guid.CreateVersion7();
+    var writer = new SelectiveInFlightInboxChannelWriter(inFlight);
+    var sut = new IntervalWorkCoordinatorStrategy(
+      coordinator: new SimpleWorkCoordinator(),
+      instanceProvider: new CoverageTestInstanceProvider(),
+      options: _createOptions(),
+      logger: new RecordingLogger<IntervalWorkCoordinatorStrategy>(),
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: writer);
+
+    try {
+      sut.RouteClaimedInboxWorkToChannel(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [_claimedInboxWork(inFlight), _claimedInboxWork(fresh)],
+        PerspectiveWork = []
+      });
+
+      await Assert.That(writer.Written).IsEquivalentTo([fresh])
+        .Because("only the row that is not already being handled may be written; writing the "
+          + "in-flight one would dispatch the same message to a second handler concurrently");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // The guard above the loop is what keeps an empty claim from touching the channel at all. A
+  // claim cycle that found nothing is the common case on an idle service, so this runs constantly.
+  [Test]
+  public async Task RouteClaimedInboxWorkToChannel_EmptyBatch_NeverAsksTheWriterAnythingAsync() {
+    var writer = new SelectiveInFlightInboxChannelWriter();
+    var sut = new IntervalWorkCoordinatorStrategy(
+      coordinator: new SimpleWorkCoordinator(),
+      instanceProvider: new CoverageTestInstanceProvider(),
+      options: _createOptions(),
+      logger: new RecordingLogger<IntervalWorkCoordinatorStrategy>(),
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: writer);
+
+    try {
+      sut.RouteClaimedInboxWorkToChannel(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+
+      await Assert.That(writer.InFlightQuestions).IsEqualTo(0)
+        .Because("an empty claim has nothing to dedup, so the in-flight set is not consulted at all");
+      await Assert.That(writer.Written).IsEmpty()
+        .Because("an empty claim writes nothing");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // ============================================================
+  // FlushTimerTick — the disposed guard
+  // ============================================================
+
+  // Disposal stops the timer and takes the final flush itself, but a tick the runtime had already
+  // dispatched still arrives afterwards. Without the guard it would start another flush against a
+  // coordinator whose scope the owner has finished with — a second round trip nobody asked for,
+  // after the strategy has reported itself drained.
+  [Test]
+  public async Task FlushTimerTick_AfterDispose_StartsNoFurtherFlushAsync() {
+    var coordinator = new CountingWorkCoordinator();
+    var sut = new IntervalWorkCoordinatorStrategy(
+      coordinator: coordinator,
+      instanceProvider: new CoverageTestInstanceProvider(),
+      options: _createOptions(),
+      logger: new RecordingLogger<IntervalWorkCoordinatorStrategy>(),
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
+
+    sut.QueueOutboxMessage(_createOutboxMessage(Guid.CreateVersion7()));
+    await sut.DisposeAsync();
+    var flushesAtDispose = coordinator.StoreOutboxCallCount;
+
+    sut.FlushTimerTick(null);
+
+    await Assert.That(flushesAtDispose).IsGreaterThan(0)
+      .Because("disposal flushed the queued message, so the count below is measured against a "
+        + "coordinator this strategy really does drive");
+    await Assert.That(coordinator.StoreOutboxCallCount).IsEqualTo(flushesAtDispose)
+      .Because("the tick returned at the disposed guard; going on would open a fresh flush against "
+        + "a coordinator the owner has already finished with");
+  }
+
+  private static InboxWork _claimedInboxWork(Guid messageId) => new() {
+    MessageId = messageId,
+    Envelope = _createEnvelope(messageId),
+    MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+    StreamId = Guid.CreateVersion7(),
+    PartitionNumber = 1,
+    Attempts = 0,
+    Status = MessageProcessingStatus.Stored,
+    Flags = WorkBatchOptions.None,
+  };
+
+  /// <summary>Counts the outbox stores a flush performs, which is how a flush is observed here.</summary>
+  private sealed class CountingWorkCoordinator : IWorkCoordinator {
+    private int _storeOutboxCalls;
+
+    public int StoreOutboxCallCount => Volatile.Read(ref _storeOutboxCalls);
+
+    public Task StoreOutboxMessagesAsync(
+        OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _storeOutboxCalls);
+      return Task.CompletedTask;
+    }
+
+    public Task StoreInboxMessagesAsync(
+        InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task ReportPerspectiveCompletionAsync(
+        PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task ReportPerspectiveFailureAsync(
+        PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task CommitHandlerResultAsync(
+        HandlerCommitRequest request, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
+      => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
+      => Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  /// <summary>
+  /// An inbox channel writer that reports a fixed set of message ids as already in flight and
+  /// records everything actually written, so the dedup's two answers are told apart.
+  /// </summary>
+  private sealed class SelectiveInFlightInboxChannelWriter(params Guid[] inFlight) : IInboxChannelWriter {
+    private readonly HashSet<Guid> _inFlight = [.. inFlight];
+    private readonly System.Threading.Channels.Channel<InboxWork> _channel =
+      System.Threading.Channels.Channel.CreateUnbounded<InboxWork>();
+    private readonly List<Guid> _written = [];
+
+    public int InFlightQuestions { get; private set; }
+    public IReadOnlyList<Guid> Written { get { lock (_written) { return [.. _written]; } } }
+
+    public System.Threading.Channels.ChannelReader<InboxWork> Reader => _channel.Reader;
+
+    public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) {
+      lock (_written) { _written.Add(work.MessageId); }
+      return _channel.Writer.WriteAsync(work, ct);
+    }
+
+    public bool TryWrite(InboxWork work) {
+      lock (_written) { _written.Add(work.MessageId); }
+      return _channel.Writer.TryWrite(work);
+    }
+
+    public bool IsInFlight(Guid messageId) {
+      InFlightQuestions++;
+      return _inFlight.Contains(messageId);
+    }
+
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
+    public void Complete() => _channel.Writer.Complete();
+    public event Action? OnNewInboxWorkAvailable;
+    public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
+  }
 }

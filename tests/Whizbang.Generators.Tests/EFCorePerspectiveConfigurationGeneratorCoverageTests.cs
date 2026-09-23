@@ -251,6 +251,58 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     await Assert.That(generated).Contains("modelBuilder.HasDefaultSchema(\"order\")");
   }
 
+  /// <summary>
+  /// A <c>[WhizbangDbContext]</c> with no <c>Schema</c> set, declared in the global namespace, has no
+  /// namespace segment to derive a schema name from, so the derivation must land on Postgres's own
+  /// default schema.
+  /// </summary>
+  /// <remarks>
+  /// This is issue #707 seen from the perspective-configuration side. Roslyn renders the global
+  /// namespace as the literal text <c>&lt;global namespace&gt;</c>, so a derivation that inspected the
+  /// display string instead of asking the symbol produced
+  /// <c>HasDefaultSchema("&lt;global namespace&gt;")</c> — a schema name that cannot exist, failing
+  /// every query the context issues. The sibling test in
+  /// <c>EFCoreGeneratorsGlobalNamespaceSchemaTests</c> runs the same source WITHOUT EF Core
+  /// references, so <c>: DbContext</c> does not bind there and schema discovery exits before the
+  /// derivation ever runs; the references are what make this one reach it.
+  /// </remarks>
+  [Test]
+  public async Task Generator_DbContextInTheGlobalNamespace_DerivesThePostgresDefaultSchemaAsync() {
+    // Arrange - no namespace declaration at all
+    const string source = """
+        using Microsoft.EntityFrameworkCore;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+        using Whizbang.Data.EFCore.Custom;
+
+        public record RootItem(string Sku);
+
+        public class RootPerspective(IPerspectiveStore<RootItem> store)
+          : IPerspectiveFor<RootItem, RootCreated> {
+          public RootItem Apply(RootItem currentData, RootCreated @event) => currentData;
+        }
+
+        public record RootCreated : IEvent;
+
+        [WhizbangDbContext]
+        public class RootDbContext : DbContext {
+          public RootDbContext(DbContextOptions<RootDbContext> options) : base(options) { }
+        }
+        """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync(source);
+
+    // Assert
+    var generated = result.GeneratedSources
+        .First(s => s.HintName == GENERATED_FILE)
+        .SourceText.ToString();
+    await Assert.That(generated).DoesNotContain("<global namespace>")
+      .Because("Roslyn's placeholder for the global namespace is display text, never a schema name");
+    await Assert.That(generated).Contains("modelBuilder.HasDefaultSchema(\"public\")")
+      .Because("with no namespace segment to derive from, the derivation must produce Postgres's own default schema");
+  }
+
   #endregion
 
   #region Storage mode and model-shape edge cases

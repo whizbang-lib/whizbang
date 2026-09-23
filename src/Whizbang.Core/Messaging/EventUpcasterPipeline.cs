@@ -81,11 +81,9 @@ public sealed class EventUpcasterPipeline {
       if (!c.TargetTypes.Any(requested.Contains)) {
         continue;
       }
-      foreach (var s in c.SourceTypes) {
-        if (!requested.Contains(s)) {
-          extra ??= [];
-          extra.Add(s);
-        }
+      foreach (var s in c.SourceTypes.Where(s => !requested.Contains(s))) {
+        extra ??= [];
+        extra.Add(s);
       }
     }
     return extra is null ? Array.Empty<Type>() : [.. extra.Distinct()];
@@ -107,11 +105,9 @@ public sealed class EventUpcasterPipeline {
       if (!c.TargetTypeNames.Overlaps(requested)) {
         continue;
       }
-      foreach (var s in c.SourceTypeNames) {
-        if (!requested.Contains(s)) {
-          extra ??= [];
-          extra.Add(s);
-        }
+      foreach (var s in c.SourceTypeNames.Where(s => !requested.Contains(s))) {
+        extra ??= [];
+        extra.Add(s);
       }
     }
     return extra is null ? Array.Empty<string>() : [.. extra.Distinct()];

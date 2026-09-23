@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -546,5 +547,93 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage =>
       false;
 
+  }
+
+  // ========================================
+  // IReceptorInvoker fallback, and the service-name fallback chain
+  // ========================================
+
+  // A host with no receptor registry at all still has to resolve an invoker: the worker resolves
+  // one per message and would otherwise fail activation on the first message it receives, taking
+  // down a consumer that simply has no receptors to run.
+  //
+  // The builder itself always leaves a null-object registry behind (TryAddWhizbangDefaults adds
+  // NullReceptorRegistry), so the registration is removed here to produce the shape the fallback
+  // was written for. Removing it is the point: the factory must not assume the builder ran.
+  [Test]
+  public async Task AddTransportConsumer_WithoutReceptorRegistry_FallsBackToTheNoOpInvokerAsync() {
+    var services = new ServiceCollection();
+    _registerRequiredServices(services);
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
+
+    builder.AddTransportConsumer();
+    services.RemoveAll<IReceptorRegistry>();
+
+    var provider = services.BuildServiceProvider();
+    using var scope = provider.CreateScope();
+    var invoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+
+    await Assert.That(invoker).IsTypeOf<NullReceptorInvoker>()
+      .Because("with no registry there is nothing to invoke, and the worker must still get an "
+        + "invoker it can call per message rather than fail activation on first delivery");
+  }
+
+  // Same fallback on the perspective-builder overload, which is a separate registration and would
+  // regress independently.
+  [Test]
+  public async Task AddTransportConsumer_PerspectiveBuilder_WithoutReceptorRegistry_FallsBackToTheNoOpInvokerAsync() {
+    var services = new ServiceCollection();
+    _registerRequiredServices(services);
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
+    var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
+
+    perspectiveBuilder.AddTransportConsumer();
+    services.RemoveAll<IReceptorRegistry>();
+
+    var provider = services.BuildServiceProvider();
+    using var scope = provider.CreateScope();
+    var invoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+
+    await Assert.That(invoker).IsTypeOf<NullReceptorInvoker>()
+      .Because("the perspective-builder overload registers its own invoker factory, so its "
+        + "fallback has to hold on its own");
+  }
+
+  // The service name is what every entity this service provisions is named after. With no
+  // instance provider and no entry-assembly name — a process hosted from unmanaged code, where
+  // Assembly.GetEntryAssembly() returns null — the chain must still yield a usable name rather
+  // than an empty one, because an empty name would produce unnamed entities on the broker.
+  [Test]
+  public async Task ResolveServiceName_NoInstanceProviderAndNoEntryAssembly_FallsBackToUnknownServiceAsync() {
+    var provider = new ServiceCollection().BuildServiceProvider();
+
+    var withoutAnything = TransportConsumerBuilderExtensions.ResolveServiceName(provider, () => null);
+    var withBlankAssemblyName = TransportConsumerBuilderExtensions.ResolveServiceName(provider, () => "   ");
+
+    await Assert.That(withoutAnything).IsEqualTo("UnknownService")
+      .Because("an unnamed service still has to name the entities it provisions; an empty name "
+        + "would produce unnamed subscriptions on the broker");
+    await Assert.That(withBlankAssemblyName).IsEqualTo("UnknownService")
+      .Because("whitespace is not a name — the chain has to fall through it the same way it falls "
+        + "through null");
+  }
+
+  // The rungs above the fallback, so the test above is about the last rung and not about the
+  // chain being broken.
+  [Test]
+  public async Task ResolveServiceName_PrefersTheInstanceProviderThenTheEntryAssemblyAsync() {
+    var withProvider = new ServiceCollection()
+      .AddSingleton<IServiceInstanceProvider>(new TestServiceInstanceProvider("named-service"))
+      .BuildServiceProvider();
+    var withoutProvider = new ServiceCollection().BuildServiceProvider();
+
+    await Assert.That(TransportConsumerBuilderExtensions.ResolveServiceName(withProvider, () => "assembly-name"))
+      .IsEqualTo("named-service")
+      .Because("a registered instance provider is the authoritative name and wins over the assembly");
+    await Assert.That(TransportConsumerBuilderExtensions.ResolveServiceName(withoutProvider, () => "assembly-name"))
+      .IsEqualTo("assembly-name")
+      .Because("with no instance provider the entry assembly names the service");
   }
 }

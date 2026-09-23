@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
 namespace Whizbang.Core.Offloads;
@@ -35,6 +36,7 @@ public sealed class PostSerializeHookChain {
   /// Runs every registered hook in order. Each hook receives the chain's
   /// current state (envelope/bytes/metadata) and may replace any of them.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Each hook may replace any of the envelope, its type, the serialized bytes or the content type, and may add destination metadata. The branches are one per replaceable part, all flat, and a hook that returns null leaves the state alone.")]
   public async Task<PostSerializeOutcome> RunAsync(PostSerializeContext initialContext, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(initialContext);
 

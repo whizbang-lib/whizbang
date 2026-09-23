@@ -816,7 +816,7 @@ public class PerspectiveWorkerDeepPathMiscTests {
   }
 
   private sealed class StubSessionAccessor : ICollectiveSessionAccessor {
-    public object GetSession(IServiceProvider scopedServiceProvider) => new object();
+    public object GetSession(IServiceProvider scopedServiceProvider) => new();
   }
 
   #endregion

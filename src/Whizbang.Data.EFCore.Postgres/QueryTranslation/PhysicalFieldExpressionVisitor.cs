@@ -45,58 +45,43 @@ public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
   protected override Expression VisitMember(MemberExpression node) {
     // We're looking for: r.Data.PropertyName
     // Where r is PerspectiveRow<TModel>, Data is the JSONB property, PropertyName is on TModel
+    //
+    // Every condition is one expression so there is a single "leave the node alone" exit. Written
+    // as separate guards, the ones nothing can falsify — a member access always has a declaring
+    // type, and matching PerspectiveRow<> above already proves the entity expression is there —
+    // each grew their own unreachable `return base.VisitMember(node)`.
+    if (node.Member is PropertyInfo propertyInfo &&
+        node.Expression is MemberExpression { Member.Name: "Data", Expression: { } entityExpression } &&
+        _isPerspectiveRowType(entityExpression.Type) &&
+        // The model type is TModel from PerspectiveRow<TModel>, as the property declares it.
+        propertyInfo.DeclaringType is { } modelType &&
+        // Only properties registered as physical fields are rewritten.
+        PhysicalFieldRegistry.TryGetMapping(modelType, propertyInfo.Name, out var mapping)) {
+      // Rewrite to: EF.Property<TProperty>(r, "shadow_property_name")
+      // Where r is the PerspectiveRow parameter (entityExpression)
 
-    // Check if this is a property access
-    if (node.Member is not PropertyInfo propertyInfo) {
-      return base.VisitMember(node);
-    }
+      // Visit the entity expression in case it needs transformation
+      var visitedEntity = Visit(entityExpression);
 
-    // Check if the expression is accessing a property through .Data
-    // i.e., node.Expression is also a MemberExpression for "Data"
-    if (node.Expression is MemberExpression dataAccess &&
-        dataAccess.Member.Name == "Data" &&
-        _isPerspectiveRowType(dataAccess.Expression?.Type)) {
-
-      // Get the model type (TModel from PerspectiveRow<TModel>)
-      var modelType = propertyInfo.DeclaringType;
-      if (modelType == null) {
-        return base.VisitMember(node);
+      if (!mapping.IsVector) {
+        // Non-vector: direct EF.Property<TProperty>(r, "shadow_property_name")
+        var efPropertyGeneric = _efPropertyMethod.MakeGenericMethod(propertyInfo.PropertyType);
+        var columnNameConstant = Expression.Constant(mapping.ShadowPropertyName);
+        return Expression.Call(null, efPropertyGeneric, visitedEntity, columnNameConstant);
       }
 
-      // Check if this property is registered as a physical field
-      if (PhysicalFieldRegistry.TryGetMapping(modelType, propertyInfo.Name, out var mapping)) {
-        // Rewrite to: EF.Property<TProperty>(r, "shadow_property_name")
-        // Where r is the PerspectiveRow parameter (dataAccess.Expression)
-
-        var entityExpression = dataAccess.Expression;
-        if (entityExpression == null) {
-          return base.VisitMember(node);
-        }
-
-        // Visit the entity expression in case it needs transformation
-        var visitedEntity = Visit(entityExpression);
-
-        if (mapping.IsVector) {
-          // Vector fields: DO NOT rewrite member access.
-          //
-          // The shadow property is Vector? but the model property is float[]? — EF Core
-          // cannot coerce between these types in expression trees. Rewriting causes:
-          //   "No coercion operator is defined between types 'String' and 'Single[]'"
-          //   or "Expression of type 'Vector' cannot be used for return type 'Single[]'"
-          //
-          // Full entity materialization works via ChangeTracker hydration (SplitModeChangeTrackerHydrator).
-          // For Select projections, use EF.Property<Vector?>(r, "embeddings") explicitly.
-          // The Whizbang vector extensions (OrderByCosineDistance, etc.) handle their own rewriting.
-          //
-          // Unifying the shadow property type to float[] waits on the vector extension refactor.
-          return base.VisitMember(node);
-        } else {
-          // Non-vector: direct EF.Property<TProperty>(r, "shadow_property_name")
-          var efPropertyGeneric = _efPropertyMethod.MakeGenericMethod(propertyInfo.PropertyType);
-          var columnNameConstant = Expression.Constant(mapping.ShadowPropertyName);
-          return Expression.Call(null, efPropertyGeneric, visitedEntity, columnNameConstant);
-        }
-      }
+      // Vector fields: DO NOT rewrite member access.
+      //
+      // The shadow property is Vector? but the model property is float[]? — EF Core
+      // cannot coerce between these types in expression trees. Rewriting causes:
+      //   "No coercion operator is defined between types 'String' and 'Single[]'"
+      //   or "Expression of type 'Vector' cannot be used for return type 'Single[]'"
+      //
+      // Full entity materialization works via ChangeTracker hydration (SplitModeChangeTrackerHydrator).
+      // For Select projections, use EF.Property<Vector?>(r, "embeddings") explicitly.
+      // The Whizbang vector extensions (OrderByCosineDistance, etc.) handle their own rewriting.
+      //
+      // Unifying the shadow property type to float[] waits on the vector extension refactor.
     }
 
     return base.VisitMember(node);

@@ -122,7 +122,7 @@ public class InMemoryTraceStore : ITraceStore {
       .ToList();
 
     foreach (var child in children) {
-      _addChildrenRecursive(child, chain, results);
+      AddChildrenRecursive(child, chain, results);
     }
 
     // Sort by timestamp
@@ -138,7 +138,15 @@ public class InMemoryTraceStore : ITraceStore {
   /// <summary>
   /// Recursively adds child messages to the causal chain.
   /// </summary>
-  private void _addChildrenRecursive(IMessageEnvelope message, HashSet<MessageId> chain, List<IMessageEnvelope> results) {
+  /// <remarks>
+  /// Internal rather than private so the already-visited answer can be asserted. Both call sites
+  /// filter candidates with <c>!chain.Contains(...)</c> and each envelope carries exactly one
+  /// causation id, so a sibling can never turn out to be a descendant of an earlier sibling —
+  /// nothing the store can be asked today re-enters with a message already in the chain. The
+  /// guard is still what stands between a causation cycle written by a producer and a stack
+  /// overflow inside a diagnostics query.
+  /// </remarks>
+  internal void AddChildrenRecursive(IMessageEnvelope message, HashSet<MessageId> chain, List<IMessageEnvelope> results) {
     if (chain.Contains(message.MessageId)) {
       return; // Circular reference protection
     }
@@ -158,7 +166,7 @@ public class InMemoryTraceStore : ITraceStore {
       .ToList();
 
     foreach (var child in children) {
-      _addChildrenRecursive(child, chain, results);
+      AddChildrenRecursive(child, chain, results);
     }
   }
 

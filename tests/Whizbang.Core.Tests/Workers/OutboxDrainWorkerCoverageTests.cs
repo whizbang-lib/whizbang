@@ -14,6 +14,7 @@ using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Workers;
@@ -313,7 +314,8 @@ public partial class OutboxDrainWorkerCoverageTests {
       IMessagePublishStrategy? publish = null,
       OutboxDrainWorkerOptions? options = null,
       ILifecycleMessageDeserializer? deserializer = null,
-      IServiceProvider? sp = null) {
+      IServiceProvider? sp = null,
+      IReceptorRegistry? runtimeReceptorRegistry = null) {
     sp ??= new ServiceCollection().BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -330,7 +332,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       publishStrategy: publish ?? new ThrowIfCalledPublishStrategy(),
       lifecycleMessageDeserializer: deserializer ?? new JsonLifecycleMessageDeserializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      runtimeReceptorRegistry: runtimeReceptorRegistry ?? NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(options ?? new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
@@ -762,5 +764,37 @@ public partial class OutboxDrainWorkerCoverageTests {
     await Assert.That(invoker.Stages).IsEmpty()
       .Because("an event-store-only message (null destination) must never invoke transport-side lifecycle stages");
     await Assert.That(failure.All).IsEmpty();
+  }
+
+  // ============================================================
+  // The runtime-receptor lookup
+  // ============================================================
+
+  // The drain worker decides whether to fire outbox lifecycle stages by asking the runtime
+  // registry about the type it resolved from the row's wire type name. That resolution returns
+  // null for any type whose assembly is not loaded in this process — routine for a service that
+  // relays another domain's events. Without the guard the lookup would throw inside the registry
+  // and fault the drain of an otherwise perfectly publishable row.
+  [Test]
+  public async Task RuntimeHasReceptors_UnresolvedMessageType_ReportsNoReceptorsWithoutAskingTheRegistryAsync() {
+    var runtimeRegistry = new AlwaysReceptorRegistry();
+    var worker = _buildDirectCallWorker(
+      failure: new FailureChannel(),
+      runtimeReceptorRegistry: runtimeRegistry);
+
+    var forUnresolvedType = worker.RuntimeHasReceptors(null, LifecycleStage.PostOutboxDetached);
+
+    await Assert.That(forUnresolvedType).IsFalse()
+      .Because("a wire type name this service cannot resolve has no runtime receptors by definition");
+    await Assert.That(runtimeRegistry.Questions).IsEmpty()
+      .Because("the guard has to answer before the registry is asked; this registry throws on a null "
+        + "type, which is exactly what the callers would hit without it");
+
+    var forResolvedType = worker.RuntimeHasReceptors(typeof(OutboxDrainWorkerCoverageTests), LifecycleStage.PostOutboxDetached);
+    await Assert.That(forResolvedType).IsTrue()
+      .Because("the registry reports a receptor for every type it is asked about, so the false above "
+        + "is the guard's answer rather than an empty registry's");
+    await Assert.That(runtimeRegistry.Questions.Count).IsEqualTo(1)
+      .Because("exactly one lookup reached the registry — the resolved one");
   }
 }

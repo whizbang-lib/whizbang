@@ -217,4 +217,81 @@ public class EFCorePerspectiveReplayReaderTests : EFCoreTestBase {
     await Assert.That(results.All(r => !r.IsNew)).IsTrue()
       .Because("LOCK-IN: wh_perspective_events rows for OTHER perspectives must not mark our events as IsNew.");
   }
+
+  /// <summary>
+  /// When the context's connection is ALREADY open, the lookup is a borrower: it must leave the
+  /// connection exactly as it found it. Closing a connection the caller owns breaks whatever the
+  /// caller was in the middle of — a replay runs inside a scope that also writes the perspective
+  /// rows, and on Npgsql an explicit transaction lives on the connection, so closing it under an
+  /// open transaction discards work the caller believes is still pending.
+  /// </summary>
+  [Test]
+  public async Task ReadReplayEventsAsync_ConnectionAlreadyOpen_LeavesItOpenForTheCallerAsync() {
+    var streamId = Guid.NewGuid();
+    var events = await _appendEventsAsync(streamId, count: 2);
+    await _insertPendingPerspectiveEventsAsync(streamId, [events[0].MessageId.Value]);
+
+    await using var dbContext = CreateDbContext();
+    var connection = dbContext.Database.GetDbConnection();
+    await connection.OpenAsync();
+    await Assert.That(connection.State).IsEqualTo(System.Data.ConnectionState.Open);
+
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(dbContext);
+    var reader = new EFCorePerspectiveReplayReader<WorkCoordinationDbContext>(dbContext, eventStore);
+
+    var results = new List<ReplayEventEnvelope>();
+    await foreach (var env in reader.ReadReplayEventsAsync(
+        streamId, PerspectiveName, fromVersionExclusive: 0,
+        [typeof(ActionTestCreatedEvent)], CancellationToken.None)) {
+      results.Add(env);
+    }
+
+    await Assert.That(results.Count).IsEqualTo(2)
+      .Because("the read still has to work on a borrowed connection, or the leave-it-alone rule is vacuous");
+    await Assert.That(results[0].IsNew).IsTrue()
+      .Because("the pending row was read over the caller's own connection");
+    await Assert.That(connection.State).IsEqualTo(System.Data.ConnectionState.Open)
+      .Because("the reader did not open this connection, so it must not close it");
+  }
+
+  /// <summary>
+  /// The pending-id lookup borrows the context's connection and opens it when it finds it closed,
+  /// so it owes the context a closed connection back — including when the query itself fails. A
+  /// replay runs on a scoped context that outlives this call; leaving the connection open on the
+  /// failure path holds a backend for the rest of that scope, and the failures this path sees are
+  /// exactly the ones that repeat (a missing table, a revoked grant), so one leak per retry
+  /// becomes a pool exhausted by a condition that is not even about connections.
+  /// </summary>
+  [Test]
+  public async Task ReadReplayEventsAsync_PendingLookupFails_HandsBackAClosedConnectionAndSurfacesTheErrorAsync() {
+    var streamId = Guid.NewGuid();
+    _ = await _appendEventsAsync(streamId, count: 1);
+
+    // Take the work-queue table away: the pending-id query is the first thing the read does, so
+    // it fails after the connection has been opened and before anything else runs.
+    await using (var admin = new NpgsqlConnection(ConnectionString)) {
+      await admin.OpenAsync();
+      await using var drop = new NpgsqlCommand("DROP TABLE wh_perspective_events", admin);
+      await drop.ExecuteNonQueryAsync();
+    }
+
+    await using var dbContext = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(dbContext);
+    var reader = new EFCorePerspectiveReplayReader<WorkCoordinationDbContext>(dbContext, eventStore);
+    var connection = dbContext.Database.GetDbConnection();
+    await Assert.That(connection.State).IsEqualTo(System.Data.ConnectionState.Closed)
+      .Because("the reader must be the one that opens it for the close-on-failure contract to mean anything");
+
+    await Assert.That(async () => {
+      await foreach (var _ in reader.ReadReplayEventsAsync(
+          streamId, PerspectiveName, fromVersionExclusive: 0,
+          [typeof(ActionTestCreatedEvent)], CancellationToken.None)) {
+        // The first MoveNext performs the pending-id lookup; nothing is ever yielded.
+      }
+    }).Throws<PostgresException>()
+      .Because("a replay that cannot tell new events from replayed ones must fail loudly, not silently treat everything as already applied");
+
+    await Assert.That(connection.State).IsEqualTo(System.Data.ConnectionState.Closed)
+      .Because("the connection the lookup opened has to go back closed even when the lookup threw");
+  }
 }

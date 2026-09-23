@@ -228,4 +228,27 @@ public class TraceSnapshotComparerTests {
     await Assert.That(text).Contains("[KindMismatch]");
     await Assert.That(text).Contains("expected 'expected-name', actual 'actual-name'");
   }
+
+  [Test]
+  public async Task Compare_TwoMultiTraceForests_MatchesWithoutInventingRootTagDifferencesAsync() {
+    // A multi-trace capture is wrapped in a synthetic root that carries no span at all. Both
+    // sides of the comparison have one, and neither has tags to compare: a comparer that read
+    // tags off the missing span would report a phantom difference on every multi-trace baseline,
+    // which is exactly the shape a test cannot debug from its own output.
+    static TraceTree forest() => TraceTree.Build([
+      SpanFactory.Create("first-trace", traceId: "trace-a", spanId: "s-a"),
+      SpanFactory.Create("second-trace", traceId: "trace-b", spanId: "s-b")
+    ]);
+
+    var actual = forest();
+    var expected = forest();
+
+    await Assert.That(actual.Span).IsNull();
+    await Assert.That(actual.Children.Count).IsEqualTo(2);
+
+    var comparison = TraceSnapshotComparer.Compare(actual, expected);
+
+    await Assert.That(comparison.IsMatch).IsTrue();
+    await Assert.That(comparison.Differences).IsEmpty();
+  }
 }

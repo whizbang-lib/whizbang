@@ -151,9 +151,9 @@ public class PerspectiveWorkerCollectiveSinkTests {
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     try {
-      var renewed = await renewCoordinator.FirstRenewal.WaitAsync(TimeSpan.FromSeconds(10));
-      await Assert.That(renewed.Category).IsEqualTo(WorkCategory.PerspectiveEvent);
-      await Assert.That(renewed.Ids).Contains(sinkWork.WorkId)
+      var (Category, Ids) = await renewCoordinator.FirstRenewal.WaitAsync(TimeSpan.FromSeconds(10));
+      await Assert.That(Category).IsEqualTo(WorkCategory.PerspectiveEvent);
+      await Assert.That(Ids).Contains(sinkWork.WorkId)
         .Because("an enqueued sink renewal must survive the registry filter and reach " +
                  "IWorkCoordinator.RenewLeasesAsync — without a registered LeaseHandle the flush " +
                  "silently drops it and the DB lease still expires mid-apply.");
@@ -992,7 +992,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
   }
 
   private sealed class StubSessionAccessor : ICollectiveSessionAccessor {
-    public object GetSession(IServiceProvider scopedServiceProvider) => new object();
+    public object GetSession(IServiceProvider scopedServiceProvider) => new();
   }
 
   /// <summary>A post-apply receptor that throws — the apply already committed, so the sink must isolate this

@@ -126,11 +126,10 @@ public class ClaimWorkerSignalCoalescingTests {
   private sealed class BlockingFakeCoordinator : IWorkCoordinator {
     private readonly Lock _lock = new();
     private readonly System.Collections.Generic.Dictionary<int, TaskCompletionSource> _callWatchers = [];
-    private readonly TaskCompletionSource _firstCallStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _firstCallRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public int CallCount { get; private set; }
-    public TaskCompletionSource FirstCallStarted => _firstCallStarted;
+    public TaskCompletionSource FirstCallStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public void ReleaseFirstCall() => _firstCallRelease.TrySetResult();
 
     public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
@@ -141,7 +140,7 @@ public class ClaimWorkerSignalCoalescingTests {
         if (_callWatchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
       }
       if (isFirst) {
-        _firstCallStarted.TrySetResult();
+        FirstCallStarted.TrySetResult();
         await _firstCallRelease.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
       }
       return new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
