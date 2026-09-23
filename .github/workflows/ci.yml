@@ -3,12 +3,21 @@ name: CI
 on:
   push:
     branches:
-      - develop        # release.yml handles post-merge to main
+      - develop        # alpha channel: the prerelease-publish job
+      - main           # a release landing here is what analyzes the main line (see below)
       - 'release/v**'  # branch-name-versioned publish (release-publish job)
   pull_request:
     branches: [main, develop, 'release/**']
   merge_group:       # the queue's own run, on the prospective merge commit
   workflow_dispatch:
+
+# WHY main IS A PUSH TRIGGER: reusable-quality.yml has always had a main-branch shape — its
+# scanner steps run on a pull request OR a push to main, and for the latter it omits
+# sonar.branch.name so SonarCloud records the analysis as the main line. Nothing ever produced
+# that push: release.yml merges the release PR and calls no quality workflow, so main went
+# unanalyzed from one release to the next and the badge kept reporting a months-old verdict on
+# months-old code. Main receives one merge per release, so this costs one matrix per release, and
+# every publish job here is guarded to develop or release/** and cannot fire from it.
 
 # Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
 # what it needs. Only the publish jobs get contents/id-token write, and only

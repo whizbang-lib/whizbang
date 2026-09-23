@@ -66,10 +66,11 @@ jobs:
       # later — rejected outright on the main-plus-PRs free plan. The PR analysis already
       # gated this exact change, and keeping the queue run lean is the point of the queue.
       - name: SonarScanner Begin
-        # ONLY a pull request or a push to main. Every other context — develop pushes, the
-        # merge queue, and a workflow_dispatch on any branch — skips the scanner entirely.
-        # Analyzing anything else is actively harmful here: see the branch note below.
-        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        # ONLY a pull request, or a run on main (a release landing, or a manual re-analysis).
+        # Every other context — develop pushes, the merge queue, a dispatch on any other branch —
+        # skips the scanner entirely. Analyzing anything else is actively harmful: see the branch
+        # note below.
+        if: github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
@@ -88,7 +89,8 @@ jobs:
 
           # A PR is a pull-request analysis against its base; a main push is the main-branch
           # analysis (no sonar.branch.name — SonarCloud's default). There is deliberately no third
-          # shape.
+          # shape. A manual run on main takes the same path, so the main line can be re-analyzed
+          # without waiting for the next release.
           #
           # This organization's SonarCloud plan does not serve non-main branch data: reads return
           # "Organization is not allowed to access data from non main branches." Submitting a
@@ -289,10 +291,11 @@ jobs:
           fi
 
       - name: SonarScanner End
-        # ONLY a pull request or a push to main. Every other context — develop pushes, the
-        # merge queue, and a workflow_dispatch on any branch — skips the scanner entirely.
-        # Analyzing anything else is actively harmful here: see the branch note below.
-        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        # ONLY a pull request, or a run on main (a release landing, or a manual re-analysis).
+        # Every other context — develop pushes, the merge queue, a dispatch on any other branch —
+        # skips the scanner entirely. Analyzing anything else is actively harmful: see the branch
+        # note below.
+        if: github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
