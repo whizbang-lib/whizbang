@@ -710,6 +710,7 @@ public sealed partial class IntegrityManifestReceptor(
     if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;   // no drill-down infrastructure — the mismatch re-audits next cycle.
     }
+    var sender = new ControlPlaneSender(transport, serializer, instanceProvider, requester, topic);
 
     // Bulk-deficit escalation: a windowed (tenant, type) deficit at or past the threshold skips
     // the stream drill-down entirely — one state-only, range-bounded redelivery of the whole
@@ -755,7 +756,7 @@ public sealed partial class IntegrityManifestReceptor(
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "bulk"),
           new KeyValuePair<string, object?>(IntegrityManifestTags.ORIGIN, message.OriginServiceName));
-        await _sendBulkBackfillRequestAsync(services, options, message, origin.TenantScope, origin.EventType, cancellationToken)
+        await _sendBulkBackfillRequestAsync(services, sender, message, origin.TenantScope, origin.EventType, cancellationToken)
           .ConfigureAwait(false);
         LogBulkBackfillRequested(logger, origin.EventType, origin.TenantScope, deficit, message.OriginServiceName);
       }
@@ -841,19 +842,23 @@ public sealed partial class IntegrityManifestReceptor(
   /// per-stream path can drip through in any reasonable number of cycles. State-only is
   /// load-bearing: backfilled history builds state and never re-fires trigger receptors.
   /// </summary>
+  /// <summary>
+  /// The control-plane essentials an outbound integrity request publishes with, taken as a unit so
+  /// the "is the infrastructure here at all?" question is answered once, by the caller that already
+  /// had to ask it, instead of being re-asked of the same provider and re-answered the same way.
+  /// </summary>
+  private sealed record ControlPlaneSender(
+    ITransport Transport,
+    IEnvelopeSerializer Serializer,
+    IServiceInstanceProvider? InstanceProvider,
+    string Requester,
+    string Topic);
+
   private async Task _sendBulkBackfillRequestAsync(
-      IServiceProvider services, StreamIntegrityOptions options,
+      IServiceProvider services, ControlPlaneSender sender,
       IntegrityManifest manifest, string? tenantScope, string eventType,
       CancellationToken cancellationToken) {
-    var transport = services.GetService<ITransport>();
-    var serializer = services.GetService<IEnvelopeSerializer>();
-    var instanceProvider = services.GetService<IServiceInstanceProvider>();
-    var requester = instanceProvider?.ServiceName;
-    var topic = options.RepairTopic
-      ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
-    if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
-      return;
-    }
+    var (transport, serializer, instanceProvider, requester, topic) = sender;
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(manifest.OriginServiceId);
     if (string.IsNullOrEmpty(originRequestTopic)) {
       LogRepairSkippedNoOriginTopic(logger, manifest.OriginServiceName, eventType, 0);

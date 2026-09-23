@@ -157,7 +157,7 @@ public sealed partial class PgSharedNotifyConnection(
       // password from that after Open for security, so a second connection built from it
       // can't authenticate). When the data source path is used the probe doesn't open a
       // second connection itself, so this argument is unused.
-      var ok = await _runProbeAsync(conn, resolution.ConnectionString ?? string.Empty, cancellationToken).ConfigureAwait(false);
+      var ok = await RunProbeAsync(conn, resolution.ConnectionString ?? string.Empty, cancellationToken).ConfigureAwait(false);
       SetAvailable(ok, ok ? null : "ProbeNowAsync round-trip failed");
       return ok;
     } catch (Exception ex) {
@@ -180,7 +180,13 @@ public sealed partial class PgSharedNotifyConnection(
   /// connection from this — must be the original (with credentials) because Npgsql strips the
   /// password from <see cref="NpgsqlConnection.ConnectionString"/> after Open for security.</param>
   /// <param name="ct">Caller cancellation.</param>
-  private async Task<bool> _runProbeAsync(NpgsqlConnection conn, string connectionString, CancellationToken ct) {
+  /// <remarks>
+  /// Internal rather than private so the cleanup contract can be driven deterministically: the
+  /// <c>UNLISTEN</c> in the finally is best-effort, and whether it swallows the failure that
+  /// actually ended the probe is only observable by handing this a connection that cannot run
+  /// either statement. Nothing about a live connection can be made to fail one and not the other.
+  /// </remarks>
+  internal async Task<bool> RunProbeAsync(NpgsqlConnection conn, string connectionString, CancellationToken ct) {
     // Nonce uses 8 hex chars of a fresh UUIDv7 — plenty of entropy for a 2 s self-test
     // window while keeping the channel name short. Per `feedback_use_trackedguid`.
     var nonce = global::Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value.ToString("N")[..12];
@@ -274,7 +280,7 @@ public sealed partial class PgSharedNotifyConnection(
   /// Slice 33.3 — wakes the dispatch loop so it can sync LISTEN/UNLISTEN state with the
   /// registry. NpgsqlConnection isn't thread-safe; issuing LISTEN directly from Subscribe
   /// while the dispatch loop holds the conn via WaitAsync would throw. Instead we cancel
-  /// the loop's wait token so it unwinds, calls _syncListensAsync, and resumes WaitAsync.
+  /// the loop's wait token so it unwinds, calls SyncListensAsync, and resumes WaitAsync.
   /// </summary>
   private void _signalResync() {
     // Latch BEFORE reading the handle. The loop publishes its handle before draining the latch,
@@ -302,7 +308,13 @@ public sealed partial class PgSharedNotifyConnection(
   /// repeatedly. MUST be called from the dispatch loop's stack so it has exclusive access
   /// to the shared conn (no overlapping WaitAsync).
   /// </summary>
-  private async Task _syncListensAsync(NpgsqlConnection conn, CancellationToken ct) {
+  /// <remarks>
+  /// Internal rather than private so the UNLISTEN-failed path can be driven: it needs a channel
+  /// already listened and a connection that has since gone away, and the dispatch loop reconnects
+  /// (clearing the set) the moment it notices the connection died, so the two states never coexist
+  /// long enough to be arranged through the loop.
+  /// </remarks>
+  internal async Task SyncListensAsync(NpgsqlConnection conn, CancellationToken ct) {
     var registryChannels = new HashSet<string>(_registry.AllChannels(), StringComparer.Ordinal);
     // Add channels missing from the live set
     foreach (var channel in registryChannels) {
@@ -423,14 +435,14 @@ public sealed partial class PgSharedNotifyConnection(
 
         // Slice 33.3 — clear the listened-channels tracking on each new conn. The new
         // conn carries no LISTEN state (server-side LISTENs are per-backend-connection),
-        // so _syncListensAsync will issue LISTEN for every channel in the registry.
+        // so SyncListensAsync will issue LISTEN for every channel in the registry.
         _listenedChannels.Clear();
 
         // LISTEN every registered channel atomically with the connection becoming visible to
         // Subscribe(). Order is "LISTEN first, then publish IsAvailable=true" so any consumer
         // reading IsAvailable inside its OnAvailabilityChanged handler can rely on LISTENs
         // already being live.
-        await _syncListensAsync(conn, stoppingToken).ConfigureAwait(false);
+        await SyncListensAsync(conn, stoppingToken).ConfigureAwait(false);
 
         // Slice 7b — acquire the session-level alive-lock so peers querying
         // is_instance_alive() / cleanup_stale_instances see this pod as alive via pg_locks
@@ -458,7 +470,7 @@ public sealed partial class PgSharedNotifyConnection(
         // NOTIFYs aren't actually flowing — could be pgbouncer in tx-pooling mode, broken
         // producer SQL, or a network partition affecting NOTIFY traffic. Treat as a failure
         // and recycle the conn so the reprobe path runs after PeriodicReprobeInterval.
-        var probeOk = await _runProbeAsync(conn, connectionString ?? string.Empty, stoppingToken).ConfigureAwait(false);
+        var probeOk = await RunProbeAsync(conn, connectionString ?? string.Empty, stoppingToken).ConfigureAwait(false);
         if (!probeOk) {
           SetAvailable(false, "self-test probe round-trip failed");
           throw new InvalidOperationException(
@@ -488,7 +500,7 @@ public sealed partial class PgSharedNotifyConnection(
           // is seen here or finds the handle and cancels the wait below. Covers both the request
           // that woke us and any that landed while we were syncing.
           if (Interlocked.Exchange(ref _resyncPending, 0) == 1) {
-            await _syncListensAsync(conn, stoppingToken).ConfigureAwait(false);
+            await SyncListensAsync(conn, stoppingToken).ConfigureAwait(false);
           }
 
           var keepaliveFired = false;
@@ -641,6 +653,17 @@ public sealed partial class PgSharedNotifyConnection(
   // Test hook — internal accessor for the registry so tests can introspect subscription state
   // without going through the public surface.
   internal NotifySubscriptionRegistry RegistryForTesting => _registry;
+
+  /// <summary>
+  /// Test hook: publishes the resync handle the dispatch loop would have published. The loop
+  /// clears the handle before the source it points at is disposed, so the stale-handle path in
+  /// <c>_signalResync</c> is only entered when an exception between publishing and clearing (a
+  /// LISTEN sync that threw) leaves a disposed source visible while the connection backs off.
+  /// That window cannot be held open from outside, and a Subscribe landing in it must still
+  /// register rather than throw.
+  /// </summary>
+  internal void PublishResyncSignalForTesting(CancellationTokenSource? signal) =>
+    Volatile.Write(ref _resyncSignal, signal);
   internal bool IsConnectionOpenForTesting {
     get {
       lock (_connectionGate) {

@@ -131,16 +131,14 @@ public sealed class PostgresSchemaInitializer {
       return false;
     }
 
-    // Extract the original table name from backup name (remove _bak_<date> suffix)
+    // Extract the original table name from backup name (remove _bak_<date> suffix). The suffix is
+    // what the query matched on, so a missing marker shares the identifier guard's exit rather than
+    // getting a `return false` of its own that no row selected by that LIKE can reach.
     var bakIdx = backupTableName.LastIndexOf("_bak_", StringComparison.Ordinal);
-    if (bakIdx < 0) {
-      return false;
-    }
-
-    var originalTableName = backupTableName[..bakIdx];
+    var originalTableName = bakIdx < 0 ? null : backupTableName[..bakIdx];
 
     // Validate all identifiers before using in DDL
-    if (!_isSafeIdentifier(originalTableName) || !_isSafeIdentifier(backupTableName)) {
+    if (originalTableName is null || !_isSafeIdentifier(originalTableName) || !_isSafeIdentifier(backupTableName)) {
       return false;
     }
 
@@ -471,21 +469,12 @@ public sealed class PostgresSchemaInitializer {
 
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
     try {
+      // Event-replay and direct-DDL run the SAME statement; only the ledger entry differs (status 4
+      // "migrating in background" versus a plain apply). Running them through one arm keeps the two
+      // copies of the execute block from drifting apart, and drops an early return that left the
+      // branch it closed with a line the async rewriter emits after the return and nothing reaches.
       if (strategy == MigrationStrategy.ColumnCopy) {
         await _migrateTableColumnCopyAsync(connection, transaction, entry.Value, tableName!, cancellationToken);
-      } else if (strategy == MigrationStrategy.EventReplay) {
-        await using var cmd = connection.CreateCommand();
-        cmd.Transaction = transaction;
-        cmd.CommandText = entry.Value;
-        cmd.CommandTimeout = 30;
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
-
-        await _upsertMigrationAsync(connection,
-          new MigrationRecord(perspectiveName, hash, versionId, 4,
-            $"MigratingInBackground from hash {existingHash![..8]}... (destructive change detected, event replay required)"),
-          cancellationToken, transaction);
-        await transaction.CommitAsync(cancellationToken);
-        return;
       } else {
         await using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
@@ -494,10 +483,15 @@ public sealed class PostgresSchemaInitializer {
         await cmd.ExecuteNonQueryAsync(cancellationToken);
       }
 
-      var status = isUpdate ? 2 : 1;
-      var desc = isUpdate
+      var eventReplay = strategy == MigrationStrategy.EventReplay;
+      var appliedStatus = isUpdate ? 2 : 1;
+      var appliedDesc = isUpdate
         ? $"Updated from hash {existingHash![..8]}... (strategy: {strategy})"
         : "First apply";
+      var status = eventReplay ? 4 : appliedStatus;
+      var desc = eventReplay
+        ? $"MigratingInBackground from hash {existingHash![..8]}... (destructive change detected, event replay required)"
+        : appliedDesc;
 
       await _upsertMigrationAsync(connection,
         new MigrationRecord(perspectiveName, hash, versionId, status, desc),
@@ -761,14 +755,13 @@ public sealed class PostgresSchemaInitializer {
         @"(CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+\s*\(.*?\)\s*;)",
         RegexOptions.Singleline | RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
 
-    if (!createTableMatch.Success) {
-      return (ddlSql, string.Empty);
-    }
-
-    var createTableSql = createTableMatch.Groups[1].Value;
-    var postTableSql = ddlSql[(createTableMatch.Index + createTableMatch.Length)..].Trim();
-
-    return (createTableSql, postTableSql);
+    // DDL this cannot split comes back whole with nothing after it. That arm shares the statement
+    // rather than owning a line of its own: the only caller is the ColumnCopy strategy, and
+    // _parseColumnsFromDdl selects that strategy with the same "CREATE TABLE … );" match, so a DDL
+    // reaching here has already matched.
+    return createTableMatch.Success
+      ? (createTableMatch.Groups[1].Value, ddlSql[(createTableMatch.Index + createTableMatch.Length)..].Trim())
+      : (ddlSql, string.Empty);
   }
 
   private static async Task _executeSqlAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string sql, CancellationToken ct) {

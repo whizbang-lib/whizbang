@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
@@ -89,6 +90,39 @@ public class PgDutyElectorCoverageTests : EFCoreTestBase {
 
     await Assert.That(async () => await attempt.Grant.DisposeAsync()).ThrowsNothing()
       .Because("a second Dispose on the same grant must be a no-op, not a second attempt against an already-closed connection");
+  }
+
+  // A duty holder's session can die under it -- a crash, a failover, an operator terminating the
+  // backend. The lock goes with the session, so there is nothing left to release; the release
+  // round trip simply cannot complete. Letting that surface would turn every such shutdown into a
+  // faulted dispose, which is the opposite of the crash-tolerant design the session lock exists
+  // for: the whole point is that a dead holder needs no cleanup from anyone.
+  [Test]
+  [Timeout(60000)]
+  public async Task DisposeGrant_AfterTheHoldersSessionWasTerminated_CompletesQuietlyAsync(CancellationToken cancellationToken) {
+    var instance = new ServiceInstanceProvider(Guid.NewGuid(), "utest-service", "utest-host", processId: 1);
+    await _joinFleetAsync(instance, cancellationToken);
+    var elector = _elector(instance);
+
+    var attempt = await elector.TryAcquireAsync("coverage-grant-session-killed", cancellationToken);
+    await Assert.That(attempt.Grant).IsNotNull()
+      .Because("the release path under test only exists once a grant was actually handed out");
+
+    // Kill every session on this test's own database except the one doing the killing: the grant's
+    // connection is among them, and it does not find out until its next round trip -- exactly the
+    // state a crashed or failed-over holder is in.
+    await using (var admin = new NpgsqlConnection(ConnectionString)) {
+      await admin.OpenAsync(cancellationToken);
+      await using var kill = new NpgsqlCommand(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+        + "WHERE datname = current_database() AND pid <> pg_backend_pid()", admin);
+      _ = await kill.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    await Assert.That(async () => await attempt.Grant!.DisposeAsync())
+      .ThrowsNothing()
+      .Because("the lock died with the session and the capability row reaps with the instance, so "
+             + "failing the dispose would report a problem that has already resolved itself");
   }
 }
 

@@ -100,4 +100,106 @@ public class IntegrityCheckpointAdvanceLostRaceTests : EFCoreTestBase {
     cmd.CommandText = $"SELECT setting_value FROM wh_settings WHERE setting_key = '{WATERMARK_KEY}'";
     return await cmd.ExecuteScalarAsync() as string;
   }
+
+  /// <summary>
+  /// Refuses the baseline INSERT outright. Standing in for the settings write failing — a revoked
+  /// grant, a full disk, a constraint added by an operator — because the coordinator sees only that
+  /// the statement threw, and nothing about which of those it was changes what it must do.
+  /// </summary>
+  private static async Task _rejectWatermarkInsertsAsync(NpgsqlConnection conn) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"""
+      CREATE FUNCTION wh_test_reject_watermark_insert() RETURNS TRIGGER AS $$
+      BEGIN
+        IF NEW.setting_key = '{WATERMARK_KEY}' THEN
+          RAISE EXCEPTION 'watermark baseline refused by test';
+        END IF;
+        RETURN NEW;
+      END; $$ LANGUAGE plpgsql;
+
+      CREATE TRIGGER wh_test_reject_watermark_insert
+        BEFORE INSERT ON wh_settings
+        FOR EACH ROW EXECUTE FUNCTION wh_test_reject_watermark_insert();
+      """;
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
+  /// Suppresses the baseline INSERT the way a row already being there suppresses it: the statement
+  /// succeeds and affects nothing. <c>ON CONFLICT DO NOTHING</c> reports the same zero when another
+  /// instance inserted the watermark between this instance's read and its write, and that race
+  /// cannot be produced by running two coordinators — whether they interleave inside that window is
+  /// thread-pool timing.
+  /// </summary>
+  private static async Task _suppressWatermarkInsertsAsync(NpgsqlConnection conn) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"""
+      CREATE FUNCTION wh_test_watermark_baseline_taken() RETURNS TRIGGER AS $$
+      BEGIN
+        IF NEW.setting_key = '{WATERMARK_KEY}' THEN
+          RETURN NULL;
+        END IF;
+        RETURN NEW;
+      END; $$ LANGUAGE plpgsql;
+
+      CREATE TRIGGER wh_test_watermark_baseline_taken
+        BEFORE INSERT ON wh_settings
+        FOR EACH ROW EXECUTE FUNCTION wh_test_watermark_baseline_taken();
+      """;
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
+  /// The very first cycle is a race too: every instance in a fresh fleet reads no watermark and
+  /// each tries to insert one. The one whose insert affects no row lost, and must skip the cycle.
+  /// Handing back a window anyway would have the whole fleet publish a checkpoint for the same
+  /// baseline range on the same tick — the identical fan-out the compare-and-set path exists to
+  /// prevent, happening on the one cycle where nothing has been checkpointed yet.
+  /// </summary>
+  [Test]
+  public async Task Advance_WhenAnotherInstanceBaselinedFirst_SkipsTheCycleAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    await _suppressWatermarkInsertsAsync(conn);
+
+    var coordinator = (IWorkCoordinator)new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    await Assert.That(await coordinator.AdvanceIntegrityCheckpointAsync()).IsNull()
+      .Because("the instance whose baseline insert affected no row did not take the window, and only "
+             + "the one that did may publish a checkpoint for it");
+  }
+
+  /// <summary>
+  /// The baseline distinguishes "I inserted the row" from "someone else did" by the affected-row
+  /// count, and answers null for the second — a normal, silent skip. A write that FAILED must not
+  /// arrive at that same answer: no row exists, so every later cycle re-enters the baseline and
+  /// fails the same way, and a stream-integrity sweep that never checkpoints looks exactly like a
+  /// fleet with nothing to report. The failure has to reach the caller.
+  /// </summary>
+  [Test]
+  public async Task Advance_WhenTheBaselineWriteIsRefused_SurfacesTheFailureRatherThanASilentSkipAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    await _rejectWatermarkInsertsAsync(conn);
+
+    var coordinator = (IWorkCoordinator)new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    await Assert.That(async () => await coordinator.AdvanceIntegrityCheckpointAsync())
+      .Throws<PostgresException>()
+      .Because("a refused baseline is not the same event as losing the baseline race, and reporting "
+             + "it as one hides a sweep that can never start");
+
+    await Assert.That(await _readWatermarkAsync(conn)).IsNull()
+      .Because("nothing was written, so a later cycle must still see no watermark and try again");
+  }
 }

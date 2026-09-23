@@ -813,7 +813,10 @@ public partial class DapperWorkCoordinator(
       return;
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var cursorsJson = cursors.Count == 0 ? "[]" : _serializePerspectiveCompletions([.. cursors]);
+    // No caller-side emptiness test: the serializer already answers "[]" for an empty batch, and
+    // duplicating that here left its own guard with no way to be reached (same shape as
+    // SerializeFailures, which callers hand the array unconditionally).
+    var cursorsJson = _serializePerspectiveCompletions([.. cursors]);
     var idArray = eventWorkIds is Guid[] earr ? earr : [.. eventWorkIds];
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
@@ -907,7 +910,7 @@ public partial class DapperWorkCoordinator(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     Guid[] outboxIds = request.OutboxIds switch { null => [], Guid[] a => a, var ids => [.. ids] };
     Guid[] perspIds = request.PerspectiveEventWorkIds switch { null => [], Guid[] p => p, var ids => [.. ids] };
-    var cursorsJson = request.PerspectiveCursors is null || request.PerspectiveCursors.Count == 0
+    var cursorsJson = request.PerspectiveCursors is null
       ? "[]" : _serializePerspectiveCompletions([.. request.PerspectiveCursors]);
     var failuresJson = _buildFailuresByCategoryJson(request.FailuresByCategory);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);

@@ -268,19 +268,25 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
 
   // --- Lines confirmed unreachable through any live call path (see test-class remarks / report) ---
   //
-  // PostgresSchemaInitializer.cs:136  (RollbackAsync bakIdx<0 "return false")
-  // PostgresSchemaInitializer.cs:315  (CleanupBackupsAsync bakIdx<0 "continue")
-  // PostgresSchemaInitializer.cs:746  (_splitDdl "no CREATE TABLE match" fallback)
+  // PostgresSchemaInitializer.cs  (CleanupBackupsAsync bakIdx<0 "continue")
   //
   // Both backup-table queries filter with `table_name LIKE '%\_bak\_%' ESCAPE '\'`, which guarantees any
   // row returned already contains the literal substring "_bak_" — so the C# LastIndexOf("_bak_") guard
-  // that follows can never see -1. And _splitDdl is reached only from the ColumnCopy branch of
-  // _executeSinglePerspectiveMigrationAsync, which is only selected when _parseColumnsFromDdl(entry.Value)
-  // already matched its "CREATE TABLE ... );" regex on that exact same string — the regex _splitDdl itself
-  // uses (byte-for-byte the same match structure, differing only in which group is captured). A DDL that
-  // fails one necessarily fails the other, so ColumnCopy is never selected for a DDL _splitDdl cannot
-  // parse. All three are defensive dead code under the current call graph; no test in this file forces
-  // them, per the instruction to report rather than fabricate an unreachable path.
+  // that follows can never see -1. RollbackAsync's copy of that guard, and _splitDdl's "no CREATE TABLE
+  // match" fallback, have since been folded into the statement that follows each of them: the protection
+  // is unchanged and neither owns a line the call graph cannot reach. (_splitDdl is reached only from the
+  // ColumnCopy branch of _executeSinglePerspectiveMigrationAsync, which _parseColumnsFromDdl only selects
+  // after matching the same "CREATE TABLE ... );" structure on the same string.) CleanupBackupsAsync's
+  // `continue` is still its own line and still unreachable, and is reported rather than forced.
+  //
+  // Separately: each of the two catch clauses in this file that awaits and then rethrows -- in
+  // _executeMigrationsWithHashDetectionAsync and in _executeSinglePerspectiveMigrationAsync -- has its
+  // CLOSING BRACE reported as an uncovered line, and no test can reach it. Awaiting inside a catch makes
+  // Roslyn hoist the handler body out of the IL catch region and turn the bare rethrow into a capture-
+  // and-throw through ExceptionDispatchInfo, which never returns; the sequence point for that closing
+  // brace lands on the state-machine field cleanup emitted after it. Both rethrows ARE exercised (the
+  // status -1 tests here and in PostgresSchemaInitializerBranchTests). The line attributed to them is
+  // compiler-emitted, not source anyone can run.
 
   // --- Redefinition closure: the ledger says why an unchanged file ran again ---
 

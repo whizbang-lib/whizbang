@@ -392,11 +392,13 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
 
   private static object? _readMember(MemberExpression m) {
     var instance = m.Expression is null ? null : _evaluateValue(m.Expression);
-    return m.Member switch {
-      FieldInfo f => f.GetValue(instance),
-      PropertyInfo p => p.GetValue(instance),
-      _ => throw new NotSupportedException(
-        $"Unsupported member '{m.Member.Name}' in collective scope-filter value."),
-    };
+    if (m.Member is FieldInfo f) {
+      return f.GetValue(instance);
+    }
+    // Not a field, so it is a property: the expression factory validates that a member access is
+    // built over a FieldInfo or a PropertyInfo and rejects anything else, so the cast cannot fail.
+    // Writing it as a cast rather than a third switch arm keeps the compiler from demanding a
+    // fallback arm no caller can reach.
+    return ((PropertyInfo)m.Member).GetValue(instance);
   }
 }
