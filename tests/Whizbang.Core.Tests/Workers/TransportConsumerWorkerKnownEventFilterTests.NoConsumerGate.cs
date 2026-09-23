@@ -5,8 +5,8 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Transports;
 using Whizbang.Core.Tests.Observability;
+using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Testing.Workers;
 
