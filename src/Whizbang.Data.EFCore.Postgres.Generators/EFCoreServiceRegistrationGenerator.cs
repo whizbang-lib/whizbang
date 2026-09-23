@@ -4,7 +4,6 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Reflection;
 using System.Text;
-using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -1500,32 +1499,26 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       out string perspectiveSnippet,
       Assembly? snippetAssembly = null) {
     var assembly = snippetAssembly ?? typeof(EFCoreServiceRegistrationGenerator).Assembly;
-    string? failure;
-    infrastructureSnippet = string.Empty;
-    perspectiveSnippet = string.Empty;
-    try {
-      infrastructureSnippet = TemplateUtilities.ExtractSnippet(
-          assembly,
-          "EFCoreSnippets.cs",
-          "REGISTER_INFRASTRUCTURE_SNIPPET",
-          "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
-      );
-      perspectiveSnippet = TemplateUtilities.ExtractSnippet(
-          assembly,
-          "EFCoreSnippets.cs",
-          "REGISTER_PERSPECTIVE_MODEL_SNIPPET",
-          "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
-      );
-      // ExtractSnippet answers a missing resource or a missing region with an error marker rather
-      // than throwing, so the marker is what a corrupt build actually looks like from here.
-      // Catching only exceptions let that through, and the registration file was emitted with the
-      // marker sitting in it as a comment.
-      failure = _snippetFailure(infrastructureSnippet) ?? _snippetFailure(perspectiveSnippet);
-    } catch (RegexMatchTimeoutException ex) {
-      // The region match carries a timeout against a pathological template; nothing else here throws.
-      failure = ex.Message;
-    }
+    infrastructureSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "EFCoreSnippets.cs",
+        "REGISTER_INFRASTRUCTURE_SNIPPET",
+        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
+    );
+    perspectiveSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "EFCoreSnippets.cs",
+        "REGISTER_PERSPECTIVE_MODEL_SNIPPET",
+        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
+    );
 
+    // ExtractSnippet answers a missing resource or a missing region with an error marker rather
+    // than throwing, so the marker is what a corrupt build actually looks like from here. Catching
+    // only exceptions let that through, and the registration file was emitted with the marker
+    // sitting in it as a comment. No catch: the one thing ExtractSnippet can throw is the region
+    // match timing out against a pathological template, which this assembly's own embedded
+    // snippets cannot be, and the callback's own net reports that as EFCORE996.
+    var failure = _snippetFailure(infrastructureSnippet) ?? _snippetFailure(perspectiveSnippet);
     if (failure is null) {
       return true;
     }
