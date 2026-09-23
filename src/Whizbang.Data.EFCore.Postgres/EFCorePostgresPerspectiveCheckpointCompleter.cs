@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
@@ -59,6 +60,7 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
 
     var persisted = 0;
     var skippedEmpty = 0;
+    Exception? failure = null;
     try {
       foreach (var completion in completions) {
         if (await _tryUpsertCursorAsync(completion, sql, cancellationToken)) {
@@ -76,17 +78,26 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
         LogBatchPersisted(logger, persisted, skippedEmpty, completions.Count);
       }
     } catch (Exception ex) {
+      // Captured rather than rethrown here. A rethrow from an async catch that also awaits makes
+      // the compiler hoist this handler out of the IL catch region and rewrite `throw;` as a
+      // capture-and-throw, and the brace's sequence point then lands on state-machine cleanup that
+      // nothing reaches. Doing the capture ourselves and throwing after the finally keeps the same
+      // order — roll back, log, dispose, propagate — with no line that cannot run.
+      failure = ex;
       if (ownsTransaction && transaction != null) {
         await transaction.RollbackAsync(cancellationToken);
       }
       if (logger != null) {
         LogBatchFailed(logger, ex, persisted, completions.Count);
       }
-      throw;
     } finally {
       if (ownsTransaction && transaction != null) {
         await transaction.DisposeAsync();
       }
+    }
+
+    if (failure is not null) {
+      ExceptionDispatchInfo.Capture(failure).Throw();
     }
   }
 
