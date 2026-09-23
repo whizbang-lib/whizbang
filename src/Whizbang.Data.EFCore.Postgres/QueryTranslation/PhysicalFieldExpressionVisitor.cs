@@ -91,23 +91,24 @@ public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
   /// Checks if a type is PerspectiveRow&lt;T&gt; or derives from it.
   /// </summary>
   private static bool _isPerspectiveRowType(Type? type) {
-    if (type == null) {
-      return false;
-    }
-
-    // Check if it's a generic type based on PerspectiveRow<>
-    if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(PerspectiveRow<>)) {
-      return true;
-    }
-
-    // Check base types
-    var baseType = type.BaseType;
-    while (baseType != null) {
-      if (baseType.IsGenericType && baseType.GetGenericTypeDefinition() == typeof(PerspectiveRow<>)) {
+    // A null type answers false through the method's own exit rather than an early return of its
+    // own: the only caller passes Expression.Type, which a Roslyn expression never leaves null, so
+    // a separate exit for it is a line nothing can reach. The guard itself is unchanged.
+    if (type is not null) {
+      // Check if it's a generic type based on PerspectiveRow<>
+      if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(PerspectiveRow<>)) {
         return true;
       }
 
-      baseType = baseType.BaseType;
+      // Check base types
+      var baseType = type.BaseType;
+      while (baseType != null) {
+        if (baseType.IsGenericType && baseType.GetGenericTypeDefinition() == typeof(PerspectiveRow<>)) {
+          return true;
+        }
+
+        baseType = baseType.BaseType;
+      }
     }
 
     return false;

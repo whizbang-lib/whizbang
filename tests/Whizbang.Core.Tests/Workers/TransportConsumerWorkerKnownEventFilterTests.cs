@@ -33,7 +33,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/TransportConsumerWorker.cs</code-under-test>
 [Category("Workers")]
-public class TransportConsumerWorkerKnownEventFilterTests {
+public partial class TransportConsumerWorkerKnownEventFilterTests {
 
   [Test]
   public async Task BatchHandler_KnownEventStored_UnknownEventFilteredBeforeInsertAsync() {
@@ -141,7 +141,10 @@ public class TransportConsumerWorkerKnownEventFilterTests {
   // ============================================================
 
   private static TransportConsumerWorker _buildWorker(
-      ITransport transport, IServiceProvider serviceProvider, TransportMetrics? metrics = null) {
+      ITransport transport,
+      IServiceProvider serviceProvider,
+      TransportMetrics? metrics = null,
+      IReceptorRegistryQuery? receptorRegistry = null) {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("filter-topic"));
     return new TransportConsumerWorker(
@@ -158,7 +161,7 @@ public class TransportConsumerWorkerKnownEventFilterTests {
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
-      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      receptorRegistry: receptorRegistry ?? new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),

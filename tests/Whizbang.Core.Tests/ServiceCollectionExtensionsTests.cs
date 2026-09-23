@@ -25,6 +25,31 @@ namespace Whizbang.Core.Tests;
 /// Target: 100% branch coverage.
 /// </summary>
 public class ServiceCollectionExtensionsTests {
+  /// <summary>
+  /// A host that supplies no IConfiguration still resolves TracingOptions, because AddWhizbang
+  /// registers an empty configuration root for exactly that case. The post-configure step that
+  /// binds Whizbang:Tracing therefore always has something to read, and every key reads as absent,
+  /// which leaves the value set in code standing.
+  /// </summary>
+  [Test]
+  public async Task AddWhizbang_WithoutAHostConfiguration_BindsAgainstAnEmptyRootAndKeepsTheCodedValueAsync() {
+    // No TryAddWhizbangDefaults here on purpose: the point is the bare service collection.
+    var services = new ServiceCollection();
+    _ = services.AddWhizbang(o => o.Tracing.Verbosity = TraceVerbosity.Verbose);
+
+    using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetService<IConfiguration>()).IsNotNull()
+      .Because("AddWhizbang registers an empty root so the types that read Whizbang:* keys can take "
+        + "configuration as a required dependency rather than a nullable one");
+
+    // Resolving runs every IPostConfigureOptions, including the one that binds the section.
+    var tracing = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
+
+    await Assert.That(tracing.Verbosity).IsEqualTo(TraceVerbosity.Verbose)
+      .Because("an empty root has no Whizbang:Tracing section, so the value set in code survives");
+  }
+
   [Test]
   public async Task AddWhizbang_WithValidServices_ReturnsWhizbangBuilderAsync() {
     // Arrange

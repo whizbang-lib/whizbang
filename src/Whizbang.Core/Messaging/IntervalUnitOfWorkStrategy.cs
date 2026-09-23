@@ -181,12 +181,10 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
     // Stop flush loop
     await _disposeCts.CancelAsync();
 
-    // Wait for flush task to complete
-    try {
-      await _flushTask;
-    } catch (OperationCanceledException) {
-      // Expected
-    }
+    // Wait for flush task to complete. No catch: _runFlushLoopAsync catches its own cancellation
+    // and returns, so the task completes rather than faulting, and a second handler for the same
+    // exception here would be a net around a net.
+    await _flushTask;
 
     // Flush remaining unit (if any)
     await _unitLock.WaitAsync(CancellationToken.None);
