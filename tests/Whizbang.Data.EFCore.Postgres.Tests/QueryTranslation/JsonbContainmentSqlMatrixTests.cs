@@ -394,6 +394,34 @@ public class JsonbContainmentSqlMatrixTests {
     Base("nullable/int/null", rows => rows.Where(x => x.Data.MaybeNum == null), Destination.Extraction);
     Base("nullable/string/not-null", rows => rows.Where(x => x.Data.MaybeStr != null), Destination.Extraction);
 
+    // --- A null that arrives as a parameter is the same comparison as a literal one.
+    //
+    // Containment of an explicit JSON null does not match a key that is absent, which is why the
+    // literal cases above keep the extraction form. A captured variable holding null is the same
+    // question, and by the time the tree is seen the value is already a query parameter with no
+    // value attached: the stand-down cannot be read off the tree and has to survive into the
+    // compiled SQL, where the value is finally known. These are the shapes a repository writes far
+    // more often than a literal null, because the value comes from ambient state that may be unset.
+    string? nullStr = null;
+    Guid? nullGid = null;
+    int? nullNum = null;
+
+    Base("nullable/string/null/param", rows => rows.Where(x => x.Data.MaybeStr == nullStr), Destination.Extraction);
+    Base("nullable/guid/null/param", rows => rows.Where(x => x.Data.MaybeGid == nullGid), Destination.Extraction);
+    Base("nullable/int/null/param", rows => rows.Where(x => x.Data.MaybeNum == nullNum), Destination.Extraction);
+
+    // --- The scope document, which every tenant-isolating read filters on.
+    //
+    // Its keys are the framework's own and an absent one is ordinary rather than exceptional, so a
+    // filter comparing one of them against state that may be unset is the case most likely to be
+    // written and the most costly to answer wrongly.
+    Base("scope/tenant/value/param",
+      rows => rows.Where(x => x.Scope.TenantId == maybeStr), Destination.Containment);
+    Base("scope/tenant/null/param",
+      rows => rows.Where(x => x.Scope.TenantId == nullStr), Destination.Extraction);
+    Base("scope/tenant/null",
+      rows => rows.Where(x => x.Scope.TenantId == null), Destination.Extraction);
+
     // --- Promoted fields keep reading their column.
     Base("physical/guid/equal", rows => rows.Where(x => x.Data.PhysGuid == g), Destination.PhysicalColumn);
     Base("physical/int/equal", rows => rows.Where(x => x.Data.PhysInt == i), Destination.PhysicalColumn);
@@ -608,10 +636,8 @@ public class JsonbContainmentSqlMatrixTests {
     var sql = shape(db.Set<PerspectiveRow<MatrixModel>>()).ToQueryString();
 
     var containment = sql.Contains("@>", StringComparison.Ordinal);
-    var extraction = sql.Contains("data ->>", StringComparison.Ordinal)
-                     || sql.Contains("data ->", StringComparison.Ordinal)
-                     || sql.Contains("data #>>", StringComparison.Ordinal)
-                     || sql.Contains("data #>", StringComparison.Ordinal);
+    // Either document the rewrite covers can be the one extracted from, so both are asked about.
+    var extraction = _readsJson(sql, "data") || _readsJson(sql, "scope");
 
     switch (expected) {
       case Destination.Containment:
@@ -639,6 +665,15 @@ public class JsonbContainmentSqlMatrixTests {
         throw new InvalidOperationException($"Unhandled destination {expected}.");
     }
   }
+
+  /// <summary>Whether the compiled SQL reads a value out of <paramref name="column"/>.</summary>
+  /// <param name="sql">The compiled SQL.</param>
+  /// <param name="column">The JSON column.</param>
+  private static bool _readsJson(string sql, string column) =>
+    sql.Contains($"{column} ->>", StringComparison.Ordinal)
+    || sql.Contains($"{column} ->", StringComparison.Ordinal)
+    || sql.Contains($"{column} #>>", StringComparison.Ordinal)
+    || sql.Contains($"{column} #>", StringComparison.Ordinal);
 
   /// <summary>The matrix is worth having only if it is broad, so its size is asserted too.</summary>
   [Test]
