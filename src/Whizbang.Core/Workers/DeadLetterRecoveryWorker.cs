@@ -230,21 +230,20 @@ public partial class DeadLetterRecoveryWorker(
         LogError(_logger, ex);
       }
 
-      try {
-        // Slice 7c — race the polling interval against the NOTIFY-driven wake. When the
-        // listener fires, the next scan runs within ms; otherwise the ScanIntervalMinutes
-        // backstop poll still kicks in. When no listener is wired the wake task never
-        // completes so behaviour collapses to the legacy polling-only loop.
-        var pollDelay = Task.Delay(TimeSpan.FromMinutes(_options.ScanIntervalMinutes), _timeProvider, stoppingToken);
-        // WaitAsync hands back the same pending task while a wait is outstanding, so a backstop
-        // timeout leaves no extra waiter behind and the next signal wakes this one task (#728).
-        var wakeTask = _notificationListener.IsConfigured
-          ? _wake.WaitAsync(stoppingToken)
-          : new TaskCompletionSource<bool>().Task;
-        await Task.WhenAny(pollDelay, wakeTask).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        break;
-      }
+      // Slice 7c — race the polling interval against the NOTIFY-driven wake. When the
+      // listener fires, the next scan runs within ms; otherwise the ScanIntervalMinutes
+      // backstop poll still kicks in. When no listener is wired the wake task never
+      // completes so behaviour collapses to the legacy polling-only loop.
+      var pollDelay = Task.Delay(TimeSpan.FromMinutes(_options.ScanIntervalMinutes), _timeProvider, stoppingToken);
+      // WaitAsync hands back the same pending task while a wait is outstanding, so a backstop
+      // timeout leaves no extra waiter behind and the next signal wakes this one task (#728).
+      var wakeTask = _notificationListener.IsConfigured
+        ? _wake.WaitAsync(stoppingToken)
+        : new TaskCompletionSource<bool>().Task;
+      // No try/catch: on shutdown Task.Delay and WakeSignal.WaitAsync both hand back a canceled
+      // task rather than throwing, and awaiting WhenAny returns the first task to finish without
+      // observing it. The loop leaves through its own condition on the next turn.
+      await Task.WhenAny(pollDelay, wakeTask).ConfigureAwait(false);
     }
 
     LogStopped(_logger);

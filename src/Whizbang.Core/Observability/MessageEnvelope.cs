@@ -340,16 +340,15 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
     }
 
     for (int i = Hops.Count - 1; i >= 0; i--) {
-      if (Hops[i].Type == HopType.Current && Hops[i].Scope != null) {
-        // Return a simple SecurityContext from the first hop's scope for backwards compatibility
-        var scope = GetCurrentScope();
-        if (scope?.Scope != null) {
-          return new SecurityContext {
-            UserId = scope.Scope.UserId,
-            TenantId = scope.Scope.TenantId
-          };
-        }
-        return null;
+      // Return a simple SecurityContext from the first hop's scope for backwards compatibility.
+      // GetCurrentScope aggregates these same current hops and ScopeContext.Scope is a required,
+      // non-nullable member, so a hop that carries a scope always yields one here — the test is
+      // part of the condition rather than a second exit nothing can take.
+      if (Hops[i].Type == HopType.Current && Hops[i].Scope != null && GetCurrentScope() is { } scope) {
+        return new SecurityContext {
+          UserId = scope.Scope.UserId,
+          TenantId = scope.Scope.TenantId
+        };
       }
     }
     return null;

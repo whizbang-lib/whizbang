@@ -622,13 +622,13 @@ public partial class PerspectiveWorker(
         ? _perspectiveWake.WaitAsync(stoppingToken)
         : new TaskCompletionSource<bool>().Task;   // never completes when no listener
 
-      try {
-        await Task.WhenAny(workWait, drainWait, idleTimeout, perspectiveSignal).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        break;
-      }
+      // The composite wake is awaited through AwaitConsumerWakeAsync so the "a canceled wait stops
+      // this loop" decision lives in one narrow member that a test can hold to it directly; see that
+      // method's remarks for why nothing reachable from here can make the await throw.
+      var awake = await AwaitConsumerWakeAsync(
+        Task.WhenAny(workWait, drainWait, idleTimeout, perspectiveSignal)).ConfigureAwait(false);
 
-      if (stoppingToken.IsCancellationRequested) {
+      if (!awake || stoppingToken.IsCancellationRequested) {
         break;
       }
 
@@ -2097,12 +2097,12 @@ public partial class PerspectiveWorker(
       return null;
     }
     var (typedEvents, rawByEventId) = fetchResult.Value;
-    if (typedEvents.Count == 0) {
-      return null;
-    }
     var typeNameCache = _buildDrainModeTypeNameCache(typedEvents);
     var grouped = _groupAndDedupeDrainModeEventsByStream(typedEvents, rawByEventId);
-    if (!grouped.TryGetValue(streamId, out var eventsForStream) || eventsForStream.Count == 0) {
+    // "No typed events" is an operand of the lookup below rather than a guard of its own: the fetch
+    // helper answers null for an empty deserialization, and an empty list groups to no entry here.
+    if (typedEvents.Count == 0
+        || !grouped.TryGetValue(streamId, out var eventsForStream) || eventsForStream.Count == 0) {
       return null;
     }
     var nextContext = new DrainBatchContext(
@@ -4448,6 +4448,28 @@ public partial class PerspectiveWorker(
     Message = "Initial perspective cursor processing complete"
   )]
   static partial void LogInitialCheckpointProcessingComplete(ILogger logger);
+
+  /// <summary>
+  /// Awaits the channel-consumer loop's composite wake and reports whether the loop should run
+  /// another cycle: <c>false</c> means the wait ended in cancellation and the loop must stop.
+  /// </summary>
+  /// <remarks>
+  /// Internal rather than private so the cancellation contract can be asserted directly. The loop
+  /// hands this a <see cref="Task.WhenAny(Task[])"/> over its four wake sources, and that task
+  /// always ends in <see cref="TaskStatus.RanToCompletion"/> — a canceled or faulted source is
+  /// simply the one it reports — so no composition the loop can build makes this await throw. The
+  /// guard stays because a wait that does end canceled has to stop the loop cleanly; letting the
+  /// exception out instead tears the consumer task down with nobody watching, and the batch the
+  /// loop was about to take never gets taken.
+  /// </remarks>
+  internal static async Task<bool> AwaitConsumerWakeAsync(Task wake) {
+    try {
+      await wake.ConfigureAwait(false);
+      return true;
+    } catch (OperationCanceledException) {
+      return false;
+    }
+  }
 
   /// <summary>The event id of a batch lost to a database failure that passes of its own accord.</summary>
   internal const int TRANSIENT_BATCH_FAILURE_EVENT_ID = 67;

@@ -45,6 +45,46 @@ public class AutoPopulateDiscoveryGeneratorCoverageTests {
     return driver.GetRunResult();
   }
 
+  // ==================== Timestamp kinds the emit table has no source for ====================
+
+  /// <summary>
+  /// The attribute accepts three timestamp kinds but only SentAt is readable off the hop the
+  /// populator runs against: QueuedAt is stamped when the outbox row commits and DeliveredAt when
+  /// the receiver takes it, neither of which has happened yet. The generator emits
+  /// <c>default</c> for those rather than inventing a value, which leaves the property at its own
+  /// default instead of silently filling it with the wrong instant.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_TimestampKindWithNoHopSource_EmitsDefaultRatherThanAWrongInstantAsync() {
+    const string source = """
+        namespace Whizbang.Core.Attributes {
+          public class PopulateTimestampAttribute : System.Attribute {
+            public PopulateTimestampAttribute(int kind) { }
+          }
+        }
+
+        namespace TestNamespace {
+          public class QueuedEvent {
+            [Whizbang.Core.Attributes.PopulateTimestamp(1)]
+            public System.DateTimeOffset QueuedAt { get; set; }
+          }
+        }
+        """;
+
+    var result = _runIsolated(source);
+
+    var populator = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(populator).IsNotNull();
+    await Assert.That(populator).Contains("QueuedAt")
+      .Because("the property is still discovered and still gets a populator entry");
+    await Assert.That(populator).Contains("default")
+      .Because("QueuedAt has no source on the hop, so the emitted value is default rather than the "
+        + "SentAt instant, which would be wrong rather than merely absent");
+    await Assert.That(populator).DoesNotContain("m.QueuedAt = hop.Timestamp")
+      .Because("filling QueuedAt from the dispatch timestamp is the mistake this arm avoids");
+  }
+
   // ==================== Scope-alias resolution fallback ====================
 
   /// <summary>
