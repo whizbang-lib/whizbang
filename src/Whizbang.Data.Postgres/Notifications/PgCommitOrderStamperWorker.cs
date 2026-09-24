@@ -190,65 +190,65 @@ public sealed partial class PgCommitOrderStamperWorker(
           if (!gotLock) {
             await lockConn.DisposeAsync();
             lockConn = null;
-            try { await Task.Delay(_stamperOptions.LeaderElectionRetry, stoppingToken); } catch (OperationCanceledException) { break; }
+            await Task.Delay(_stamperOptions.LeaderElectionRetry, stoppingToken);
             continue;
           }
 
           _setLeader(true);
 
-          try {
-            var skipWakeWait = false;
-            var fencedDrain = false;
-            while (!stoppingToken.IsCancellationRequested) {
-              // Wait for NOTIFY-fired wake OR polling-interval timeout. Either path fires
-              // the same stamp. Skipped when the previous iteration left known work behind
-              // (mid-drain or fenced) — pending work never waits on an external wake.
-              if (!skipWakeWait) {
-                // Returning to wake-waiting ends any fenced-drain episode: subsequent stamps
-                // are steady-state again and must not ring the make-up doorbell.
-                fencedDrain = false;
-                try {
-                  var effectiveInterval = ComputeEffectivePollingInterval(
-                    _stamperOptions,
-                    _notifySignalingGate?.IsAvailable);
-                  _ = await _wake.WaitAsync(effectiveInterval, stoppingToken);
-                } catch (OperationCanceledException) { break; }
-              }
-              skipWakeWait = false;
-
-              // Nothing unstamped, nothing to sort: the probe hits the partial index and costs
-              // nothing, the stamp's eligibility CTE orders every unstamped row and does not.
-              if (!await _hasPendingUnstampedAsync(lockConn, stoppingToken)) {
-                OnStampSkipped?.Invoke();
-                continue;
-              }
-
-              var stamped = await _stampOnceAsync(lockConn, notifyOwners: fencedDrain, stoppingToken);
-              _ = Interlocked.Add(ref _totalStamped, stamped);
-              OnStampCompleted?.Invoke(stamped);
-
-              if (stamped > 0) {
-                // A full batch may have left more behind — drain immediately instead of
-                // waiting for another wake.
-                skipWakeWait = true;
-              } else if (await _hasPendingUnstampedAsync(lockConn, stoppingToken)) {
-                // Fenced: unstamped rows exist but an in-flight same-database transaction
-                // holds the ordering fence, so this wake stamped nothing. The rows' own
-                // committing wake has already fired and will not repeat — without this
-                // retry they would sit invisible to perspective fetches until the next
-                // external backstop tick. Keep re-stamping on the tight interval until
-                // the fence clears and the pending set drains — and have those stamps ring
-                // the owners' make-up doorbell (the commit-time doorbell was consumed by a
-                // pre-visibility claim; nothing else re-wakes the appliers).
-                fencedDrain = true;
-                try { await Task.Delay(_stamperOptions.FencedRetryInterval, stoppingToken); } catch (OperationCanceledException) { break; }
-                skipWakeWait = true;
-              }
+          // Cancellation anywhere below means shutdown, and one handler answers it: the
+          // per-iteration catch further down, reached after this iteration's finally has
+          // released the advisory lock and cleared the leader flag. Answering it here too sent
+          // the same shutdown out through a different line depending on which await happened to
+          // observe the token first, so which line ran was a matter of timing.
+          var skipWakeWait = false;
+          var fencedDrain = false;
+          while (!stoppingToken.IsCancellationRequested) {
+            // Wait for NOTIFY-fired wake OR polling-interval timeout. Either path fires
+            // the same stamp. Skipped when the previous iteration left known work behind
+            // (mid-drain or fenced) — pending work never waits on an external wake.
+            if (!skipWakeWait) {
+              // Returning to wake-waiting ends any fenced-drain episode: subsequent stamps
+              // are steady-state again and must not ring the make-up doorbell.
+              fencedDrain = false;
+              var effectiveInterval = ComputeEffectivePollingInterval(
+                _stamperOptions,
+                _notifySignalingGate?.IsAvailable);
+              _ = await _wake.WaitAsync(effectiveInterval, stoppingToken);
             }
-          } catch (OperationCanceledException) {
-            // shutdown — fall through to finally
+            skipWakeWait = false;
+
+            // Nothing unstamped, nothing to sort: the probe hits the partial index and costs
+            // nothing, the stamp's eligibility CTE orders every unstamped row and does not.
+            if (!await _hasPendingUnstampedAsync(lockConn, stoppingToken)) {
+              OnStampSkipped?.Invoke();
+              continue;
+            }
+
+            var stamped = await _stampOnceAsync(lockConn, notifyOwners: fencedDrain, stoppingToken);
+            _ = Interlocked.Add(ref _totalStamped, stamped);
+            OnStampCompleted?.Invoke(stamped);
+
+            if (stamped > 0) {
+              // A full batch may have left more behind — drain immediately instead of
+              // waiting for another wake.
+              skipWakeWait = true;
+            } else if (await _hasPendingUnstampedAsync(lockConn, stoppingToken)) {
+              // Fenced: unstamped rows exist but an in-flight same-database transaction
+              // holds the ordering fence, so this wake stamped nothing. The rows' own
+              // committing wake has already fired and will not repeat — without this
+              // retry they would sit invisible to perspective fetches until the next
+              // external backstop tick. Keep re-stamping on the tight interval until
+              // the fence clears and the pending set drains — and have those stamps ring
+              // the owners' make-up doorbell (the commit-time doorbell was consumed by a
+              // pre-visibility claim; nothing else re-wakes the appliers).
+              fencedDrain = true;
+              await Task.Delay(_stamperOptions.FencedRetryInterval, stoppingToken);
+              skipWakeWait = true;
+            }
           }
         } catch (OperationCanceledException) {
+          // The one shutdown exit: every canceled await in the iteration above lands here.
           break;
         } catch (Exception ex) {
           LogIterationError(_logger, ex.Message, resolution.Source, _notificationOptions.ConnectionStringKey ?? "(unset)");
