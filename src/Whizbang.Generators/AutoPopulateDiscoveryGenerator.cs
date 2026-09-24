@@ -607,8 +607,13 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       POPULATE_KIND_IDENTIFIER when info.SpecificKind == "IdentifierKind.CausationId" =>
           isStringTarget ? "hop.CausationId?.Value.ToString()" : "hop.CausationId?.Value",
       POPULATE_KIND_IDENTIFIER when info.SpecificKind == "IdentifierKind.StreamId" => "hop.StreamId",
-      POPULATE_KIND_HEADER => $"_extractExtensionValue(hop, \"{info.SpecificKind}\")",
-      _ => "default"
+      // HEADER is the last kind TryPopulateSent's filter admits, so it is also the arm that
+      // satisfies exhaustiveness — a separate discard arm here could never be taken, because that
+      // filter and the clamps in the extractors between them enumerate every kind and every
+      // SpecificKind that can arrive. The consequence is a coupling: a kind added to the filter
+      // without an arm of its own would be read as a header extension, so the filter and this table
+      // change together.
+      _ => $"_extractExtensionValue(hop, \"{info.SpecificKind}\")"
     };
   }
 

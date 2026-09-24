@@ -89,6 +89,7 @@ public sealed class EFCorePerspectiveReplayReader<TDbContext>(TDbContext context
     if (needsClose) {
       await connection.OpenAsync(cancellationToken);
     }
+    var result = new HashSet<Guid>();
     try {
       await using var cmd = connection.CreateCommand();
       cmd.CommandText = """
@@ -108,16 +109,18 @@ public sealed class EFCorePerspectiveReplayReader<TDbContext>(TDbContext context
       perspNameParam.Value = perspectiveName;
       cmd.Parameters.Add(perspNameParam);
 
-      var result = new HashSet<Guid>();
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
       while (await reader.ReadAsync(cancellationToken)) {
         result.Add(reader.GetGuid(0));
       }
-      return result;
     } finally {
       if (needsClose) {
         await connection.CloseAsync();
       }
     }
+
+    // Returned after the finally rather than from inside the try: an early return out of a try
+    // whose finally awaits puts the finally's scope-end sequence point on cleanup nothing reaches.
+    return result;
   }
 }

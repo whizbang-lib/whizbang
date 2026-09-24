@@ -3109,14 +3109,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (prior is null) {
       // First run: BASELINE at the current head without counting history — a fresh consumer set
       // has nothing to compare retroactive counts against, and a startup count storm helps no one.
-      await using var init = conn.CreateCommand().WithCoordinatorTimeout();
-      init.CommandText =
-        $"INSERT INTO {settings} (setting_key, setting_value, value_type, description) " +
-        "VALUES (@p_key, @p_value, 'integer', 'Stream-integrity checkpoint watermark (highest commit_sequence already checkpointed)') " +
-        "ON CONFLICT DO NOTHING";
-      init.Parameters.Add(new Npgsql.NpgsqlParameter(P_KEY, WATERMARK_KEY));
-      init.Parameters.Add(new Npgsql.NpgsqlParameter("p_value", current.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-      var inserted = await init.ExecuteNonQueryAsync(cancellationToken);
+      // The command's scope closes before the return: returning from inside an `await using` puts
+      // that scope's end sequence point on cleanup nothing reaches.
+      int inserted;
+      await using (var init = conn.CreateCommand().WithCoordinatorTimeout()) {
+        init.CommandText =
+          $"INSERT INTO {settings} (setting_key, setting_value, value_type, description) " +
+          "VALUES (@p_key, @p_value, 'integer', 'Stream-integrity checkpoint watermark (highest commit_sequence already checkpointed)') " +
+          "ON CONFLICT DO NOTHING";
+        init.Parameters.Add(new Npgsql.NpgsqlParameter(P_KEY, WATERMARK_KEY));
+        init.Parameters.Add(new Npgsql.NpgsqlParameter("p_value", current.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        inserted = await init.ExecuteNonQueryAsync(cancellationToken);
+      }
+
       return inserted == 1
         ? new IntegrityCheckpointWindow { FromCommitSequence = current, ToCommitSequence = current }
         : null;   // another instance baselined first — it owns this window

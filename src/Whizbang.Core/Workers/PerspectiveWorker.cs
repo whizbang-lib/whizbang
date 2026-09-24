@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -622,13 +623,13 @@ public partial class PerspectiveWorker(
         ? _perspectiveWake.WaitAsync(stoppingToken)
         : new TaskCompletionSource<bool>().Task;   // never completes when no listener
 
-      try {
-        await Task.WhenAny(workWait, drainWait, idleTimeout, perspectiveSignal).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        break;
-      }
+      // The composite wake is awaited through AwaitConsumerWakeAsync so the "a canceled wait stops
+      // this loop" decision lives in one narrow member that a test can hold to it directly; see that
+      // method's remarks for why nothing reachable from here can make the await throw.
+      var awake = await AwaitConsumerWakeAsync(
+        Task.WhenAny(workWait, drainWait, idleTimeout, perspectiveSignal)).ConfigureAwait(false);
 
-      if (stoppingToken.IsCancellationRequested) {
+      if (!awake || stoppingToken.IsCancellationRequested) {
         break;
       }
 
@@ -1222,6 +1223,7 @@ public partial class PerspectiveWorker(
         Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
         await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
         _markAffinityHeld(gateEntry, "standard");
+        Exception? cursorFailure = null;
         try {
           await using var groupScope = _scopeFactory.CreateAsyncScope();
           var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
@@ -1349,6 +1351,12 @@ public partial class PerspectiveWorker(
               _metrics?.EventsProcessed.Add(processedEvents.Count);
             }
           } catch (Exception ex) when (ex is not OperationCanceledException) {
+            // Captured rather than rethrown here. A rethrow from an async catch that also awaits
+            // makes the compiler hoist this handler out of the IL catch region and rewrite
+            // `throw;` as a capture-and-throw; the brace's sequence point then lands on
+            // state-machine cleanup that nothing reaches. Throwing after the block keeps the same
+            // order — record, park, report, release the gate, propagate — with no unreachable line.
+            cursorFailure = ex;
             var leasedRows = group.Select(w => w.WorkId).Where(id => id != Guid.Empty).Distinct().ToList();
             var storedForm = await _tryRecordStoredFormFailureAsync(ex, streamId, perspectiveName, leasedRows, ct);
             if (storedForm is null) {
@@ -1368,13 +1376,16 @@ public partial class PerspectiveWorker(
               Error = storedForm ?? ex.Message
             };
             await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
-            throw;
           }
         } finally {
           Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
           _markAffinityReleased(gateEntry);
           gateEntry.Semaphore.Release();
           _sweepIdleStreamAffinityGatesIfDue();
+        }
+
+        if (cursorFailure is not null) {
+          ExceptionDispatchInfo.Capture(cursorFailure).Throw();
         }
       });
 
@@ -2097,12 +2108,12 @@ public partial class PerspectiveWorker(
       return null;
     }
     var (typedEvents, rawByEventId) = fetchResult.Value;
-    if (typedEvents.Count == 0) {
-      return null;
-    }
     var typeNameCache = _buildDrainModeTypeNameCache(typedEvents);
     var grouped = _groupAndDedupeDrainModeEventsByStream(typedEvents, rawByEventId);
-    if (!grouped.TryGetValue(streamId, out var eventsForStream) || eventsForStream.Count == 0) {
+    // "No typed events" is an operand of the lookup below rather than a guard of its own: the fetch
+    // helper answers null for an empty deserialization, and an empty list groups to no entry here.
+    if (typedEvents.Count == 0
+        || !grouped.TryGetValue(streamId, out var eventsForStream) || eventsForStream.Count == 0) {
       return null;
     }
     var nextContext = new DrainBatchContext(
@@ -4448,6 +4459,28 @@ public partial class PerspectiveWorker(
     Message = "Initial perspective cursor processing complete"
   )]
   static partial void LogInitialCheckpointProcessingComplete(ILogger logger);
+
+  /// <summary>
+  /// Awaits the channel-consumer loop's composite wake and reports whether the loop should run
+  /// another cycle: <c>false</c> means the wait ended in cancellation and the loop must stop.
+  /// </summary>
+  /// <remarks>
+  /// Internal rather than private so the cancellation contract can be asserted directly. The loop
+  /// hands this a <see cref="Task.WhenAny(Task[])"/> over its four wake sources, and that task
+  /// always ends in <see cref="TaskStatus.RanToCompletion"/> — a canceled or faulted source is
+  /// simply the one it reports — so no composition the loop can build makes this await throw. The
+  /// guard stays because a wait that does end canceled has to stop the loop cleanly; letting the
+  /// exception out instead tears the consumer task down with nobody watching, and the batch the
+  /// loop was about to take never gets taken.
+  /// </remarks>
+  internal static async Task<bool> AwaitConsumerWakeAsync(Task wake) {
+    try {
+      await wake.ConfigureAwait(false);
+      return true;
+    } catch (OperationCanceledException) {
+      return false;
+    }
+  }
 
   /// <summary>The event id of a batch lost to a database failure that passes of its own accord.</summary>
   internal const int TRANSIENT_BATCH_FAILURE_EVENT_ID = 67;

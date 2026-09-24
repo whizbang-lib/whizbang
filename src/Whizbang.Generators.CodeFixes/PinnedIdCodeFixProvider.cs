@@ -43,25 +43,26 @@ public class PinnedIdCodeFixProvider : CodeFixProvider {
 
   /// <inheritdoc/>
   public override async Task RegisterCodeFixesAsync(CodeFixContext context) {
+    // A document whose language has no syntax trees answers null for its root. Registering nothing
+    // is the right answer for it, and it is the same answer an empty diagnostic list gives, so the
+    // two leave through this method's own end rather than one of them owning a return.
     var root = await context.Document.GetSyntaxRootAsync(context.CancellationToken).ConfigureAwait(false);
-    if (root is null) {
-      return;
-    }
+    if (root is not null) {
+      foreach (var diagnostic in context.Diagnostics) {
+        var diagnosticSpan = diagnostic.Location.SourceSpan;
+        var node = root.FindNode(diagnosticSpan);
+        var typeDeclaration = node.AncestorsAndSelf().OfType<TypeDeclarationSyntax>().FirstOrDefault();
+        if (typeDeclaration is null) {
+          continue;
+        }
 
-    foreach (var diagnostic in context.Diagnostics) {
-      var diagnosticSpan = diagnostic.Location.SourceSpan;
-      var node = root.FindNode(diagnosticSpan);
-      var typeDeclaration = node.AncestorsAndSelf().OfType<TypeDeclarationSyntax>().FirstOrDefault();
-      if (typeDeclaration is null) {
-        continue;
+        context.RegisterCodeFix(
+          CodeAction.Create(
+            title: "Add [PinnedId(\"<new-guid>\")]",
+            createChangedDocument: ct => _addPinnedIdAsync(context.Document, typeDeclaration, ct),
+            equivalenceKey: nameof(PinnedIdCodeFixProvider)),
+          diagnostic);
       }
-
-      context.RegisterCodeFix(
-        CodeAction.Create(
-          title: "Add [PinnedId(\"<new-guid>\")]",
-          createChangedDocument: ct => _addPinnedIdAsync(context.Document, typeDeclaration, ct),
-          equivalenceKey: nameof(PinnedIdCodeFixProvider)),
-        diagnostic);
     }
   }
 
@@ -71,10 +72,6 @@ public class PinnedIdCodeFixProvider : CodeFixProvider {
       CancellationToken cancellationToken) {
 
     var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
-    if (root is null) {
-      return document;
-    }
-
     var guid = System.Guid.NewGuid().ToString();
 
     // Use the fully-qualified name + Simplifier.Annotation so Roslyn collapses it to "PinnedId"
@@ -97,7 +94,9 @@ public class PinnedIdCodeFixProvider : CodeFixProvider {
       .WithAdditionalAnnotations(Formatter.Annotation);
 
     var newTypeDeclaration = typeDeclaration.AddAttributeLists(attributeList);
-    var newRoot = root.ReplaceNode(typeDeclaration, newTypeDeclaration);
+    // A document whose language has no syntax trees answers null for its root; there is nothing to
+    // rewrite, so the document goes back unchanged through the same exit the rewrite uses.
+    var newRoot = root?.ReplaceNode(typeDeclaration, newTypeDeclaration);
 
     if (newRoot is CompilationUnitSyntax compilationUnit && !_hasUsing(compilationUnit, PINNED_ID_ATTRIBUTE_NAMESPACE)) {
       var usingDirective = SyntaxFactory.UsingDirective(SyntaxFactory.ParseName(PINNED_ID_ATTRIBUTE_NAMESPACE))
@@ -105,7 +104,7 @@ public class PinnedIdCodeFixProvider : CodeFixProvider {
       newRoot = compilationUnit.AddUsings(usingDirective);
     }
 
-    return document.WithSyntaxRoot(newRoot);
+    return newRoot is null ? document : document.WithSyntaxRoot(newRoot);
   }
 
   private static bool _hasUsing(CompilationUnitSyntax compilationUnit, string namespaceName) {

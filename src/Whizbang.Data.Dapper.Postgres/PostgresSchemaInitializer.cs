@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -473,6 +474,7 @@ public sealed class PostgresSchemaInitializer {
       // the rollback, because a row recorded inside the doomed transaction would roll back with it
       // and leave the failure invisible.
       await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+      Exception? failure = null;
       try {
         await using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
@@ -494,12 +496,21 @@ public sealed class PostgresSchemaInitializer {
             cancellationToken, transaction);
         await transaction.CommitAsync(cancellationToken);
       } catch (Exception ex) {
+        // Captured rather than rethrown here. A rethrow from an async catch that also awaits
+        // makes the compiler hoist this handler out of the IL catch region and rewrite
+        // `throw;` as a capture-and-throw; the brace's sequence point then lands on
+        // state-machine cleanup nothing reaches. Throwing after the block keeps the same
+        // order — roll back, record the failure, propagate — with no unreachable line.
+        failure = ex;
         await transaction.RollbackAsync(cancellationToken);
         // Record failure on the connection with no ambient transaction, so it survives the rollback.
         await _upsertMigrationAsync(connection,
             new MigrationRecord(migration.Name, hash, versionId, -1, $"Failed: {ex.Message}"),
             cancellationToken);
-        throw; // Re-throw to halt migration
+      }
+
+      if (failure is not null) {
+        ExceptionDispatchInfo.Capture(failure).Throw();   // halt migration
       }
     }
   }
@@ -538,6 +549,7 @@ public sealed class PostgresSchemaInitializer {
     }
 
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+    Exception? failure = null;
     try {
       // Event-replay and direct-DDL run the SAME statement; only the ledger entry differs (status 4
       // "migrating in background" versus a plain apply). Running them through one arm keeps the two
@@ -568,11 +580,20 @@ public sealed class PostgresSchemaInitializer {
         cancellationToken, transaction);
       await transaction.CommitAsync(cancellationToken);
     } catch (Exception ex) {
+      // Captured rather than rethrown here. A rethrow from an async catch that also awaits
+      // makes the compiler hoist this handler out of the IL catch region and rewrite
+      // `throw;` as a capture-and-throw; the brace's sequence point then lands on
+      // state-machine cleanup nothing reaches. Throwing after the block keeps the same
+      // order — roll back, record the failure, propagate — with no unreachable line.
+      failure = ex;
       await transaction.RollbackAsync(cancellationToken);
       await _upsertMigrationAsync(connection,
         new MigrationRecord(perspectiveName, hash, versionId, -1, $"Failed: {ex.Message}"),
         cancellationToken);
-      throw;
+    }
+
+    if (failure is not null) {
+      ExceptionDispatchInfo.Capture(failure).Throw();
     }
   }
 
