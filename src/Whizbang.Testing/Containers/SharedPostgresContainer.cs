@@ -218,6 +218,12 @@ public static class SharedPostgresContainer {
           ex
         );
       }
+      // Scratch databases an earlier run abandoned, dropped once per process now that the container
+      // is known good. See PerTestDatabaseFactory.SweepAbandonedAsync for why they are worth more
+      // than disk: a session left idle in a transaction inside one of them holds a snapshot open,
+      // and that is enough to fail a migration test that is perfectly correct. The sweep answers
+      // its own failures, so nothing here depends on it succeeding.
+      _ = await PerTestDatabaseFactory.SweepAbandonedAsync(cancellationToken: ct);
     } finally {
       _initLock.Release();
     }
