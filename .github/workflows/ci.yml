@@ -522,18 +522,18 @@ jobs:
 
   build:
     name: Build
-    needs: [version, changes, ff-validated]
+    needs: [version, changes]
     # !failure() && !cancelled(): version is skipped (not failed) on PRs — build must
     # still run there with the placeholder version below. Pushes honor the change filter
     # too: a docs-only merge runs no build/tests and publishes no package.
     #
-    # The fast-forward clause, and only that one: on such a queue run every suite and the
-    # quality gate skip, so nothing consumes what this produces and pack skips with it. Not
-    # gated on queue-validated, because a develop push publishes from these artifacts and the
-    # argument for publishing queue-validated bits rests on verify-rebuild, which needs them.
-    if: >-
-      !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
-      (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group')
+    # NOT gated on the fast-forward check, though every suite and the quality gate are. The
+    # queue run's build writes the determinism manifest, and the DEVELOP PUSH reads it back:
+    # verify-rebuild downloads it from the queue run to prove the SDK and the assembly set,
+    # which is the whole safety argument for publishing queue-validated bits unre-tested.
+    # Skipping this on a fast-forward leaves no manifest to download, so verify-rebuild fails
+    # and the prerelease publish it gates never happens. Build runs on the queue.
+    if: ${{ !failure() && !cancelled() && (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-build.yml
