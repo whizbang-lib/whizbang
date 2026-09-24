@@ -2728,7 +2728,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
 
       var digest = hash.ToString("x8", System.Globalization.CultureInfo.InvariantCulture);
-      return name.Substring(0, postgresIdentifierLimit - digest.Length - 1) + "_" + digest;
+      return name[..(postgresIdentifierLimit - digest.Length - 1)] + "_" + digest;
     }
   }
 

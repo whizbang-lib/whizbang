@@ -49,7 +49,7 @@ public class PerspectiveAccessorGeneratorTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "MyApp_Perspectives_CustomerModelAccessors.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("public static Expression<Func<global::MyApp.Perspectives.CustomerModel, string>> Name")
+    await Assert.That(generated).Contains("public static Expression<Func<global::MyApp.Perspectives.CustomerModel, string>> Name")
       .Because("a filter naming a property needs the expression that reads it, typed as the property is");
     await Assert.That(generated).Contains("_m => _m.Address.City")
       .Because("a model with structure is the one that attracts dynamic filtering, so nested paths resolve too");
@@ -94,7 +94,7 @@ public class PerspectiveAccessorGeneratorTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "MyApp_Perspectives_NodeModelAccessors.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("case \"Parent.Label\":")
+    await Assert.That(generated).Contains("case \"Parent.Label\":")
       .Because("one step through the reference is useful and is what a filter would write");
     await Assert.That(generated).DoesNotContain("Parent.Parent.Parent.Parent")
       .Because("a bound is what keeps a model that refers to itself from generating forever");
@@ -142,7 +142,7 @@ public class PerspectiveAccessorGeneratorTests {
     await Assert.That(generated).IsNotNull()
       .Because("the file name has to be unique across the compilation, and a simple name is not");
 
-    await Assert.That(generated!).Contains("internal static class Ledger_EntryModelAccessors")
+    await Assert.That(generated).Contains("internal static class Ledger_EntryModelAccessors")
       .Because("a public property yielding a type the consumer cannot see is generated code that "
              + "does not compile");
   }
@@ -194,7 +194,7 @@ public class PerspectiveAccessorGeneratorTests {
 
     var tags = GeneratorTestHelper.GetGeneratedSource(result, "MyApp_Perspectives_TagListModelAccessors.g.cs");
     await Assert.That(tags).IsNotNull();
-    await Assert.That(tags!).Contains("case \"Tags\":")
+    await Assert.That(tags).Contains("case \"Tags\":")
       .Because("the collection itself is a path a filter can name");
     await Assert.That(tags).DoesNotContain("Tags.")
       .Because("an element has no path of its own, so descending would generate cases nothing reaches");

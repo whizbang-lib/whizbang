@@ -357,11 +357,7 @@ public static class JsonIndexDiscovery {
           method = argument.Value.Value is int m && m > 0 ? _methodNames[m] : null;
           break;
         case "Expressions":
-          foreach (var value in argument.Value.Values) {
-            if (value.Value is string expression && !string.IsNullOrWhiteSpace(expression)) {
-              expressions.Add(expression);
-            }
-          }
+          expressions.AddRange(_expressionsIn(argument.Value));
           break;
       }
     }
@@ -372,6 +368,17 @@ public static class JsonIndexDiscovery {
 
     return new CompositeIndexInfo([.. covered], declaredName, where, unique, method, operatorClass);
   }
+
+  /// <summary>The non-empty expressions of a declared Expressions argument.</summary>
+  /// <remarks>
+  /// Its own step so the decision above stays one loop over the named arguments rather than a loop
+  /// inside a loop, which is what the quality gate measures.
+  /// </remarks>
+  private static IEnumerable<string> _expressionsIn(TypedConstant argument) =>
+    argument.Values
+      .Select(static value => value.Value as string)
+      .Where(static expression => !string.IsNullOrWhiteSpace(expression))
+      .Select(static expression => expression!);
 
   /// <summary>
   /// The declaration's properties resolved to the SQL each is indexed over, or null when any one of

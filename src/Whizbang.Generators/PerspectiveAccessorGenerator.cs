@@ -60,12 +60,13 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
   private static AccessorModel? _extract(GeneratorSyntaxContext context, System.Threading.CancellationToken cancellationToken) {
     cancellationToken.ThrowIfCancellationRequested();
 
-    if (context.SemanticModel.GetDeclaredSymbol((ClassDeclarationSyntax)context.Node, cancellationToken)
-        is not INamedTypeSymbol declared) {
-      return null;
-    }
+    // Cast rather than tested: the answer for a class declaration is the class, and a null or an
+    // unexpected symbol falls into the interface check below rather than into a guard of its own
+    // that nothing can reach.
+    var declared = context.SemanticModel.GetDeclaredSymbol(
+      (ClassDeclarationSyntax)context.Node, cancellationToken) as INamedTypeSymbol;
 
-    var perspective = declared.AllInterfaces.FirstOrDefault(
+    var perspective = declared?.AllInterfaces.FirstOrDefault(
       i => i.Name == "IPerspectiveFor" && i.TypeArguments.Length > 0);
 
     if (perspective?.TypeArguments[0] is not INamedTypeSymbol model) {
@@ -104,7 +105,7 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
       string.IsNullOrEmpty(containing) ? null : containing,
       TypeNameUtilities.FullyQualified(model),
       visible,
-      paths.ToImmutableArray());
+      [.. paths]);
   }
 
   /// <summary>Collects the paths of a model and, to a bounded depth, of the objects it holds.</summary>

@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Generators.Tests;
 
@@ -1864,8 +1863,10 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(schemaExtensions).IsNotNull();
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    var names = Regex.Matches(sourceText, @"conname = '(ck_[a-z0-9_]+_len|ck_[a-z0-9_]+_[0-9a-f]{8})'")
-      .Select(m => m.Groups[1].Value)
+    var names = sourceText.Split("conname = '", StringSplitOptions.None)
+      .Skip(1)
+      .Select(after => after[..after.IndexOf('\'', StringComparison.Ordinal)])
+      .Where(name => name.StartsWith("ck_", StringComparison.Ordinal))
       .Distinct(StringComparer.Ordinal)
       .ToList();
 
@@ -1877,13 +1878,13 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
       .Because("PostgreSQL truncates a longer identifier rather than refusing it, so two names that "
              + "differ only past the limit would silently become one.");
 
-    await Assert.That(Regex.IsMatch(names[0], "_[0-9a-f]{8}$")).IsTrue()
+    await Assert.That(names[0][^9] == '_' && names[0][^8..].All(char.IsAsciiHexDigitLower)).IsTrue()
       .Because("the tail is a digest of the whole name, so the same name comes out on every start "
              + "and the guard recognizes what the last start wrote.");
 
     // Written twice: once where the table is created and once where a column is added to a table
     // that already exists. Both sites have to name the same constraint.
-    await Assert.That(Regex.Count(sourceText, Regex.Escape(names[0]))).IsGreaterThanOrEqualTo(2)
+    await Assert.That(sourceText.Split(names[0], StringSplitOptions.None).Length - 1).IsGreaterThanOrEqualTo(2)
       .Because("the guard and the ALTER TABLE have to name the same constraint or the statement "
              + "adds one that is already there.");
   }

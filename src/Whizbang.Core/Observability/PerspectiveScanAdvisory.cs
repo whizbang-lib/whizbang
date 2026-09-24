@@ -111,8 +111,8 @@ public sealed partial class PerspectiveScanAdvisory(
         if (measured.Length > 0) {
           var dearest = measured[0];
           LogPerspectiveFilterIsScanned(
-            _logger, table, dearest.Document, dearest.Field, dearest.MeanMilliseconds, dearest.Calls,
-            scans.SequentialRowsRead, bytes / (1024 * 1024));
+            _logger, table, $"{dearest.Document} ->> '{dearest.Field}'", dearest.MeanMilliseconds,
+            dearest.Calls, scans.SequentialRowsRead, bytes / (1024 * 1024));
         } else {
           LogPerspectiveIsScanned(
             _logger, table, scans.SequentialRowsRead, scans.SequentialScans, scans.IndexScans, bytes / (1024 * 1024));
@@ -138,12 +138,12 @@ public sealed partial class PerspectiveScanAdvisory(
     EventId = 307,
     Level = LogLevel.Warning,
     Message = "Perspective table {Table} is being read by scanning it, and the filter doing it is "
-            + "{Document} ->> '{Field}' at {MeanMilliseconds} ms mean over {Calls} calls "
-            + "({SequentialRowsRead} rows read by scan, {SizeMegabytes} MB). Promote {Field} with "
+            + "{Filter} at {MeanMilliseconds} ms mean over {Calls} calls ({SequentialRowsRead} rows "
+            + "read by scan, {SizeMegabytes} MB). Promote the field that filter reads with "
             + "[PhysicalField] plus [Indexed], or declare an index covering it, and that filter becomes "
             + "a lookup.")]
   private static partial void LogPerspectiveFilterIsScanned(
-    ILogger logger, string table, string document, string field, double meanMilliseconds, long calls,
+    ILogger logger, string table, string filter, double meanMilliseconds, long calls,
     long sequentialRowsRead, long sizeMegabytes);
 
   [LoggerMessage(

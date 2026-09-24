@@ -154,6 +154,7 @@ public sealed class PostgresSchemaInitializer {
       }
 
       await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+      Exception? failure = null;
       try {
         await using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
@@ -167,10 +168,18 @@ public sealed class PostgresSchemaInitializer {
           cancellationToken, transaction);
         await transaction.CommitAsync(cancellationToken);
       } catch (Exception ex) {
+        // Captured rather than rethrown here, for the reason the two migration paths above give:
+        // a rethrow from an async catch that also awaits leaves the brace's sequence point on
+        // state-machine cleanup nothing reaches. The order is unchanged -- roll back, record the
+        // failure on the connection the rollback did not touch, propagate.
+        failure = ex;
         await transaction.RollbackAsync(cancellationToken);
         await _upsertMigrationAsync(connection,
           new MigrationRecord(name, hash, versionId, -1, $"Failed: {ex.Message}"), cancellationToken);
-        throw;
+      }
+
+      if (failure is not null) {
+        ExceptionDispatchInfo.Capture(failure).Throw();
       }
     }
   }

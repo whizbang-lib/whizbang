@@ -104,7 +104,7 @@ internal sealed class CanonicalTemporalSqlRewriter(RelationalTypeMapping microse
 
   /// <summary>The bound converted in the database, which is what a parameter needs.</summary>
   private SqlUnaryExpression _epochOf(SqlExpression bound) =>
-    new SqlUnaryExpression(
+    new(
       ExpressionType.Convert,
       new SqlBinaryExpression(
         ExpressionType.Multiply,
