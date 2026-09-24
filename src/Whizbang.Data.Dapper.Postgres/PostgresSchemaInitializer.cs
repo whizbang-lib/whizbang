@@ -37,6 +37,7 @@ public sealed class PostgresSchemaInitializer {
   private readonly KeyValuePair<string, string>[]? _perspectiveEntries;
   private readonly IMigrationProvider _migrationProvider;
   private readonly string? _applicationVersion;
+  private readonly IApplicationSchemaObjects? _applicationObjects;
 
   public PostgresSchemaInitializer(string connectionString, string? perspectiveSchemaSql = null)
     : this(connectionString, perspectiveSchemaSql, new PostgresMigrationProvider()) {
@@ -61,10 +62,12 @@ public sealed class PostgresSchemaInitializer {
       string connectionString,
       KeyValuePair<string, string>[] perspectiveEntries,
       IMigrationProvider? migrationProvider = null,
-      string? applicationVersion = null)
+      string? applicationVersion = null,
+      IApplicationSchemaObjects? applicationObjects = null)
     : this(connectionString, perspectiveSchemaSql: null, migrationProvider ?? new PostgresMigrationProvider()) {
     _perspectiveEntries = perspectiveEntries ?? throw new ArgumentNullException(nameof(perspectiveEntries));
     _applicationVersion = applicationVersion;
+    _applicationObjects = applicationObjects;
   }
 
   /// <summary>
@@ -93,6 +96,12 @@ public sealed class PostgresSchemaInitializer {
     // Execute migration SQL files with hash-based change detection
     await _executeMigrationsWithHashDetectionAsync(connection, cancellationToken);
 
+    // An application's own objects, before anything of its perspectives exists. This is the slot an
+    // immutable function behind an expression index needs: the function has to be there before the
+    // index that calls it is created, and the index is created by the perspective pass below.
+    await _executeApplicationObjectsAsync(
+      connection, _applicationObjects?.BeforePerspectives, "before", cancellationToken);
+
     // Execute perspective schema — per-perspective hash tracking if entries provided, else legacy single-string
     if (_perspectiveEntries is { Length: > 0 }) {
       await _executePerspectiveMigrationsAsync(connection, cancellationToken);
@@ -101,6 +110,67 @@ public sealed class PostgresSchemaInitializer {
       perspectiveCommand.CommandText = _perspectiveSchemaSql;
       perspectiveCommand.CommandTimeout = 30;
       await perspectiveCommand.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    // And the objects that refer to a perspective's table, which can only be created now that the
+    // tables are there.
+    await _executeApplicationObjectsAsync(
+      connection, _applicationObjects?.AfterPerspectives, "after", cancellationToken);
+  }
+
+  /// <summary>
+  /// Applies one slot of an application's own objects, skipping any whose SQL has not changed.
+  /// </summary>
+  /// <remarks>
+  /// Recorded in the same ledger as everything else, under a name that says which slot it came from,
+  /// so a reader of the ledger can see where in the sequence an object was applied rather than
+  /// having to know. Skipping on an unchanged hash is what makes contributing an object cost nothing
+  /// on later starts.
+  /// </remarks>
+  /// <param name="connection">An open connection.</param>
+  /// <param name="objects">The slot's objects, or null when the application contributed none.</param>
+  /// <param name="slot">Which slot, for the ledger entry.</param>
+  /// <param name="cancellationToken">The token.</param>
+  private async Task _executeApplicationObjectsAsync(
+      NpgsqlConnection connection,
+      IReadOnlyList<ApplicationSchemaObject>? objects,
+      string slot,
+      CancellationToken cancellationToken) {
+    if (objects is not { Count: > 0 }) {
+      return;
+    }
+
+    var versionId = await _upsertVersionAsync(connection, cancellationToken);
+
+    foreach (var owned in objects) {
+      var name = $"app:{slot}:{owned.Name}";
+      var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(owned.Sql)));
+      var existingHash = await _getExistingHashAsync(connection, name, cancellationToken);
+
+      if (existingHash == hash) {
+        await _updateMigrationStatusAsync(connection, name, versionId, 3, "Skipped (hash unchanged)", cancellationToken);
+        continue;
+      }
+
+      await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+      try {
+        await using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = owned.Sql;
+        cmd.CommandTimeout = 30;
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+
+        await _upsertMigrationAsync(connection,
+          new MigrationRecord(name, hash, versionId, existingHash is null ? 1 : 2,
+            existingHash is null ? "First apply" : "Re-applied after change"),
+          cancellationToken, transaction);
+        await transaction.CommitAsync(cancellationToken);
+      } catch (Exception ex) {
+        await transaction.RollbackAsync(cancellationToken);
+        await _upsertMigrationAsync(connection,
+          new MigrationRecord(name, hash, versionId, -1, $"Failed: {ex.Message}"), cancellationToken);
+        throw;
+      }
     }
   }
 
