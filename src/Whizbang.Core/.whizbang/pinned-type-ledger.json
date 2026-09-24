@@ -218,6 +218,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "0769ce19-f5dc-4bbf-9bb2-c0867d25d940",
+      "clrTypeName": "Whizbang.Core.SystemEvents.PerspectiveScanAdvised",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
       "pinnedId": "cbc33f2c-db1d-4554-8090-db41875e280f",
       "clrTypeName": "Whizbang.Core.SystemEvents.Security.AccessDenied",
       "kind": "event",

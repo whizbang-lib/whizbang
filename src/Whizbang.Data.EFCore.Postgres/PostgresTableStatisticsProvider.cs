@@ -125,4 +125,34 @@ public sealed class PostgresTableStatisticsProvider(
 
     return results;
   }
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// Read from the same catalog view the sizes come from, so this costs another cheap statement on
+  /// the maintenance cadence rather than anything that touches the tables themselves.
+  /// </remarks>
+  public async Task<IReadOnlyDictionary<string, TableScanStatistics>> GetTableScanStatisticsAsync(
+      CancellationToken ct = default) {
+    var statistics = new Dictionary<string, TableScanStatistics>(StringComparer.Ordinal);
+
+    await using var connection = await dataSource.OpenConnectionAsync(ct);
+    await using var cmd = new NpgsqlCommand("""
+      SELECT relname,
+             COALESCE(seq_scan, 0) AS seq_scans,
+             COALESCE(seq_tup_read, 0) AS seq_rows,
+             COALESCE(idx_scan, 0) AS idx_scans
+      FROM pg_stat_user_tables
+      WHERE schemaname = @schema
+      """, connection);
+
+    cmd.Parameters.AddWithValue("schema", schema);
+
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      statistics[reader.GetString(0)] =
+        new TableScanStatistics(reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3));
+    }
+
+    return statistics;
+  }
 }
