@@ -175,6 +175,47 @@ public sealed partial class PostgresTableStatisticsProvider(
   [GeneratedRegex(@"\bwh_per_[a-z0-9_]+", RegexOptions.IgnoreCase)]
   private static partial Regex PerspectiveTable();
 
+  /// <summary>
+  /// Adds the document filters one recorded statement names, to the table it reads.
+  /// </summary>
+  /// <remarks>
+  /// Separated from the read so that what it understands can be established without a database.
+  /// The extension this reads from has to be loaded at server start, so no test container has it,
+  /// and leaving the parsing behind that would mean the part most able to be wrong -- what the
+  /// patterns match, and what counts as the same filter twice -- were the part never run.
+  /// </remarks>
+  /// <param name="collected">The filters found so far, by table.</param>
+  /// <param name="statement">The recorded statement text.</param>
+  /// <param name="calls">How many times it ran.</param>
+  /// <param name="meanMilliseconds">Its mean execution time.</param>
+  internal static void Collect(
+      Dictionary<string, List<ExpensivePredicate>> collected,
+      string statement, long calls, double meanMilliseconds) {
+    var table = PerspectiveTable().Match(statement);
+    if (!table.Success) {
+      return;
+    }
+
+    var name = table.Value.ToLowerInvariant();
+    if (!collected.TryGetValue(name, out var predicates)) {
+      predicates = [];
+      collected[name] = predicates;
+    }
+
+    var extractions = DocumentExtraction().Matches(statement)
+      .Select(match => (Document: match.Groups[1].Value.ToLowerInvariant(), Field: match.Groups[2].Value));
+
+    foreach (var (document, field) in extractions) {
+      // The same field named twice in one statement is one filter, and the same field across
+      // statements is still one thing to promote, so the dearest sighting is the one kept -- which
+      // is the first seen, because the statements arrive dearest first.
+      if (Array.IndexOf(_documents, document) >= 0
+          && !predicates.Exists(p => p.Document == document && p.Field == field)) {
+        predicates.Add(new ExpensivePredicate(document, field, calls, meanMilliseconds));
+      }
+    }
+  }
+
   /// <inheritdoc/>
   /// <remarks>
   /// Answers empty rather than throwing when the statistics are not collected. The extension has to
@@ -204,27 +245,7 @@ public sealed partial class PostgresTableStatisticsProvider(
         var calls = reader.GetInt64(1);
         var mean = reader.GetDouble(2);
 
-        var table = PerspectiveTable().Match(statement);
-        if (!table.Success) {
-          continue;
-        }
-
-        if (!collected.TryGetValue(table.Value, out var predicates)) {
-          predicates = [];
-          collected[table.Value] = predicates;
-        }
-
-        var extractions = DocumentExtraction().Matches(statement)
-          .Select(match => (Document: match.Groups[1].Value.ToLowerInvariant(), Field: match.Groups[2].Value));
-
-        foreach (var (document, field) in extractions) {
-          // The same field named twice in one statement is one filter, and the same field across
-          // statements is still one thing to promote, so the dearest sighting is the one kept.
-          if (Array.IndexOf(_documents, document) >= 0
-              && !predicates.Exists(p => p.Document == document && p.Field == field)) {
-            predicates.Add(new ExpensivePredicate(document, field, calls, mean));
-          }
-        }
+        Collect(collected, statement, calls, mean);
       }
 
       foreach (var (table, predicates) in collected) {
