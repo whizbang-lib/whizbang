@@ -36,22 +36,22 @@ public class DocumentFilterTagInterceptorTests {
   public async Task EveryWayACommandLeaves_CarriesTheTagAsync() {
     var interceptor = new DocumentFilterTagInterceptor();
 
-    using var reader = new NpgsqlCommand(FILTERED);
+    await using var reader = new NpgsqlCommand(FILTERED);
     interceptor.ReaderExecuting(reader, Unused, default);
     await Assert.That(reader.CommandText).StartsWith("/* wh:f=data.TenantId */")
       .Because("a query that reads rows is the one the advisory is about");
 
-    using var readerAsync = new NpgsqlCommand(FILTERED);
+    await using var readerAsync = new NpgsqlCommand(FILTERED);
     await interceptor.ReaderExecutingAsync(readerAsync, Unused, default);
     await Assert.That(readerAsync.CommandText).StartsWith("/* wh:f=data.TenantId */")
       .Because("asynchronously is how a context sends almost all of them");
 
-    using var scalar = new NpgsqlCommand(FILTERED);
+    await using var scalar = new NpgsqlCommand(FILTERED);
     interceptor.ScalarExecuting(scalar, Unused, default);
     await Assert.That(scalar.CommandText).StartsWith("/* wh:f=data.TenantId */")
       .Because("a count over a filtered perspective is a scalar, and is exactly the shape that scans");
 
-    using var scalarAsync = new NpgsqlCommand(FILTERED);
+    await using var scalarAsync = new NpgsqlCommand(FILTERED);
     await interceptor.ScalarExecutingAsync(scalarAsync, Unused, default);
     await Assert.That(scalarAsync.CommandText).StartsWith("/* wh:f=data.TenantId */");
   }
@@ -65,7 +65,7 @@ public class DocumentFilterTagInterceptorTests {
   public async Task ACommandWithNothingToName_IsHandedOnUnchangedAsync() {
     const string plain = "SELECT id FROM wh_outbox WHERE (metadata ->> 'Kind') = @p0";
 
-    using var command = new NpgsqlCommand(plain);
+    await using var command = new NpgsqlCommand(plain);
     new DocumentFilterTagInterceptor().ReaderExecuting(command, Unused, default);
 
     await Assert.That(command.CommandText).IsEqualTo(plain)
@@ -91,5 +91,5 @@ public class DocumentFilterTagInterceptorTests {
 
   private static IEnumerable<IInterceptor> _interceptors(DbContextOptions options) =>
     options.FindExtension<CoreOptionsExtension>()?.Interceptors
-      ?? Enumerable.Empty<IInterceptor>();
+      ?? [];
 }
