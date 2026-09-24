@@ -38,23 +38,25 @@ public class PerTestDatabaseSweepTests {
     new(DateTimeOffset.UtcNow + ahead);
 
   /// <summary>Whether a database of that name is on the server.</summary>
-  /// <param name="name">The database name.</param>
+  /// <param name="databaseName">The database name.</param>
   /// <returns><see langword="true"/> when it exists.</returns>
-  private static async Task<bool> _existsAsync(string name) {
+  private static async Task<bool> _existsAsync(string databaseName) {
     await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
     await admin.OpenAsync();
+    // The parameter placeholder and the C# parameter deliberately do not share a name: matching
+    // them reads as a nameof() that got away (RCS1015), and a SQL placeholder is not a symbol.
     await using var query = new NpgsqlCommand("SELECT 1 FROM pg_database WHERE datname = @name", admin);
-    _ = query.Parameters.AddWithValue("name", name);
+    _ = query.Parameters.AddWithValue("name", databaseName);
     return await query.ExecuteScalarAsync() is not null;
   }
 
   /// <summary>Creates a database under a name of the caller's choosing, bypassing the factory.</summary>
-  /// <param name="name">The name to create.</param>
+  /// <param name="databaseName">The name to create.</param>
   /// <returns>A task that completes when the database exists.</returns>
-  private static async Task _createRawAsync(string name) {
+  private static async Task _createRawAsync(string databaseName) {
     await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
     await admin.OpenAsync();
-    await using var create = new NpgsqlCommand($"CREATE DATABASE {name}", admin);
+    await using var create = new NpgsqlCommand($"CREATE DATABASE {databaseName}", admin);
     _ = await create.ExecuteNonQueryAsync();
   }
 
