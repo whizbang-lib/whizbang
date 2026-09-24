@@ -1,8 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Whizbang.Core.Commands.System;
 using Whizbang.Core;
+using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.EFCore.Postgres;
