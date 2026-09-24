@@ -320,6 +320,9 @@ public static class JsonIndexDiscovery {
   /// what one means. Inline it was a loop inside a loop inside a loop, which the quality gate
   /// measured at cognitive complexity 21.
   /// </remarks>
+  /// <summary>The index methods, in the order the declaring enum defines them.</summary>
+  private static readonly string[] _methodNames = ["btree", "hash", "gin", "gist", "spgist", "brin"];
+
   private static CompositeIndexInfo? _compositeFor(
       AttributeData declaration, Dictionary<string, IPropertySymbol> properties) {
     var elements = _elementsFor(declaration, properties);
@@ -329,7 +332,10 @@ public static class JsonIndexDiscovery {
 
     string? declaredName = null;
     string? where = null;
+    string? method = null;
+    string? operatorClass = null;
     var unique = false;
+    var expressions = new List<string>();
 
     foreach (var argument in declaration.NamedArguments) {
       switch (argument.Key) {
@@ -342,10 +348,29 @@ public static class JsonIndexDiscovery {
         case "Unique":
           unique = argument.Value.Value is true;
           break;
+        case "OperatorClass":
+          operatorClass = argument.Value.Value as string;
+          break;
+        case "Method":
+          // Btree is the default and is left unwritten, so an index that never asked for a method
+          // produces the statement it always produced.
+          method = argument.Value.Value is int m && m > 0 ? _methodNames[m] : null;
+          break;
+        case "Expressions":
+          foreach (var value in argument.Value.Values) {
+            if (value.Value is string expression && !string.IsNullOrWhiteSpace(expression)) {
+              expressions.Add(expression);
+            }
+          }
+          break;
       }
     }
 
-    return new CompositeIndexInfo([.. elements], declaredName, where, unique);
+    // Properties first and expressions after, which is the order the index is built in and so the
+    // order a filter has to lead with.
+    var covered = elements.Concat(expressions.Select(e => new CompositeIndexElement(e, e)));
+
+    return new CompositeIndexInfo([.. covered], declaredName, where, unique, method, operatorClass);
   }
 
   /// <summary>

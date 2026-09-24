@@ -75,12 +75,36 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
     var paths = new List<AccessorPath>();
     _walk(model, prefix: "", depth: 0, paths);
 
-    return paths.Count == 0
-      ? null
-      : new AccessorModel(
-          model.Name,
-          TypeNameUtilities.FullyQualified(model),
-          paths.ToImmutableArray());
+    if (paths.Count == 0) {
+      return null;
+    }
+
+    var containing = TypeNameUtilities.NamespaceName(model.ContainingNamespace);
+
+    // A model nested in another type shares its namespace with every other model nested in a
+    // sibling, and they may share a simple name. The declaring types are part of the name here for
+    // the same reason they are part of the model's own.
+    var declaring = new List<string>();
+    for (var outer = model.ContainingType; outer is not null; outer = outer.ContainingType) {
+      declaring.Insert(0, outer.Name);
+    }
+
+    declaring.Add(model.Name);
+    var name = string.Join("_", declaring);
+
+    // A model no more visible than its assembly cannot be handed out by a public property. The
+    // accessors live beside the model, so matching it is enough.
+    var visible = model.DeclaredAccessibility == Accessibility.Public;
+    for (var outer = model.ContainingType; visible && outer is not null; outer = outer.ContainingType) {
+      visible = outer.DeclaredAccessibility == Accessibility.Public;
+    }
+
+    return new AccessorModel(
+      name,
+      string.IsNullOrEmpty(containing) ? null : containing,
+      TypeNameUtilities.FullyQualified(model),
+      visible,
+      paths.ToImmutableArray());
   }
 
   /// <summary>Collects the paths of a model and, to a bounded depth, of the objects it holds.</summary>
@@ -95,9 +119,14 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
       }
 
       var path = prefix.Length == 0 ? property.Name : prefix + "." + property.Name;
-      paths.Add(new AccessorPath(
-        path,
-        TypeNameUtilities.FullyQualified(property.Type)));
+      // The annotation is part of the type the accessor yields. Without it the lambda returning a
+      // property that may be null is a nullable warning in the consumer's own build, which is their
+      // build broken by generated code rather than by anything they wrote.
+      var nullable = property.NullableAnnotation == NullableAnnotation.Annotated && property.Type.IsReferenceType
+        ? "?"
+        : string.Empty;
+
+      paths.Add(new AccessorPath(path, TypeNameUtilities.FullyQualified(property.Type) + nullable));
 
       // Only a plain object is descended into. A collection's elements have no path of their own
       // that a filter could name, and a primitive has nothing beneath it.
@@ -121,12 +150,15 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
       sb.AppendLine("using System;");
       sb.AppendLine("using System.Linq.Expressions;");
       sb.AppendLine();
-      sb.AppendLine("namespace Whizbang.Generated;");
+      // The model's own namespace rather than one of the framework's. Two models in different
+      // namespaces may share a simple name, and putting both in one namespace would make their
+      // accessor classes collide; here they no more collide than the models do.
+      sb.AppendLine($"namespace {model.Namespace ?? "Whizbang.Generated"};");
       sb.AppendLine();
       sb.AppendLine("/// <summary>");
       sb.AppendLine($"/// The properties of {model.Name} as expressions, so a filter built from text needs no reflection.");
       sb.AppendLine("/// </summary>");
-      sb.AppendLine($"public static class {model.Name}Accessors {{");
+      sb.AppendLine($"{(model.IsPublic ? "public" : "internal")} static class {model.Name}Accessors {{");
 
       foreach (var path in model.Paths) {
         var member = path.Path.Replace(".", "");
@@ -156,13 +188,17 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
       sb.AppendLine("  }");
       sb.AppendLine("}");
 
-      context.AddSource($"{model.Name}Accessors.g.cs", sb.ToString());
+      // Keyed on the fully qualified name for the same reason, since the file name has to be unique
+      // across the whole compilation and the simple name is not.
+      var hint = model.FullyQualifiedName.Replace("global::", "").Replace(".", "_").Replace("+", "_");
+      context.AddSource($"{hint}Accessors.g.cs", sb.ToString());
     }
   }
 }
 
 /// <summary>A perspective model and the paths it can be filtered on.</summary>
-internal sealed record AccessorModel(string Name, string FullyQualifiedName, ImmutableArray<AccessorPath> Paths);
+internal sealed record AccessorModel(
+    string Name, string? Namespace, string FullyQualifiedName, bool IsPublic, ImmutableArray<AccessorPath> Paths);
 
 /// <summary>One addressable property path and the type it yields.</summary>
 internal sealed record AccessorPath(string Path, string TypeName);

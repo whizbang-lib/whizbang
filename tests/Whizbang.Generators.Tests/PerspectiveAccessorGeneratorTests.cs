@@ -46,7 +46,7 @@ public class PerspectiveAccessorGeneratorTests {
   [Test]
   public async Task Accessors_CoverTopLevelAndNestedPaths_AndLookUpByNameAsync() {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveAccessorGenerator>(SOURCE);
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "CustomerModelAccessors.g.cs");
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MyApp_Perspectives_CustomerModelAccessors.g.cs");
 
     await Assert.That(generated).IsNotNull();
     await Assert.That(generated!).Contains("public static Expression<Func<global::MyApp.Perspectives.CustomerModel, string>> Name")
@@ -91,7 +91,7 @@ public class PerspectiveAccessorGeneratorTests {
       """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveAccessorGenerator>(selfReferencing);
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "NodeModelAccessors.g.cs");
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MyApp_Perspectives_NodeModelAccessors.g.cs");
 
     await Assert.That(generated).IsNotNull();
     await Assert.That(generated!).Contains("case \"Parent.Label\":")

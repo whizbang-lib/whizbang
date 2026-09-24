@@ -74,6 +74,63 @@ public class CompositeIndexDiscoveryTests {
       .Because("and the declared name wins over the derived one.");
   }
 
+  /// <summary>
+  /// A method other than btree reaches the statement, and nothing else does.
+  /// </summary>
+  /// <remarks>
+  /// Btree is the default and is deliberately left unwritten, so an index that never asked for a
+  /// method produces the statement it has always produced rather than a differently spelled one
+  /// that CREATE INDEX IF NOT EXISTS would treat as the same index anyway.
+  /// </remarks>
+  [Test]
+  public async Task AnIndexMethodReachesTheStatement_AndBtreeStaysUnwrittenAsync() {
+    var gin = _discover(
+      """[PerspectiveIndex("Payload", Method = PerspectiveIndexMethod.Gin, OperatorClass = "jsonb_path_ops")]""",
+      """
+        public string Payload { get; init; } = "";
+      """);
+
+    await Assert.That(gin).Count().IsEqualTo(1);
+
+    var statement = CompositeIndexSql.CreateStatement(gin[0], "public.wh_per_probe", "probe");
+    await Assert.That(statement).Contains("USING gin")
+      .Because("a containment filter over a document is the shape btree cannot serve at all");
+    await Assert.That(statement).Contains("jsonb_path_ops")
+      .Because("the operator class is what makes the index smaller and faster for that shape");
+
+    var plain = _discover("""[PerspectiveIndex("Payload")]""", """
+        public string Payload { get; init; } = "";
+      """);
+
+    await Assert.That(CompositeIndexSql.CreateStatement(plain[0], "public.wh_per_probe", "probe"))
+      .DoesNotContain("USING")
+      .Because("an index that never asked for a method has to keep the statement it already had");
+  }
+
+  /// <summary>
+  /// An expression covers what a property name cannot reach, and follows the named properties.
+  /// </summary>
+  [Test]
+  public async Task AnExpressionIsIndexed_AfterThePropertiesItAccompaniesAsync() {
+    var found = _discover(
+      """[PerspectiveIndex("Tenant", Expressions = ["(data ->> 'Kind')"])]""",
+      """
+        public string Tenant { get; init; } = "";
+      """);
+
+    await Assert.That(found).Count().IsEqualTo(1);
+
+    var statement = CompositeIndexSql.CreateStatement(found[0], "public.wh_per_probe", "probe");
+    await Assert.That(statement).Contains("(data ->> 'Kind')")
+      .Because("a value that is not a property of the model has no name to be reached by");
+
+    var tenant = statement.IndexOf("Tenant", StringComparison.Ordinal);
+    var kind = statement.IndexOf("(data ->> 'Kind')", StringComparison.Ordinal);
+    await Assert.That(tenant).IsLessThan(kind)
+      .Because("a composite answers a filter on a leading subset, so the declared order is the "
+             + "contract and the properties lead");
+  }
+
   [Test]
   public async Task APromotedPropertysDeclaredColumnName_IsWhatTheIndexUsesAsync() {
     var found = _discover(
