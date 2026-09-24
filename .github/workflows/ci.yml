@@ -148,14 +148,22 @@ jobs:
           # deliberately skipped — on queue refs that includes the full matrix AND the
           # quality gate, which run unconditionally there. Same SHA = same tree = same
           # workflow files, so that green fully validated these exact bytes.
-          RUN_ID=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&event=merge_group&status=success&per_page=10" \
-            --jq '[.workflow_runs[] | select(.name == "CI")][0].id // ""')
+          # The WORKFLOW endpoint, not the runs endpoint filtered by name: a run's .name is its
+          # run-name, and this workflow sets one (see run-name above), so a run of this file is
+          # named "CI - merge queue" or "CI - PR #N - branch" and never plain "CI". Filtering on
+          # .name silently matched nothing, which left this gate answering "not validated" on
+          # every push and the whole matrix running a second time after the queue had already
+          # run it. Addressing ci.yml by path cannot drift with the run-name.
+          RUN_ID=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=merge_group&status=success&per_page=10" \
+            --jq '.workflow_runs[0].id // ""')
           if [ -n "$RUN_ID" ]; then
             echo "Queue run $RUN_ID validated $SHA — skipping the redundant push matrix."
+            echo "Queue-validated: **true** -- run $RUN_ID already validated $SHA" >> "$GITHUB_STEP_SUMMARY"
             echo "validated=true" >> "$GITHUB_OUTPUT"
             echo "queue_run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           else
             echo "No successful merge_group CI run for $SHA — running the full matrix."
+            echo "Queue-validated: **false** -- no successful queue run for $SHA" >> "$GITHUB_STEP_SUMMARY"
             echo "validated=false" >> "$GITHUB_OUTPUT"
             echo "queue_run_id=" >> "$GITHUB_OUTPUT"
           fi
@@ -299,8 +307,9 @@ jobs:
           if ! grep -q " coverage-" artifacts.list; then
             PR_HEAD=$(git rev-list --parents -n 1 HEAD | awk '{print $3}')
             if [ -n "${PR_HEAD:-}" ]; then
-              PR_RUN=$(gh api "repos/$REPO/actions/runs?head_sha=$PR_HEAD&event=pull_request&per_page=30" \
-                --jq '[.workflow_runs[] | select(.name == "CI" and .status == "completed")]
+              # Addressed by path rather than by name: see the note in queue-validated.
+              PR_RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$PR_HEAD&event=pull_request&per_page=30" \
+                --jq '[.workflow_runs[] | select(.status == "completed")]
                       | sort_by(.run_started_at) | last | .id // ""' 2>/dev/null || echo "")
               if [ -n "$PR_RUN" ]; then
                 echo "Queue run had no coverage (fast-forward ff-skip) — falling back to PR run $PR_RUN for $PR_HEAD."
@@ -392,7 +401,15 @@ jobs:
           # NOTE: no `set -e`. Every exit path emits skip and returns 0, so the guard can
           # never fail the run — the worst case is skip=false (the full queue matrix).
           set -uo pipefail
-          emit() { echo "skip=$1" >> "$GITHUB_OUTPUT"; echo "$2"; exit 0; }
+          # Also written to the run summary. The verdict decides whether the whole matrix runs
+          # again, so "why did the queue re-run everything" has to be answerable at a glance
+          # rather than by reading this job's log.
+          emit() {
+            echo "skip=$1" >> "$GITHUB_OUTPUT"
+            echo "$2"
+            echo "Fast-forward skip: **$1** -- $2" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
 
           read -r _COMMIT P1 P2 P3 < <(git rev-list --parents -n 1 HEAD) \
             || emit false "cannot read the queue commit's parents — full matrix"
@@ -420,8 +437,11 @@ jobs:
           # The PR run for this exact PR head must have gone fully green INCLUDING Quality,
           # so a dependabot PR (whose Quality is skipped, see the quality job) still gets a
           # real queue run rather than riding a half-validated PR run.
-          PR_RUN=$(gh api "repos/$REPO/actions/runs?head_sha=$PR_HEAD&event=pull_request&per_page=30" \
-            --jq '[.workflow_runs[] | select(.name == "CI" and .status == "completed")]
+          # Addressed by path rather than by name: see the note in queue-validated. Filtering on
+          # .name matched nothing here too, so this gate answered "full matrix" for every queue
+          # entry and the suites the pull request had just passed ran again on the same tree.
+          PR_RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$PR_HEAD&event=pull_request&per_page=30" \
+            --jq '[.workflow_runs[] | select(.status == "completed")]
                   | sort_by(.run_started_at) | last | .id // ""' 2>/dev/null) \
             || emit false "could not query the PR run — full matrix"
           if [ -z "$PR_RUN" ]; then emit false "no completed PR run for $PR_HEAD — full matrix"; fi
@@ -462,6 +482,12 @@ jobs:
 
   format:
     name: Verify Code Formatting
+    # Gated on the fast-forward check only, never on queue-validated: a queue run ships nothing,
+    # so skipping there costs nothing, while the publish jobs on a develop push need this job's
+    # own success and a skipped one is not a success. On a fast-forward the tree is byte-identical
+    # to the one the pull request run already checked.
+    needs: [ff-validated]
+    if: ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -496,11 +522,18 @@ jobs:
 
   build:
     name: Build
-    needs: [version, changes]
+    needs: [version, changes, ff-validated]
     # !failure() && !cancelled(): version is skipped (not failed) on PRs — build must
     # still run there with the placeholder version below. Pushes honor the change filter
     # too: a docs-only merge runs no build/tests and publishes no package.
-    if: ${{ !failure() && !cancelled() && (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
+    #
+    # The fast-forward clause, and only that one: on such a queue run every suite and the
+    # quality gate skip, so nothing consumes what this produces and pack skips with it. Not
+    # gated on queue-validated, because a develop push publishes from these artifacts and the
+    # argument for publishing queue-validated bits rests on verify-rebuild, which needs them.
+    if: >-
+      !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
+      (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group')
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-build.yml
