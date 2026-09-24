@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure;
+using Whizbang.Data.EFCore.Postgres.Observability;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
 
 using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
@@ -19,6 +20,38 @@ namespace Whizbang.Data.EFCore.Postgres.Functions;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_BumpsStoreManagedUpdatedAtAndVersionAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CanonicalTemporalConventionTests.cs</tests>
 public static class WhizbangDbContextOptionsExtensions {
+  /// <summary>
+  /// Names the document fields a query filters on in the statement the database records, so the
+  /// scan advisory can say which filter was doing the reading.
+  /// </summary>
+  /// <param name="optionsBuilder">The DbContext options builder.</param>
+  /// <returns>The same options builder for fluent chaining.</returns>
+  /// <remarks>
+  /// <para>
+  /// PostgreSQL records a statement with its constants replaced by placeholders, and a JSON key is
+  /// a constant, so <c>data -&gt;&gt; 'Kind'</c> is kept as <c>data -&gt;&gt; $1</c> and the field
+  /// is gone. This writes the fields into a leading comment, which is not a constant and is kept
+  /// whole, and the advisory reads them back out of it.
+  /// </para>
+  /// <para>
+  /// Opt in, because it reads the text of every command the context sends. That is a cost on the
+  /// query path for a diagnostic, and it buys nothing at all where the database does not collect
+  /// statement statistics. Without it the advisory still names the table.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// optionsBuilder.UseWhizbangFilterNaming();
+  /// </code>
+  /// </example>
+  /// <docs>operations/diagnostics/whiz306</docs>
+  public static DbContextOptionsBuilder UseWhizbangFilterNaming(
+      this DbContextOptionsBuilder optionsBuilder) {
+    ArgumentNullException.ThrowIfNull(optionsBuilder);
+
+    return optionsBuilder.AddInterceptors(new DocumentFilterTagInterceptor());
+  }
+
   /// <summary>
   /// Adds Whizbang's custom PostgreSQL function translators to the Npgsql provider.
   /// Call this method when configuring Npgsql options to enable optimized principal filtering.

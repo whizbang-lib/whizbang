@@ -2,8 +2,10 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 using Whizbang.Core.Observability;
 using Whizbang.Data.EFCore.Postgres;
+using Whizbang.Data.EFCore.Postgres.Observability;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
@@ -134,10 +136,9 @@ public class TableStatisticsProviderTests : IAsyncDisposable {
   /// What a recorded statement is understood to say, without needing the extension that records it.
   /// </summary>
   /// <remarks>
-  /// A recorded statement has had its literals replaced by placeholders, which is why the numbers
-  /// in these are gone and the document keys are not: a key is part of the expression rather than a
-  /// literal of the query. That is the property the whole feature depends on, so it is stated here
-  /// rather than assumed.
+  /// The fallback reading, for a statement that still carries its keys -- one read from somewhere
+  /// that keeps constants, or sent by a consumer who has not turned the naming on. What the
+  /// database itself records is covered below, where the keys are gone.
   /// </remarks>
   [Test]
   public async Task ARecordedStatementNamesTheFiltersItReadsAsync() {
@@ -194,6 +195,123 @@ public class TableStatisticsProviderTests : IAsyncDisposable {
     await Assert.That(collected["wh_per_documents"].Select(p => p.Document))
       .IsEquivalentTo(["scope", "metadata"])
       .Because("a tenant filter reads the scope document, and it is the highest-traffic filter there is");
+  }
+
+  /// <summary>
+  /// A statement as the database actually records it -- constants replaced -- still names its
+  /// fields, because the tag is not a constant.
+  /// </summary>
+  /// <remarks>
+  /// This is the case the whole naming rests on. PostgreSQL records
+  /// <c>data -&gt;&gt; 'TenantId'</c> as <c>data -&gt;&gt; $1</c>: the key is a constant and goes
+  /// the way every other constant goes. Reading the key off the recorded text therefore finds
+  /// nothing at all, which is why the fields are written into a comment before the statement is
+  /// sent.
+  /// </remarks>
+  [Test]
+  public async Task ARecordedStatementNamesItsFieldsThroughTheTagAsync() {
+    var collected = new Dictionary<string, List<ExpensivePredicate>>(StringComparer.Ordinal);
+
+    PostgresTableStatisticsProvider.Collect(collected,
+      "/* wh:f=data.EntityType,data.TenantId */ SELECT w.id FROM wh_per_documents AS w "
+      + "WHERE (w.data ->> $1) = $2 AND (w.data ->> $3) = $4",
+      calls: 1158, meanMilliseconds: 218.0);
+
+    var found = collected["wh_per_documents"];
+    await Assert.That(found.Select(p => p.Field)).IsEquivalentTo(["EntityType", "TenantId"])
+      .Because("the keys are gone from the statement, so the tag is the only thing left that has them");
+    await Assert.That(found[0].Document).IsEqualTo("data");
+    await Assert.That(found[0].MeanMilliseconds).IsEqualTo(218.0);
+  }
+
+  /// <summary>The tag is written for a statement that reads a perspective, and for nothing else.</summary>
+  /// <remarks>
+  /// It is read off the text of every command the context sends, so the common case -- a statement
+  /// that touches no perspective at all -- has to cost a single scan for a substring and end there,
+  /// and has to come back byte for byte what it was.
+  /// </remarks>
+  [Test]
+  public async Task TheTagNamesWhatAStatementFiltersOn_AndNothingElseIsTouchedAsync() {
+    const string filtered =
+      "SELECT w.id FROM wh_per_documents AS w WHERE (w.data ->> 'TenantId') = @p0 "
+      + "AND (w.scope ->> 't') = @p1 AND (w.data ->> 'TenantId') IS NOT NULL";
+
+    var tagged = DocumentFilterNaming.Tagged(filtered);
+
+    await Assert.That(tagged).StartsWith("/* wh:f=data.TenantId,scope.t */ ")
+      .Because("the same field twice is one field, and the order is the statement's own or two "
+             + "statements that filter alike would be told apart by nothing but spelling");
+
+    const string untouched = "SELECT id FROM wh_outbox WHERE (metadata ->> 'Kind') = @p0";
+    await Assert.That(DocumentFilterNaming.Tagged(untouched)).IsEqualTo(untouched)
+      .Because("a statement that reads no perspective is one the advisory can say nothing about");
+
+    const string unfiltered = "SELECT id FROM wh_per_documents WHERE id = @p0";
+    await Assert.That(DocumentFilterNaming.Tagged(unfiltered)).IsEqualTo(unfiltered)
+      .Because("a perspective read by its key has no document filter to name");
+  }
+
+  /// <summary>
+  /// The tag survives being recorded, and the read gets it back out of the database.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Everything else about the naming is established without a database, and none of it means
+  /// anything if PostgreSQL does not keep the comment. It does keep it, and this is where that is
+  /// asserted rather than assumed -- against the real view, through the real read.
+  /// </para>
+  /// <para>
+  /// The extension has to be created in the database being read and its library loaded at server
+  /// start, which the shared container does. A container from before that will not have it.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(180000)]
+  public async Task ATaggedStatementIsReadBackFromTheStatisticsAsync(CancellationToken cancellationToken) {
+    await using (var db = await _dataSource.OpenConnectionAsync(cancellationToken)) {
+      var loaded = (string?)await new NpgsqlCommand("SHOW shared_preload_libraries", db)
+        .ExecuteScalarAsync(cancellationToken);
+
+      if (loaded?.Contains("pg_stat_statements", StringComparison.Ordinal) != true) {
+        throw new SkipTestException(
+          "pg_stat_statements is not loaded by this server. The shared test container loads it; "
+          + "one created before it did will not. Run: docker rm -f whizbang-test-postgres");
+      }
+
+      await _executeAsync(db, "CREATE EXTENSION IF NOT EXISTS pg_stat_statements", cancellationToken);
+      await _executeAsync(db, "CREATE TABLE wh_per_tagged_probe (id int, data jsonb)", cancellationToken);
+      await _executeAsync(db,
+        "INSERT INTO wh_per_tagged_probe SELECT g, jsonb_build_object('Kind', 'needle') "
+        + "FROM generate_series(1, 200) g", cancellationToken);
+      await _executeAsync(db, "SELECT pg_stat_statements_reset()", cancellationToken);
+
+      // Sent exactly as the interceptor would send it, keys and all, so what is recorded is what a
+      // consumer's query would leave behind.
+      var filter = DocumentFilterNaming.Tagged(
+        "SELECT count(*) FROM wh_per_tagged_probe WHERE data ->> 'Kind' = 'needle'");
+
+      for (var i = 0; i < 3; i++) {
+        await _executeAsync(db, filter, cancellationToken);
+      }
+    }
+
+    var provider = new PostgresTableStatisticsProvider(_dataSource);
+    var predicates = await provider.GetExpensivePredicatesAsync(cancellationToken);
+
+    await Assert.That(predicates.ContainsKey("wh_per_tagged_probe")).IsTrue()
+      .Because("the statement read a perspective table, which is what the advisory advises on");
+
+    var measured = predicates["wh_per_tagged_probe"];
+    await Assert.That(measured.Select(p => p.Field)).Contains("Kind")
+      .Because("naming the field is the whole difference between a finding to investigate and one "
+             + "to act on, and the comment is what carried it through the recording");
+    await Assert.That(measured.First(p => p.Field == "Kind").Calls).IsGreaterThan(0L)
+      .Because("the counts come from the same row, so an empty one would rank nothing");
+  }
+
+  private static async Task _executeAsync(NpgsqlConnection db, string sql, CancellationToken cancellationToken) {
+    await using var command = new NpgsqlCommand(sql, db);
+    await command.ExecuteNonQueryAsync(cancellationToken);
   }
 
   /// <summary>The sizes read alongside the counters, which the finding reports as context.</summary>
