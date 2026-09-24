@@ -167,6 +167,17 @@ public class PerTestDatabaseSweepTests {
   }
 
   /// <summary>
+  /// The stamp costs fifteen characters of a name that has to stay inside an identifier, so a prefix
+  /// long enough to push it over is refused where it is passed rather than truncated by the server
+  /// into a name the drop afterwards cannot find.
+  /// </summary>
+  [Test]
+  public async Task Create_APrefixTooLongForAnIdentifier_IsRefusedAsync() =>
+    await Assert.That(async () => await PerTestDatabaseFactory.CreateAsync(new string('p', PerTestDatabaseFactory.MAX_PREFIX_LENGTH + 1)))
+      .Throws<ArgumentException>()
+      .Because("a truncated name would exist on the server under a name nothing else uses");
+
+  /// <summary>
   /// Cancellation stops the sweep rather than propagating: whoever is shutting down is not waiting
   /// on housekeeping.
   /// </summary>

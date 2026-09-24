@@ -58,6 +58,12 @@ public static class PerTestDatabaseFactory {
   /// <summary>How a scratch database's creation time is written into its name.</summary>
   private const string STAMP_FORMAT = "yyyyMMddHHmmss";
 
+  /// <summary>
+  /// The longest prefix that leaves room for the stamp and the GUID inside Postgres's 63-byte
+  /// identifier limit: 63 less the stamp's fourteen, the GUID's thirty-two, and the two separators.
+  /// </summary>
+  internal const int MAX_PREFIX_LENGTH = 63 - 14 - 32 - 2;
+
   /// <summary>The shape <see cref="CreateAsync"/> gives a name: prefix, creation stamp, then a GUID.</summary>
   private const string SCRATCH_NAME_PATTERN = @"^[a-z0-9_]+_\d{14}_[0-9a-f]{32}$";
 
@@ -146,6 +152,14 @@ public static class PerTestDatabaseFactory {
       TimeProvider? timeProvider = null,
       CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(namePrefix);
+    if (namePrefix.Length > MAX_PREFIX_LENGTH) {
+      // Said here rather than discovered later: Postgres truncates an over-long identifier silently,
+      // so the database would exist under a name neither the connection string nor the drop uses.
+      throw new ArgumentException(
+        $"A scratch database prefix may be at most {MAX_PREFIX_LENGTH} characters so the name still "
+        + $"fits an identifier; '{namePrefix}' is {namePrefix.Length}.",
+        nameof(namePrefix));
+    }
 
     // The creation time goes into the name because a database does not carry one: asking the server
     // means statting the database's directory, which only a superuser may do, and a sweep that needs
