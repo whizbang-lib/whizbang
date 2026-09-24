@@ -1745,15 +1745,15 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   /// table describe different columns.
   /// </para>
   /// <para>
-  /// A declared LENGTH is a different matter and is pinned as unhonoured. This generator emits
-  /// CREATE TABLE and additive ADD COLUMN, never ALTER COLUMN TYPE, so honouring a length that has
-  /// been declarable and ignored for a long time would constrain a new database where an existing
-  /// one stays unconstrained. A declared column type does not have that problem: it is new, so
-  /// there is no existing table that declared one and was ignored.
+  /// A declared LENGTH reaches the table too, but as a constraint rather than as the column's type.
+  /// In PostgreSQL a length-limited type is a constraint and nothing else, storage and performance
+  /// being identical, and this generator emits CREATE TABLE and additive ADD COLUMN and never ALTER
+  /// COLUMN TYPE. Emitting the limited type would therefore constrain a new database while an
+  /// established one stayed unconstrained; a check constraint is additive and reaches both.
   /// </para>
   /// </remarks>
   [Test]
-  public async Task Generator_DeclaredColumnType_ReachesTheTable_WhileLengthStaysUnhonouredAsync() {
+  public async Task Generator_DeclaredColumnType_AndDeclaredLength_BothReachTheTableAsync() {
     const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
@@ -1792,13 +1792,22 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("uuid[]", StringComparison.Ordinal)
       .Because("the derivation's fallback is text, so a declared type that did not win here would "
              + "create the array column as a delimited string.");
-    // MaxLength is deliberately NOT asserted here. This generator does not honour it, and making
-    // it do so would constrain a new database where an existing one is unconstrained; see the
-    // comment at the construction site.
-    await Assert.That(sourceText).Contains("TEXT", StringComparison.Ordinal)
-      .Because("a declared length is not honoured on this path, so the column stays text -- pinned "
-             + "so that changing it is a decision with a migration behind it rather than a silent "
-             + "divergence between databases of different ages.");
+
+    // Named down to the column, because the framework's own migration tracking carries a
+    // content_hash VARCHAR(64) and a looser assertion matches that instead of the column under test.
+    await Assert.That(sourceText).Contains("label TEXT", StringComparison.Ordinal)
+      .Because("the column keeps the type the length does not change; in PostgreSQL a limited type "
+             + "is a constraint and nothing else.");
+    await Assert.That(sourceText).DoesNotContain("label VARCHAR", StringComparison.OrdinalIgnoreCase)
+      .Because("emitting the limited type would constrain a new database while an established one "
+             + "stayed unconstrained, since the table is only ever created or added to.");
+
+    await Assert.That(sourceText).Contains("CHECK (length(label) <= 64) NOT VALID", StringComparison.Ordinal)
+      .Because("the declared length is enforced from now on, on tables that already exist as well "
+             + "as new ones, without scanning what is already there.");
+    await Assert.That(sourceText).Contains("FROM pg_constraint WHERE conname = 'ck_wh_per_lineage_label_len'", StringComparison.Ordinal)
+      .Because("PostgreSQL has no ADD CONSTRAINT IF NOT EXISTS and this script runs on every start, "
+             + "so re-running it has to be silent.");
   }
 
   /// <summary>

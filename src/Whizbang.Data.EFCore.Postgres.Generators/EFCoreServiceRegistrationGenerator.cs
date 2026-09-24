@@ -831,11 +831,15 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     bool isUnique = false;
     string? columnName = null;
     string? columnType = null;
+    int? maxLength = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
         case "Unique":
           isUnique = namedArg.Value.Value is true;
+          break;
+        case "MaxLength":
+          maxLength = namedArg.Value.Value as int?;
           break;
         case "ColumnName":
           columnName = namedArg.Value.Value as string;
@@ -857,14 +861,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         TypeName: typeName,
         IsIndexed: isIndexed,
         IsUnique: isUnique,
-        // Deliberately not read from the attribute here, though the model side reads it. This
-        // generator emits CREATE TABLE plus additive ADD COLUMN, and never ALTER COLUMN TYPE, so
-        // honouring a length that has been declarable and ignored for a long time would give a new
-        // database varchar(n) where an existing one keeps text -- the same model constrained
-        // differently depending on when its database was created, and a write that succeeds on one
-        // deployment failing on another. The disagreement is real and is filed rather than papered
-        // over, because closing it needs a migration path and not a generator tweak.
-        MaxLength: null,
+        // Read here now that a length has somewhere to go that does not depend on when the
+        // database was created. It never becomes the column's type, which this generator could only
+        // apply to a table it creates; it becomes a check constraint, which it can add to one that
+        // already exists.
+        MaxLength: maxLength,
         IsVector: false,
         VectorDimensions: null,
         VectorDistanceMetric: null,
@@ -2628,7 +2629,107 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Additive for tables created before E2-4d — CREATE ... IF NOT EXISTS above skips existing tables.
     sb.AppendLine($"ALTER TABLE {quotedSchema}.{perspective.TableName} ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;");
     _appendSystemTimeMigrationSql(sb, perspective, quotedSchema);
+    _appendLengthConstraintSql(sb, perspective, quotedSchema);
     sb.AppendLine();
+  }
+
+  /// <summary>
+  /// The declared length of a promoted text column, as a constraint the table can actually carry.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The column stays TEXT. In PostgreSQL a length-limited type is a constraint and nothing else,
+  /// storage and performance being identical, so the only question a declared length raises is
+  /// whether it is enforced. Emitting the limited type would answer it for new tables alone: this
+  /// generator writes CREATE TABLE and additive ADD COLUMN and never ALTER COLUMN TYPE, so an
+  /// established table would keep its unconstrained column while a fresh one rejected the same
+  /// value, and the same code would behave differently by the age of the database it met.
+  /// </para>
+  /// <para>
+  /// A check constraint is additive, so it reaches both. NOT VALID leaves existing rows unscanned,
+  /// which means no rewrite and no long lock, and it still applies to every row written or updated
+  /// from that point on. Whether the rows already there comply can be settled later and separately
+  /// with VALIDATE CONSTRAINT, which is a question about data rather than about schema.
+  /// </para>
+  /// <para>
+  /// A null is not a violation: length(NULL) is NULL, and a check passes unless it is false.
+  /// </para>
+  /// </remarks>
+  /// <param name="sb">The script being built.</param>
+  /// <param name="perspective">The perspective whose table is being written.</param>
+  /// <param name="quotedSchema">The schema, already quoted.</param>
+  private static void _appendLengthConstraintSql(
+      StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
+    var table = $"{quotedSchema}.{perspective.TableName}";
+
+    foreach (var field in perspective.PhysicalFields) {
+      if (field.MaxLength is not { } maxLength || !_isTextColumn(field)) {
+        continue;
+      }
+
+      var name = _lengthConstraintName(perspective.TableName, field.ColumnName);
+
+      // PostgreSQL has no ADD CONSTRAINT IF NOT EXISTS, so the guard is written out. Re-running the
+      // script has to be silent, because it runs on every start.
+      sb.AppendLine("DO $$ BEGIN");
+      sb.AppendLine($"  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '{name}'");
+      sb.AppendLine($"    AND conrelid = '{table}'::regclass) THEN");
+      sb.AppendLine($"    ALTER TABLE {table} ADD CONSTRAINT {name}");
+      sb.AppendLine($"      CHECK (length({field.ColumnName}) <= {maxLength}) NOT VALID;");
+      sb.AppendLine("  END IF;");
+      sb.AppendLine("END $$;");
+    }
+  }
+
+  /// <summary>Whether the column holds text, which is the only thing a length can constrain.</summary>
+  /// <remarks>
+  /// An author who named the column's type owns it, and a length beside it would be second-guessing
+  /// a decision already made explicitly.
+  /// </remarks>
+  /// <param name="field">The promoted field.</param>
+  private static bool _isTextColumn(PhysicalFieldInfo field) {
+    if (!string.IsNullOrWhiteSpace(field.ColumnType) || field.IsVector) {
+      return false;
+    }
+
+    var typeName = field.TypeName.Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
+    return typeName is "System.String" or "string";
+  }
+
+  /// <summary>
+  /// A constraint name that is the same on every run and fits what PostgreSQL will store.
+  /// </summary>
+  /// <remarks>
+  /// An identifier is truncated to 63 bytes rather than rejected, so two long names that differ only
+  /// past that point would silently become one. The tail is replaced with a digest of the full name
+  /// when it would not fit, which keeps the name unique and still derives it from the same inputs
+  /// every time, so the guard above recognizes the constraint it wrote last start.
+  /// </remarks>
+  /// <param name="tableName">The table the constraint sits on.</param>
+  /// <param name="columnName">The column whose length is constrained.</param>
+  private static string _lengthConstraintName(string tableName, string columnName) {
+    const int postgresIdentifierLimit = 63;
+    var name = $"ck_{tableName}_{columnName}_len";
+
+    if (name.Length <= postgresIdentifierLimit) {
+      return name;
+    }
+
+    // FNV-1a rather than a cryptographic digest: this runs in an analyzer, which targets a surface
+    // where the one-call hashing APIs do not exist, and the requirement here is that the same name
+    // comes out every run rather than that the input cannot be recovered.
+    unchecked {
+      const uint offsetBasis = 2166136261;
+      const uint prime = 16777619;
+
+      var hash = offsetBasis;
+      foreach (var c in name) {
+        hash = (hash ^ c) * prime;
+      }
+
+      var digest = hash.ToString("x8", System.Globalization.CultureInfo.InvariantCulture);
+      return name.Substring(0, postgresIdentifierLimit - digest.Length - 1) + "_" + digest;
+    }
   }
 
   /// <summary>
@@ -2843,6 +2944,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Additive for tables created before E2-4d (CREATE ... IF NOT EXISTS skips existing tables).
     perspSql.AppendLine($"ALTER TABLE {quotedSchema}.{perspective.TableName} ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;");
     _appendSystemTimeMigrationSql(perspSql, perspective, quotedSchema);
+    _appendLengthConstraintSql(perspSql, perspective, quotedSchema);
   }
 
   /// <summary>

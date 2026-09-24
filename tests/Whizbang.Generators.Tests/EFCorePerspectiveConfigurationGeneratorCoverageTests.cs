@@ -502,8 +502,9 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
   #region Physical field extraction
 
   /// <summary>
-  /// Test that [PhysicalField(MaxLength, ColumnName)] produces a varchar(N) column
-  /// under the custom column name.
+  /// Test that [PhysicalField(MaxLength, ColumnName)] produces a text column under the custom
+  /// column name. The length is a constraint on the table rather than the column's type, so the
+  /// model says what the table says.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -536,7 +537,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     await Assert.That(generated).IsNotNull();
     await Assert.That(generated).Contains("entity.Property<string>(\"custom_sku\")");
     await Assert.That(generated).Contains(".HasColumnName(\"custom_sku\")");
-    await Assert.That(generated).Contains(".HasColumnType(\"varchar(100)\")");
+    await Assert.That(generated).Contains(".HasColumnType(\"text\")");
   }
 
   /// <summary>
