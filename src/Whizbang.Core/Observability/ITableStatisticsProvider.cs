@@ -54,7 +54,44 @@ public interface ITableStatisticsProvider {
   /// <returns>The scan statistics per table name.</returns>
   Task<IReadOnlyDictionary<string, TableScanStatistics>> GetTableScanStatisticsAsync(CancellationToken ct = default) =>
     Task.FromResult<IReadOnlyDictionary<string, TableScanStatistics>>(new Dictionary<string, TableScanStatistics>());
+
+  /// <summary>
+  /// Returns, per table, the document filters the database has measured as expensive.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Where the engine records statement statistics, the advice can name the filter rather than only
+  /// the table. Scan counters say reading is happening; this says what was reading.
+  /// </para>
+  /// <para>
+  /// Defaults to empty, and an implementation is expected to answer empty rather than throw when
+  /// the statistics are not collected. Naming the filter is an improvement on the advice, never a
+  /// condition of it, so an engine without it still advises on the table.
+  /// </para>
+  /// </remarks>
+  /// <param name="ct">Cancels the read.</param>
+  /// <returns>The measured filters per table name, or empty where none are recorded.</returns>
+  Task<IReadOnlyDictionary<string, IReadOnlyList<ExpensivePredicate>>> GetExpensivePredicatesAsync(
+      CancellationToken ct = default) =>
+    Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<ExpensivePredicate>>>(
+      new Dictionary<string, IReadOnlyList<ExpensivePredicate>>());
 }
+
+/// <summary>
+/// A filter the database has measured as expensive, and the field it reads.
+/// </summary>
+/// <remarks>
+/// This is what turns "look at this perspective" into "promote this property". The scan counters
+/// say a table is being read through; this says which filter was doing the reading, which is the
+/// difference between a finding someone has to investigate and one they can act on.
+/// </remarks>
+/// <param name="Document">The stored document the field is read out of: data, metadata or scope.</param>
+/// <param name="Field">The field read out of it, as the filter names it.</param>
+/// <param name="Calls">How many times the statement ran over the measured window.</param>
+/// <param name="MeanMilliseconds">Its mean execution time, which is what makes it worth naming.</param>
+/// <docs>operations/diagnostics/whiz306</docs>
+public readonly record struct ExpensivePredicate(
+    string Document, string Field, long Calls, double MeanMilliseconds);
 
 /// <summary>
 /// How much of a table's reading has been done by sequential scan, and how much by index.

@@ -38,4 +38,18 @@ public sealed record PerspectiveScanAdvised : ISystemEvent {
 
   /// <summary>The row count the finding was raised against.</summary>
   public required long RowsThreshold { get; init; }
+
+  /// <summary>
+  /// The document filters the database measured as expensive on this table, dearest first, or empty
+  /// where the engine records no statement statistics.
+  /// </summary>
+  /// <remarks>
+  /// This is what makes the finding actionable rather than investigable: the table says where to
+  /// look, and these say what to promote. They are absent rather than wrong where the statistics
+  /// are not collected.
+  /// </remarks>
+  public IReadOnlyList<string> MeasuredFilters { get; init; } = [];
+
+  /// <summary>The mean execution time of the dearest of them, or null where none were measured.</summary>
+  public double? DearestFilterMeanMilliseconds { get; init; }
 }

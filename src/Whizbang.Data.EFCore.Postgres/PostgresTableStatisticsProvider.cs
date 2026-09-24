@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Npgsql;
 using Whizbang.Core.Observability;
 
@@ -10,7 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs</tests>
-public sealed class PostgresTableStatisticsProvider(
+public sealed partial class PostgresTableStatisticsProvider(
   NpgsqlDataSource dataSource,
   string schema = "public") : ITableStatisticsProvider {
 
@@ -154,5 +155,87 @@ public sealed class PostgresTableStatisticsProvider(
     }
 
     return statistics;
+  }
+
+  /// <summary>The documents a perspective stores, which are the only ones a filter can extract from.</summary>
+  private static readonly string[] _documents = ["data", "metadata", "scope"];
+
+  /// <summary>
+  /// Matches a document extraction in a recorded statement, capturing the document and the field.
+  /// </summary>
+  /// <remarks>
+  /// Read off the statement text because that is the only form the statistics keep. A recorded
+  /// statement has had its literals replaced by placeholders, but a JSON key is part of the
+  /// expression rather than a literal of the query, so it survives and is what the advice needs.
+  /// </remarks>
+  [GeneratedRegex(@"\b(data|metadata|scope)\s*->>?\s*'([^']+)'", RegexOptions.IgnoreCase)]
+  private static partial Regex DocumentExtraction();
+
+  /// <summary>Matches the perspective table a recorded statement reads.</summary>
+  [GeneratedRegex(@"\bwh_per_[a-z0-9_]+", RegexOptions.IgnoreCase)]
+  private static partial Regex PerspectiveTable();
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// Answers empty rather than throwing when the statistics are not collected. The extension has to
+  /// be installed AND loaded at startup, and a deployment may have done neither; naming the filter
+  /// is an improvement on the advice rather than a condition of it, so its absence is not a fault.
+  /// </remarks>
+  public async Task<IReadOnlyDictionary<string, IReadOnlyList<ExpensivePredicate>>> GetExpensivePredicatesAsync(
+      CancellationToken ct = default) {
+    var byTable = new Dictionary<string, IReadOnlyList<ExpensivePredicate>>(StringComparer.Ordinal);
+
+    await using var connection = await dataSource.OpenConnectionAsync(ct);
+
+    try {
+      await using var cmd = new NpgsqlCommand("""
+        SELECT query, calls, mean_exec_time
+        FROM pg_stat_statements
+        WHERE query ILIKE '%wh\_per\_%' AND query LIKE '%->%'
+        ORDER BY mean_exec_time DESC
+        LIMIT 200
+        """, connection);
+
+      await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+      var collected = new Dictionary<string, List<ExpensivePredicate>>(StringComparer.Ordinal);
+
+      while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+        var statement = reader.GetString(0);
+        var calls = reader.GetInt64(1);
+        var mean = reader.GetDouble(2);
+
+        var table = PerspectiveTable().Match(statement);
+        if (!table.Success) {
+          continue;
+        }
+
+        if (!collected.TryGetValue(table.Value, out var predicates)) {
+          predicates = [];
+          collected[table.Value] = predicates;
+        }
+
+        var extractions = DocumentExtraction().Matches(statement)
+          .Select(match => (Document: match.Groups[1].Value.ToLowerInvariant(), Field: match.Groups[2].Value));
+
+        foreach (var (document, field) in extractions) {
+          // The same field named twice in one statement is one filter, and the same field across
+          // statements is still one thing to promote, so the dearest sighting is the one kept.
+          if (Array.IndexOf(_documents, document) >= 0
+              && !predicates.Exists(p => p.Document == document && p.Field == field)) {
+            predicates.Add(new ExpensivePredicate(document, field, calls, mean));
+          }
+        }
+      }
+
+      foreach (var (table, predicates) in collected) {
+        byTable[table] = predicates;
+      }
+    } catch (PostgresException) {
+      // Not installed, not loaded, or not readable by this role. The table-level advice stands on
+      // its own and this only ever made it sharper.
+      return byTable;
+    }
+
+    return byTable;
   }
 }

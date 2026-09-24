@@ -47,6 +47,56 @@ public class PerspectiveScanAdvisoryTests {
       .Because("the finding is about the table, so the same table means the same finding in any process");
   }
 
+  /// <summary>
+  /// Where the filter was measured, the advice names it rather than only the table.
+  /// </summary>
+  /// <remarks>
+  /// This is the difference between a finding someone has to investigate and one they can act on.
+  /// The dearest filter leads, because that is the one to promote.
+  /// </remarks>
+  [Test]
+  public async Task AMeasuredFilter_IsNamedInTheFindingAsync() {
+    var reported = await _advisory(new AlwaysReports()).ReportAsync(
+      new Dictionary<string, TableScanStatistics> {
+        ["wh_per_documents"] = new(SequentialScans: 4_000, SequentialRowsRead: 50_000_000, IndexScans: 12),
+      },
+      new Dictionary<string, long> { ["wh_per_documents"] = 1_500_000_000 },
+      new Dictionary<string, IReadOnlyList<ExpensivePredicate>> {
+        ["wh_per_documents"] = [
+          new ExpensivePredicate("data", "EntityType", 900, 4.0),
+          new ExpensivePredicate("data", "TenantId", 1_158, 218.0),
+        ],
+      });
+
+    await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].MeasuredFilters).Contains("data ->> 'TenantId'")
+      .Because("naming the filter is what turns look-at-this-perspective into promote-this-property");
+    await Assert.That(reported[0].MeasuredFilters[0]).IsEqualTo("data ->> 'TenantId'")
+      .Because("the dearest one leads, because that is the one worth promoting first");
+    await Assert.That(reported[0].DearestFilterMeanMilliseconds).IsEqualTo(218.0);
+  }
+
+  /// <summary>
+  /// Where no statement statistics exist, the advice still stands and names the table alone.
+  /// </summary>
+  /// <remarks>
+  /// The extension has to be installed and loaded, and a deployment may have done neither. Naming
+  /// the filter sharpens the advice; it was never a condition of giving it.
+  /// </remarks>
+  [Test]
+  public async Task WithoutMeasuredFilters_TheAdviceStillNamesTheTableAsync() {
+    var reported = await _advisory(new AlwaysReports()).ReportAsync(
+      new Dictionary<string, TableScanStatistics> {
+        ["wh_per_documents"] = new(SequentialScans: 4_000, SequentialRowsRead: 50_000_000, IndexScans: 12),
+      },
+      new Dictionary<string, long> { ["wh_per_documents"] = 1_500_000_000 },
+      predicates: null);
+
+    await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].MeasuredFilters).IsEmpty();
+    await Assert.That(reported[0].DearestFilterMeanMilliseconds).IsNull();
+  }
+
   [Test]
   public async Task ASmallTableScannedOften_IsNotReportedAsync() {
     var reported = await _advisory(new AlwaysReports()).ReportAsync(
