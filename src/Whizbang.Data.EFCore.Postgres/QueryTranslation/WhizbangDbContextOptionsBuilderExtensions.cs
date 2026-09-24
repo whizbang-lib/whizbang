@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Query;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 
@@ -46,6 +48,13 @@ public static class WhizbangDbContextOptionsBuilderExtensions {
     // Add the query interceptor that transforms r.Data.PropertyName to EF.Property()
     // and the materialization interceptor that hydrates physical field values into Data after query
     optionsBuilder.AddInterceptors(_queryInterceptor, _materializationInterceptor);
+
+    // The containment rewrite rides the query interceptor above, so its correction belongs on the
+    // same switch: a context that does not compile filters into containment tests has nothing to
+    // correct. The correction is the one decision the rewrite cannot make for itself, because it
+    // depends on the candidate values and those are not known until the command is built.
+    optionsBuilder.ReplaceService<IRelationalParameterBasedSqlProcessorFactory, ContainmentParameterProcessorFactory>();
+
 
     return optionsBuilder;
   }

@@ -244,7 +244,11 @@ public static class SharedPostgresContainer {
                   $"--publish 0:{CONTAINER_PORT} " +
                   "--restart no " +
                   $"{IMAGE_NAME} " +
-                  "-c max_connections=500",
+                  "-c max_connections=500 " +
+                  // Loaded at start because that is the only time it can be. It costs a small
+                  // fixed allocation and tracks nothing until a database creates the extension,
+                  // and it is what lets the statement-statistics reader be tested at all.
+                  "-c shared_preload_libraries=pg_stat_statements",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,

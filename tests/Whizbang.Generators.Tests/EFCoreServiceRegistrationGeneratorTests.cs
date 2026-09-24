@@ -1745,15 +1745,15 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   /// table describe different columns.
   /// </para>
   /// <para>
-  /// A declared LENGTH is a different matter and is pinned as unhonoured. This generator emits
-  /// CREATE TABLE and additive ADD COLUMN, never ALTER COLUMN TYPE, so honouring a length that has
-  /// been declarable and ignored for a long time would constrain a new database where an existing
-  /// one stays unconstrained. A declared column type does not have that problem: it is new, so
-  /// there is no existing table that declared one and was ignored.
+  /// A declared LENGTH reaches the table too, but as a constraint rather than as the column's type.
+  /// In PostgreSQL a length-limited type is a constraint and nothing else, storage and performance
+  /// being identical, and this generator emits CREATE TABLE and additive ADD COLUMN and never ALTER
+  /// COLUMN TYPE. Emitting the limited type would therefore constrain a new database while an
+  /// established one stayed unconstrained; a check constraint is additive and reaches both.
   /// </para>
   /// </remarks>
   [Test]
-  public async Task Generator_DeclaredColumnType_ReachesTheTable_WhileLengthStaysUnhonouredAsync() {
+  public async Task Generator_DeclaredColumnType_AndDeclaredLength_BothReachTheTableAsync() {
     const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
@@ -1792,13 +1792,101 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("uuid[]", StringComparison.Ordinal)
       .Because("the derivation's fallback is text, so a declared type that did not win here would "
              + "create the array column as a delimited string.");
-    // MaxLength is deliberately NOT asserted here. This generator does not honour it, and making
-    // it do so would constrain a new database where an existing one is unconstrained; see the
-    // comment at the construction site.
-    await Assert.That(sourceText).Contains("TEXT", StringComparison.Ordinal)
-      .Because("a declared length is not honoured on this path, so the column stays text -- pinned "
-             + "so that changing it is a decision with a migration behind it rather than a silent "
-             + "divergence between databases of different ages.");
+
+    // Named down to the column, because the framework's own migration tracking carries a
+    // content_hash VARCHAR(64) and a looser assertion matches that instead of the column under test.
+    await Assert.That(sourceText).Contains("label TEXT", StringComparison.Ordinal)
+      .Because("the column keeps the type the length does not change; in PostgreSQL a limited type "
+             + "is a constraint and nothing else.");
+    await Assert.That(sourceText).DoesNotContain("label VARCHAR", StringComparison.OrdinalIgnoreCase)
+      .Because("emitting the limited type would constrain a new database while an established one "
+             + "stayed unconstrained, since the table is only ever created or added to.");
+
+    await Assert.That(sourceText).Contains("CHECK (length(label) <= 64) NOT VALID", StringComparison.Ordinal)
+      .Because("the declared length is enforced from now on, on tables that already exist as well "
+             + "as new ones, without scanning what is already there.");
+    await Assert.That(sourceText).Contains("FROM pg_constraint WHERE conname = 'ck_wh_per_lineage_label_len'", StringComparison.Ordinal)
+      .Because("PostgreSQL has no ADD CONSTRAINT IF NOT EXISTS and this script runs on every start, "
+             + "so re-running it has to be silent.");
+  }
+
+  /// <summary>
+  /// A constraint name too long for PostgreSQL is folded, and a column whose type the author named
+  /// is left unconstrained.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// PostgreSQL truncates an identifier over 63 bytes rather than refusing it, so two constraints
+  /// whose names differ only past that point would silently become the same one, and the guard that
+  /// looks the constraint up by name before adding it would find the wrong one. The tail is replaced
+  /// with a digest of the whole name instead, which has to come out the same on every start or the
+  /// guard stops recognizing what the last start wrote and the statement fails on the second run.
+  /// </para>
+  /// <para>
+  /// A length is a constraint on text. An author who named the column's type owns it, so a length
+  /// beside it is not second-guessed with a constraint of the framework's own.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task Generator_ALengthConstraintName_IsFoldedToWhatPostgresStoresAsync() {
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record FoldingEvent : IEvent;
+
+      public class FoldingModel {
+        [PhysicalField(MaxLength = 64)]
+        public string AnExtraordinarilyDescriptivePropertyNameThatNoIdentifierLimitWillHold { get; init; } = "";
+
+        [PhysicalField(ColumnType = "citext", MaxLength = 64)]
+        public string TypedLabel { get; init; } = "";
+      }
+
+      public class FoldingPerspective : IPerspectiveFor<FoldingModel, FoldingEvent> {
+        public FoldingModel Apply(FoldingModel currentData, FoldingEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    var names = sourceText.Split("conname = '", StringSplitOptions.None)
+      .Skip(1)
+      .Select(after => after[..after.IndexOf('\'', StringComparison.Ordinal)])
+      .Where(name => name.StartsWith("ck_", StringComparison.Ordinal))
+      .Distinct(StringComparer.Ordinal)
+      .ToList();
+
+    await Assert.That(names.Count).IsEqualTo(1)
+      .Because("one of the two lengths is on a column whose type the author named, and that one is "
+             + "the author's to constrain.");
+
+    await Assert.That(names[0].Length).IsLessThanOrEqualTo(63)
+      .Because("PostgreSQL truncates a longer identifier rather than refusing it, so two names that "
+             + "differ only past the limit would silently become one.");
+
+    await Assert.That(names[0][^9] == '_' && names[0][^8..].All(char.IsAsciiHexDigitLower)).IsTrue()
+      .Because("the tail is a digest of the whole name, so the same name comes out on every start "
+             + "and the guard recognizes what the last start wrote.");
+
+    // Written twice: once where the table is created and once where a column is added to a table
+    // that already exists. Both sites have to name the same constraint.
+    await Assert.That(sourceText.Split(names[0], StringSplitOptions.None).Length - 1).IsGreaterThanOrEqualTo(2)
+      .Because("the guard and the ALTER TABLE have to name the same constraint or the statement "
+             + "adds one that is already there.");
   }
 
   /// <summary>

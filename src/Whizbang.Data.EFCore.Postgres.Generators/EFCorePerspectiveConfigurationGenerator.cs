@@ -716,9 +716,10 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         .TrimEnd('?');
 
     return typeName switch {
-      "System.String" or "string" => field.MaxLength.HasValue
-          ? $"varchar({field.MaxLength.Value})"
-          : "text",
+      // A declared length is carried by a check constraint rather than by the column's type, so the
+      // column is text here as it is in the table. Claiming a limited type while the table holds
+      // text is what made the model and the database describe different columns.
+      "System.String" or "string" => "text",
       "System.Int32" or "int" => "integer",
       "System.Int64" or "long" => "bigint",
       "System.Int16" or "short" => "smallint",

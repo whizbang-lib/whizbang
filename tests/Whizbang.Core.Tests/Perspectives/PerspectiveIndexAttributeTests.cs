@@ -47,6 +47,9 @@ public class PerspectiveIndexAttributeTests {
       Name = "idx_chosen",
       Where = "(data ->> 'Status') = 'active'",
       Unique = true,
+      Method = PerspectiveIndexMethod.Gin,
+      OperatorClass = "jsonb_path_ops",
+      Expressions = ["lower(name)"],
     };
 
     await Assert.That(declaration.Name).IsEqualTo("idx_chosen");
@@ -55,6 +58,14 @@ public class PerspectiveIndexAttributeTests {
              + "own filter, because PostgreSQL decides whether a partial index applies by reasoning "
              + "about that text rather than by evaluating it.");
     await Assert.That(declaration.Unique).IsTrue();
+    await Assert.That(declaration.Method).IsEqualTo(PerspectiveIndexMethod.Gin)
+      .Because("the method is the difference between an index that answers a containment filter "
+             + "and one that cannot");
+    await Assert.That(declaration.OperatorClass).IsEqualTo("jsonb_path_ops")
+      .Because("the operator class decides what the index can answer, and is the author's to name");
+    await Assert.That(declaration.Expressions).IsEquivalentTo(["lower(name)"])
+      .Because("an expression is indexable where a property alone is not, and it is passed through "
+             + "verbatim for the same reason the predicate is");
   }
 
   /// <summary>

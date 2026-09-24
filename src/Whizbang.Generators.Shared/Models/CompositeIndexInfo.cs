@@ -27,13 +27,17 @@ public sealed record CompositeIndexElement(string PropertyName, string Element);
 /// <param name="Name">The declared name, or null to derive one.</param>
 /// <param name="Where">The partial predicate, verbatim, or null for every row.</param>
 /// <param name="Unique">Whether the index enforces uniqueness.</param>
+/// <param name="Method">The index method, or null for the default btree.</param>
+/// <param name="OperatorClass">The operator class applied to each element, or null for the default.</param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/CompositeIndexGenerationTests.cs</tests>
 public sealed record CompositeIndexInfo(
     ImmutableArray<CompositeIndexElement> Elements,
     string? Name = null,
     string? Where = null,
-    bool Unique = false
+    bool Unique = false,
+    string? Method = null,
+    string? OperatorClass = null
 );
 
 /// <summary>
@@ -129,10 +133,19 @@ public static class CompositeIndexSql {
     }
 
     var unique = index.Unique ? "UNIQUE " : string.Empty;
-    var columns = string.Join(", ", index.Elements.Select(static e => e.Element));
+
+    // The operator class follows the element it applies to, and applies to every one: a per-element
+    // class would need a second list kept in step with the first, which is a worse thing to get
+    // wrong than it is to express.
+    var opClass = string.IsNullOrWhiteSpace(index.OperatorClass) ? string.Empty : " " + index.OperatorClass;
+    var columns = string.Join(", ", index.Elements.Select(e => e.Element + opClass));
+
+    // Omitted rather than written out for btree, so that the statement for an index that never asked
+    // for a method is the statement it has always been.
+    var using_ = string.IsNullOrWhiteSpace(index.Method) ? string.Empty : $" USING {index.Method}";
     var where = string.IsNullOrWhiteSpace(index.Where) ? string.Empty : $" WHERE {index.Where}";
 
     return $"CREATE {unique}INDEX IF NOT EXISTS {Name(index, indexPrefix)} "
-         + $"ON {qualifiedTable} ({columns}){where};";
+         + $"ON {qualifiedTable}{using_} ({columns}){where};";
   }
 }
