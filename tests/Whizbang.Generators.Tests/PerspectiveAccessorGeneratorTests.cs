@@ -99,4 +99,108 @@ public class PerspectiveAccessorGeneratorTests {
     await Assert.That(generated).DoesNotContain("Parent.Parent.Parent.Parent")
       .Because("a bound is what keeps a model that refers to itself from generating forever");
   }
+
+  /// <summary>
+  /// A model declared inside another type is named by the whole path and is no more visible than
+  /// the type it sits in.
+  /// </summary>
+  /// <remarks>
+  /// Two models nested in sibling types share a namespace and may share a simple name, so the
+  /// declaring types are part of the accessor's name for the same reason they are part of the
+  /// model's. Visibility is carried for a harder reason: a public property returning a type the
+  /// consumer cannot see does not compile, and it is generated code that would not compile.
+  /// </remarks>
+  [Test]
+  public async Task Accessors_ForANestedModel_AreNamedAndSeenAsTheModelIsAsync() {
+    const string nested = """
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace MyApp.Perspectives;
+
+      internal static class Ledger {
+        public class EntryModel {
+          [StreamId]
+          public Guid EntryId { get; init; }
+          public string Memo { get; init; } = "";
+        }
+      }
+
+      public record EntryPosted([property: StreamId] Guid EntryId) : IEvent;
+
+      public class EntryPerspective : IPerspectiveFor<Ledger.EntryModel, EntryPosted> {
+        public Ledger.EntryModel Apply(Ledger.EntryModel? current, EntryPosted @event) =>
+          new Ledger.EntryModel { EntryId = @event.EntryId };
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveAccessorGenerator>(nested);
+    var generated = GeneratorTestHelper.GetGeneratedSource(
+      result, "MyApp_Perspectives_Ledger_EntryModelAccessors.g.cs");
+
+    await Assert.That(generated).IsNotNull()
+      .Because("the file name has to be unique across the compilation, and a simple name is not");
+
+    await Assert.That(generated!).Contains("internal static class Ledger_EntryModelAccessors")
+      .Because("a public property yielding a type the consumer cannot see is generated code that "
+             + "does not compile");
+  }
+
+  /// <summary>
+  /// A collection is a path a filter can name, and not a way into the elements. A model with no
+  /// path at all, and a class that is not a perspective, yield nothing rather than an empty class.
+  /// </summary>
+  /// <remarks>
+  /// An element of a collection has no path of its own that a filter could write -- there is no
+  /// way to say which element -- so descending into one would generate cases nothing can reach.
+  /// </remarks>
+  [Test]
+  public async Task Accessors_StopAtACollection_AndAreNotWrittenForAModelWithNoPathsAsync() {
+    const string shapes = """
+      using System;
+      using System.Collections.Generic;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace MyApp.Perspectives;
+
+      public class TagListModel {
+        [StreamId]
+        public Guid ListId { get; init; }
+        public List<string> Tags { get; init; } = new();
+      }
+
+      public class NothingModel {
+      }
+
+      public record ListTagged([property: StreamId] Guid ListId) : IEvent;
+
+      public class TagListPerspective : IPerspectiveFor<TagListModel, ListTagged> {
+        public TagListModel Apply(TagListModel? current, ListTagged @event) =>
+          new TagListModel { ListId = @event.ListId };
+      }
+
+      public class NothingPerspective : IPerspectiveFor<NothingModel, ListTagged> {
+        public NothingModel Apply(NothingModel? current, ListTagged @event) => new NothingModel();
+      }
+
+      public class NotAPerspective : IDisposable {
+        public void Dispose() { }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveAccessorGenerator>(shapes);
+
+    var tags = GeneratorTestHelper.GetGeneratedSource(result, "MyApp_Perspectives_TagListModelAccessors.g.cs");
+    await Assert.That(tags).IsNotNull();
+    await Assert.That(tags!).Contains("case \"Tags\":")
+      .Because("the collection itself is a path a filter can name");
+    await Assert.That(tags).DoesNotContain("Tags.")
+      .Because("an element has no path of its own, so descending would generate cases nothing reaches");
+
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(
+      result, "MyApp_Perspectives_NothingModelAccessors.g.cs")).IsNull()
+      .Because("a class with nothing to address is nothing to generate");
+  }
 }

@@ -111,6 +111,36 @@ public class ApplicationSchemaObjectsTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// An object whose SQL is wrong stops the sequence and says so in the ledger.
+  /// </summary>
+  /// <remarks>
+  /// The alternative is a start that looks successful while an object an index or a query depends
+  /// on was never created, which surfaces later as a failure somewhere else entirely. The ledger
+  /// entry is what makes the cause findable rather than only the symptom.
+  /// </remarks>
+  [Test]
+  [Timeout(180000)]
+  public async Task AnObjectThatWillNotApply_FailsTheStartAndIsRecordedAsync(CancellationToken cancellationToken) {
+    var broken = new ApplicationSchemaObject("broken_function", "CREATE FUNCTION this is not sql;");
+
+    var initializer = new PostgresSchemaInitializer(
+      _connectionString, [], null, null, new Objects([broken], []));
+
+    await Assert.That(async () => await initializer.InitializeSchemaAsync(cancellationToken))
+      .Throws<NpgsqlException>()
+      .Because("an object that did not apply must not leave the start looking successful");
+
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    var status = await db.ExecuteScalarAsync<string>(
+      "SELECT status_description FROM wh_schema_migrations WHERE file_name = 'app:before:broken_function'");
+
+    await Assert.That(status).StartsWith("Failed:")
+      .Because("the ledger is where someone looks to find which object it was");
+  }
+
+  /// <summary>
   /// Applying again is silent, and an object whose SQL has not changed is skipped.
   /// </summary>
   /// <remarks>

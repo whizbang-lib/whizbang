@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Generators.Tests;
 
@@ -1808,6 +1809,83 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("FROM pg_constraint WHERE conname = 'ck_wh_per_lineage_label_len'", StringComparison.Ordinal)
       .Because("PostgreSQL has no ADD CONSTRAINT IF NOT EXISTS and this script runs on every start, "
              + "so re-running it has to be silent.");
+  }
+
+  /// <summary>
+  /// A constraint name too long for PostgreSQL is folded, and a column whose type the author named
+  /// is left unconstrained.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// PostgreSQL truncates an identifier over 63 bytes rather than refusing it, so two constraints
+  /// whose names differ only past that point would silently become the same one, and the guard that
+  /// looks the constraint up by name before adding it would find the wrong one. The tail is replaced
+  /// with a digest of the whole name instead, which has to come out the same on every start or the
+  /// guard stops recognizing what the last start wrote and the statement fails on the second run.
+  /// </para>
+  /// <para>
+  /// A length is a constraint on text. An author who named the column's type owns it, so a length
+  /// beside it is not second-guessed with a constraint of the framework's own.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task Generator_ALengthConstraintName_IsFoldedToWhatPostgresStoresAsync() {
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record FoldingEvent : IEvent;
+
+      public class FoldingModel {
+        [PhysicalField(MaxLength = 64)]
+        public string AnExtraordinarilyDescriptivePropertyNameThatNoIdentifierLimitWillHold { get; init; } = "";
+
+        [PhysicalField(ColumnType = "citext", MaxLength = 64)]
+        public string TypedLabel { get; init; } = "";
+      }
+
+      public class FoldingPerspective : IPerspectiveFor<FoldingModel, FoldingEvent> {
+        public FoldingModel Apply(FoldingModel currentData, FoldingEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    var names = Regex.Matches(sourceText, @"conname = '(ck_[a-z0-9_]+_len|ck_[a-z0-9_]+_[0-9a-f]{8})'")
+      .Select(m => m.Groups[1].Value)
+      .Distinct(StringComparer.Ordinal)
+      .ToList();
+
+    await Assert.That(names.Count).IsEqualTo(1)
+      .Because("one of the two lengths is on a column whose type the author named, and that one is "
+             + "the author's to constrain.");
+
+    await Assert.That(names[0].Length).IsLessThanOrEqualTo(63)
+      .Because("PostgreSQL truncates a longer identifier rather than refusing it, so two names that "
+             + "differ only past the limit would silently become one.");
+
+    await Assert.That(Regex.IsMatch(names[0], "_[0-9a-f]{8}$")).IsTrue()
+      .Because("the tail is a digest of the whole name, so the same name comes out on every start "
+             + "and the guard recognizes what the last start wrote.");
+
+    // Written twice: once where the table is created and once where a column is added to a table
+    // that already exists. Both sites have to name the same constraint.
+    await Assert.That(Regex.Count(sourceText, Regex.Escape(names[0]))).IsGreaterThanOrEqualTo(2)
+      .Because("the guard and the ALTER TABLE have to name the same constraint or the statement "
+             + "adds one that is already there.");
   }
 
   /// <summary>

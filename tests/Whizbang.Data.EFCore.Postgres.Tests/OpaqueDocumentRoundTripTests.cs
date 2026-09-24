@@ -31,6 +31,7 @@ public sealed class OpaqueDocument {
   public Guid Id { get; set; }
   public DateTime StartedAt { get; set; }
   public DateTimeOffset? EndedAt { get; set; }
+  public DateOnly Scheduled { get; set; }
   public List<OpaqueTurn> Turns { get; set; } = [];
 }
 
@@ -77,6 +78,8 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
   private const string TABLE = "wh_per_opaque_document";
 
   private static readonly DateTime _startedAt = new(2026, 3, 4, 5, 6, 7, 890, DateTimeKind.Utc);
+  private static readonly DateTimeOffset _endedBound = new DateTimeOffset(_startedAt).AddHours(2);
+  private static readonly DateOnly _scheduledBound = DateOnly.FromDateTime(_startedAt);
 
   private string _databaseName = null!;
   private string _connectionString = null!;
@@ -234,7 +237,13 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
       foreach (var (id, at) in new[] { (earlier, _startedAt), (later, _startedAt.AddDays(1)) }) {
         await strategy.UpsertPerspectiveRowAsync(
           writer, TABLE, id,
-          new OpaqueDocument { Id = id, StartedAt = at, Turns = [] },
+          new OpaqueDocument {
+            Id = id,
+            StartedAt = at,
+            EndedAt = new DateTimeOffset(at).AddHours(1),
+            Scheduled = DateOnly.FromDateTime(at),
+            Turns = [],
+          },
           new PerspectiveMetadata { EventType = "e", EventId = "1", Timestamp = at },
           new PerspectiveScope());
       }
@@ -269,6 +278,24 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
 
     await Assert.That(afterParameter).IsEquivalentTo(after)
       .Because("where the bound came from cannot change which rows answer");
+
+    // An instant carrying an offset and a date with no time of day are each stored in the same unit
+    // and each converted by an overload of their own, so each is filtered on here as well.
+    var endedAfter = await reader.Set<PerspectiveRow<OpaqueDocument>>().AsNoTracking()
+      .Where(r => r.Data.EndedAt > _endedBound)
+      .Select(r => r.Id)
+      .ToListAsync();
+
+    await Assert.That(endedAfter).IsEquivalentTo([later])
+      .Because("an instant carrying an offset counts forward in the same unit");
+
+    var scheduledAfter = await reader.Set<PerspectiveRow<OpaqueDocument>>().AsNoTracking()
+      .Where(r => r.Data.Scheduled > _scheduledBound)
+      .Select(r => r.Id)
+      .ToListAsync();
+
+    await Assert.That(scheduledAfter).IsEquivalentTo([later])
+      .Because("a date with no time of day is the microsecond at midnight, which counts forward too");
   }
 
   /// <summary>
