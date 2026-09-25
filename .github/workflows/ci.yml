@@ -10,12 +10,17 @@ name: CI
 # created before anything merges, and that run is the one the release pull request is gated on and
 # the only one that publishes. Calling it post-merge says the opposite of what is true, on the one
 # branch where somebody reading the list is deciding whether it is safe to merge.
+# The run name says WHERE the change is in its life; each job name says what PHASE it is (Plan,
+# Build, Test, Analyze, Gate, Publish, Merge back, Report, Notify). docs/RELEASING.md → "Reading a
+# run". Numbered so the stages sort in the order a change moves through them.
 run-name: >-
-  CI ${{ github.event_name == 'pull_request' && format('· PR #{0} · {1}', github.event.pull_request.number, github.head_ref)
-      || github.event_name == 'merge_group' && '· merge queue'
+  CI ${{ github.event_name == 'pull_request' && format('· 1 pre-merge · PR #{0} · {1}', github.event.pull_request.number, github.head_ref)
+      || github.event_name == 'merge_group' && '· 2 merge queue'
       || github.event_name == 'workflow_dispatch' && format('· manual · {0}', github.ref_name)
-      || startsWith(github.ref, 'refs/heads/release/v') && format('· release cut · {0}', github.ref_name)
-      || format('· post-merge · {0}', github.ref_name) }}
+      || github.ref == 'refs/heads/develop' && '· 3 post-merge · develop (alpha)'
+      || startsWith(github.ref, 'refs/heads/release/v') && format('· 4 release candidate · {0}', github.ref_name)
+      || github.ref == 'refs/heads/main' && '· 5 released · main'
+      || format('· push · {0}', github.ref_name) }}
 
 on:
   push:
@@ -24,7 +29,9 @@ on:
       - main           # a release landing here is what analyzes the main line (see below)
       - 'release/v**'  # branch-name-versioned publish (release-publish job)
   pull_request:
-    branches: [main, develop, 'release/**']
+    # Same release glob as push: every release branch is release/vX.Y.Z[-label] (the version is
+    # parsed from the name), so a PR into anything else under release/ is not a release.
+    branches: [main, develop, 'release/v**']
   merge_group:       # the queue's own run, on the prospective merge commit
   workflow_dispatch:
 
@@ -33,8 +40,10 @@ on:
 # sonar.branch.name so SonarCloud records the analysis as the main line. Nothing ever produced
 # that push: release.yml merges the release PR and calls no quality workflow, so main went
 # unanalyzed from one release to the next and the badge kept reporting a months-old verdict on
-# months-old code. Main receives one merge per release, so this costs one matrix per release, and
-# every publish job here is guarded to develop or release/** and cannot fire from it.
+# months-old code. Main receives one merge per release, and every publish job here is guarded to
+# develop or release/v** and cannot fire from it. The push does NOT re-run the matrix: its tree is
+# the one the release branch just tested, so release-pr yields build, pack and the suites to that
+# run, and Quality analyzes that run's coverage.
 
 # Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
 # what it needs. Only the publish jobs get contents/id-token write, and only
@@ -68,7 +77,7 @@ concurrency:
 
 jobs:
   changes:
-    name: Detect Changes
+    name: Plan · Detect changes
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -130,7 +139,7 @@ jobs:
   # ============================================================================
 
   queue-validated:
-    name: Queue Validation Check
+    name: Plan · Reuse the merge queue's results
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
       vars.PUSH_RUN_FULL_MATRIX != 'true'
@@ -175,63 +184,122 @@ jobs:
           fi
 
   release-pr:
-    name: Release PR Duplicate Check
-    # start-release pushes release/v** AND opens the release PR at the SAME commit, so two runs
-    # of this workflow cover identical bytes: the push run, which must run the matrix because it
-    # publishes, and the PR run, which gates the merge to main. Both ran everything — two builds,
-    # two Sonar analyses and two integration matrices per release cut, over one tree.
+    name: Plan · Reuse the release branch's results
+    # Two events re-test a tree another run of this workflow already covers:
     #
-    # The PR run yields EVERY job that costs a runner: format, build, quality and the six suites.
-    # Yielding only the suites left the two most expensive jobs still doubled, because build and
-    # quality are gated on their own change filter rather than on the matrix's. What remains
-    # doubled is the handful of jobs that resolve an expression and stop (Detect Changes, and the
-    # event-exclusive guards that skip here anyway), which cost seconds, not minutes.
+    # RELEASE PR. start-release pushes release/v** AND opens the release PR at the SAME commit. The
+    # push run must run the matrix because it publishes; the PR run only gates the merge. The PR run
+    # yields format, build and the six suites to the push run, whose results carry the same check
+    # NAMES on the same commit, so the ruleset on main reads them either way.
     #
-    # The push run's results are what the merge reads, and they are the same check NAMES on the
-    # same commit, so a ruleset on main would read them either way.
+    # MAIN PUSH. Merging a release PR pushes main, which is a push trigger only so Quality records a
+    # main-line analysis. Its tree is byte-identical to the release-branch tree that just went green
+    # (start-release merges main into the release branch first), so re-running build, pack and the
+    # suites there tested nothing new: ~46 minutes per release. It yields them too.
+    #
+    # QUALITY NEVER YIELDS: SonarScanner runs only on a pull request or on main, so this run's
+    # Quality is the only one that can analyze. It takes its COVERAGE from the run yielded to
+    # (coverage-run-id), because this run's suites no longer produce any.
     #
     # Why yielding is safe in this direction and not the other: these jobs are skipped by an
-    # expression, which resolves in seconds, while the push run's real results land minutes later
-    # and therefore win as the last report for each name. Skipping the PUSH run instead would put
-    # a fast "skipped" after a slow real result and could mask a failure — and would also strand
-    # the publish, which only the push event performs (see release-publish).
+    # expression, which resolves in seconds, while the covering run's real results land later (or
+    # already have) and win as the last report for each name. Skipping the release-branch PUSH run
+    # instead would put a fast "skipped" after a slow real result and could mask a failure, and
+    # would strand the publish, which only that push performs (see release-publish).
     if: >-
-      github.event_name == 'pull_request' &&
-      startsWith(github.head_ref, 'release/v') &&
-      vars.RELEASE_PR_FULL_MATRIX != 'true'
+      (github.event_name == 'pull_request' && startsWith(github.head_ref, 'release/v') &&
+       vars.RELEASE_PR_FULL_MATRIX != 'true') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+       vars.MAIN_PUSH_FULL_MATRIX != 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read         # the main-push check reads the merge commit's release-branch parent
       actions: read
+      pull-requests: write   # the sticky comment naming the run the matrix yielded to
     outputs:
-      skip: ${{ steps.check.outputs.skip }}
+      skip: ${{ steps.check.outputs.skip || steps.main.outputs.skip }}
+      coverage-run-id: ${{ steps.check.outputs.coverage-run-id || steps.main.outputs.coverage-run-id }}
     steps:
       - name: Is the push run for this same commit already covering it?
         id: check
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           # Addressed by workflow PATH, not by name: this workflow sets a run-name, so a run of
           # this file is never named plain "CI" and filtering on .name matches nothing — the same
           # trap queue-validated documents above.
-          RUN_ID=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=10" \
-            --jq '.workflow_runs[0].id // ""')
-          if [ -n "$RUN_ID" ]; then
+          RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=10" \
+            --jq '.workflow_runs[0] // {} | {id: (.id // ""), status: (.status // ""), conclusion: (.conclusion // "")}')
+          RUN_ID=$(jq -r .id <<< "$RUN")
+          CONCLUSION=$(jq -r .conclusion <<< "$RUN")
+          # Yield only to a push run that can still report green. One already canceled or failed
+          # would leave the required checks unreported, blocking the PR with nothing to point at.
+          if [ -n "$RUN_ID" ] && [ "$CONCLUSION" != cancelled ] && [ "$CONCLUSION" != failure ]; then
             echo "Push run $RUN_ID covers $SHA — the PR run yields the matrix to it."
             echo "Release-PR duplicate: **true** -- push run $RUN_ID covers $SHA" >> "$GITHUB_STEP_SUMMARY"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            { echo "skip=true"; echo "coverage-run-id=$RUN_ID"; } >> "$GITHUB_OUTPUT"
+            # Make the yield visible FROM THE PR: the required checks now come only from that run,
+            # so if it is canceled or fails the PR blocks with no failing check of its own. One
+            # sticky comment, updated in place on every PR run.
+            MARKER='<!-- release-pr-yield -->'
+            URL="https://github.com/$REPO/actions/runs/$RUN_ID"
+            BODY=$(cat <<EOF
+          $MARKER
+          **The build and test suites for this release PR run in the release-branch push run [$RUN_ID]($URL)** for commit \`$SHA\`, not in this PR's own run. Their results are the required checks this PR merges on, and this PR's Quality analyzes the coverage they produce.
+
+          If that run is canceled or fails, this PR blocks with no failing check to point at. To recover:
+          - **Re-run it:** \`gh run rerun $RUN_ID --failed\` (or re-run its jobs in the Actions UI). Its fresh results land on this same commit.
+          - **Or take the matrix back:** set the repository variable \`RELEASE_PR_FULL_MATRIX=true\`, re-run this PR's CI run, then unset the variable.
+          EOF
+            )
+            EXISTING=$(gh api "repos/$REPO/issues/$PR/comments?per_page=100" \
+              --jq "[.[] | select(.body | startswith(\"$MARKER\"))][0].id // \"\"")
+            if [ -n "$EXISTING" ]; then
+              gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY" > /dev/null
+            else
+              gh api "repos/$REPO/issues/$PR/comments" -f body="$BODY" > /dev/null
+            fi
           else
-            # No push run means nothing else is testing this commit, so the PR run does it.
-            echo "No push run for $SHA — the PR run keeps the matrix."
-            echo "Release-PR duplicate: **false** -- no push run for $SHA" >> "$GITHUB_STEP_SUMMARY"
+            # No live push run means nothing else is testing this commit, so the PR run does it.
+            echo "No live push run for $SHA (found: ${RUN_ID:-none} ${CONCLUSION}) — the PR run keeps the matrix."
+            echo "Release-PR duplicate: **false** -- no live push run for $SHA (found: ${RUN_ID:-none} ${CONCLUSION})" >> "$GITHUB_STEP_SUMMARY"
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Did the release branch already test this exact tree?
+        id: main
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Fails SAFE: any doubt keeps the full matrix (skip=false), and this step never fails the run.
+          keep() { echo "Keeping the full matrix on main: $1"; echo "Main push duplicate: **false** -- $1" >> "$GITHUB_STEP_SUMMARY"; echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          # Every fallible command falls back to keep(): a FAILED guard would make !failure() false
+          # for every job downstream of it and skip the whole matrix, the opposite of failing safe.
+          git fetch --quiet --depth=2 origin "$GITHUB_SHA" || keep "could not fetch $GITHUB_SHA"
+          SRC=$(git rev-parse --verify --quiet "$GITHUB_SHA^2" || true)
+          [ -n "$SRC" ] || keep "HEAD is not a merge"
+          git fetch --quiet --depth=1 origin "$SRC" || keep "could not fetch $SRC"
+          [ "$(git rev-parse "$GITHUB_SHA^{tree}" 2>/dev/null)" = "$(git rev-parse "$SRC^{tree}" 2>/dev/null)" ] \
+            || keep "the merge changed the tree relative to its release-branch parent $SRC"
+          # Addressed by workflow PATH, not by name (this workflow sets a run-name).
+          RUN_ID=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SRC&event=push&status=success&per_page=10" \
+            --jq '[.workflow_runs[] | select(.head_branch | startswith("release/v"))] | first | .id // ""' || true)
+          [ -n "$RUN_ID" ] || keep "no green release-branch push run for $SRC"
+          echo "Release-branch run $RUN_ID tested this exact tree ($SRC) — main yields its matrix to it."
+          echo "Main push duplicate: **true** -- release-branch run $RUN_ID tested this tree ($SRC)" >> "$GITHUB_STEP_SUMMARY"
+          { echo "skip=true"; echo "coverage-run-id=$RUN_ID"; } >> "$GITHUB_OUTPUT"
+
   verify-rebuild:
-    name: Verify Deterministic Rebuild
+    name: Build · Verify rebuild matches the tested build
     # The hardened half of the skip: rebuild on the QUEUE's exact SDK at the QUEUE's
     # version and confirm the SAME assembly SET. That plus the shared commit SHA is the
     # safety argument for publishing queue-validated bits unre-tested: identical source +
@@ -250,28 +318,49 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2   # the pushed merge commit and its PR-head parent (fast-forward fallback)
 
       - name: Setup .NET
         uses: ./.github/actions/setup-dotnet-retry
         with:
           dotnet-version: '10.0.x'
 
-      - name: Download queue run's determinism manifest
+      - name: Download the determinism manifest of the run that built this tree
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           QUEUE_RUN_ID: ${{ needs.queue-validated.outputs.queue-run-id }}
         run: |
           set -euo pipefail
-          ART_ID=$(gh api "repos/$REPO/actions/runs/$QUEUE_RUN_ID/artifacts?per_page=100" \
-            --jq '[.artifacts[] | select(.name | startswith("determinism-manifest-"))][0].id // ""')
+          manifest_of() {  # $1 = run id -> id of its live determinism manifest, or ""
+            gh api "repos/$REPO/actions/runs/$1/artifacts?per_page=100" \
+              --jq '[.artifacts[] | select((.name | startswith("determinism-manifest-")) and (.expired | not))][0].id // ""'
+          }
+          ART_ID=$(manifest_of "$QUEUE_RUN_ID")
+          SOURCE="queue run $QUEUE_RUN_ID"
           if [ -z "$ART_ID" ]; then
-            echo "::error::Queue run $QUEUE_RUN_ID published no determinism manifest — cannot verify the rebuild."
-            exit 1
+            # A FAST-FORWARD queue run skips its build (ff-validated): the PR run built this exact
+            # tree. Re-prove that here rather than trust the queue's verdict: this push is the queue's
+            # merge commit, whose second parent is the PR head, and the two trees must be identical.
+            PR_HEAD=$(git rev-list --parents -n 1 HEAD | awk '{print $3}')
+            if [ -z "$PR_HEAD" ] || [ "$(git rev-parse "HEAD^{tree}")" != "$(git rev-parse "$PR_HEAD^{tree}")" ]; then
+              echo "::error::Queue run $QUEUE_RUN_ID published no determinism manifest, and this push is not a fast-forward of a PR head — cannot verify the rebuild."
+              exit 1
+            fi
+            PR_RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$PR_HEAD&event=pull_request&status=success&per_page=30" \
+              --jq '[.workflow_runs[]] | sort_by(.run_started_at) | last | .id // ""')
+            ART_ID=$([ -n "$PR_RUN" ] && manifest_of "$PR_RUN" || true)
+            SOURCE="PR run $PR_RUN (fast-forward: the queue run skipped its build)"
+            if [ -z "$ART_ID" ]; then
+              echo "::error::Neither queue run $QUEUE_RUN_ID nor a green PR run for $PR_HEAD holds a live determinism manifest — cannot verify the rebuild. Set repo variable PUSH_RUN_FULL_MATRIX=true and re-run all jobs to run the full matrix instead."
+              exit 1
+            fi
           fi
+          echo "Verifying against the manifest from $SOURCE."
           gh api "repos/$REPO/actions/artifacts/$ART_ID/zip" > manifest.zip
           mkdir -p queue-manifest && unzip -o -q manifest.zip -d queue-manifest
-          echo "queue built version '$(cat queue-manifest/version.txt)' on SDK $(cat queue-manifest/sdk.txt): $(wc -l < queue-manifest/assemblies.sha256) assemblies"
+          echo "manifest: built version '$(cat queue-manifest/version.txt)' on SDK $(cat queue-manifest/sdk.txt): $(wc -l < queue-manifest/assemblies.sha256) assemblies"
 
       # The toolchain must be EXACTLY the queue's: with a different SDK even benign
       # hash differences lose their explanation, so drift fails closed before building.
@@ -325,7 +414,7 @@ jobs:
           fi
 
   reupload-reports:
-    name: Republish Queue Run Reports
+    name: Report · Republish the tested run's coverage
     # With the suites skipped, this run would otherwise upload no coverage (the
     # Codecov develop baseline PR comparisons rely on) and carry no TRX (the docs
     # test-status and Codecov Test Analytics inputs). Republish the full-matrix run's
@@ -436,7 +525,7 @@ jobs:
   # QUEUE_RUN_FULL_MATRIX=true forces the full queue matrix.
   # ============================================================================
   ff-validated:
-    name: Fast-Forward Validation Check
+    name: Plan · Reuse the PR's results (fast-forward)
     if: github.event_name == 'merge_group' && vars.QUEUE_RUN_FULL_MATRIX != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -517,6 +606,14 @@ jobs:
           if [ "${QUALITY_OK:-0}" -lt 1 ]; then
             emit false "PR run $PR_RUN did not run Quality to green (dependabot? re-run?) — full matrix"
           fi
+          # A skip also skips this run's Build, so the develop push's verify-rebuild will read the
+          # PR run's determinism manifest instead. Only skip while that manifest is still live.
+          MANIFEST=$(gh api "repos/$REPO/actions/runs/$PR_RUN/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select((.name | startswith("determinism-manifest-")) and (.expired | not))] | length' \
+            2>/dev/null || echo 0)
+          if [ "${MANIFEST:-0}" -lt 1 ]; then
+            emit false "PR run $PR_RUN holds no live build manifest for the push run's verify-rebuild — full matrix"
+          fi
           emit true "PR run $PR_RUN validated this exact tree ($MERGE_TREE) — skipping the redundant queue matrix"
 
   # On pushes (and dispatch) the real version must be stamped into assemblies before
@@ -529,21 +626,21 @@ jobs:
   # names built from it trip NU5123 (path too long), which is warning-as-error here, so pack
   # fails on every queue run. Both events fall through to the placeholder below instead.
   version:
-    name: Version
+    name: Plan · Version
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-version.yml
 
   pr-version:
-    name: PR Version
+    name: Plan · Version preview
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-version.yml
 
   format:
-    name: Verify Code Formatting
+    name: Build · Check formatting
     # Gated on the two checks that mean "another run already covered this exact tree" — the
     # fast-forward check and the release-PR check — and never on queue-validated: a queue run ships
     # nothing, so skipping there costs nothing, while the publish jobs on a develop push need this
@@ -586,24 +683,22 @@ jobs:
         run: ./scripts/Lint-MigrationSql.ps1
 
   build:
-    name: Build
-    needs: [version, changes, release-pr]
+    name: Build · Compile
+    needs: [version, changes, release-pr, ff-validated]
     # !failure() && !cancelled(): version is skipped (not failed) on PRs — build must
     # still run there with the placeholder version below. Pushes honor the change filter
     # too: a docs-only merge runs no build/tests and publishes no package.
     #
-    # NOT gated on the fast-forward check, though every suite and the quality gate are. The
-    # queue run's build writes the determinism manifest, and the DEVELOP PUSH reads it back:
-    # verify-rebuild downloads it from the queue run to prove the SDK and the assembly set,
-    # which is the whole safety argument for publishing queue-validated bits unre-tested.
-    # Skipping this on a fast-forward leaves no manifest to download, so verify-rebuild fails
-    # and the prerelease publish it gates never happens. Build runs on the queue.
-    #
-    # The release-PR clause is the one skip that is safe here despite the manifest argument above:
-    # it fires only when a PUSH run for this same commit is already building, and that run is the
-    # one every consumer of the manifest reads.
+    # Skipped wherever another run already built this exact tree:
+    #   - a release PR (release-pr): the release-branch push run for the same commit is building;
+    #   - a main push after a release merge (release-pr): the release-branch run built this tree;
+    #   - a fast-forward queue run (ff-validated): the PR run built this tree. The develop push's
+    #     verify-rebuild then reads the PR run's determinism manifest instead of the queue run's
+    #     (ff-validated only skips while that manifest is live, and verify-rebuild re-proves the
+    #     tree match before trusting it).
     if: >-
       ${{ !failure() && !cancelled() && needs.release-pr.outputs.skip != 'true' &&
+      needs.ff-validated.outputs.skip != 'true' &&
       (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
     permissions:
       contents: read
@@ -619,7 +714,7 @@ jobs:
   # merge-queue matrix, every suite (and quality) skips — see the queue-validated
   # section below for the verification that replaces them on the publish path.
   unit-tests:
-    name: Unit Tests
+    name: Test · Unit
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -630,7 +725,7 @@ jobs:
       artifact-name: build-${{ github.run_id }}
 
   postgres-integration:
-    name: PostgreSQL Integration
+    name: Test · PostgreSQL
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -670,7 +765,7 @@ jobs:
       shard-name: ${{ matrix.shard }}
 
   inmemory-integration:
-    name: InMemory Integration
+    name: Test · InMemory
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -680,7 +775,7 @@ jobs:
       artifact-name: build-${{ github.run_id }}
 
   rabbitmq-integration:
-    name: RabbitMQ Integration
+    name: Test · RabbitMQ
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -693,7 +788,7 @@ jobs:
     # Single-dimension matrix so GitHub renders the leg names itself ("Service Bus
     # Integration (whizbang)") — matrix expressions in `name:` don't render on
     # reusable-workflow-call jobs.
-    name: Service Bus Integration
+    name: Test · Service Bus
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -711,7 +806,7 @@ jobs:
       shard-name: ${{ matrix.shard }}
 
   azureblob-integration:
-    name: AzureBlob Integration
+    name: Test · Azure Blob
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -721,7 +816,7 @@ jobs:
       artifact-name: build-${{ github.run_id }}
 
   quality:
-    name: Quality
+    name: Analyze · Quality
     # Deliberately does NOT need the test suites: it starts its Sonar-wrapped build
     # while they run, then waits for their coverage artifacts internally (failing fast
     # if any test job fails). actions:read is required for that polling.
@@ -732,7 +827,8 @@ jobs:
     # restricted context, so it can never recover. Skipping is safe because ci-result
     # accepts skipped jobs, and the merge queue re-runs quality with full secrets
     # before anything lands on develop.
-    needs: [changes, queue-validated, ff-validated]
+    # release-pr is needed for its coverage-run-id only; quality is never skipped by it (see below).
+    needs: [changes, queue-validated, ff-validated, release-pr]
     # !failure() && !cancelled() is REQUIRED here: queue-validated and ff-validated are each
     # skipped on every event but their own (push / merge_group), and a skipped need would
     # otherwise poison the implicit success() check and silently skip quality everywhere. The
@@ -747,6 +843,8 @@ jobs:
     # on a pull request or on main, so the push run for a release branch deliberately skips the
     # scanner. Yielding here removed the only context that ever analyzes a release PR, and the
     # release then merged to main carrying no analysis of its own.
+    # With the suites yielded, this run has no coverage of its own: Quality waits for, and
+    # analyzes, the covering run's (coverage-run-id from release-pr).
     if: >-
       !failure() && !cancelled() &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
@@ -759,8 +857,9 @@ jobs:
       pull-requests: write   # the uncovered-new-lines gate comments the list on the PR
     uses: ./.github/workflows/reusable-quality.yml
     with:
-      # unit, postgres, inmemory, rabbitmq, azureblob + 2 servicebus shards
-      coverage-artifact-count: 11
+      # Set when the suites yielded to another run over the same tree (a release PR's push run, or
+      # the release-branch run behind a main push): the coverage to analyze lives there.
+      coverage-run-id: ${{ needs.release-pr.outputs.coverage-run-id }}
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -771,7 +870,7 @@ jobs:
   # ============================================================================
 
   test-results:
-    name: Upload Test Results to Codecov
+    name: Report · Test results to Codecov
     # Failed-test reporting is the point, so this runs when suites FAIL too; only
     # cancellation or a skipped matrix (docs-only run) skips it. The suites all share
     # one gate (build success), so unit-tests stands proxy for the whole matrix.
@@ -863,7 +962,7 @@ jobs:
   # ============================================================================
 
   ci-result:
-    name: CI Result
+    name: Gate · CI result
     # Sole required context in the develop ruleset. Skipped jobs are fine — docs-only
     # PRs/pushes skip the matrix by design, and version/pr-version are event-exclusive —
     # but any failure or cancellation fails the gate. Requiring only this context also
@@ -892,107 +991,25 @@ jobs:
   # ============================================================================
 
   pack:
-    name: Pack NuGet Packages
+    name: Build · Pack
     needs: [version, build]
     # version is skipped (not failed) on PRs; pack still validates packability there.
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
-    runs-on: ubuntu-latest
     permissions:
       contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup .NET
-        uses: ./.github/actions/setup-dotnet-retry
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Restore dependencies
-        run: dotnet restore
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: build-${{ github.run_id }}
-
-      - name: Pack NuGet packages (no rebuild)
-        env:
-          VERSION: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
-        run: |
-          # NU5017 false positive for analyzer packages in .NET 10 SDK
-          dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
-
-      - name: Verify expected packages
-        run: |
-          # NOTE: Internal packages excluded (IsPackable=false):
-          #   - Whizbang.Generators.Shared (ILMerged into generator packages)
-          #   - Whizbang.Testing (empty placeholder)
-          EXPECTED_PACKAGES=(
-            "SoftwareExtravaganza.Whizbang.Core"
-            "SoftwareExtravaganza.Whizbang.Generators"
-            "SoftwareExtravaganza.Whizbang.Data.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.Schema"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Sqlite"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Custom"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators"
-            "SoftwareExtravaganza.Whizbang.Observability"
-            "SoftwareExtravaganza.Whizbang.Sagas.Contracts"
-            "SoftwareExtravaganza.Whizbang.Sagas"
-            "SoftwareExtravaganza.Whizbang.Sagas.Generators"
-            "SoftwareExtravaganza.Whizbang.SignalR"
-            "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus"
-            "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ"
-            "SoftwareExtravaganza.Whizbang.Transports.Mutations"
-            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints"
-            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints.Generators"
-            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate"
-            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate.Generators"
-            "SoftwareExtravaganza.Whizbang.Hosting.AspNet"
-            "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus"
-            "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ"
-            "SoftwareExtravaganza.Whizbang.Migrate"
-            "SoftwareExtravaganza.Whizbang.CLI"
-          )
-
-          MISSING=0
-          for pkg in "${EXPECTED_PACKAGES[@]}"; do
-            # compgen -G: glob-match test — [ -f glob ] breaks when a glob matches more than one file
-            if ! compgen -G "./packages/${pkg}.*.nupkg" > /dev/null; then
-              echo "ERROR: ${pkg} package not created"
-              MISSING=$((MISSING + 1))
-            else
-              echo "✓ ${pkg}"
-            fi
-          done
-
-          if [ $MISSING -gt 0 ]; then
-            echo ""
-            echo "ERROR: ${MISSING} package(s) missing"
-            exit 1
-          fi
-
-          echo ""
-          echo "All ${#EXPECTED_PACKAGES[@]} packages verified successfully"
-
-      - name: List packages
-        run: ls -la ./packages
-
-      - name: Upload NuGet packages
-        # On PRs and queue runs pack is a packability gate only — nothing consumes the
-        # artifact, because the publish jobs are gated on push.
-        if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: nuget-packages-${{ github.run_id }}
-          path: ./packages/*.nupkg
-          retention-days: 3
+      actions: read
+    uses: ./.github/workflows/reusable-pack.yml
+    with:
+      version: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
+      # On PRs and queue runs pack is a packability gate only: nothing consumes the artifact,
+      # because the publish jobs are gated on push.
+      artifact-name: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && format('nuget-packages-{0}', github.run_id) || '' }}
+      # A release-branch run's packages are what release.yml promotes on merge (it fails closed
+      # rather than rebuild), so they live long enough to cover a release PR held over a weekend.
+      retention-days: ${{ startsWith(github.ref, 'refs/heads/release/v') && 7 || 3 }}
 
   version-comment:
-    name: Comment Version on PR
+    name: Report · Version comment on PR
     needs: pr-version
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -1038,7 +1055,7 @@ jobs:
   # ============================================================================
 
   prerelease-publish:
-    name: Publish Prerelease NuGet
+    name: Publish · Alpha (develop)
     needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, queue-validated, verify-rebuild]
     # The explicit per-suite results replace the old implicit success() (which a
     # skipped suite would poison). Publish requires pack + format green AND either
@@ -1059,18 +1076,7 @@ jobs:
     with:
       version: ${{ needs.version.outputs.semver }}
       artifact-name: nuget-packages-${{ github.run_id }}
-    secrets:
-      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
-      PUSHOVER_USER_KEY_1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
-      PUSHOVER_USER_KEY_2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
-      PUSHOVER_USER_KEY_3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
-      PUSHOVER_USER_KEY_4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
-      PUSHOVER_USER_KEY_5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
-      PUSHOVER_USER_KEY_6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
-      PUSHOVER_USER_KEY_7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
-      PUSHOVER_USER_KEY_8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
-      PUSHOVER_USER_KEY_9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
-      PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
+    secrets: inherit   # the Pushover keys nuget-push notifies with, as release-publish does
 
   # ============================================================================
   # Release NuGet Publish - Auto-publish on release/v* push (e.g. hotfix merge)
@@ -1083,43 +1089,130 @@ jobs:
   # GUARD: a release branch with an OPEN PR into main publishes on MERGE (release.yml). The
   # release-guard job below skips this push-publish in that case, so a push to the release branch
   # (a conflict fix, a stabilization commit) never competes with the merge for the approval gate
-  # or attempts a duplicate version+tag. This path then serves standalone (no-PR) release branches
-  # — e.g. a direct hotfix that publishes without a main PR.
+  # or attempts a duplicate version+tag.
+  # With NO open PR, the guard classifies the branch by LINE (docs/RELEASING.md → "Hotfixes"):
+  #   current line (version above the highest stable tag) — must reach main AND develop, so the
+  #     guard opens the release PR into main instead of publishing here; the merge then publishes
+  #     through release.yml and sync-develop brings it back, exactly like a release cut.
+  #   older line (version at or below the highest stable tag) — must NOT reach main (it would
+  #     regress main to an older release), so it publishes here and release-sync-develop opens a
+  #     develop-only back-merge PR. Without that PR the fix would exist only on its own branch and
+  #     the next cut from develop would silently ship without it.
   # ============================================================================
 
   release-guard:
-    name: Release Publish Guard
+    name: Plan · Route the hotfix by line
+    needs: [version]
+    # Not on the branch-creation push: that is the base cut with no changes yet, and start-release
+    # opens its own PR seconds after pushing — a guard-opened PR could win that race and break it.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created
     runs-on: ubuntu-latest
     permissions:
+      contents: read        # the gate action
+      actions: read         # the fix PR's CI run
+      checks: read          # the fix PR's SonarCloud check
       pull-requests: read
     outputs:
       should_publish: ${{ steps.check.outputs.should_publish }}
+      line: ${{ steps.check.outputs.line }}
     steps:
-      - name: Skip if an open release PR to main exists (the merge will publish)
+      - name: Classify the release branch and route its publish
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          # RELEASE_PAT opens the PR so its CI runs (a GITHUB_TOKEN-created PR sits in
+          # action_required and never reports its required checks).
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.semver }}
         run: |
           # If this release branch has an OPEN PR into main, the canonical publish happens on
           # merge (release.yml); publishing here too would compete for the nuget-publish approval
-          # gate and attempt a duplicate version+tag. Only publish from a push when there is NO
-          # such PR (e.g. a standalone hotfix branch).
-          PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --base main --state open --json number --jq '.[0].number // ""')
+          # gate and attempt a duplicate version+tag.
+          open_pr() { gh pr list --repo "$REPO" --head "$BRANCH" --base main --state open --json number --jq '.[0].number // ""'; }
+          PR=$(open_pr)
           if [ -n "$PR" ]; then
             echo "Open release PR to main (#$PR) — the merge will publish. Skipping release-branch publish."
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "No open release PR to main — publishing from the release-branch push."
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            { echo "should_publish=false"; echo "line=current"; } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
+          # Highest STABLE tag in the repo. A prerelease never counts: a line is only "older" once
+          # something above it has actually shipped stable.
+          # Captured separately so a failed lookup aborts (-e) instead of reading as "no tags".
+          TAG_REFS=$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v" --jq '.[].ref')
+          HIGHEST=$(sed -n 's#^refs/tags/v\([0-9]*\.[0-9]*\.[0-9]*\)$#\1#p' <<< "$TAG_REFS" | sort -V | tail -1)
+          if [ -z "$HIGHEST" ]; then
+            echo "::error::No stable vX.Y.Z tag found — cannot tell a current-line hotfix from an older-line patch."
+            exit 1
+          fi
+          CORE="${VERSION%%-*}"
+          if [ "$(printf '%s\n%s\n' "$HIGHEST" "$CORE" | sort -V | tail -1)" = "$HIGHEST" ]; then
+            LINE=older      # at or below something already shipped stable
+          else
+            LINE=current
+          fi
+          echo "Version $VERSION vs highest stable v${HIGHEST} → $LINE line"
+          echo "line=$LINE" >> "$GITHUB_OUTPUT"
+
+          if [ "$LINE" = "current" ]; then
+            # Route through main like every release: the merge publishes (release.yml) and
+            # sync-develop carries it back. The title IS the version string (release.yml parses it).
+            GH_TOKEN="$RELEASE_PAT" gh pr create --repo "$REPO" --head "$BRANCH" --base main \
+              --title "chore(release): v${VERSION}" \
+              --body "Current-line hotfix: v${VERSION} is above the highest stable release (v${HIGHEST}), so it ships through main — merging publishes it and syncs develop. Opened automatically because the branch was pushed without a PR." \
+              || [ -n "$(open_pr)" ] || {
+              echo "::error::Could not open the release PR into main for $BRANCH. Open it by hand with title 'chore(release): v${VERSION}'."
+              exit 1
+            }
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            echo "### Current-line hotfix → release PR into main opened; the merge publishes." >> "$GITHUB_STEP_SUMMARY"
+          else
+            # An older-line fix publishes straight from this push, with no release PR to gate it, so it
+            # must arrive through a PR into this branch: that PR's run is where 100% coverage of new
+            # lines and zero Sonar findings are enforced. A direct push is refused, loudly.
+            FIX_PR=$(gh api "repos/$REPO/commits/$GITHUB_SHA/pulls" \
+              | jq -r '[.[] | select(.merged_at != null and .base.ref == env.BRANCH)][0] | if . == null then "" else "\(.number) \(.head.sha)" end')
+            if [ -z "$FIX_PR" ]; then
+              echo "::error::$GITHUB_SHA was pushed to $BRANCH directly. An older-line hotfix publishes only a fix merged through a PR into $BRANCH (fix/* -> $BRANCH), so its coverage and Sonar gate runs. Open that PR."
+              exit 1
+            fi
+            echo "Older line; fix PR #${FIX_PR%% *} merged. Publishing once its gate is confirmed; develop gets a back-merge PR."
+            { echo "should_publish=true"; echo "gate_sha=${FIX_PR##* }"; } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout the gate action
+        if: steps.check.outputs.should_publish == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+
+      # 100% coverage of new lines and zero Sonar findings, on the fix PR that brought this commit.
+      - name: Require the fix PR's gate
+        if: steps.check.outputs.should_publish == 'true'
+        uses: ./.github/actions/require-pr-gate
+        with:
+          sha: ${{ steps.check.outputs.gate_sha }}
+          token: ${{ github.token }}
+
   release-publish:
-    name: Publish Release NuGet
+    name: Publish · Hotfix (older line)
     needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, release-guard]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created && needs.release-guard.outputs.should_publish == 'true'
+    # EXPLICIT gate, mirroring prerelease-publish. GitHub applies success() implicitly only while an
+    # `if` contains no status-check function, so the old plain `if` gated on every need implicitly
+    # — and adding the `!failure() && !cancelled()` every other job opens with would have silently
+    # deleted the whole test gate on the path that publishes STABLE releases. Naming each result
+    # makes the gate survive that edit. Every suite runs on a release/v push (the queue-validated
+    # and release-pr skips never apply to one), so all six must be green.
+    if: >-
+      !failure() && !cancelled() &&
+      github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created &&
+      needs.release-guard.outputs.should_publish == 'true' &&
+      needs.version.result == 'success' && needs.pack.result == 'success' && needs.format.result == 'success' &&
+      needs.unit-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
+      needs.inmemory-integration.result == 'success' && needs.rabbitmq-integration.result == 'success' &&
+      needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success'
     permissions:
       contents: write       # nuget-publish creates the tag + GitHub release
       id-token: write       # NuGet OIDC trusted publishing
@@ -1131,12 +1224,29 @@ jobs:
       artifact-name: nuget-packages-${{ github.run_id }}
     secrets: inherit
 
+  # An older-line patch never reaches main, but develop must still get the fix or the next cut from
+  # develop ships without it. Same mechanism release.yml uses after a main merge.
+  release-sync-develop:
+    name: Merge back · Hotfix to develop
+    needs: [version, release-guard, release-publish]
+    if: needs.release-publish.result == 'success' && needs.release-guard.outputs.line == 'older'
+    permissions:
+      contents: write        # push the throwaway sync branch (sync/*, not protected)
+      pull-requests: write    # open the review PR into protected develop
+    uses: ./.github/workflows/reusable-sync-develop.yml
+    with:
+      source-ref: ${{ github.sha }}
+      source-label: hotfix
+      version: ${{ needs.version.outputs.semver }}
+    secrets:
+      RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+
   # ============================================================================
   # Notifications - Send push notifications on build completion
   # ============================================================================
 
   notify-success:
-    name: Notify Success
+    name: Notify · Success
     needs: [changes, quality]
     permissions:
       contents: read
@@ -1156,21 +1266,10 @@ jobs:
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: success
-    secrets:
-      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
-      PUSHOVER_USER_KEY_1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
-      PUSHOVER_USER_KEY_2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
-      PUSHOVER_USER_KEY_3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
-      PUSHOVER_USER_KEY_4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
-      PUSHOVER_USER_KEY_5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
-      PUSHOVER_USER_KEY_6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
-      PUSHOVER_USER_KEY_7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
-      PUSHOVER_USER_KEY_8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
-      PUSHOVER_USER_KEY_9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
-      PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
+    secrets: inherit   # the Pushover keys nuget-push notifies with, as release-publish does
 
   notify-failure:
-    name: Notify Failure
+    name: Notify · Failure
     # Depends on the aggregate gate rather than a list of jobs, so a failure is announced wherever it
     # happens: a pull request run and the merge queue's run alike.
     #
@@ -1190,21 +1289,10 @@ jobs:
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: failure
-    secrets:
-      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
-      PUSHOVER_USER_KEY_1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
-      PUSHOVER_USER_KEY_2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
-      PUSHOVER_USER_KEY_3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
-      PUSHOVER_USER_KEY_4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
-      PUSHOVER_USER_KEY_5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
-      PUSHOVER_USER_KEY_6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
-      PUSHOVER_USER_KEY_7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
-      PUSHOVER_USER_KEY_8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
-      PUSHOVER_USER_KEY_9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
-      PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
+    secrets: inherit   # the Pushover keys nuget-push notifies with, as release-publish does
 
   notify-cancelled:
-    name: Notify Cancelled
+    name: Notify · Canceled
     needs: [build, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
     permissions:
       contents: read
@@ -1214,25 +1302,14 @@ jobs:
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: cancelled
-    secrets:
-      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
-      PUSHOVER_USER_KEY_1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
-      PUSHOVER_USER_KEY_2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
-      PUSHOVER_USER_KEY_3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
-      PUSHOVER_USER_KEY_4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
-      PUSHOVER_USER_KEY_5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
-      PUSHOVER_USER_KEY_6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
-      PUSHOVER_USER_KEY_7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
-      PUSHOVER_USER_KEY_8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
-      PUSHOVER_USER_KEY_9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
-      PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
+    secrets: inherit   # the Pushover keys nuget-push notifies with, as release-publish does
 
   # ============================================================================
   # Living docs: publish test status to the docs site
   # ============================================================================
 
   publish-test-status:
-    name: Publish Test Status to Docs
+    name: Report · Test status to docs
     # Ships per-test pass/fail to whizbang-lib.github.io so doc pages render
     # live verification badges. Runs even when suites FAIL (failures are what
     # the badges must show) but not when cancelled. No-ops without the token

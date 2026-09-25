@@ -68,7 +68,7 @@ permissions: {}
 
 jobs:
   pack:
-    name: Build & Pack
+    name: Build and pack (manual only)
     # Skipped when the caller supplies an already-tested packages artifact.
     if: ${{ inputs.artifact-name == '' }}
     runs-on: ubuntu-latest
@@ -112,7 +112,7 @@ jobs:
           path: ./packages/*.nupkg
 
   push:
-    name: Push (Trusted Publishing)
+    name: Push
     needs: pack
     # pack is skipped (not failed) when artifact-name is supplied; run on skip, stop on failure.
     if: ${{ !failure() && !cancelled() }}
@@ -127,7 +127,7 @@ jobs:
     secrets: inherit
 
   release:
-    name: Tag & GitHub Release
+    name: Tag and GitHub release
     needs: [pack, push]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest

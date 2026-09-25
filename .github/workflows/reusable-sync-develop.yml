@@ -1,0 +1,107 @@
+name: Sync Into Develop
+
+# The ONE merge-back mechanism: opens a review PR that brings a published release's changes into
+# develop. Called by release.yml after a release PR merges to main (source = main), and by ci.yml
+# after a standalone older-line patch publishes from its release branch (source = that commit),
+# which must reach develop but never main. See docs/RELEASING.md → "Hotfixes".
+
+on:
+  workflow_call:
+    inputs:
+      source-ref:
+        description: 'Branch name (resolved against origin) or commit SHA holding the published release'
+        required: true
+        type: string
+      source-label:
+        description: 'Short name for the source, used in the sync branch and PR title (main | hotfix)'
+        required: true
+        type: string
+      version:
+        description: 'The published version, e.g. 0.2450.1'
+        required: true
+        type: string
+    secrets:
+      RELEASE_PAT:
+        required: true
+
+permissions: {}
+
+jobs:
+  sync:
+    name: Open develop sync PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push the throwaway sync branch (sync/*, not protected)
+      pull-requests: write    # open the review PR into protected develop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # RELEASE_PAT (not GITHUB_TOKEN) so the sync PR triggers CI — GITHUB_TOKEN-created
+          # PRs are left in action_required and their required checks never run.
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync source into develop (via PR — never a direct push)
+        env:
+          SOURCE_REF: ${{ inputs.source-ref }}
+          SOURCE_LABEL: ${{ inputs.source-label }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          git fetch origin develop
+          SRC=$(git rev-parse --verify --quiet "origin/${SOURCE_REF}^{commit}" \
+                || git rev-parse --verify --quiet "${SOURCE_REF}^{commit}") || {
+            echo "::error::Cannot resolve sync source '${SOURCE_REF}'"
+            exit 1
+          }
+
+          # develop is protected (no direct push) AND intentionally keeps its LOCAL
+          # Directory.Build.props placeholder — the release version bump must NOT flow into
+          # develop (the published version comes from GitVersion, not this file). So exclude
+          # it when deciding whether there is anything real to bring back.
+          # THREE-dot: only what the source added since it diverged from develop (the release's own
+          # changes) — NOT develop's post-cut advances, which a two-dot diff would wrongly include.
+          DIFF=$(git diff --name-only "origin/develop...${SRC}" -- . ':(exclude)Directory.Build.props')
+          if [ -z "$DIFF" ]; then
+            echo "Only Directory.Build.props differs (the release version bump)."
+            echo "develop keeps its local placeholder by convention — nothing to sync."
+            {
+              echo "## Develop Sync — no-op"
+              echo ""
+              echo "Only the release version bump differed; develop keeps its local placeholder. Nothing to sync."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "${SOURCE_LABEL} has changes develop is missing (beyond the version bump):"
+          echo "$DIFF"
+
+          SYNC_BRANCH="sync/${SOURCE_LABEL}-to-develop-v${RELEASE_VERSION}"
+          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null 2>&1; then
+            echo "Sync branch $SYNC_BRANCH already exists — leaving the existing PR."
+            exit 0
+          fi
+
+          # Build the sync branch from the source, but restore develop's Directory.Build.props so
+          # the merge brings the real changes without overwriting develop's local placeholder.
+          git checkout -B "$SYNC_BRANCH" "$SRC"
+          git checkout origin/develop -- Directory.Build.props
+          git commit -am "chore: keep develop's local Directory.Build.props during ${SOURCE_LABEL}->develop sync" || true
+          git push origin "$SYNC_BRANCH"
+
+          gh pr create --base develop --head "$SYNC_BRANCH" \
+            --title "chore: sync ${SOURCE_LABEL} into develop after v${RELEASE_VERSION} release" \
+            --label automated \
+            --body "Back-merges the changes from **${SOURCE_LABEL}** that **develop** is missing after the v${RELEASE_VERSION} release. \`Directory.Build.props\` is intentionally kept at develop's local placeholder — the release version is not carried into develop (versions come from GitVersion). Resolve any conflicts, review, and merge."
+
+          {
+            echo "## Develop Sync — review PR opened"
+            echo ""
+            echo "${SOURCE_LABEL} had changes beyond the version bump; opened a PR from \`$SYNC_BRANCH\` into develop for review."
+          } >> "$GITHUB_STEP_SUMMARY"

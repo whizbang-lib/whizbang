@@ -25,7 +25,7 @@ on:
 
 jobs:
   postgres-tests:
-    name: PostgreSQL Integration Tests
+    name: Run suite
     runs-on: ubuntu-latest
     timeout-minutes: 45
 

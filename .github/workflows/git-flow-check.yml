@@ -6,7 +6,7 @@ on:
 
 jobs:
   validate-branch-direction:
-    name: Validate Branch Direction
+    name: Gate · Gitflow branch direction
     runs-on: ubuntu-latest
 
     steps:
@@ -24,40 +24,36 @@ jobs:
 
           # Define allowed patterns
           # Format: "source_pattern:target_pattern"
+          # The supported flows, and only these (docs/RELEASING.md → "Supported flows"):
           ALLOWED_PATTERNS=(
-            # Feature branches → develop
+            # Everyday work → develop (merge queue; develop publishes the alpha channel)
             "feature/*:develop"
             "feat/*:develop"
             "fix/*:develop"
+            "bugfix/*:develop"
+            "hotfix/*:develop"
             "chore/*:develop"
             "docs/*:develop"
+            "plan/*:develop"
             "refactor/*:develop"
             "test/*:develop"
             "perf/*:develop"
             "ci/*:develop"
             "build/*:develop"
             "style/*:develop"
-
-            # Release branches → main
-            "release/*:main"
-            "releases/*:main"
-
-            # Hotfix branches → main OR develop
-            "hotfix/*:main"
-            "hotfix/*:develop"
-
-            # Bugfix branches → develop OR release/*
-            "bugfix/*:develop"
-            "bugfix/*:release/*"
-
-            # Dependabot → develop (configured in dependabot.yml)
             "dependabot/*:develop"
 
-            # Main → develop (sync after release)
-            "main:develop"
+            # Stabilization of an open release: a fix lands on the release branch (and so in its
+            # next beta/rc), then reaches develop through the release's own back-merge
+            "fix/*:release/v*"
+            "bugfix/*:release/v*"
+            "hotfix/*:release/v*"
 
-            # Develop → release/* (should use workflow, but allow manual)
-            "develop:release/*"
+            # The release itself: only a release branch ever targets main
+            "release/v*:main"
+
+            # Automated back-merges into develop (after a release, or an older-line hotfix)
+            "sync/*:develop"
           )
 
           # Function to check if source matches pattern
@@ -111,8 +107,7 @@ jobs:
           elif [[ "$HEAD_REF" == release/* ]] && [[ "$BASE_REF" == develop ]]; then
             echo "📌 Release branches merge into 'main', not 'develop'."
             echo ""
-            echo "   After a release is merged to main, main automatically syncs to develop."
-            echo "   You don't need to create a PR from release/* to develop."
+            echo "   After the release publishes, a sync/* PR brings its changes back to develop."
 
           elif [[ "$HEAD_REF" == develop ]] && [[ "$BASE_REF" == main ]]; then
             echo "📌 Don't merge 'develop' directly into 'main'."
@@ -122,25 +117,25 @@ jobs:
             echo "   2. Run the workflow to create a release branch"
             echo "   3. The workflow will create a proper release PR"
 
-          elif [[ "$HEAD_REF" == hotfix/* ]]; then
-            echo "📌 Hotfix branches can merge into 'main' or 'develop'."
+          elif [[ "$BASE_REF" == main ]]; then
+            echo "📌 Only a release/vX.Y.Z branch may target 'main'."
             echo ""
-            echo "   Current target: $BASE_REF"
-            echo "   Allowed targets: main, develop"
+            echo "   A hotfix ships as its own release branch: branch release/vX.Y.Z from the tag it"
+            echo "   patches, push, then commit the fix. See docs/RELEASING.md → Hotfixes."
 
           else
             echo "📌 This branch direction is not recognized."
             echo ""
-            echo "   Common patterns:"
-            echo "   • feature/* → develop"
-            echo "   • release/* → main"
-            echo "   • hotfix/* → main or develop"
-            echo "   • main → develop (sync)"
+            echo "   Supported directions:"
+            echo "   • feat/*, fix/*, test/*, ci/*, ... → develop"
+            echo "   • fix/*, bugfix/*, hotfix/* → release/vX.Y.Z   (stabilizing an open release)"
+            echo "   • release/vX.Y.Z → main"
+            echo "   • sync/* → develop   (automated back-merges)"
           fi
 
           echo ""
-          echo "📚 See the full branching guide:"
-          echo "   https://github.com/$REPO/blob/main/.github/BRANCHING.md"
+          echo "📚 Supported flows:"
+          echo "   https://github.com/$REPO/blob/develop/docs/RELEASING.md#supported-flows"
           echo ""
 
           exit 1
@@ -203,7 +198,7 @@ jobs:
               '',
               suggestion,
               '',
-              '📚 **[Read the full branching guide](.github/BRANCHING.md)**',
+              '📚 **[Supported flows](../blob/develop/docs/RELEASING.md#supported-flows)**',
               '',
               '---',
               '<sub>This check ensures we follow Git Flow for clean releases. If you believe this is incorrect, please contact a maintainer.</sub>',

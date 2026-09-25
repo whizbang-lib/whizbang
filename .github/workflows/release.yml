@@ -1,5 +1,10 @@
 name: Release
 
+run-name: >-
+  Release ${{ github.event_name == 'workflow_dispatch' && (inputs.dry_run && '· dry run' || format('· manual publish · v{0}', inputs.version))
+      || github.event.pull_request.merged && format('· 6 publish stable · {0}', github.event.pull_request.head.ref)
+      || format('· not a release (PR #{0} closed unmerged)', github.event.pull_request.number) }}
+
 on:
   # Trigger when a release PR is merged to main
   pull_request:
@@ -43,7 +48,7 @@ concurrency:
 jobs:
   # Only run if this is a merged release PR or a manual dry run
   check-release:
-    name: Check Release Conditions
+    name: Plan · Is this a release?
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,6 +62,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_MERGED: ${{ github.event.pull_request.merged }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           DRY_RUN: ${{ inputs.dry_run }}
           INPUT_VERSION: ${{ inputs.version }}
         run: |
@@ -74,6 +80,14 @@ jobs:
             # Check if PR title matches release pattern
             if [[ "$PR_TITLE" =~ ^chore\(release\):\ v([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then
               VERSION="${BASH_REMATCH[1]}"
+              # Gitflow: only a release branch ships to main, and it ships its OWN stable number.
+              # A release-looking title on any other branch, a prerelease version (those publish
+              # from the release branch, release-prerelease.yml), or a title that disagrees with
+              # the branch name would publish something nobody cut.
+              if [ "$PR_HEAD_REF" != "release/v$VERSION" ] || [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "::error::Refusing to publish '$VERSION' from '$PR_HEAD_REF': a release PR must come from release/vX.Y.Z and be titled exactly 'chore(release): vX.Y.Z' with the same stable X.Y.Z. Recover with: gh workflow run release.yml --ref main -f version=X.Y.Z -f release_type=auto -f dry_run=false"
+                exit 1
+              fi
               echo "Release PR merged - version: $VERSION"
               echo "should_release=true" >> "$GITHUB_OUTPUT"
               echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -89,7 +103,7 @@ jobs:
           fi
 
   version:
-    name: Calculate Version
+    name: Plan · Version (dry run)
     needs: check-release
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -276,7 +290,7 @@ jobs:
   # ============================================================================
 
   notify-approval-needed:
-    name: Notify Approval Needed
+    name: Notify · Approval needed
     needs: check-release
     if: needs.check-release.outputs.should_release == 'true' && vars.PUSHOVER_ENABLED == 'true'
     runs-on: ubuntu-latest
@@ -310,7 +324,7 @@ jobs:
           url-title: "Approve Release"
 
   approve:
-    name: Approve Release
+    name: Gate · Approve release
     needs: check-release
     if: needs.check-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
@@ -324,12 +338,84 @@ jobs:
         run: echo "Release v$VERSION approved"
 
   # ============================================================================
+  # Locate the tested packages - BEFORE anything is tagged
+  #
+  # A release publishes the packages its tests ran against: the release-branch push run's own
+  # pack artifact, promoted as-is. Nothing is rebuilt on main. This job proves those packages are
+  # still available and that the tree they were built from is the tree being tagged, and it runs
+  # before `release` so that a failure leaves no tag and no draft release behind. It fails closed:
+  # quietly rebuilding would publish bytes no suite ran against. Recovery is named in the error.
+  # ============================================================================
+
+  locate-tested-packages:
+    name: Plan · Locate the tested packages
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read   # read the release-branch run and its artifacts
+    outputs:
+      run-id: ${{ steps.find.outputs.run-id }}
+      artifact-name: ${{ steps.find.outputs.artifact-name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2   # the merge commit and its release-branch parent
+
+      - name: Find the release-branch run that tested this tree
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.check-release.outputs.version }}
+          # On a release PR merge the tested commit is the PR head. On a recovery dispatch (from
+          # main) it is the merge commit's release-branch parent.
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          SRC="${PR_HEAD:-$(git rev-parse --verify --quiet HEAD^2 || true)}"
+          if [ -z "$SRC" ]; then
+            echo "::error::Cannot find the release-branch commit for v$VERSION: HEAD is not a merge of a release branch."
+            exit 1
+          fi
+          git fetch --quiet --depth=1 origin "$SRC"
+          # Provenance: the tag goes on HEAD, so HEAD must be the exact tree the suites tested.
+          # start-release merges main into the release branch first, so a release merge adds nothing.
+          if [ "$(git rev-parse "HEAD^{tree}")" != "$(git rev-parse "$SRC^{tree}")" ]; then
+            echo "::error::The tree being tagged differs from the tested release-branch tree ($SRC). Publishing would ship bytes no suite ran against."
+            exit 1
+          fi
+
+          # Addressed by workflow PATH, not by name: ci.yml sets a run-name, so no run is named "CI".
+          RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SRC&event=push&per_page=10" \
+            --jq '[.workflow_runs[] | select(.head_branch | startswith("release/v"))] | first // {} | {id: (.id // ""), conclusion: (.conclusion // ""), url: (.html_url // "")}')
+          RUN_ID=$(jq -r .id <<< "$RUN")
+          CONCLUSION=$(jq -r .conclusion <<< "$RUN")
+          RECOVER="Re-run the release-branch CI run for $SRC (all jobs), which rebuilds and re-tests its packages, then re-run this workflow: gh workflow run release.yml --ref main -f version=$VERSION -f release_type=auto -f dry_run=false"
+          if [ -z "$RUN_ID" ] || [ "$CONCLUSION" != success ]; then
+            echo "::error::No green release-branch CI run for $SRC (found: ${RUN_ID:-none} ${CONCLUSION:-}). $RECOVER"
+            exit 1
+          fi
+          ARTIFACT="nuget-packages-$RUN_ID"
+          LIVE=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?name=$ARTIFACT" --jq '[.artifacts[] | select(.expired | not)] | length')
+          if [ "$LIVE" -lt 1 ]; then
+            echo "::error::The tested packages ($ARTIFACT on run $RUN_ID) have expired or were never uploaded. $RECOVER"
+            exit 1
+          fi
+          echo "Promoting $ARTIFACT from release-branch run $RUN_ID ($SRC)."
+          { echo "run-id=$RUN_ID"; echo "artifact-name=$ARTIFACT"; } >> "$GITHUB_OUTPUT"
+          echo "### Promoting the tested packages from [run $RUN_ID]($(jq -r .url <<< "$RUN")), commit \`$SRC\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ============================================================================
   # Release - Create tag and GitHub Release
   # ============================================================================
 
   release:
-    name: Create Release
-    needs: [check-release, approve]
+    name: Publish · Tag and draft the GitHub release
+    needs: [check-release, approve, locate-tested-packages]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -426,102 +512,39 @@ jobs:
   # ============================================================================
 
   build-and-pack:
-    name: Build and Pack
-    needs: [check-release, release]
+    # Promotes, does not build: the packages are the release-branch run's tested artifact (see
+    # locate-tested-packages). The job id is kept so publish and upload-release-assets are unchanged.
+    name: Build · Promote the tested packages
+    needs: [check-release, release, locate-tested-packages]
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read   # download another run's artifact
     timeout-minutes: 15
     outputs:
       artifact-name: nuget-packages-${{ github.run_id }}
 
     steps:
-      - name: Checkout tag
+      - name: Download the tested packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.locate-tested-packages.outputs.artifact-name }}
+          run-id: ${{ needs.locate-tested-packages.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: ./packages
+
+      - name: Checkout the verify action
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: v${{ needs.check-release.outputs.version }}
+          sparse-checkout: .github
+          path: repo
 
-      - name: Setup .NET
-        uses: ./.github/actions/setup-dotnet-retry
+      # Exactly the release version: the tested packages carry the branch-name version, so a PR
+      # title that disagrees with its branch name fails here instead of shipping a mismatch.
+      - name: Verify the package set
+        uses: ./repo/.github/actions/verify-packages
         with:
-          dotnet-version: '10.0.x'
-
-      - name: Cache NuGet packages
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
-          restore-keys: ${{ runner.os }}-nuget-
-
-      - name: Restore dependencies
-        run: dotnet restore
-
-      - name: Build
-        env:
-          VERSION: ${{ needs.check-release.outputs.version }}
-        run: dotnet build --configuration Release --no-restore -p:Version="$VERSION"
-
-      - name: Pack NuGet packages
-        env:
-          VERSION: ${{ needs.check-release.outputs.version }}
-        run: |
-          # NU5017 false positive for analyzer packages in .NET 10 SDK
-          dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
-
-      - name: Verify expected packages
-        run: |
-          # NOTE: Internal packages excluded (IsPackable=false):
-          #   - Whizbang.Generators.Shared (ILMerged into generator packages)
-          #   - Whizbang.Testing (empty placeholder)
-          EXPECTED_PACKAGES=(
-            "SoftwareExtravaganza.Whizbang.Core"
-            "SoftwareExtravaganza.Whizbang.Generators"
-            "SoftwareExtravaganza.Whizbang.Data.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.Schema"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Sqlite"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Custom"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators"
-            "SoftwareExtravaganza.Whizbang.Observability"
-            "SoftwareExtravaganza.Whizbang.Sagas.Contracts"
-            "SoftwareExtravaganza.Whizbang.Sagas"
-            "SoftwareExtravaganza.Whizbang.Sagas.Generators"
-            "SoftwareExtravaganza.Whizbang.SignalR"
-            "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus"
-            "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ"
-            "SoftwareExtravaganza.Whizbang.Transports.Mutations"
-            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints"
-            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints.Generators"
-            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate"
-            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate.Generators"
-            "SoftwareExtravaganza.Whizbang.Hosting.AspNet"
-            "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus"
-            "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ"
-            "SoftwareExtravaganza.Whizbang.Migrate"
-            "SoftwareExtravaganza.Whizbang.CLI"
-          )
-
-          MISSING=0
-          for pkg in "${EXPECTED_PACKAGES[@]}"; do
-            # compgen -G: glob-match test — [ -f glob ] breaks when a glob matches more than one file
-            if ! compgen -G "./packages/${pkg}.*.nupkg" > /dev/null; then
-              echo "ERROR: ${pkg} package not created"
-              MISSING=$((MISSING + 1))
-            else
-              echo "✓ ${pkg}"
-            fi
-          done
-
-          if [ $MISSING -gt 0 ]; then
-            echo ""
-            echo "ERROR: ${MISSING} package(s) missing"
-            exit 1
-          fi
-
-          echo ""
-          echo "All ${#EXPECTED_PACKAGES[@]} packages verified successfully"
+          version: ${{ needs.check-release.outputs.version }}
 
       - name: List packages
         run: ls -la ./packages
@@ -534,7 +557,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Publish to NuGet
+    name: Publish · Stable to NuGet
     needs: [check-release, build-and-pack]
     permissions:
       contents: read
@@ -544,21 +567,10 @@ jobs:
     with:
       version: ${{ needs.check-release.outputs.version }}
       artifact-name: nuget-packages-${{ github.run_id }}
-    secrets:
-      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
-      PUSHOVER_USER_KEY_1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
-      PUSHOVER_USER_KEY_2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
-      PUSHOVER_USER_KEY_3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
-      PUSHOVER_USER_KEY_4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
-      PUSHOVER_USER_KEY_5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
-      PUSHOVER_USER_KEY_6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
-      PUSHOVER_USER_KEY_7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
-      PUSHOVER_USER_KEY_8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
-      PUSHOVER_USER_KEY_9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
-      PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
+    secrets: inherit   # the Pushover keys nuget-push notifies with, as release-publish does
 
   upload-release-assets:
-    name: Upload Release Assets
+    name: Publish · Attach packages to the GitHub release
     needs: [check-release, build-and-pack]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -598,87 +610,28 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Release**: [v$RELEASE_VERSION](https://github.com/$REPO/releases/tag/v$RELEASE_VERSION)" >> "$GITHUB_STEP_SUMMARY"
 
-  # Sync main back to develop after successful release
+  # Sync main back to develop after successful release. The mechanism is shared with ci.yml's
+  # older-line hotfix path (reusable-sync-develop.yml) so there is exactly one merge-back.
   sync-develop:
-    name: Sync Main to Develop
+    name: Merge back · Main to develop
     needs: [check-release, publish]
-    runs-on: ubuntu-latest
     permissions:
       contents: write        # push the throwaway sync branch (sync/*, not protected)
       pull-requests: write    # open the review PR into protected develop
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          # RELEASE_PAT (not GITHUB_TOKEN) so the sync PR triggers CI — GITHUB_TOKEN-created
-          # PRs are left in action_required and their required checks never run.
-          token: ${{ secrets.RELEASE_PAT }}
-
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Sync main into develop (via PR — never a direct push)
-        env:
-          RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-        run: |
-          git fetch origin main develop
-
-          # develop is protected (no direct push) AND intentionally keeps its LOCAL
-          # Directory.Build.props placeholder — the release version bump must NOT flow into
-          # develop (the published version comes from GitVersion, not this file). So exclude
-          # it when deciding whether there is anything real to bring back.
-          # THREE-dot: only what main added since it diverged from develop (the release's own
-          # changes) — NOT develop's post-cut advances, which a two-dot diff would wrongly include.
-          DIFF=$(git diff --name-only origin/develop...origin/main -- . ':(exclude)Directory.Build.props')
-          if [ -z "$DIFF" ]; then
-            echo "Only Directory.Build.props differs (the release version bump)."
-            echo "develop keeps its local placeholder by convention — nothing to sync."
-            {
-              echo "## Develop Sync — no-op"
-              echo ""
-              echo "Only the release version bump differed; develop keeps its local placeholder. Nothing to sync."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          echo "main has changes develop is missing (beyond the version bump):"
-          echo "$DIFF"
-
-          SYNC_BRANCH="sync/main-to-develop-v${RELEASE_VERSION}"
-          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null 2>&1; then
-            echo "Sync branch $SYNC_BRANCH already exists — leaving the existing PR."
-            exit 0
-          fi
-
-          # Build the sync branch from main, but restore develop's Directory.Build.props so the
-          # merge brings the real changes without overwriting develop's local placeholder.
-          git checkout -B "$SYNC_BRANCH" origin/main
-          git checkout origin/develop -- Directory.Build.props
-          git commit -am "chore: keep develop's local Directory.Build.props during main->develop sync" || true
-          git push origin "$SYNC_BRANCH"
-
-          gh pr create --base develop --head "$SYNC_BRANCH" \
-            --title "chore: sync main into develop after v${RELEASE_VERSION} release" \
-            --label automated \
-            --body "Back-merges release-stabilization changes from **main** that **develop** is missing after the v${RELEASE_VERSION} release. \`Directory.Build.props\` is intentionally kept at develop's local placeholder — the release version is not carried into develop (versions come from GitVersion). Review and merge."
-
-          {
-            echo "## Develop Sync — review PR opened"
-            echo ""
-            echo "main had changes beyond the version bump; opened a PR from \`$SYNC_BRANCH\` into develop for review."
-          } >> "$GITHUB_STEP_SUMMARY"
+    uses: ./.github/workflows/reusable-sync-develop.yml
+    with:
+      source-ref: main
+      source-label: main
+      version: ${{ needs.check-release.outputs.version }}
+    secrets:
+      RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
 
   # ============================================================================
   # Notifications - comprehensive failure detection
   # ============================================================================
 
   notify-release-failed:
-    name: Notify Release Failed
+    name: Notify · Release failed
     needs: [check-release, release, build-and-pack, publish]
     if: >-
       always() &&
