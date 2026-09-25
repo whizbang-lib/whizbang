@@ -42,6 +42,8 @@ namespace Whizbang.Core.SystemEvents;
 /// </code>
 /// </example>
 /// <docs>fundamentals/events/system-events#audit</docs>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditTagPayloadTests.cs:EventAudited_TagPayload_LeavesTheOriginalBodyOutAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditTagPayloadTests.cs:EventAudited_TagPayload_StillIdentifiesTheAuditedChangeAsync</tests>
 [AuditEvent(Exclude = true, Reason = "System event - prevents infinite self-auditing loop")]
 // The framework audit tag: membership in the sys-audit coalesce group. EnableAudit() binds the
 // built-in coalesce policy to this tag, so audit singles ride the generic tag-bound coalescing

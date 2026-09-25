@@ -36,6 +36,7 @@ namespace Whizbang.Core.SystemEvents;
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitCommandAuditedAsync_SetsTimestampAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditTests.cs:CommandAudited_HasRequiredProperties_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditTests.cs:CommandAudited_ImplementsISystemEvent_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditTagPayloadTests.cs:CommandAudited_TagPayload_LeavesTheCommandBodyOutAsync</tests>
 [AuditEvent(Exclude = true, Reason = "System event - prevents infinite self-auditing loop")]
 // Same sys-audit group membership as EventAudited: wherever a CommandAudited single reaches an
 // outbox mint seam, it coalesces on the audit cadence. See SystemAuditTagAttribute for why the
