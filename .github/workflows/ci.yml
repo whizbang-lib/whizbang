@@ -10,12 +10,17 @@ name: CI
 # created before anything merges, and that run is the one the release pull request is gated on and
 # the only one that publishes. Calling it post-merge says the opposite of what is true, on the one
 # branch where somebody reading the list is deciding whether it is safe to merge.
+# The run name says WHERE the change is in its life; each job name says what PHASE it is (Plan,
+# Build, Test, Analyze, Gate, Publish, Merge back, Report, Notify). docs/RELEASING.md → "Reading a
+# run". Numbered so the stages sort in the order a change moves through them.
 run-name: >-
-  CI ${{ github.event_name == 'pull_request' && format('· PR #{0} · {1}', github.event.pull_request.number, github.head_ref)
-      || github.event_name == 'merge_group' && '· merge queue'
+  CI ${{ github.event_name == 'pull_request' && format('· 1 pre-merge · PR #{0} · {1}', github.event.pull_request.number, github.head_ref)
+      || github.event_name == 'merge_group' && '· 2 merge queue'
       || github.event_name == 'workflow_dispatch' && format('· manual · {0}', github.ref_name)
-      || startsWith(github.ref, 'refs/heads/release/v') && format('· release cut · {0}', github.ref_name)
-      || format('· post-merge · {0}', github.ref_name) }}
+      || github.ref == 'refs/heads/develop' && '· 3 post-merge · develop (alpha)'
+      || startsWith(github.ref, 'refs/heads/release/v') && format('· 4 release candidate · {0}', github.ref_name)
+      || github.ref == 'refs/heads/main' && '· 5 released · main'
+      || format('· push · {0}', github.ref_name) }}
 
 on:
   push:
@@ -72,7 +77,7 @@ concurrency:
 
 jobs:
   changes:
-    name: Detect Changes
+    name: Plan · Detect changes
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -134,7 +139,7 @@ jobs:
   # ============================================================================
 
   queue-validated:
-    name: Queue Validation Check
+    name: Plan · Reuse the merge queue's results
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
       vars.PUSH_RUN_FULL_MATRIX != 'true'
@@ -179,7 +184,7 @@ jobs:
           fi
 
   release-pr:
-    name: Release Duplicate Check
+    name: Plan · Reuse the release branch's results
     # Two events re-test a tree another run of this workflow already covers:
     #
     # RELEASE PR. start-release pushes release/v** AND opens the release PR at the SAME commit. The
@@ -294,7 +299,7 @@ jobs:
           { echo "skip=true"; echo "coverage-run-id=$RUN_ID"; } >> "$GITHUB_OUTPUT"
 
   verify-rebuild:
-    name: Verify Deterministic Rebuild
+    name: Build · Verify rebuild matches the tested build
     # The hardened half of the skip: rebuild on the QUEUE's exact SDK at the QUEUE's
     # version and confirm the SAME assembly SET. That plus the shared commit SHA is the
     # safety argument for publishing queue-validated bits unre-tested: identical source +
@@ -409,7 +414,7 @@ jobs:
           fi
 
   reupload-reports:
-    name: Republish Queue Run Reports
+    name: Report · Republish the tested run's coverage
     # With the suites skipped, this run would otherwise upload no coverage (the
     # Codecov develop baseline PR comparisons rely on) and carry no TRX (the docs
     # test-status and Codecov Test Analytics inputs). Republish the full-matrix run's
@@ -520,7 +525,7 @@ jobs:
   # QUEUE_RUN_FULL_MATRIX=true forces the full queue matrix.
   # ============================================================================
   ff-validated:
-    name: Fast-Forward Validation Check
+    name: Plan · Reuse the PR's results (fast-forward)
     if: github.event_name == 'merge_group' && vars.QUEUE_RUN_FULL_MATRIX != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -621,21 +626,21 @@ jobs:
   # names built from it trip NU5123 (path too long), which is warning-as-error here, so pack
   # fails on every queue run. Both events fall through to the placeholder below instead.
   version:
-    name: Version
+    name: Plan · Version
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-version.yml
 
   pr-version:
-    name: PR Version
+    name: Plan · Version preview
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-version.yml
 
   format:
-    name: Verify Code Formatting
+    name: Build · Check formatting
     # Gated on the two checks that mean "another run already covered this exact tree" — the
     # fast-forward check and the release-PR check — and never on queue-validated: a queue run ships
     # nothing, so skipping there costs nothing, while the publish jobs on a develop push need this
@@ -678,7 +683,7 @@ jobs:
         run: ./scripts/Lint-MigrationSql.ps1
 
   build:
-    name: Build
+    name: Build · Compile
     needs: [version, changes, release-pr, ff-validated]
     # !failure() && !cancelled(): version is skipped (not failed) on PRs — build must
     # still run there with the placeholder version below. Pushes honor the change filter
@@ -709,7 +714,7 @@ jobs:
   # merge-queue matrix, every suite (and quality) skips — see the queue-validated
   # section below for the verification that replaces them on the publish path.
   unit-tests:
-    name: Unit Tests
+    name: Test · Unit
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -720,7 +725,7 @@ jobs:
       artifact-name: build-${{ github.run_id }}
 
   postgres-integration:
-    name: PostgreSQL Integration
+    name: Test · PostgreSQL
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -760,7 +765,7 @@ jobs:
       shard-name: ${{ matrix.shard }}
 
   inmemory-integration:
-    name: InMemory Integration
+    name: Test · InMemory
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -770,7 +775,7 @@ jobs:
       artifact-name: build-${{ github.run_id }}
 
   rabbitmq-integration:
-    name: RabbitMQ Integration
+    name: Test · RabbitMQ
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -783,7 +788,7 @@ jobs:
     # Single-dimension matrix so GitHub renders the leg names itself ("Service Bus
     # Integration (whizbang)") — matrix expressions in `name:` don't render on
     # reusable-workflow-call jobs.
-    name: Service Bus Integration
+    name: Test · Service Bus
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -801,7 +806,7 @@ jobs:
       shard-name: ${{ matrix.shard }}
 
   azureblob-integration:
-    name: AzureBlob Integration
+    name: Test · Azure Blob
     needs: [build, queue-validated, ff-validated, release-pr]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
@@ -811,7 +816,7 @@ jobs:
       artifact-name: build-${{ github.run_id }}
 
   quality:
-    name: Quality
+    name: Analyze · Quality
     # Deliberately does NOT need the test suites: it starts its Sonar-wrapped build
     # while they run, then waits for their coverage artifacts internally (failing fast
     # if any test job fails). actions:read is required for that polling.
@@ -865,7 +870,7 @@ jobs:
   # ============================================================================
 
   test-results:
-    name: Upload Test Results to Codecov
+    name: Report · Test results to Codecov
     # Failed-test reporting is the point, so this runs when suites FAIL too; only
     # cancellation or a skipped matrix (docs-only run) skips it. The suites all share
     # one gate (build success), so unit-tests stands proxy for the whole matrix.
@@ -957,7 +962,7 @@ jobs:
   # ============================================================================
 
   ci-result:
-    name: CI Result
+    name: Gate · CI result
     # Sole required context in the develop ruleset. Skipped jobs are fine — docs-only
     # PRs/pushes skip the matrix by design, and version/pr-version are event-exclusive —
     # but any failure or cancellation fails the gate. Requiring only this context also
@@ -986,109 +991,25 @@ jobs:
   # ============================================================================
 
   pack:
-    name: Pack NuGet Packages
+    name: Build · Pack
     needs: [version, build]
     # version is skipped (not failed) on PRs; pack still validates packability there.
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
-    runs-on: ubuntu-latest
     permissions:
       contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup .NET
-        uses: ./.github/actions/setup-dotnet-retry
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Restore dependencies
-        run: dotnet restore
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: build-${{ github.run_id }}
-
-      - name: Pack NuGet packages (no rebuild)
-        env:
-          VERSION: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
-        run: |
-          # NU5017 false positive for analyzer packages in .NET 10 SDK
-          dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
-
-      - name: Verify expected packages
-        run: |
-          # NOTE: Internal packages excluded (IsPackable=false):
-          #   - Whizbang.Generators.Shared (ILMerged into generator packages)
-          #   - Whizbang.Testing (empty placeholder)
-          EXPECTED_PACKAGES=(
-            "SoftwareExtravaganza.Whizbang.Core"
-            "SoftwareExtravaganza.Whizbang.Generators"
-            "SoftwareExtravaganza.Whizbang.Data.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.Schema"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Sqlite"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Custom"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators"
-            "SoftwareExtravaganza.Whizbang.Observability"
-            "SoftwareExtravaganza.Whizbang.Sagas.Contracts"
-            "SoftwareExtravaganza.Whizbang.Sagas"
-            "SoftwareExtravaganza.Whizbang.Sagas.Generators"
-            "SoftwareExtravaganza.Whizbang.SignalR"
-            "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus"
-            "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ"
-            "SoftwareExtravaganza.Whizbang.Transports.Mutations"
-            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints"
-            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints.Generators"
-            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate"
-            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate.Generators"
-            "SoftwareExtravaganza.Whizbang.Hosting.AspNet"
-            "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus"
-            "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ"
-            "SoftwareExtravaganza.Whizbang.Migrate"
-            "SoftwareExtravaganza.Whizbang.CLI"
-          )
-
-          MISSING=0
-          for pkg in "${EXPECTED_PACKAGES[@]}"; do
-            # compgen -G: glob-match test — [ -f glob ] breaks when a glob matches more than one file
-            if ! compgen -G "./packages/${pkg}.*.nupkg" > /dev/null; then
-              echo "ERROR: ${pkg} package not created"
-              MISSING=$((MISSING + 1))
-            else
-              echo "✓ ${pkg}"
-            fi
-          done
-
-          if [ $MISSING -gt 0 ]; then
-            echo ""
-            echo "ERROR: ${MISSING} package(s) missing"
-            exit 1
-          fi
-
-          echo ""
-          echo "All ${#EXPECTED_PACKAGES[@]} packages verified successfully"
-
-      - name: List packages
-        run: ls -la ./packages
-
-      - name: Upload NuGet packages
-        # On PRs and queue runs pack is a packability gate only — nothing consumes the
-        # artifact, because the publish jobs are gated on push.
-        if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: nuget-packages-${{ github.run_id }}
-          path: ./packages/*.nupkg
-          # A release-branch run's packages are what release.yml promotes on merge (it fails closed
-          # rather than rebuild), so they live long enough to cover a release PR held over a weekend.
-          retention-days: ${{ startsWith(github.ref, 'refs/heads/release/v') && 7 || 3 }}
+      actions: read
+    uses: ./.github/workflows/reusable-pack.yml
+    with:
+      version: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
+      # On PRs and queue runs pack is a packability gate only: nothing consumes the artifact,
+      # because the publish jobs are gated on push.
+      artifact-name: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && format('nuget-packages-{0}', github.run_id) || '' }}
+      # A release-branch run's packages are what release.yml promotes on merge (it fails closed
+      # rather than rebuild), so they live long enough to cover a release PR held over a weekend.
+      retention-days: ${{ startsWith(github.ref, 'refs/heads/release/v') && 7 || 3 }}
 
   version-comment:
-    name: Comment Version on PR
+    name: Report · Version comment on PR
     needs: pr-version
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -1134,7 +1055,7 @@ jobs:
   # ============================================================================
 
   prerelease-publish:
-    name: Publish Prerelease NuGet
+    name: Publish · Alpha (develop)
     needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, queue-validated, verify-rebuild]
     # The explicit per-suite results replace the old implicit success() (which a
     # skipped suite would poison). Publish requires pack + format green AND either
@@ -1191,7 +1112,7 @@ jobs:
   # ============================================================================
 
   release-guard:
-    name: Release Publish Guard
+    name: Plan · Route the hotfix by line
     needs: [version]
     # Not on the branch-creation push: that is the base cut with no changes yet, and start-release
     # opens its own PR seconds after pushing — a guard-opened PR could win that race and break it.
@@ -1261,7 +1182,7 @@ jobs:
           fi
 
   release-publish:
-    name: Publish Release NuGet
+    name: Publish · Hotfix (older line)
     needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, release-guard]
     # EXPLICIT gate, mirroring prerelease-publish. GitHub applies success() implicitly only while an
     # `if` contains no status-check function, so the old plain `if` gated on every need implicitly
@@ -1291,7 +1212,7 @@ jobs:
   # An older-line patch never reaches main, but develop must still get the fix or the next cut from
   # develop ships without it. Same mechanism release.yml uses after a main merge.
   release-sync-develop:
-    name: Sync Hotfix to Develop
+    name: Merge back · Hotfix to develop
     needs: [version, release-guard, release-publish]
     if: needs.release-publish.result == 'success' && needs.release-guard.outputs.line == 'older'
     permissions:
@@ -1310,7 +1231,7 @@ jobs:
   # ============================================================================
 
   notify-success:
-    name: Notify Success
+    name: Notify · Success
     needs: [changes, quality]
     permissions:
       contents: read
@@ -1344,7 +1265,7 @@ jobs:
       PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
 
   notify-failure:
-    name: Notify Failure
+    name: Notify · Failure
     # Depends on the aggregate gate rather than a list of jobs, so a failure is announced wherever it
     # happens: a pull request run and the merge queue's run alike.
     #
@@ -1378,7 +1299,7 @@ jobs:
       PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
 
   notify-cancelled:
-    name: Notify Cancelled
+    name: Notify · Canceled
     needs: [build, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
     permissions:
       contents: read
@@ -1406,7 +1327,7 @@ jobs:
   # ============================================================================
 
   publish-test-status:
-    name: Publish Test Status to Docs
+    name: Report · Test status to docs
     # Ships per-test pass/fail to whizbang-lib.github.io so doc pages render
     # live verification badges. Runs even when suites FAIL (failures are what
     # the badges must show) but not when cancelled. No-ops without the token

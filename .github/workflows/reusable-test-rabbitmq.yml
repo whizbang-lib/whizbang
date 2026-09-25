@@ -20,7 +20,7 @@ on:
 
 jobs:
   rabbitmq-tests:
-    name: RabbitMQ Integration Tests
+    name: Run suite
     runs-on: ubuntu-latest
     timeout-minutes: 45
 

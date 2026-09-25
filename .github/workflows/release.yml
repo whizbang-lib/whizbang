@@ -1,5 +1,10 @@
 name: Release
 
+run-name: >-
+  Release ${{ github.event_name == 'workflow_dispatch' && (inputs.dry_run && '· dry run' || format('· manual publish · v{0}', inputs.version))
+      || github.event.pull_request.merged && format('· 6 publish stable · {0}', github.event.pull_request.head.ref)
+      || format('· not a release (PR #{0} closed unmerged)', github.event.pull_request.number) }}
+
 on:
   # Trigger when a release PR is merged to main
   pull_request:
@@ -43,7 +48,7 @@ concurrency:
 jobs:
   # Only run if this is a merged release PR or a manual dry run
   check-release:
-    name: Check Release Conditions
+    name: Plan · Is this a release?
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,6 +62,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_MERGED: ${{ github.event.pull_request.merged }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           DRY_RUN: ${{ inputs.dry_run }}
           INPUT_VERSION: ${{ inputs.version }}
         run: |
@@ -74,6 +80,14 @@ jobs:
             # Check if PR title matches release pattern
             if [[ "$PR_TITLE" =~ ^chore\(release\):\ v([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then
               VERSION="${BASH_REMATCH[1]}"
+              # Gitflow: only a release branch ships to main, and it ships its OWN stable number.
+              # A release-looking title on any other branch, a prerelease version (those publish
+              # from the release branch, release-prerelease.yml), or a title that disagrees with
+              # the branch name would publish something nobody cut.
+              if [ "$PR_HEAD_REF" != "release/v$VERSION" ] || [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "::error::Refusing to publish '$VERSION' from '$PR_HEAD_REF': a release PR must come from release/vX.Y.Z and be titled exactly 'chore(release): vX.Y.Z' with the same stable X.Y.Z. Recover with: gh workflow run release.yml --ref main -f version=X.Y.Z -f release_type=auto -f dry_run=false"
+                exit 1
+              fi
               echo "Release PR merged - version: $VERSION"
               echo "should_release=true" >> "$GITHUB_OUTPUT"
               echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -89,7 +103,7 @@ jobs:
           fi
 
   version:
-    name: Calculate Version
+    name: Plan · Version (dry run)
     needs: check-release
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -276,7 +290,7 @@ jobs:
   # ============================================================================
 
   notify-approval-needed:
-    name: Notify Approval Needed
+    name: Notify · Approval needed
     needs: check-release
     if: needs.check-release.outputs.should_release == 'true' && vars.PUSHOVER_ENABLED == 'true'
     runs-on: ubuntu-latest
@@ -310,7 +324,7 @@ jobs:
           url-title: "Approve Release"
 
   approve:
-    name: Approve Release
+    name: Gate · Approve release
     needs: check-release
     if: needs.check-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
@@ -334,7 +348,7 @@ jobs:
   # ============================================================================
 
   locate-tested-packages:
-    name: Locate Tested Packages
+    name: Plan · Locate the tested packages
     needs: check-release
     if: needs.check-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
@@ -400,7 +414,7 @@ jobs:
   # ============================================================================
 
   release:
-    name: Create Release
+    name: Publish · Tag and draft the GitHub release
     needs: [check-release, approve, locate-tested-packages]
     runs-on: ubuntu-latest
     permissions:
@@ -500,7 +514,7 @@ jobs:
   build-and-pack:
     # Promotes, does not build: the packages are the release-branch run's tested artifact (see
     # locate-tested-packages). The job id is kept so publish and upload-release-assets are unchanged.
-    name: Promote Tested Packages
+    name: Build · Promote the tested packages
     needs: [check-release, release, locate-tested-packages]
     runs-on: ubuntu-latest
     permissions:
@@ -519,64 +533,18 @@ jobs:
           github-token: ${{ github.token }}
           path: ./packages
 
-      - name: Verify expected packages
-        env:
-          VERSION: ${{ needs.check-release.outputs.version }}
-        run: |
-          # NOTE: Internal packages excluded (IsPackable=false):
-          #   - Whizbang.Generators.Shared (ILMerged into generator packages)
-          #   - Whizbang.Testing (empty placeholder)
-          EXPECTED_PACKAGES=(
-            "SoftwareExtravaganza.Whizbang.Core"
-            "SoftwareExtravaganza.Whizbang.Generators"
-            "SoftwareExtravaganza.Whizbang.Data.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.Schema"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.Dapper.Sqlite"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Custom"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres"
-            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators"
-            "SoftwareExtravaganza.Whizbang.Observability"
-            "SoftwareExtravaganza.Whizbang.Sagas.Contracts"
-            "SoftwareExtravaganza.Whizbang.Sagas"
-            "SoftwareExtravaganza.Whizbang.Sagas.Generators"
-            "SoftwareExtravaganza.Whizbang.SignalR"
-            "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus"
-            "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ"
-            "SoftwareExtravaganza.Whizbang.Transports.Mutations"
-            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints"
-            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints.Generators"
-            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate"
-            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate.Generators"
-            "SoftwareExtravaganza.Whizbang.Hosting.AspNet"
-            "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus"
-            "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ"
-            "SoftwareExtravaganza.Whizbang.Migrate"
-            "SoftwareExtravaganza.Whizbang.CLI"
-          )
+      - name: Checkout the verify action
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          path: repo
 
-          MISSING=0
-          for pkg in "${EXPECTED_PACKAGES[@]}"; do
-            # compgen -G: glob-match test — [ -f glob ] breaks when a glob matches more than one file
-            # Exactly the release version: the tested packages carry the branch-name version, so a
-            # PR title that disagrees with its branch name fails here instead of shipping a mismatch.
-            if [ ! -f "./packages/${pkg}.${VERSION}.nupkg" ]; then
-              echo "ERROR: ${pkg} ${VERSION} package not found"
-              MISSING=$((MISSING + 1))
-            else
-              echo "✓ ${pkg}"
-            fi
-          done
-
-          if [ $MISSING -gt 0 ]; then
-            echo ""
-            echo "ERROR: ${MISSING} package(s) missing"
-            exit 1
-          fi
-
-          echo ""
-          echo "All ${#EXPECTED_PACKAGES[@]} packages verified successfully"
+      # Exactly the release version: the tested packages carry the branch-name version, so a PR
+      # title that disagrees with its branch name fails here instead of shipping a mismatch.
+      - name: Verify the package set
+        uses: ./repo/.github/actions/verify-packages
+        with:
+          version: ${{ needs.check-release.outputs.version }}
 
       - name: List packages
         run: ls -la ./packages
@@ -589,7 +557,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Publish to NuGet
+    name: Publish · Stable to NuGet
     needs: [check-release, build-and-pack]
     permissions:
       contents: read
@@ -613,7 +581,7 @@ jobs:
       PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
 
   upload-release-assets:
-    name: Upload Release Assets
+    name: Publish · Attach packages to the GitHub release
     needs: [check-release, build-and-pack]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -656,7 +624,7 @@ jobs:
   # Sync main back to develop after successful release. The mechanism is shared with ci.yml's
   # older-line hotfix path (reusable-sync-develop.yml) so there is exactly one merge-back.
   sync-develop:
-    name: Sync Main to Develop
+    name: Merge back · Main to develop
     needs: [check-release, publish]
     permissions:
       contents: write        # push the throwaway sync branch (sync/*, not protected)
@@ -674,7 +642,7 @@ jobs:
   # ============================================================================
 
   notify-release-failed:
-    name: Notify Release Failed
+    name: Notify · Release failed
     needs: [check-release, release, build-and-pack, publish]
     if: >-
       always() &&

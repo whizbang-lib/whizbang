@@ -1,0 +1,89 @@
+name: Pack (Reusable)
+
+# Packs an ALREADY-BUILT tree into NuGet packages at a given version, without rebuilding, so the
+# binaries inside are the ones the suites ran against. Two callers:
+#   - ci.yml's pack job: this run's build, at this run's version (a packability gate on PRs and
+#     queue runs; the published artifact on develop and release-branch pushes).
+#   - release-prerelease.yml: a release-branch run's tested build, repacked at X.Y.Z-beta.N or
+#     X.Y.Z-rc.N. Same DLLs as the release candidate, a prerelease package version.
+# Every package set is checked against .github/nuget-packages.txt at exactly one version.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The package version to stamp
+        required: true
+        type: string
+      build-run-id:
+        description: Run whose build-<run id> artifact to pack. Empty = this run.
+        required: false
+        type: string
+        default: ''
+      ref:
+        description: Commit to check out for restore; must be the commit that build-run-id built. Empty = this run's.
+        required: false
+        type: string
+        default: ''
+      artifact-name:
+        description: Upload the packages under this name. Empty = verify only, upload nothing.
+        required: false
+        type: string
+        default: ''
+      retention-days:
+        description: Retention for the uploaded packages
+        required: false
+        type: number
+        default: 3
+
+permissions: {}
+
+jobs:
+  pack:
+    name: Pack without rebuilding
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read   # download another run's build artifact
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Download the tested build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: build-${{ inputs.build-run-id || github.run_id }}
+          run-id: ${{ inputs.build-run-id || github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Pack NuGet packages (no rebuild)
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          # NU5017 false positive for analyzer packages in .NET 10 SDK; verify-packages below is the
+          # real check that every package was produced.
+          dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
+
+      - name: Verify the package set
+        uses: ./.github/actions/verify-packages
+        with:
+          version: ${{ inputs.version }}
+
+      - name: Upload NuGet packages
+        if: inputs.artifact-name != ''
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ./packages/*.nupkg
+          retention-days: ${{ inputs.retention-days }}

@@ -17,7 +17,7 @@ env:
 
 jobs:
   build:
-    name: Build
+    name: Compile and hash
     runs-on: ubuntu-latest
     # The analyzers run in every project now, which roughly doubles the solution build on a
     # hosted runner (16 minutes observed); the artifact upload and instrumentation follow it.
@@ -51,11 +51,9 @@ jobs:
           # directly into a run block — the shell sees only the variable, not the value.
           VERSION: ${{ inputs.version }}
         run: |
-          VERSION_ARGS=""
-          if [ -n "$VERSION" ]; then
-            VERSION_ARGS="-p:Version=$VERSION"
-          fi
-          dotnet build --no-restore --configuration Release $VERSION_ARGS
+          BUILD_ARGS=(--no-restore --configuration Release)
+          if [ -n "$VERSION" ]; then BUILD_ARGS+=("-p:Version=$VERSION"); fi
+          dotnet build "${BUILD_ARGS[@]}"
 
       # Formatting verification runs as a separate parallel job (ci.yml `format`) so it
       # stays off the build -> test-suites critical path.
@@ -107,7 +105,9 @@ jobs:
             tools/**/obj/Release
             !**/obj/Release/**/ref/**
             !**/obj/Release/**/refint/**
-          retention-days: 1
+          # A release branch's build is repacked for its beta and rc prereleases
+          # (release-prerelease.yml), so it lives as long as the release PR might stay open.
+          retention-days: ${{ startsWith(github.ref, 'refs/heads/release/v') && 7 || 1 }}
           compression-level: 6
 
       # ----------------------------------------------------------------------------

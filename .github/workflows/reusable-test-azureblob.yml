@@ -10,7 +10,7 @@ on:
 
 jobs:
   azureblob-tests:
-    name: AzureBlob Integration Tests
+    name: Run suite
     runs-on: ubuntu-latest
     timeout-minutes: 45
 

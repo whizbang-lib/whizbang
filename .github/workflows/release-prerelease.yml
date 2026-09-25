@@ -1,0 +1,128 @@
+name: Release Prerelease
+
+# Publishes a beta or rc FROM a release branch, while its release PR is open. Gitflow channels:
+#   develop            -> X.Y.0-alpha.N   automatic on every merge (changed packages only)
+#   release/vX.Y.Z     -> X.Y.Z-beta.N / X.Y.Z-rc.N   this workflow, on request
+#   main               -> X.Y.Z           when the release PR merges (release.yml)
+# Nothing merges here. The packages are the release branch's TESTED build (the CI push run for the
+# branch head), repacked at the prerelease version without rebuilding, so the DLLs are the ones
+# the suites ran against. The tag goes on that commit, on the release branch.
+#
+# Run it from the Actions tab with "Use workflow from" set to the release branch.
+# See docs/RELEASING.md → "Supported flows".
+
+run-name: >-
+  Release · 4 prerelease · ${{ inputs.label }} · ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        # Ordered and closed: prerelease identifiers compare ASCII-wise (alpha < beta < rc), so a
+        # free-text label would sort wherever it happens to. alpha is develop's channel.
+        description: 'Prerelease stage (numbered automatically: beta.1, beta.2, ... rc.1, ...)'
+        required: true
+        type: choice
+        options:
+          - beta
+          - rc
+
+concurrency:
+  group: release-prerelease-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  plan:
+    name: Plan · Choose the prerelease version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read   # find the branch's CI run and its build
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      run-id: ${{ steps.plan.outputs.run-id }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - name: Validate the branch, find its tested build, number the prerelease
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          LABEL: ${{ inputs.label }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REF" =~ ^refs/heads/release/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Run this from a release branch named release/vX.Y.Z (got $REF). Prereleases come from release branches; develop publishes alphas by itself."
+            exit 1
+          fi
+          BASE="${BASH_REMATCH[1]}"
+          TAGS=$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v$BASE" --jq '.[].ref | sub("^refs/tags/"; "")')
+          if grep -qx "v$BASE" <<< "$TAGS"; then
+            echo "::error::v$BASE has already shipped stable. A fix to it is a hotfix (docs/RELEASING.md → Hotfixes), not a prerelease."
+            exit 1
+          fi
+          ESCAPED="${BASE//./\\.}"
+          # Precedence is beta < rc < stable. A beta after an rc would sort below it and never be
+          # picked by latest-version resolution.
+          if [ "$LABEL" = beta ] && grep -qE "^v${ESCAPED}-rc\.[0-9]+$" <<< "$TAGS"; then
+            echo "::error::v$BASE already has an rc; a beta would sort below it. Publish another rc, or merge the release PR."
+            exit 1
+          fi
+          LAST=$(sed -nE "s/^v${ESCAPED}-${LABEL}\.([0-9]+)$/\1/p" <<< "$TAGS" | sort -n | tail -1)
+          VERSION="${BASE}-${LABEL}.$(( ${LAST:-0} + 1 ))"
+
+          # The tested build: the CI push run for this exact commit, green, with its build output
+          # still available (kept 7 days on release branches). Addressed by workflow PATH, not by
+          # name: ci.yml sets a run-name, so no run is named plain "CI".
+          RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=10" \
+            --jq '.workflow_runs[0] // {} | {id: (.id // ""), status: (.status // ""), conclusion: (.conclusion // "")}')
+          RUN_ID=$(jq -r .id <<< "$RUN")
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::No CI push run for $SHA yet. Push to the branch (or wait for its run to start), then retry."
+            exit 1
+          fi
+          if [ "$(jq -r .status <<< "$RUN")" != completed ] || [ "$(jq -r .conclusion <<< "$RUN")" != success ]; then
+            echo "::error::CI run $RUN_ID for $SHA is $(jq -r '.status + " " + .conclusion' <<< "$RUN"). A prerelease publishes only a fully green build: wait for it, or fix and re-run it."
+            exit 1
+          fi
+          LIVE=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?name=build-$RUN_ID" --jq '[.artifacts[] | select(.expired | not)] | length')
+          if [ "$LIVE" -lt 1 ]; then
+            echo "::error::The build from CI run $RUN_ID has expired. Re-run that run (all jobs) to rebuild and re-test it, then retry."
+            exit 1
+          fi
+          echo "Publishing v$VERSION from CI run $RUN_ID ($SHA)."
+          { echo "version=$VERSION"; echo "run-id=$RUN_ID"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
+          echo "### v$VERSION from the tested build of CI run $RUN_ID (\`$SHA\`)" >> "$GITHUB_STEP_SUMMARY"
+
+  pack:
+    name: Build · Repack the tested build
+    needs: plan
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/reusable-pack.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      build-run-id: ${{ needs.plan.outputs.run-id }}
+      ref: ${{ needs.plan.outputs.sha }}
+      artifact-name: nuget-packages-prerelease-${{ github.run_id }}
+      retention-days: 7
+
+  publish:
+    name: Publish · Prerelease to NuGet
+    needs: [plan, pack]
+    permissions:
+      contents: write       # the tag + GitHub pre-release
+      id-token: write       # NuGet OIDC trusted publishing
+      attestations: write   # nuget-push attests provenance before pushing
+    uses: ./.github/workflows/nuget-publish.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      ref: ${{ needs.plan.outputs.sha }}
+      artifact-name: nuget-packages-prerelease-${{ github.run_id }}
+    secrets: inherit

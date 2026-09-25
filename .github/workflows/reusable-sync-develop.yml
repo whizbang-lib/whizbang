@@ -28,7 +28,7 @@ permissions: {}
 
 jobs:
   sync:
-    name: Open Develop Sync PR
+    name: Open develop sync PR
     runs-on: ubuntu-latest
     permissions:
       contents: write        # push the throwaway sync branch (sync/*, not protected)
