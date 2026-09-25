@@ -278,8 +278,10 @@ public class SubscriptionRetryHelperTests {
     var disconnectException = new InvalidOperationException("Connection lost");
     subscription.TriggerDisconnect("Connection lost", exception: disconnectException, applicationInitiated: false);
 
-    // Wait for reconnection (signal-based, not timing-based)
-    await transport.WaitForSubscribeCallCountAsync(2, TimeSpan.FromSeconds(10));
+    // Wait for the reconnected subscription to be HOOKED, not merely requested. The helper marks the
+    // state Healthy after the transport call returns and only then attaches its disconnect handler,
+    // so waiting on the call itself raced the assertion below (it read Recovering on CI).
+    await transport.WaitForHookedSubscriptionCountAsync(2, TimeSpan.FromSeconds(10));
 
     // Assert - should have attempted reconnection
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
@@ -404,26 +406,33 @@ public class SubscriptionRetryHelperTests {
     private readonly bool _returnDisconnectableSubscription = returnDisconnectableSubscription;
     private int _attemptCount;
     private readonly Lock _lock = new();
-    private readonly List<(int TargetCount, TaskCompletionSource Signal)> _waiters = [];
 
     public int SubscribeCallCount { get; private set; }
 
-    public Task WaitForSubscribeCallCountAsync(int count, TimeSpan timeout) {
+    private int _hookedSubscriptionCount;
+    private readonly List<(int TargetCount, TaskCompletionSource Signal)> _hookedWaiters = [];
+
+    /// <summary>
+    /// Completes once <paramref name="count"/> returned subscriptions have had a disconnect handler
+    /// attached: the helper's last step for a subscription it has already marked Healthy.
+    /// </summary>
+    public Task WaitForHookedSubscriptionCountAsync(int count, TimeSpan timeout) {
       var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
       lock (_lock) {
-        if (SubscribeCallCount >= count) {
+        if (_hookedSubscriptionCount >= count) {
           tcs.TrySetResult();
         } else {
-          _waiters.Add((count, tcs));
+          _hookedWaiters.Add((count, tcs));
         }
       }
       return tcs.Task.WaitAsync(timeout);
     }
 
-    private void _notifyWaiters() {
+    private void _onSubscriptionHooked() {
       lock (_lock) {
-        foreach (var (target, signal) in _waiters) {
-          if (SubscribeCallCount >= target) {
+        _hookedSubscriptionCount++;
+        foreach (var (target, signal) in _hookedWaiters) {
+          if (_hookedSubscriptionCount >= target) {
             signal.TrySetResult();
           }
         }
@@ -450,7 +459,6 @@ public class SubscriptionRetryHelperTests {
       CancellationToken cancellationToken = default) {
       SubscribeCallCount++;
       _attemptCount++;
-      _notifyWaiters();
 
       if (_alwaysFail) {
         throw new InvalidOperationException("Mock transport always fails");
@@ -461,7 +469,7 @@ public class SubscriptionRetryHelperTests {
       }
 
       ISubscription subscription = _returnDisconnectableSubscription
-        ? new DisconnectableMockSubscription()
+        ? new DisconnectableMockSubscription(_onSubscriptionHooked)
         : new MockSubscription();
 
       return Task.FromResult(subscription);
@@ -504,8 +512,16 @@ public class SubscriptionRetryHelperTests {
   /// <summary>
   /// A mock subscription that exposes the ability to trigger disconnect events for testing.
   /// </summary>
-  private sealed class DisconnectableMockSubscription : ISubscription {
-    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+  private sealed class DisconnectableMockSubscription(Action? onHandlerAttached = null) : ISubscription {
+    private EventHandler<SubscriptionDisconnectedEventArgs>? _onDisconnected;
+
+    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected {
+      add {
+        _onDisconnected += value;
+        onHandlerAttached?.Invoke();
+      }
+      remove => _onDisconnected -= value;
+    }
 
     public bool IsActive { get; private set; } = true;
 
@@ -527,7 +543,7 @@ public class SubscriptionRetryHelperTests {
     /// Triggers the OnDisconnected event to simulate a subscription disconnect.
     /// </summary>
     public void TriggerDisconnect(string reason, Exception? exception = null, bool applicationInitiated = false) {
-      OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
+      _onDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
         Reason = reason,
         Exception = exception,
         IsApplicationInitiated = applicationInitiated
