@@ -35,8 +35,10 @@ on:
 # sonar.branch.name so SonarCloud records the analysis as the main line. Nothing ever produced
 # that push: release.yml merges the release PR and calls no quality workflow, so main went
 # unanalyzed from one release to the next and the badge kept reporting a months-old verdict on
-# months-old code. Main receives one merge per release, so this costs one matrix per release, and
-# every publish job here is guarded to develop or release/v** and cannot fire from it.
+# months-old code. Main receives one merge per release, and every publish job here is guarded to
+# develop or release/v** and cannot fire from it. The push does NOT re-run the matrix: its tree is
+# the one the release branch just tested, so release-pr yields build, pack and the suites to that
+# run, and Quality analyzes that run's coverage.
 
 # Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
 # what it needs. Only the publish jobs get contents/id-token write, and only
@@ -177,40 +179,46 @@ jobs:
           fi
 
   release-pr:
-    name: Release PR Duplicate Check
-    # start-release pushes release/v** AND opens the release PR at the SAME commit, so two runs
-    # of this workflow cover identical bytes: the push run, which must run the matrix because it
-    # publishes, and the PR run, which gates the merge to main. Both ran everything — two builds,
-    # two Sonar analyses and two integration matrices per release cut, over one tree.
+    name: Release Duplicate Check
+    # Two events re-test a tree another run of this workflow already covers:
     #
-    # The PR run yields EVERY job that costs a runner: format, build, quality and the six suites.
-    # Yielding only the suites left the two most expensive jobs still doubled, because build and
-    # quality are gated on their own change filter rather than on the matrix's. What remains
-    # doubled is the handful of jobs that resolve an expression and stop (Detect Changes, and the
-    # event-exclusive guards that skip here anyway), which cost seconds, not minutes.
+    # RELEASE PR. start-release pushes release/v** AND opens the release PR at the SAME commit. The
+    # push run must run the matrix because it publishes; the PR run only gates the merge. The PR run
+    # yields format, build and the six suites to the push run, whose results carry the same check
+    # NAMES on the same commit, so the ruleset on main reads them either way.
     #
-    # The push run's results are what the merge reads, and they are the same check NAMES on the
-    # same commit, so a ruleset on main would read them either way.
+    # MAIN PUSH. Merging a release PR pushes main, which is a push trigger only so Quality records a
+    # main-line analysis. Its tree is byte-identical to the release-branch tree that just went green
+    # (start-release merges main into the release branch first), so re-running build, pack and the
+    # suites there tested nothing new: ~46 minutes per release. It yields them too.
+    #
+    # QUALITY NEVER YIELDS: SonarScanner runs only on a pull request or on main, so this run's
+    # Quality is the only one that can analyze. It takes its COVERAGE from the run yielded to
+    # (coverage-run-id), because this run's suites no longer produce any.
     #
     # Why yielding is safe in this direction and not the other: these jobs are skipped by an
-    # expression, which resolves in seconds, while the push run's real results land minutes later
-    # and therefore win as the last report for each name. Skipping the PUSH run instead would put
-    # a fast "skipped" after a slow real result and could mask a failure — and would also strand
-    # the publish, which only the push event performs (see release-publish).
+    # expression, which resolves in seconds, while the covering run's real results land later (or
+    # already have) and win as the last report for each name. Skipping the release-branch PUSH run
+    # instead would put a fast "skipped" after a slow real result and could mask a failure, and
+    # would strand the publish, which only that push performs (see release-publish).
     if: >-
-      github.event_name == 'pull_request' &&
-      startsWith(github.head_ref, 'release/v') &&
-      vars.RELEASE_PR_FULL_MATRIX != 'true'
+      (github.event_name == 'pull_request' && startsWith(github.head_ref, 'release/v') &&
+       vars.RELEASE_PR_FULL_MATRIX != 'true') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+       vars.MAIN_PUSH_FULL_MATRIX != 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read         # the main-push check reads the merge commit's release-branch parent
       actions: read
       pull-requests: write   # the sticky comment naming the run the matrix yielded to
     outputs:
-      skip: ${{ steps.check.outputs.skip }}
+      skip: ${{ steps.check.outputs.skip || steps.main.outputs.skip }}
+      coverage-run-id: ${{ steps.check.outputs.coverage-run-id || steps.main.outputs.coverage-run-id }}
     steps:
       - name: Is the push run for this same commit already covering it?
         id: check
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -230,7 +238,7 @@ jobs:
           if [ -n "$RUN_ID" ] && [ "$CONCLUSION" != cancelled ] && [ "$CONCLUSION" != failure ]; then
             echo "Push run $RUN_ID covers $SHA — the PR run yields the matrix to it."
             echo "Release-PR duplicate: **true** -- push run $RUN_ID covers $SHA" >> "$GITHUB_STEP_SUMMARY"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            { echo "skip=true"; echo "coverage-run-id=$RUN_ID"; } >> "$GITHUB_OUTPUT"
             # Make the yield visible FROM THE PR: the required checks now come only from that run,
             # so if it is canceled or fails the PR blocks with no failing check of its own. One
             # sticky comment, updated in place on every PR run.
@@ -238,7 +246,7 @@ jobs:
             URL="https://github.com/$REPO/actions/runs/$RUN_ID"
             BODY=$(cat <<EOF
           $MARKER
-          **CI for this release PR runs in the release-branch push run [$RUN_ID]($URL)** for commit \`$SHA\`, not in this PR's own run. Its results are the required checks this PR merges on.
+          **The build and test suites for this release PR run in the release-branch push run [$RUN_ID]($URL)** for commit \`$SHA\`, not in this PR's own run. Their results are the required checks this PR merges on, and this PR's Quality analyzes the coverage they produce.
 
           If that run is canceled or fails, this PR blocks with no failing check to point at. To recover:
           - **Re-run it:** \`gh run rerun $RUN_ID --failed\` (or re-run its jobs in the Actions UI). Its fresh results land on this same commit.
@@ -258,6 +266,32 @@ jobs:
             echo "Release-PR duplicate: **false** -- no live push run for $SHA (found: ${RUN_ID:-none} ${CONCLUSION})" >> "$GITHUB_STEP_SUMMARY"
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Did the release branch already test this exact tree?
+        id: main
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Fails SAFE: any doubt keeps the full matrix (skip=false), and this step never fails the run.
+          keep() { echo "Keeping the full matrix on main: $1"; echo "Main push duplicate: **false** -- $1" >> "$GITHUB_STEP_SUMMARY"; echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          # Every fallible command falls back to keep(): a FAILED guard would make !failure() false
+          # for every job downstream of it and skip the whole matrix, the opposite of failing safe.
+          git fetch --quiet --depth=2 origin "$GITHUB_SHA" || keep "could not fetch $GITHUB_SHA"
+          SRC=$(git rev-parse --verify --quiet "$GITHUB_SHA^2" || true)
+          [ -n "$SRC" ] || keep "HEAD is not a merge"
+          git fetch --quiet --depth=1 origin "$SRC" || keep "could not fetch $SRC"
+          [ "$(git rev-parse "$GITHUB_SHA^{tree}" 2>/dev/null)" = "$(git rev-parse "$SRC^{tree}" 2>/dev/null)" ] \
+            || keep "the merge changed the tree relative to its release-branch parent $SRC"
+          # Addressed by workflow PATH, not by name (this workflow sets a run-name).
+          RUN_ID=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SRC&event=push&status=success&per_page=10" \
+            --jq '[.workflow_runs[] | select(.head_branch | startswith("release/v"))] | first | .id // ""' || true)
+          [ -n "$RUN_ID" ] || keep "no green release-branch push run for $SRC"
+          echo "Release-branch run $RUN_ID tested this exact tree ($SRC) — main yields its matrix to it."
+          echo "Main push duplicate: **true** -- release-branch run $RUN_ID tested this tree ($SRC)" >> "$GITHUB_STEP_SUMMARY"
+          { echo "skip=true"; echo "coverage-run-id=$RUN_ID"; } >> "$GITHUB_OUTPUT"
 
   verify-rebuild:
     name: Verify Deterministic Rebuild
@@ -761,7 +795,8 @@ jobs:
     # restricted context, so it can never recover. Skipping is safe because ci-result
     # accepts skipped jobs, and the merge queue re-runs quality with full secrets
     # before anything lands on develop.
-    needs: [changes, queue-validated, ff-validated]
+    # release-pr is needed for its coverage-run-id only; quality is never skipped by it (see below).
+    needs: [changes, queue-validated, ff-validated, release-pr]
     # !failure() && !cancelled() is REQUIRED here: queue-validated and ff-validated are each
     # skipped on every event but their own (push / merge_group), and a skipped need would
     # otherwise poison the implicit success() check and silently skip quality everywhere. The
@@ -776,6 +811,8 @@ jobs:
     # on a pull request or on main, so the push run for a release branch deliberately skips the
     # scanner. Yielding here removed the only context that ever analyzes a release PR, and the
     # release then merged to main carrying no analysis of its own.
+    # With the suites yielded, this run has no coverage of its own: Quality waits for, and
+    # analyzes, the covering run's (coverage-run-id from release-pr).
     if: >-
       !failure() && !cancelled() &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
@@ -787,6 +824,10 @@ jobs:
       actions: read
       pull-requests: write   # the uncovered-new-lines gate comments the list on the PR
     uses: ./.github/workflows/reusable-quality.yml
+    with:
+      # Set when the suites yielded to another run over the same tree (a release PR's push run, or
+      # the release-branch run behind a main push): the coverage to analyze lives there.
+      coverage-run-id: ${{ needs.release-pr.outputs.coverage-run-id }}
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

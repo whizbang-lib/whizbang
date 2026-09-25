@@ -274,7 +274,7 @@ Every merge used to run the full test matrix **three** times — the PR run, the
 and the post-merge develop push run, and every release cut ran it twice over one commit. Three
 guards in `ci.yml` remove the redundant legs while keeping every publish gate provable. A
 fast-forward merge now runs the matrix **once** (the PR run); a real merge (develop moved) runs it
-**twice** (PR + queue); a release cut runs it **once** (the release-branch push run).
+**twice** (PR + queue); a release, from cut to main, runs it **once** (the release-branch push run).
 
 ### ff-validated — skip the redundant *queue* matrix on a fast-forward
 
@@ -331,24 +331,35 @@ toolchain drift (e.g. an SDK patch released in the minutes between the queue run
 run) — the publish stays blocked until either the drifted rebuild is validated by real suites or
 the next merge lands.
 
-### release-pr — skip the redundant *release PR* matrix
+### release-pr — skip the redundant *release PR* and *main push* matrices
 
-`start-release` pushes `release/vX.Y.Z` **and** opens the release PR at the same commit, so two CI
-runs cover identical bytes. The push run must run everything, because only it can publish; the PR
-run only gates the merge. `release-pr` (release PRs only) makes the PR run yield **format, build,
-quality and the six suites** to the push run when one exists for the PR head. The required checks on
-`main` are then satisfied by the push run's results, which carry the same check names on the same
-commit.
+Two events re-test a tree another run already covers, and `release-pr` makes both yield **format,
+build and the six suites** (and so pack) to that run:
 
-- It yields only to a push run that can still report green. One already **canceled or failed** keeps
-  the matrix in the PR run instead.
-- Each yield posts one **sticky PR comment** naming the push run. If that run is later canceled or
-  fails, the PR blocks with no failing check of its own, and the comment is where the recovery
-  lives: **re-run the push run** (`gh run rerun <id> --failed`). Its fresh results land on the same
-  commit.
+- **The release PR.** `start-release` pushes `release/vX.Y.Z` **and** opens the release PR at the same
+  commit. The push run must run everything, because only it can publish; the PR run only gates the
+  merge. The required checks on `main` are satisfied by the push run's results, which carry the same
+  check names on the same commit. It yields only to a push run that can still report green: one
+  already **canceled or failed** keeps the matrix in the PR run.
+- **The main push.** Merging the release PR pushes `main`, whose tree is byte-identical to the
+  release-branch tree that just went green (`start-release` merges main in first). The push to main
+  yields to that release-branch run: about 46 minutes per release. It fails safe: a non-merge push,
+  a merge that changed the tree, or no green release-branch run keeps the full matrix.
 
-**Escape hatch:** repo variable `RELEASE_PR_FULL_MATRIX=true`, then re-run the PR's CI run, forces
-the full matrix in the PR run. Unset it afterwards.
+**Quality never yields.** SonarScanner runs only on a pull request or on `main`, so the release PR's
+Quality and the main push's Quality are the only analyses those trees get (the release-branch push
+run's Quality builds and checks coverage but does not scan). Each one takes its **coverage from the
+run it yielded to** (`coverage-run-id`), waiting for that run's suites, because its own run
+produces none.
+
+Each release-PR yield posts one **sticky PR comment** naming the push run. If that run is later
+canceled or fails, the PR blocks with no failing check of its own, and the comment is where the
+recovery lives: **re-run the push run** (`gh run rerun <id> --failed`). Its fresh results land on
+the same commit.
+
+**Escape hatches:** repo variable `RELEASE_PR_FULL_MATRIX=true` (then re-run the PR's CI run) forces
+the full matrix in a release PR run; `MAIN_PUSH_FULL_MATRIX=true` does the same for a main push.
+Unset them afterwards.
 
 ---
 
