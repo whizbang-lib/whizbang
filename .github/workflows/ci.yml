@@ -1083,36 +1083,84 @@ jobs:
   # GUARD: a release branch with an OPEN PR into main publishes on MERGE (release.yml). The
   # release-guard job below skips this push-publish in that case, so a push to the release branch
   # (a conflict fix, a stabilization commit) never competes with the merge for the approval gate
-  # or attempts a duplicate version+tag. This path then serves standalone (no-PR) release branches
-  # — e.g. a direct hotfix that publishes without a main PR.
+  # or attempts a duplicate version+tag.
+  # With NO open PR, the guard classifies the branch by LINE (docs/RELEASING.md → "Hotfixes"):
+  #   current line (version above the highest stable tag) — must reach main AND develop, so the
+  #     guard opens the release PR into main instead of publishing here; the merge then publishes
+  #     through release.yml and sync-develop brings it back, exactly like a release cut.
+  #   older line (version at or below the highest stable tag) — must NOT reach main (it would
+  #     regress main to an older release), so it publishes here and release-sync-develop opens a
+  #     develop-only back-merge PR. Without that PR the fix would exist only on its own branch and
+  #     the next cut from develop would silently ship without it.
   # ============================================================================
 
   release-guard:
     name: Release Publish Guard
+    needs: [version]
+    # Not on the branch-creation push: that is the base cut with no changes yet, and start-release
+    # opens its own PR seconds after pushing — a guard-opened PR could win that race and break it.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
     outputs:
       should_publish: ${{ steps.check.outputs.should_publish }}
+      line: ${{ steps.check.outputs.line }}
     steps:
-      - name: Skip if an open release PR to main exists (the merge will publish)
+      - name: Classify the release branch and route its publish
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          # RELEASE_PAT opens the PR so its CI runs (a GITHUB_TOKEN-created PR sits in
+          # action_required and never reports its required checks).
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.semver }}
         run: |
           # If this release branch has an OPEN PR into main, the canonical publish happens on
           # merge (release.yml); publishing here too would compete for the nuget-publish approval
-          # gate and attempt a duplicate version+tag. Only publish from a push when there is NO
-          # such PR (e.g. a standalone hotfix branch).
-          PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --base main --state open --json number --jq '.[0].number // ""')
+          # gate and attempt a duplicate version+tag.
+          open_pr() { gh pr list --repo "$REPO" --head "$BRANCH" --base main --state open --json number --jq '.[0].number // ""'; }
+          PR=$(open_pr)
           if [ -n "$PR" ]; then
             echo "Open release PR to main (#$PR) — the merge will publish. Skipping release-branch publish."
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            { echo "should_publish=false"; echo "line=current"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Highest STABLE tag in the repo. A prerelease never counts: a line is only "older" once
+          # something above it has actually shipped stable.
+          # Captured separately so a failed lookup aborts (-e) instead of reading as "no tags".
+          TAG_REFS=$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v" --jq '.[].ref')
+          HIGHEST=$(sed -n 's#^refs/tags/v\([0-9]*\.[0-9]*\.[0-9]*\)$#\1#p' <<< "$TAG_REFS" | sort -V | tail -1)
+          if [ -z "$HIGHEST" ]; then
+            echo "::error::No stable vX.Y.Z tag found — cannot tell a current-line hotfix from an older-line patch."
+            exit 1
+          fi
+          CORE="${VERSION%%-*}"
+          if [ "$(printf '%s\n%s\n' "$HIGHEST" "$CORE" | sort -V | tail -1)" = "$HIGHEST" ]; then
+            LINE=older      # at or below something already shipped stable
           else
-            echo "No open release PR to main — publishing from the release-branch push."
+            LINE=current
+          fi
+          echo "Version $VERSION vs highest stable v${HIGHEST} → $LINE line"
+          echo "line=$LINE" >> "$GITHUB_OUTPUT"
+
+          if [ "$LINE" = "current" ]; then
+            # Route through main like every release: the merge publishes (release.yml) and
+            # sync-develop carries it back. The title IS the version string (release.yml parses it).
+            GH_TOKEN="$RELEASE_PAT" gh pr create --repo "$REPO" --head "$BRANCH" --base main \
+              --title "chore(release): v${VERSION}" \
+              --body "Current-line hotfix: v${VERSION} is above the highest stable release (v${HIGHEST}), so it ships through main — merging publishes it and syncs develop. Opened automatically because the branch was pushed without a PR." \
+              || [ -n "$(open_pr)" ] || {
+              echo "::error::Could not open the release PR into main for $BRANCH. Open it by hand with title 'chore(release): v${VERSION}'."
+              exit 1
+            }
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            echo "### Current-line hotfix → release PR into main opened; the merge publishes." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No open release PR to main and an older line — publishing from the release-branch push; develop gets a back-merge PR."
             echo "should_publish=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -1130,6 +1178,23 @@ jobs:
       ref: ${{ github.sha }}
       artifact-name: nuget-packages-${{ github.run_id }}
     secrets: inherit
+
+  # An older-line patch never reaches main, but develop must still get the fix or the next cut from
+  # develop ships without it. Same mechanism release.yml uses after a main merge.
+  release-sync-develop:
+    name: Sync Hotfix to Develop
+    needs: [version, release-guard, release-publish]
+    if: needs.release-publish.result == 'success' && needs.release-guard.outputs.line == 'older'
+    permissions:
+      contents: write        # push the throwaway sync branch (sync/*, not protected)
+      pull-requests: write    # open the review PR into protected develop
+    uses: ./.github/workflows/reusable-sync-develop.yml
+    with:
+      source-ref: ${{ github.sha }}
+      source-label: hotfix
+      version: ${{ needs.version.outputs.semver }}
+    secrets:
+      RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
 
   # ============================================================================
   # Notifications - Send push notifications on build completion
