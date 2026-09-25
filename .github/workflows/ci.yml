@@ -5,10 +5,16 @@ name: CI
 # not: it starts seconds AFTER the merge has already landed, and canceling it cannot undo
 # anything, it only abandons whatever the run had left to do (for develop, that is the prerelease
 # publish). Saying which event this is, up front, is the difference.
+#
+# A release branch is the exception that proves it. Its push run is the release CUT: the branch is
+# created before anything merges, and that run is the one the release pull request is gated on and
+# the only one that publishes. Calling it post-merge says the opposite of what is true, on the one
+# branch where somebody reading the list is deciding whether it is safe to merge.
 run-name: >-
   CI ${{ github.event_name == 'pull_request' && format('· PR #{0} · {1}', github.event.pull_request.number, github.head_ref)
       || github.event_name == 'merge_group' && '· merge queue'
       || github.event_name == 'workflow_dispatch' && format('· manual · {0}', github.ref_name)
+      || startsWith(github.ref, 'refs/heads/release/v') && format('· release cut · {0}', github.ref_name)
       || format('· post-merge · {0}', github.ref_name) }}
 
 on:
