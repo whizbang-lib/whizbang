@@ -1015,7 +1015,9 @@ jobs:
         with:
           name: nuget-packages-${{ github.run_id }}
           path: ./packages/*.nupkg
-          retention-days: 3
+          # A release-branch run's packages are what release.yml promotes on merge (it fails closed
+          # rather than rebuild), so they live long enough to cover a release PR held over a weekend.
+          retention-days: ${{ startsWith(github.ref, 'refs/heads/release/v') && 7 || 3 }}
 
   version-comment:
     name: Comment Version on PR

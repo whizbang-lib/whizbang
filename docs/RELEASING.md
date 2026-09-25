@@ -255,11 +255,11 @@ afterwards.
 
 ```mermaid
 sequenceDiagram
-  participant CI as CI (pack)
+  participant CI as CI (release-branch run)
   participant Env as nuget-publish env
   participant You as Required reviewer
   participant Nuget as nuget.org
-  CI->>CI: build + pack (tested bits)
+  CI->>CI: pack + full matrix (the bits that ship)
   CI->>Env: request deployment
   Env-->>You: "approval needed" (+ Pushover)
   You->>Env: Approve
@@ -399,7 +399,8 @@ below), writes the version into `Directory.Build.props`, and opens a PR to `main
 `chore(release): vX.Y.Z[-label]`. Then:
 
 1. **Review the PR.** The version-preview comment now shows the exact version that will publish.
-2. **Merge it.** `release.yml` runs: creates the tag, packs, and requests the `nuget-publish` approval.
+2. **Merge it.** `release.yml` runs: finds the release-branch run's **tested packages**, creates the
+   tag, and requests the `nuget-publish` approval. See [Releases promote the tested packages](#releases-promote-the-tested-packages).
 3. **Approve** in the Actions UI → packages publish to nuget.org.
 
 > **Why start-release merges main first.** `main` carries the *previous* release's version in
@@ -409,6 +410,25 @@ below), writes the version into `Directory.Build.props`, and opens a PR to `main
 > expected conflict (the version is re-stamped immediately after), so the PR to `main` opens clean —
 > without ever touching develop's placeholder. Any *other* merge conflict is unexpected and fails the
 > run loudly rather than being silently dropped.
+
+### Releases promote the tested packages
+
+`release.yml` never rebuilds. The release-branch push run already packed every package at the release
+version (from the branch name) and ran the full matrix against exactly those bytes, so the release
+publishes that run's `nuget-packages-<run>` artifact as-is. `locate-tested-packages` runs **before
+anything is tagged** and fails closed if any of these does not hold:
+
+- HEAD's tree is byte-identical to the tested release-branch tree (true for every release merge,
+  because `start-release` merges main into the release branch first);
+- that release-branch run is green;
+- its package artifact still exists (kept 7 days on a `release/v*` run).
+
+Each package must then carry exactly the release version, so a PR title that disagrees with its
+branch name fails instead of shipping a mismatch. A failure leaves no tag and no draft release behind.
+Recovery, named in the error: re-run the release-branch CI run (all jobs), which rebuilds and
+re-tests the packages, then
+`gh workflow run release.yml --ref main -f version=X.Y.Z -f release_type=auto -f dry_run=false`.
+It never falls back to a rebuild: that would publish bytes no suite ran against.
 
 ### Prerelease vs final
 

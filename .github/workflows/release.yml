@@ -324,12 +324,84 @@ jobs:
         run: echo "Release v$VERSION approved"
 
   # ============================================================================
+  # Locate the tested packages - BEFORE anything is tagged
+  #
+  # A release publishes the packages its tests ran against: the release-branch push run's own
+  # pack artifact, promoted as-is. Nothing is rebuilt on main. This job proves those packages are
+  # still available and that the tree they were built from is the tree being tagged, and it runs
+  # before `release` so that a failure leaves no tag and no draft release behind. It fails closed:
+  # quietly rebuilding would publish bytes no suite ran against. Recovery is named in the error.
+  # ============================================================================
+
+  locate-tested-packages:
+    name: Locate Tested Packages
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read   # read the release-branch run and its artifacts
+    outputs:
+      run-id: ${{ steps.find.outputs.run-id }}
+      artifact-name: ${{ steps.find.outputs.artifact-name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2   # the merge commit and its release-branch parent
+
+      - name: Find the release-branch run that tested this tree
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.check-release.outputs.version }}
+          # On a release PR merge the tested commit is the PR head. On a recovery dispatch (from
+          # main) it is the merge commit's release-branch parent.
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          SRC="${PR_HEAD:-$(git rev-parse --verify --quiet HEAD^2 || true)}"
+          if [ -z "$SRC" ]; then
+            echo "::error::Cannot find the release-branch commit for v$VERSION: HEAD is not a merge of a release branch."
+            exit 1
+          fi
+          git fetch --quiet --depth=1 origin "$SRC"
+          # Provenance: the tag goes on HEAD, so HEAD must be the exact tree the suites tested.
+          # start-release merges main into the release branch first, so a release merge adds nothing.
+          if [ "$(git rev-parse "HEAD^{tree}")" != "$(git rev-parse "$SRC^{tree}")" ]; then
+            echo "::error::The tree being tagged differs from the tested release-branch tree ($SRC). Publishing would ship bytes no suite ran against."
+            exit 1
+          fi
+
+          # Addressed by workflow PATH, not by name: ci.yml sets a run-name, so no run is named "CI".
+          RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SRC&event=push&per_page=10" \
+            --jq '[.workflow_runs[] | select(.head_branch | startswith("release/v"))] | first // {} | {id: (.id // ""), conclusion: (.conclusion // ""), url: (.html_url // "")}')
+          RUN_ID=$(jq -r .id <<< "$RUN")
+          CONCLUSION=$(jq -r .conclusion <<< "$RUN")
+          RECOVER="Re-run the release-branch CI run for $SRC (all jobs), which rebuilds and re-tests its packages, then re-run this workflow: gh workflow run release.yml --ref main -f version=$VERSION -f release_type=auto -f dry_run=false"
+          if [ -z "$RUN_ID" ] || [ "$CONCLUSION" != success ]; then
+            echo "::error::No green release-branch CI run for $SRC (found: ${RUN_ID:-none} ${CONCLUSION:-}). $RECOVER"
+            exit 1
+          fi
+          ARTIFACT="nuget-packages-$RUN_ID"
+          LIVE=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?name=$ARTIFACT" --jq '[.artifacts[] | select(.expired | not)] | length')
+          if [ "$LIVE" -lt 1 ]; then
+            echo "::error::The tested packages ($ARTIFACT on run $RUN_ID) have expired or were never uploaded. $RECOVER"
+            exit 1
+          fi
+          echo "Promoting $ARTIFACT from release-branch run $RUN_ID ($SRC)."
+          { echo "run-id=$RUN_ID"; echo "artifact-name=$ARTIFACT"; } >> "$GITHUB_OUTPUT"
+          echo "### Promoting the tested packages from [run $RUN_ID]($(jq -r .url <<< "$RUN")), commit \`$SRC\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ============================================================================
   # Release - Create tag and GitHub Release
   # ============================================================================
 
   release:
     name: Create Release
-    needs: [check-release, approve]
+    needs: [check-release, approve, locate-tested-packages]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -426,49 +498,30 @@ jobs:
   # ============================================================================
 
   build-and-pack:
-    name: Build and Pack
-    needs: [check-release, release]
+    # Promotes, does not build: the packages are the release-branch run's tested artifact (see
+    # locate-tested-packages). The job id is kept so publish and upload-release-assets are unchanged.
+    name: Promote Tested Packages
+    needs: [check-release, release, locate-tested-packages]
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read   # download another run's artifact
     timeout-minutes: 15
     outputs:
       artifact-name: nuget-packages-${{ github.run_id }}
 
     steps:
-      - name: Checkout tag
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download the tested packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          ref: v${{ needs.check-release.outputs.version }}
-
-      - name: Setup .NET
-        uses: ./.github/actions/setup-dotnet-retry
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Cache NuGet packages
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
-          restore-keys: ${{ runner.os }}-nuget-
-
-      - name: Restore dependencies
-        run: dotnet restore
-
-      - name: Build
-        env:
-          VERSION: ${{ needs.check-release.outputs.version }}
-        run: dotnet build --configuration Release --no-restore -p:Version="$VERSION"
-
-      - name: Pack NuGet packages
-        env:
-          VERSION: ${{ needs.check-release.outputs.version }}
-        run: |
-          # NU5017 false positive for analyzer packages in .NET 10 SDK
-          dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
+          name: ${{ needs.locate-tested-packages.outputs.artifact-name }}
+          run-id: ${{ needs.locate-tested-packages.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: ./packages
 
       - name: Verify expected packages
+        env:
+          VERSION: ${{ needs.check-release.outputs.version }}
         run: |
           # NOTE: Internal packages excluded (IsPackable=false):
           #   - Whizbang.Generators.Shared (ILMerged into generator packages)
@@ -506,8 +559,10 @@ jobs:
           MISSING=0
           for pkg in "${EXPECTED_PACKAGES[@]}"; do
             # compgen -G: glob-match test — [ -f glob ] breaks when a glob matches more than one file
-            if ! compgen -G "./packages/${pkg}.*.nupkg" > /dev/null; then
-              echo "ERROR: ${pkg} package not created"
+            # Exactly the release version: the tested packages carry the branch-name version, so a
+            # PR title that disagrees with its branch name fails here instead of shipping a mismatch.
+            if [ ! -f "./packages/${pkg}.${VERSION}.nupkg" ]; then
+              echo "ERROR: ${pkg} ${VERSION} package not found"
               MISSING=$((MISSING + 1))
             else
               echo "✓ ${pkg}"
