@@ -31,12 +31,17 @@ database names, or raw workload counts that identify a consumer's system).
 
 ## Releasing & Versioning
 
-📖 **Read [`docs/RELEASING.md`](docs/RELEASING.md)** before cutting a release or touching any release
-workflow (`reusable-version.yml`, `release.yml`, `start-release.yml`, `ci.yml` publish jobs,
-`nuget-*.yml`). It documents — with diagrams — the gitflow branching model, the three publish channels,
-how the version is decided and kept identical across **preview → publish → stamp → tag**, the tag-driven
-GitVersion sync (highest repo-wide tag), and the `nuget-publish` approval gate. `Directory.Build.props`
-is a **local placeholder**, never the source of truth.
+**Invoke the `release` skill** (`.claude/skills/release/SKILL.md`, also `/release`) for anything that
+publishes, versions or tags: shipping a change, cutting a release, a beta or rc, shipping stable, a
+hotfix, a stuck release run, or "when will this be on NuGet?". It maps the situation to the right
+flow and its recovery, so nobody has to explain the process each time.
+
+📖 **[`docs/RELEASING.md`](docs/RELEASING.md)** is the source of truth behind it: the supported flows
+(alpha on develop, beta/rc from a release branch, stable on main, hotfixes by line), the recovery
+table, how to read a run's stage and phase names, how the version is decided and kept identical
+across **preview → publish → stamp → tag**, and the `nuget-publish` approval gate. Any change to a
+release workflow, the version logic or the branch rules updates that document and the skill in the
+same PR. `Directory.Build.props` is a **local placeholder**, never the source of truth.
 
 ---
 

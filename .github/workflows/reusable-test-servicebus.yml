@@ -20,7 +20,7 @@ on:
 
 jobs:
   servicebus-tests:
-    name: Azure Service Bus Integration Tests
+    name: Run suite
     runs-on: ubuntu-latest
     timeout-minutes: 45
 

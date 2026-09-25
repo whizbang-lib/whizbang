@@ -10,7 +10,7 @@ on:
 
 jobs:
   unit-tests:
-    name: Unit Tests
+    name: Run suite
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

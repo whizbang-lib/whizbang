@@ -160,7 +160,7 @@ jobs:
   # ============================================================================
 
   notify-deployed:
-    name: Notify Deployed
+    name: Notify deployed
     needs: [push]
     if: success() && vars.PUSHOVER_ENABLED == 'true'
     continue-on-error: true
@@ -194,7 +194,7 @@ jobs:
           url-title: "View on NuGet"
 
   notify-deploy-failed:
-    name: Notify Deploy Failed
+    name: Notify deploy failed
     needs: [push]
     if: failure() && vars.PUSHOVER_ENABLED == 'true'
     continue-on-error: true
