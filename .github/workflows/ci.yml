@@ -205,6 +205,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: read
+      pull-requests: write   # the sticky comment naming the run the matrix yielded to
     outputs:
       skip: ${{ steps.check.outputs.skip }}
     steps:
@@ -214,21 +215,47 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           # Addressed by workflow PATH, not by name: this workflow sets a run-name, so a run of
           # this file is never named plain "CI" and filtering on .name matches nothing — the same
           # trap queue-validated documents above.
-          RUN_ID=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=10" \
-            --jq '.workflow_runs[0].id // ""')
-          if [ -n "$RUN_ID" ]; then
+          RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=10" \
+            --jq '.workflow_runs[0] // {} | {id: (.id // ""), status: (.status // ""), conclusion: (.conclusion // "")}')
+          RUN_ID=$(jq -r .id <<< "$RUN")
+          CONCLUSION=$(jq -r .conclusion <<< "$RUN")
+          # Yield only to a push run that can still report green. One already canceled or failed
+          # would leave the required checks unreported, blocking the PR with nothing to point at.
+          if [ -n "$RUN_ID" ] && [ "$CONCLUSION" != cancelled ] && [ "$CONCLUSION" != failure ]; then
             echo "Push run $RUN_ID covers $SHA — the PR run yields the matrix to it."
             echo "Release-PR duplicate: **true** -- push run $RUN_ID covers $SHA" >> "$GITHUB_STEP_SUMMARY"
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            # Make the yield visible FROM THE PR: the required checks now come only from that run,
+            # so if it is canceled or fails the PR blocks with no failing check of its own. One
+            # sticky comment, updated in place on every PR run.
+            MARKER='<!-- release-pr-yield -->'
+            URL="https://github.com/$REPO/actions/runs/$RUN_ID"
+            BODY=$(cat <<EOF
+          $MARKER
+          **CI for this release PR runs in the release-branch push run [$RUN_ID]($URL)** for commit \`$SHA\`, not in this PR's own run. Its results are the required checks this PR merges on.
+
+          If that run is canceled or fails, this PR blocks with no failing check to point at. To recover:
+          - **Re-run it:** \`gh run rerun $RUN_ID --failed\` (or re-run its jobs in the Actions UI). Its fresh results land on this same commit.
+          - **Or take the matrix back:** set the repository variable \`RELEASE_PR_FULL_MATRIX=true\`, re-run this PR's CI run, then unset the variable.
+          EOF
+            )
+            EXISTING=$(gh api "repos/$REPO/issues/$PR/comments?per_page=100" \
+              --jq "[.[] | select(.body | startswith(\"$MARKER\"))][0].id // \"\"")
+            if [ -n "$EXISTING" ]; then
+              gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY" > /dev/null
+            else
+              gh api "repos/$REPO/issues/$PR/comments" -f body="$BODY" > /dev/null
+            fi
           else
-            # No push run means nothing else is testing this commit, so the PR run does it.
-            echo "No push run for $SHA — the PR run keeps the matrix."
-            echo "Release-PR duplicate: **false** -- no push run for $SHA" >> "$GITHUB_STEP_SUMMARY"
+            # No live push run means nothing else is testing this commit, so the PR run does it.
+            echo "No live push run for $SHA (found: ${RUN_ID:-none} ${CONCLUSION}) — the PR run keeps the matrix."
+            echo "Release-PR duplicate: **false** -- no live push run for $SHA (found: ${RUN_ID:-none} ${CONCLUSION})" >> "$GITHUB_STEP_SUMMARY"
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
