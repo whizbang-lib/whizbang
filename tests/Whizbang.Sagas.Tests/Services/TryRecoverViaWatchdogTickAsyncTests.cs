@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -385,6 +386,45 @@ public class TryRecoverViaWatchdogTickAsyncTests {
     await Assert.That(emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Any()).IsFalse();
     await Assert.That(emitter.Published.OfType<SagaCompletionAbandonedEvent>().Any()).IsFalse();
     await Assert.That(emitter.Published.OfType<TestCompletedEvent>().Count()).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// A tick delivered to the framework's router reaches a hand-written saga service and drives it
+  /// through the same recovery lifecycle a generated receiver would.
+  /// </summary>
+  /// <remarks>
+  /// This is the path that was missing. A hand-written saga armed its watchdog, the tick was
+  /// delivered on time, and with no receiver it was discarded — so the recovery below never ran and a
+  /// stranded saga was never completed, re-armed or abandoned.
+  /// </remarks>
+  [Test]
+  public async Task RoutedTick_ReachesAHandWrittenSagaService_AndReArmsAsync() {
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(
+        agg: new SagaItemAggregate(Total: 3, Completed: 1, Failed: 0, InProgress: 2),
+        items: []),
+      terminalReader: new FakeTerminalReader(),
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 3 });
+    var services = new ServiceCollection();
+    services.AddScoped<ISagaWatchdogParticipant>(_ => svc);
+    await using var sp = services.BuildServiceProvider();
+    var router = new SagaWatchdogTickRouter(sp.GetRequiredService<IServiceScopeFactory>());
+
+    await Assert.That(((ISagaWatchdogParticipant)svc).SagaName).IsEqualTo(SAGA_NAME)
+      .Because("the router addresses ticks by the name the service armed them with");
+
+    await router.HandleAsync(new SagaCompletionWatchdogTickEvent {
+      StreamId = _sagaId,
+      SagaName = SAGA_NAME,
+      EntityId = _entityId,
+      RescheduleCount = 0,
+    }, CancellationToken.None);
+
+    var reArmed = emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Single();
+    await Assert.That(reArmed.RescheduleCount).IsEqualTo(1)
+      .Because("a saga still in progress re-arms rather than being left without a next wake-up");
+    await Assert.That(emitter.LastScheduledFor).IsNotNull()
+      .Because("the re-arm is scheduled for a future time, not fired at once");
   }
 
   // ── Builder + test doubles ─────────────────────────────────────────────

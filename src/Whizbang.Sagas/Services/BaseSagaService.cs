@@ -36,6 +36,7 @@ namespace Whizbang.Sagas.Services;
 /// </para>
 /// </remarks>
 public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStarted, TItemCompleted, TItemFailed, TCompleted, TReset, THookStarted, THookCompleted>
+  : ISagaWatchdogParticipant
   where TInit : class, ISagaInitiatedEvent
   where TItemsDispatched : class, ISagaItemsDispatchedEvent
   where TItemStarted : class, ISagaItemStartedEvent
@@ -79,6 +80,13 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
 
   /// <summary>The saga name this service emits events for — matches the value supplied to <c>[Saga("Name")]</c>.</summary>
   protected string SagaName => _sagaName;
+
+  /// <summary>
+  /// The name the framework's watchdog router addresses this saga's ticks to. Implemented
+  /// explicitly so it neither shadows <see cref="SagaName"/> nor the <c>SagaName</c> constant that
+  /// <c>[Saga]</c>-generated receptors bind to.
+  /// </summary>
+  string ISagaWatchdogParticipant.SagaName => _sagaName;
 
   /// <summary>
   /// Backwards-compatible constructor that wires only the emitter + logger.
