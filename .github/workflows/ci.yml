@@ -139,48 +139,86 @@ jobs:
   # ============================================================================
 
   queue-validated:
-    name: Plan · Reuse the merge queue's results
+    name: Plan · Reuse already-tested results
+    # Two pushes carry a tree another run already tested, and skip the six suites and Quality here:
+    #   DEVELOP: the merge queue fast-forwards develop to the exact SHA its run just validated.
+    #   RELEASE CUT: release/vX.Y.Z is the develop commit it was cut from, plus main's version file
+    #     and the new version, all in Directory.Build.props, which the build does not read (the
+    #     version is stamped from the branch name). Reused only when that file is the ONLY
+    #     difference; a stabilization fix, or a hotfix cut from a tag, runs the full matrix.
+    # Either way the evidence comes from find-tested-run (the queue run, or on a fast-forward the PR
+    # run), and validated is true only when both its coverage and its build manifest are still
+    # available. Anything less runs the full matrix: this job never fails the run.
     if: >-
-      github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
-      vars.PUSH_RUN_FULL_MATRIX != 'true'
+      github.event_name == 'push' &&
+      ((github.ref == 'refs/heads/develop' && vars.PUSH_RUN_FULL_MATRIX != 'true') ||
+       (startsWith(github.ref, 'refs/heads/release/v') && vars.RELEASE_CUT_FULL_MATRIX != 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read   # the resolver action
       actions: read
     outputs:
-      validated: ${{ steps.check.outputs.validated }}
-      queue-run-id: ${{ steps.check.outputs.queue_run_id }}
+      validated: ${{ steps.decide.outputs.validated }}
+      reports-run-id: ${{ steps.find.outputs.reports-run-id }}
+      manifest-run-id: ${{ steps.find.outputs.manifest-run-id }}
     steps:
-      - name: Look for a successful merge_group CI run on this exact SHA
-        id: check
+      - name: Which tested develop commit does this push stand on?
+        id: target
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
         run: |
-          set -euo pipefail
-          # A run's conclusion is success only when every job succeeded or was
-          # deliberately skipped — on queue refs that includes the full matrix AND the
-          # quality gate, which run unconditionally there. Same SHA = same tree = same
-          # workflow files, so that green fully validated these exact bytes.
-          # The WORKFLOW endpoint, not the runs endpoint filtered by name: a run's .name is its
-          # run-name, and this workflow sets one (see run-name above), so a run of this file is
-          # named "CI - merge queue" or "CI - PR #N - branch" and never plain "CI". Filtering on
-          # .name silently matched nothing, which left this gate answering "not validated" on
-          # every push and the whole matrix running a second time after the queue had already
-          # run it. Addressing ci.yml by path cannot drift with the run-name.
-          RUN_ID=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=merge_group&status=success&per_page=10" \
-            --jq '.workflow_runs[0].id // ""')
-          if [ -n "$RUN_ID" ]; then
-            echo "Queue run $RUN_ID validated $SHA — skipping the redundant push matrix."
-            echo "Queue-validated: **true** -- run $RUN_ID already validated $SHA" >> "$GITHUB_STEP_SUMMARY"
+          set -uo pipefail
+          none() { echo "Full matrix: $1"; echo "Reuse: **false** -- $1" >> "$GITHUB_STEP_SUMMARY"; echo "sha=" >> "$GITHUB_OUTPUT"; exit 0; }
+          if [ "$REF" = refs/heads/develop ]; then
+            echo "sha=$SHA" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # A release cut: the compare endpoint gives the merge base with develop (the commit the
+          # branch was cut from) and every file that differs from it.
+          CMP=$(gh api "repos/$REPO/compare/develop...$SHA" 2>/dev/null) || none "cannot compare with develop"
+          BASE=$(jq -r '.merge_base_commit.sha // ""' <<< "$CMP")
+          OTHER=$(jq -r '[.files[].filename | select(. != "Directory.Build.props")] | join(", ")' <<< "$CMP")
+          [ -n "$BASE" ] || none "no merge base with develop"
+          [ -z "$OTHER" ] || none "the branch changes more than Directory.Build.props relative to develop ($OTHER)"
+          # The evidence is the run that TESTED $BASE (its queue run, or PR run on a fast-forward),
+          # which find-tested-run requires next. Its develop push run adds nothing: it reused that
+          # same evidence, and may have been canceled by a later push without anything being wrong.
+          echo "Release cut from develop $BASE; only Directory.Build.props differs."
+          echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the resolver action
+        if: steps.target.outputs.sha != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+
+      - name: Find the run that tested it
+        id: find
+        if: steps.target.outputs.sha != ''
+        uses: ./.github/actions/find-tested-run
+        with:
+          sha: ${{ steps.target.outputs.sha }}
+          token: ${{ github.token }}
+
+      - name: Decide
+        id: decide
+        env:
+          TARGET: ${{ steps.target.outputs.sha }}
+          REPORTS: ${{ steps.find.outputs.reports-run-id }}
+          MANIFEST: ${{ steps.find.outputs.manifest-run-id }}
+          SUMMARY: ${{ steps.find.outputs.summary }}
+        run: |
+          if [ -n "$TARGET" ] && [ -n "$REPORTS" ] && [ -n "$MANIFEST" ]; then
+            echo "Reusing the tests of $TARGET: $SUMMARY"
+            echo "Reuse: **true** -- $TARGET ($SUMMARY)" >> "$GITHUB_STEP_SUMMARY"
             echo "validated=true" >> "$GITHUB_OUTPUT"
-            echo "queue_run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           else
-            echo "No successful merge_group CI run for $SHA — running the full matrix."
-            echo "Queue-validated: **false** -- no successful queue run for $SHA" >> "$GITHUB_STEP_SUMMARY"
+            [ -n "$TARGET" ] && echo "Reuse: **false** -- evidence for $TARGET incomplete ($SUMMARY)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Full matrix: ${SUMMARY:-no tested commit to reuse}"
             echo "validated=false" >> "$GITHUB_OUTPUT"
-            echo "queue_run_id=" >> "$GITHUB_OUTPUT"
           fi
 
   release-pr:
@@ -318,8 +356,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 2   # the pushed merge commit and its PR-head parent (fast-forward fallback)
 
       - name: Setup .NET
         uses: ./.github/actions/setup-dotnet-retry
@@ -330,36 +366,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          QUEUE_RUN_ID: ${{ needs.queue-validated.outputs.queue-run-id }}
+          # Resolved once by queue-validated (find-tested-run): the queue run, or on a fast-forward
+          # the PR run, whichever built this exact tree and still holds its manifest.
+          MANIFEST_RUN_ID: ${{ needs.queue-validated.outputs.manifest-run-id }}
         run: |
           set -euo pipefail
-          manifest_of() {  # $1 = run id -> id of its live determinism manifest, or ""
-            gh api "repos/$REPO/actions/runs/$1/artifacts?per_page=100" \
-              --jq '[.artifacts[] | select((.name | startswith("determinism-manifest-")) and (.expired | not))][0].id // ""'
-          }
-          ART_ID=$(manifest_of "$QUEUE_RUN_ID")
-          SOURCE="queue run $QUEUE_RUN_ID"
+          ART_ID=$(gh api "repos/$REPO/actions/runs/$MANIFEST_RUN_ID/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select((.name | startswith("determinism-manifest-")) and (.expired | not))][0].id // ""')
           if [ -z "$ART_ID" ]; then
-            # A FAST-FORWARD queue run skips its build (ff-validated): the PR run built this exact
-            # tree. Re-prove that here rather than trust the queue's verdict: this push is the queue's
-            # merge commit, whose second parent is the PR head, and the two trees must be identical.
-            PR_HEAD=$(git rev-list --parents -n 1 HEAD | awk '{print $3}')
-            if [ -z "$PR_HEAD" ] || [ "$(git rev-parse "HEAD^{tree}")" != "$(git rev-parse "$PR_HEAD^{tree}")" ]; then
-              echo "::error::Queue run $QUEUE_RUN_ID published no determinism manifest, and this push is not a fast-forward of a PR head — cannot verify the rebuild."
-              exit 1
-            fi
-            PR_RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$PR_HEAD&event=pull_request&status=success&per_page=30" \
-              --jq '[.workflow_runs[]] | sort_by(.run_started_at) | last | .id // ""')
-            ART_ID=$([ -n "$PR_RUN" ] && manifest_of "$PR_RUN" || true)
-            SOURCE="PR run $PR_RUN (fast-forward: the queue run skipped its build)"
-            if [ -z "$ART_ID" ]; then
-              echo "::error::Neither queue run $QUEUE_RUN_ID nor a green PR run for $PR_HEAD holds a live determinism manifest — cannot verify the rebuild. Set repo variable PUSH_RUN_FULL_MATRIX=true and re-run all jobs to run the full matrix instead."
-              exit 1
-            fi
+            echo "::error::Run $MANIFEST_RUN_ID no longer holds a determinism manifest (it expired after the reuse decision). Set repo variable PUSH_RUN_FULL_MATRIX=true (or RELEASE_CUT_FULL_MATRIX=true on a release branch) and re-run all jobs."
+            exit 1
           fi
-          echo "Verifying against the manifest from $SOURCE."
           gh api "repos/$REPO/actions/artifacts/$ART_ID/zip" > manifest.zip
           mkdir -p queue-manifest && unzip -o -q manifest.zip -d queue-manifest
+          echo "Verifying against the manifest from run $MANIFEST_RUN_ID."
           echo "manifest: built version '$(cat queue-manifest/version.txt)' on SDK $(cat queue-manifest/sdk.txt): $(wc -l < queue-manifest/assemblies.sha256) assemblies"
 
       # The toolchain must be EXACTLY the queue's: with a different SDK even benign
@@ -415,15 +435,11 @@ jobs:
 
   reupload-reports:
     name: Report · Republish the tested run's coverage
-    # With the suites skipped, this run would otherwise upload no coverage (the
-    # Codecov develop baseline PR comparisons rely on) and carry no TRX (the docs
-    # test-status and Codecov Test Analytics inputs). Republish the full-matrix run's
-    # artifacts in THIS run so every downstream consumer keeps working unchanged.
-    #
-    # SOURCE RUN: normally the queue run for this SHA. But on a FAST-FORWARD merge the
-    # queue run itself ff-skipped its suites (ff-validated) and produced no coverage/TRX
-    # — there the full matrix ran in the PR run, so we fall back to it (the push merge
-    # commit's second parent is the PR head). Real merges keep using the queue run.
+    # With the suites skipped, this run would otherwise carry no coverage and no TRX. Republish the
+    # tested run's (queue-validated resolved it: the queue run, or on a fast-forward the PR run) so
+    # every consumer keeps working unchanged: the Codecov baseline, Test Analytics, the docs test
+    # status, and, on a release cut, the release PR's Quality and the main push's, which read
+    # coverage from THIS run.
     needs: [queue-validated]
     if: ${{ !failure() && !cancelled() && needs.queue-validated.outputs.validated == 'true' }}
     runs-on: ubuntu-latest
@@ -432,46 +448,17 @@ jobs:
       contents: read
       actions: read
     steps:
-      - name: Checkout (for the merge commit's PR-head parent)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 2
-
-      - name: Download the full-matrix run's coverage and TRX artifacts
+      - name: Download the tested run's coverage and TRX artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          QUEUE_RUN_ID: ${{ needs.queue-validated.outputs.queue-run-id }}
+          REPORTS_RUN_ID: ${{ needs.queue-validated.outputs.reports-run-id }}
         run: |
           set -euo pipefail
-
-          list_reports() {  # $1 = run id → writes "id name" lines for coverage-*/trx-*
-            gh api "repos/$REPO/actions/runs/$1/artifacts?per_page=100" \
-              --jq '.artifacts[] | select((.name | startswith("coverage-")) or (.name | startswith("trx-"))) | "\(.id) \(.name)"'
-          }
-
-          # Prefer the queue run. If it ff-skipped its suites (fast-forward), it has no
-          # coverage — fall back to the PR run that actually ran the full matrix, found via
-          # the merge commit's second parent (the PR head).
-          list_reports "$QUEUE_RUN_ID" > artifacts.list || true
-          SOURCE="queue run $QUEUE_RUN_ID"
+          gh api "repos/$REPO/actions/runs/$REPORTS_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired | not) | select((.name | startswith("coverage-")) or (.name | startswith("trx-"))) | "\(.id) \(.name)"' > artifacts.list
           if ! grep -q " coverage-" artifacts.list; then
-            PR_HEAD=$(git rev-list --parents -n 1 HEAD | awk '{print $3}')
-            if [ -n "${PR_HEAD:-}" ]; then
-              # Addressed by path rather than by name: see the note in queue-validated.
-              PR_RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$PR_HEAD&event=pull_request&per_page=30" \
-                --jq '[.workflow_runs[] | select(.status == "completed")]
-                      | sort_by(.run_started_at) | last | .id // ""' 2>/dev/null || echo "")
-              if [ -n "$PR_RUN" ]; then
-                echo "Queue run had no coverage (fast-forward ff-skip) — falling back to PR run $PR_RUN for $PR_HEAD."
-                list_reports "$PR_RUN" > artifacts.list || true
-                SOURCE="PR run $PR_RUN"
-              fi
-            fi
-          fi
-
-          if ! grep -q " coverage-" artifacts.list; then
-            echo "::error::No coverage artifacts on the queue run OR the PR run — Codecov's develop baseline would go dark."
+            echo "::error::Run $REPORTS_RUN_ID no longer holds coverage (it expired after the reuse decision). Set PUSH_RUN_FULL_MATRIX=true (or RELEASE_CUT_FULL_MATRIX=true) and re-run all jobs."
             exit 1
           fi
           mkdir -p coverage trx
@@ -483,7 +470,7 @@ jobs:
             esac
             rm art.zip
           done < artifacts.list
-          echo "republishing $(wc -l < artifacts.list) artifacts from $SOURCE: $(find coverage -name '*.cobertura.xml' | wc -l) coverage files, $(find trx -name '*.trx' | wc -l) TRX files"
+          echo "republishing $(wc -l < artifacts.list) artifacts from run $REPORTS_RUN_ID: $(find coverage -name '*.cobertura.xml' | wc -l) coverage files, $(find trx -name '*.trx' | wc -l) TRX files"
 
       # Same upload shape as the quality job's step, so Codecov's develop baseline is
       # indistinguishable from a full-matrix push run.
@@ -506,6 +493,16 @@ jobs:
           path: trx/
           retention-days: 1
           if-no-files-found: warn
+
+      # A later run reads coverage from this one: the release PR's Quality and the main push's
+      # (coverage-run-id) on a release cut. One artifact; Quality downloads coverage-* and merges.
+      - name: Republish coverage for runs that read it from here
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-republished
+          path: coverage/
+          retention-days: ${{ startsWith(github.ref, 'refs/heads/release/v') && 7 || 1 }}
+          if-no-files-found: error
 
   # ============================================================================
   # Fast-forward queue-skip optimization (companion to queue-validated above)

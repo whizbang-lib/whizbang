@@ -19,7 +19,7 @@ it: the rules there are enforced by the workflows, and a step that fights them f
 | Situation | Flow | Do |
 |---|---|---|
 | A change is merged, or about to be, and someone wants it "out" | F1 | Nothing to cut. Develop publishes `0.Y.0-alpha.N` on every merge, but **only the changed packages**. If a consumer needs a complete, installable set, that is a beta (F2 + F3). |
-| "Cut a release" / "release what's on develop" | F2 | `gh workflow run start-release.yml --ref develop -f release_type=auto` |
+| "Cut a release" / "release what's on develop" | F2 | `gh workflow run start-release.yml --ref develop -f release_type=auto`. A clean cut reuses the tested develop commit's results (no suites; ready in about 15 minutes). If its verify-rebuild goes red, the recovery is `RELEASE_CUT_FULL_MATRIX=true` and a re-run. |
 | "Give consumers something to test" / beta / rc / release candidate | F3 | Needs an open release branch (F2 first if none). `gh workflow run release-prerelease.yml --ref release/vX.Y.Z -f label=beta` (or `rc`) |
 | A bug found during the release | F4 | Fix on `fix/<name>` cut from `release/vX.Y.Z`, PR **into `release/vX.Y.Z`**. After it merges and the branch goes green, publish the next beta/rc (F3). |
 | "Ship it" / stable | F5 | Merge the release PR **with a merge commit**: `gh pr merge <n> --merge` (or `--auto --merge`). Then the `nuget-publish` approval. |
