@@ -1502,7 +1502,7 @@ public sealed class OutboxDrainWorkerOptions {
   /// <para>
   /// Introduced in Slice 5a of release/v0.647.0-alpha.1 after a consumer's production
   /// stuck-row pattern was traced to the consumer's IMessageSecurityContextProvider
-  /// hanging on a test-pattern tenant id (<c>c0ffee00-cafe-f00d-face-feed12345678</c>).
+  /// hanging on the tenant id carried by the envelope.
   /// Without this timeout, the publish path waits on the security context
   /// establishment indefinitely; <c>claim_orphaned_outbox</c> keeps re-leasing
   /// the row, attempts increments forever, and no forensic signal surfaces.

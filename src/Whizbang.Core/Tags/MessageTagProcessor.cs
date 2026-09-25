@@ -216,7 +216,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
   /// against: materializing the payload as a string to read its length allocated the whole payload
   /// again on every check, per tag, and counted UTF-16 characters rather than bytes.
   /// </remarks>
-  /// <docs>fundamentals/messages/message-tags#payload-size-limits</docs>
+  /// <docs>fundamentals/messages/message-tags#payload-size-thresholds</docs>
   /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:PayloadByteLength_CountsUtf8Bytes_NotCharactersAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:PayloadByteLength_DoesNotAllocateInProportionToThePayloadAsync</tests>
   internal static int PayloadByteLength(JsonElement payload) =>

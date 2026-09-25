@@ -30,8 +30,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// outbox row spun for hundreds of retries with no log, no failure record, no DLQ
 /// promotion, no ASB traffic. Root cause: a consumer's
 /// <see cref="IMessageSecurityContextProvider"/> implementation hung
-/// indefinitely on the envelope's test-pattern tenant id
-/// (<c>c0ffee00-cafe-f00d-face-feed12345678</c>). The hang occurred at
+/// indefinitely on the tenant id carried by the envelope. The hang occurred at
 /// <c>OutboxDrainWorker._publishBulkAsync:411</c> BEFORE the publish call
 /// was even attempted. The cancellation token at the call site is the
 /// worker's stoppingToken — only fires on pod shutdown. So the hang persists
