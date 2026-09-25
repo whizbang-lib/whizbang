@@ -209,6 +209,21 @@ rather than skipping it: an open series is the highest `X.Y.Z` with beta or rc t
 and above the highest stable release. `major`, `minor` and `patch` start a new number instead and
 warn that the open series is left behind. `manual` is **recovery only** and accepts only `X.Y.Z`.
 
+### Raising the version floor
+
+When a published prerelease sorts above what develop now computes, every later develop build is
+invisible to anything resolving the latest version. It happens when a release cut is abandoned after
+develop has already published under the cut's next number: the open branch moves develop up, and
+deleting it moves develop back down, below a version already on NuGet.
+
+The fix is a floor, not a fake tag. `next-version` in `GitVersion.yml` is taken when it is higher than
+the highest tag, so develop computes `next-version`-alpha.N and a release cut with `auto` offers
+`next-version`. Once a release is tagged above it, the setting is inert and can be removed.
+Pick the floor above every published version, verified with `dotnet-gitversion /nocache
+/showvariable SemVer` on develop. A tag would do the same but claims a release that never happened.
+
+Current floor: `0.2599.0` (2026-09-25), above the stale `0.2452.0-alpha.2`.
+
 ---
 
 ## GitVersion synchronization — why it still works

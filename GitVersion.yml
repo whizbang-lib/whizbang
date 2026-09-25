@@ -1,3 +1,8 @@
+# Version floor. GitVersion takes the highest of this and the highest repo-wide tag, so develop
+# computes 0.2599.0-alpha.N until a real release is tagged above it, after which this line is inert.
+# Raised past a stale 0.2452.0-alpha.2, published while an abandoned release cut was open, which
+# otherwise out-sorted every later develop build. See docs/RELEASING.md -> "Raising the version floor".
+next-version: 0.2599.0
 mode: ContinuousDeployment
 branches:
   develop:
