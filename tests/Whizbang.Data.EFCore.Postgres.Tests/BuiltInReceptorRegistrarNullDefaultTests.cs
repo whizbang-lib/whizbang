@@ -137,8 +137,7 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
       // and nothing else. A hosted service that wants a database or a clock is doing other work and
       // is not what this sweep is about -- excluding it by SHAPE rather than by skipping it at run
       // time is what keeps the sweep from quietly exercising nothing.
-      .Where(x => x.Ctor is not null
-               && x.Ctor.GetParameters() is { Length: > 0 } ps
+      .Where(x => x.Ctor?.GetParameters() is { Length: > 0 } ps
                && ps[0].ParameterType == typeof(IServiceProvider)
                && ps.All(pi => pi.ParameterType == typeof(IServiceProvider)
                             || pi.ParameterType == typeof(IServiceScopeFactory)
