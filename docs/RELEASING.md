@@ -580,6 +580,9 @@ and publishes nothing.
   counting legs from the jobs list once Build succeeds. Suite legs must stay named
   `<suite> / <...> Tests`; a finished-green set with a missing artifact fails loudly. Its job budget
   (180 minutes) is sized for runner queueing, because it starts with the run and waits.
+- **A `pull_request` trigger filters on the BASE branch only.** There is no head-branch filter, so a
+  release PR always starts a CI run. Its jobs can yield (release-pr), but the run itself cannot be
+  prevented, which is why a release PR still shows a row per yielded job.
 - **`main` is protected by a ruleset, not classic branch protection.** `.../branches/main/protection`
   returns 404 "Branch not protected"; the 13 required checks are at
   `gh api repos/<owner>/<repo>/rules/branches/main`.
