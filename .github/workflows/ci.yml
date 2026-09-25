@@ -168,6 +168,56 @@ jobs:
             echo "queue_run_id=" >> "$GITHUB_OUTPUT"
           fi
 
+  release-pr:
+    name: Release PR Duplicate Check
+    # start-release pushes release/v** AND opens the release PR at the SAME commit, so two runs
+    # of this workflow cover identical bytes: the push run, which must run the matrix because it
+    # publishes, and the PR run, which gates the merge to main. Both ran the full matrix — two
+    # integration matrices per release cut, testing one tree twice.
+    #
+    # The PR run yields. The push run's results are what the merge is gated on, and they are the
+    # same check NAMES on the same commit, so branch protection reads them either way.
+    #
+    # Why yielding is safe in this direction and not the other: these jobs are skipped by an
+    # expression, which resolves in seconds, while the push run's real results land minutes later
+    # and therefore win as the last report for each name. Skipping the PUSH run instead would put
+    # a fast "skipped" after a slow real result and could mask a failure — and would also strand
+    # the publish, which only the push event performs (see release-publish).
+    if: >-
+      github.event_name == 'pull_request' &&
+      startsWith(github.head_ref, 'release/v') &&
+      vars.RELEASE_PR_FULL_MATRIX != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Is the push run for this same commit already covering it?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Addressed by workflow PATH, not by name: this workflow sets a run-name, so a run of
+          # this file is never named plain "CI" and filtering on .name matches nothing — the same
+          # trap queue-validated documents above.
+          RUN_ID=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=10" \
+            --jq '.workflow_runs[0].id // ""')
+          if [ -n "$RUN_ID" ]; then
+            echo "Push run $RUN_ID covers $SHA — the PR run yields the matrix to it."
+            echo "Release-PR duplicate: **true** -- push run $RUN_ID covers $SHA" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            # No push run means nothing else is testing this commit, so the PR run does it.
+            echo "No push run for $SHA — the PR run keeps the matrix."
+            echo "Release-PR duplicate: **false** -- no push run for $SHA" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   verify-rebuild:
     name: Verify Deterministic Rebuild
     # The hardened half of the skip: rebuild on the QUEUE's exact SDK at the QUEUE's
@@ -549,8 +599,8 @@ jobs:
   # section below for the verification that replaces them on the publish path.
   unit-tests:
     name: Unit Tests
-    needs: [build, queue-validated, ff-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
+    needs: [build, queue-validated, ff-validated, release-pr]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-unit.yml
@@ -560,8 +610,8 @@ jobs:
 
   postgres-integration:
     name: PostgreSQL Integration
-    needs: [build, queue-validated, ff-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
+    needs: [build, queue-validated, ff-validated, release-pr]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
     # The three Postgres-tagged projects run sequentially inside one job (shared containers),
@@ -600,8 +650,8 @@ jobs:
 
   inmemory-integration:
     name: InMemory Integration
-    needs: [build, queue-validated, ff-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
+    needs: [build, queue-validated, ff-validated, release-pr]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-inmemory.yml
@@ -610,8 +660,8 @@ jobs:
 
   rabbitmq-integration:
     name: RabbitMQ Integration
-    needs: [build, queue-validated, ff-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
+    needs: [build, queue-validated, ff-validated, release-pr]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
@@ -623,8 +673,8 @@ jobs:
     # Integration (whizbang)") — matrix expressions in `name:` don't render on
     # reusable-workflow-call jobs.
     name: Service Bus Integration
-    needs: [build, queue-validated, ff-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
+    needs: [build, queue-validated, ff-validated, release-pr]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
     # The two AzureServiceBus-tagged projects run sequentially inside one job (shared
@@ -641,8 +691,8 @@ jobs:
 
   azureblob-integration:
     name: AzureBlob Integration
-    needs: [build, queue-validated, ff-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
+    needs: [build, queue-validated, ff-validated, release-pr]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-azureblob.yml
