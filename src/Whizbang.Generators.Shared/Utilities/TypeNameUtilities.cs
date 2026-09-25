@@ -201,8 +201,11 @@ public static class TypeNameUtilities {
   // ToDisplayParts, MetadataName) are banned outside this file so a local rendering cannot drift
   // from the runtime's TypeNameFormatter again.
   // ---------------------------------------------------------------------------------------------
+  // Add, not With: WithMiscellaneousOptions REPLACES the set, and FullyQualifiedFormat's set
+  // carries UseSpecialTypes. Replacing it rendered string as global::System.String, which is why
+  // callers that wanted both kept private formats of their own rather than using this one.
   private static readonly SymbolDisplayFormat _fullyQualifiedWithNullability =
-    SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(
+    SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(
       SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
 
   /// <summary>
@@ -216,7 +219,10 @@ public static class TypeNameUtilities {
     return symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
   }
 
-  /// <summary>The fully qualified C# form with nullable reference annotations (<c>string?</c>).</summary>
+  /// <summary>
+  /// The fully qualified C# form with nullable reference annotations, keywords intact
+  /// (<c>string?</c>, not <c>global::System.String?</c>), inside generic arguments as well.
+  /// </summary>
   public static string FullyQualifiedWithNullability(ITypeSymbol symbol) {
     if (symbol == null) {
       throw new ArgumentNullException(nameof(symbol));
