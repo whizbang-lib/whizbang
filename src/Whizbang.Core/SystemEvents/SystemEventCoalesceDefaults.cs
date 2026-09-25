@@ -19,6 +19,8 @@ namespace Whizbang.Core.SystemEvents;
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_AuditEnabled_RegistersTheBuiltInBindingFromTheKnobsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_SlideZero_RegistersNothingAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_HostBindingForSysAudit_AlwaysWinsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:Apply_BuiltInBinding_FoldsWithTheLeastUrgentMemberAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditCoalesceRebaseTests.cs:AuditComposite_WithOneBelowBandMember_StaysInTheIdleBandAsync</tests>
 public static class SystemEventCoalesceDefaults {
   /// <summary>
   /// Applies the built-in audit coalesce binding to <paramref name="tagOptions"/> when
@@ -38,6 +40,10 @@ public static class SystemEventCoalesceDefaults {
       MaxDelaySeconds = systemEventOptions.AuditShipMaxDelaySeconds,
       MaxBatchCount = systemEventOptions.AuditShipMaxBatchCount,
       Atomicity = FanoutAtomicity.Independent,
+      // Stated, not inherited. The general default takes the MOST urgent member's number so a bundle
+      // is never scheduled behind something a caller waits on; nobody waits on an audit record, so
+      // under that default one below-band member would carry the whole batch out of the idle band.
+      PriorityFold = CompositePriorityFold.LeastUrgent,
       // The audit group folds into its proven carrier (identity preservation + raw carry,
       // fan-out locked by CompositeInboxFanoutTests) instead of the generic composite.
       CompositeFactory = BuildAuditComposite

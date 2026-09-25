@@ -42,12 +42,24 @@ namespace Whizbang.Core.SystemEvents;
 /// </code>
 /// </example>
 /// <docs>fundamentals/events/system-events#audit</docs>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditTagPayloadTests.cs:EventAudited_TagPayload_LeavesTheOriginalBodyOutAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditTagPayloadTests.cs:EventAudited_TagPayload_StillIdentifiesTheAuditedChangeAsync</tests>
 [AuditEvent(Exclude = true, Reason = "System event - prevents infinite self-auditing loop")]
 // The framework audit tag: membership in the sys-audit coalesce group. EnableAudit() binds the
 // built-in coalesce policy to this tag, so audit singles ride the generic tag-bound coalescing
 // machinery — zero audit-specific shipping code. Tag set explicitly at the usage site because
 // the MessageTagDiscoveryGenerator reads only what is syntactically present here.
-[SystemAuditTag(Tag = SystemTags.AUDIT)]
+//
+// Properties is narrowed to what IDENTIFIES the audited change, leaving OriginalBody out. The body is
+// unbounded — it is whatever the audited event carried — so an un-narrowed tag payload breached the
+// tag size threshold for any application with one large event, and the remedy that warning names
+// (narrow Properties) is not one a consumer can apply to a framework type. The tag payload is built
+// into its own dictionary for hooks; the stored record and the audit composite still carry the body.
+[SystemAuditTag(Tag = SystemTags.AUDIT, Properties = [
+  nameof(Id), nameof(OriginalEventId), nameof(OriginalEventType), nameof(OriginalStreamId),
+  nameof(OriginalStreamPosition), nameof(Timestamp), nameof(TenantId), nameof(UserId),
+  nameof(CorrelationId), nameof(CausationId), nameof(AuditReason), nameof(ActivityName),
+  nameof(ActivityDescription), nameof(AuditLevel)])]
 [PinnedId("a917ce3a-52ce-4c20-92de-99ab649c2ebe")]
 public sealed record EventAudited : ISystemEvent {
   /// <summary>

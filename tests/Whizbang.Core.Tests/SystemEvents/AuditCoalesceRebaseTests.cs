@@ -8,8 +8,10 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Priority;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.Tags;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -131,6 +133,50 @@ public class AuditCoalesceRebaseTests {
     var audit = (AuditEventsComposite)composite;
     await Assert.That(audit.InnerEventIds).IsEquivalentTo([single!.MessageId]);
     await Assert.That(audit.InnerTypeNames[0]).IsEqualTo(single.MessageType);
+  }
+
+  /// <summary>
+  /// The audit binding states that a bundle waits with its slowest member, rather than inheriting a
+  /// default that is right for other groups and wrong for this one.
+  /// </summary>
+  /// <remarks>
+  /// Nobody waits on an audit record, which is what the idle band is for. Under the general default,
+  /// the composite takes its MOST urgent member's number, so a single below-band member — a consumer
+  /// lowering AuditPriority, a message of its own joining the group — would promote the entire batch
+  /// out of the idle band and set it competing with the work it records.
+  /// </remarks>
+  [Test]
+  public async Task Apply_BuiltInBinding_FoldsWithTheLeastUrgentMemberAsync() {
+    var systemEventOptions = new SystemEventOptions();
+    systemEventOptions.EnableAudit();
+    var tagOptions = new TagOptions();
+
+    SystemEventCoalesceDefaults.Apply(tagOptions, systemEventOptions);
+
+    await Assert.That(tagOptions.CoalesceBindings[SystemTags.AUDIT].PriorityFold)
+      .IsEqualTo(CompositePriorityFold.LeastUrgent);
+  }
+
+  [Test]
+  public async Task AuditComposite_WithOneBelowBandMember_StaysInTheIdleBandAsync() {
+    var systemEventOptions = new SystemEventOptions();
+    systemEventOptions.EnableAudit();
+    var tagOptions = new TagOptions();
+    SystemEventCoalesceDefaults.Apply(tagOptions, systemEventOptions);
+    var binding = tagOptions.CoalesceBindings[SystemTags.AUDIT];
+    var idle = _auditSingle(systemEventOptions)!;
+    var promoted = _auditSingle(systemEventOptions)! with { Priority = WorkPriority.STANDARD };
+
+    var folded = CoalesceShipWorker.FoldPriority(binding, new CoalesceFoldBatch {
+      Group = SystemTags.AUDIT,
+      Singles = [idle, promoted, idle],
+      Atomicity = binding.Atomicity
+    });
+
+    await Assert.That(idle.Priority).IsEqualTo(WorkPriority.IDLE)
+      .Because("the precondition: audit singles are minted in the idle band");
+    await Assert.That(WorkPriority.Bucket(folded)).IsEqualTo(WorkBucket.Idle)
+      .Because("one urgent member must not carry a whole audit batch out of the band nobody waits on");
   }
 
   #endregion

@@ -36,6 +36,7 @@ namespace Whizbang.Sagas.Services;
 /// </para>
 /// </remarks>
 public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStarted, TItemCompleted, TItemFailed, TCompleted, TReset, THookStarted, THookCompleted>
+  : ISagaWatchdogParticipant
   where TInit : class, ISagaInitiatedEvent
   where TItemsDispatched : class, ISagaItemsDispatchedEvent
   where TItemStarted : class, ISagaItemStartedEvent
@@ -79,6 +80,13 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
 
   /// <summary>The saga name this service emits events for — matches the value supplied to <c>[Saga("Name")]</c>.</summary>
   protected string SagaName => _sagaName;
+
+  /// <summary>
+  /// The name the framework's watchdog router addresses this saga's ticks to. Implemented
+  /// explicitly so it neither shadows <see cref="SagaName"/> nor the <c>SagaName</c> constant that
+  /// <c>[Saga]</c>-generated receptors bind to.
+  /// </summary>
+  string ISagaWatchdogParticipant.SagaName => _sagaName;
 
   /// <summary>
   /// Backwards-compatible constructor that wires only the emitter + logger.
@@ -486,6 +494,25 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     var now = DateTimeOffset.UtcNow;
 
     var (nextDelay, nextStallCount, shouldAbandon) = _computeAdaptiveNextDelay(tick, currentAgg, now);
+    if (shouldAbandon && await _resolveStrandedItemsAsync(ctx, cancellationToken).ConfigureAwait(false) > 0) {
+      // Stranded items were failed or re-dispatched. Complete now if that finished the saga, and
+      // otherwise wake again with the stall count reset, so the new terminal events have time to
+      // reach the projection before the saga is judged stuck a second time.
+      if (await TryRecoverViaWatchdogAsync(ctx, cancellationToken).ConfigureAwait(false)) {
+        return WatchdogTickOutcome.Recovered;
+      }
+      await _emitter.PublishAsync(new SagaCompletionWatchdogTickEvent {
+        StreamId = tick.StreamId,
+        SagaName = tick.SagaName,
+        EntityId = tick.EntityId,
+        RescheduleCount = tick.RescheduleCount + 1,
+        LastObservedAt = now,
+        LastObservedCompleted = currentAgg?.Completed ?? 0,
+        LastObservedFailed = currentAgg?.Failed ?? 0,
+        ConsecutiveStallCount = 0,
+      }, now + _options.MinWatchdogDelay).ConfigureAwait(false);
+      return WatchdogTickOutcome.ReArmed;
+    }
     if (shouldAbandon) {
       var abandoned = new SagaCompletionAbandonedEvent {
         StreamId = tick.StreamId,
@@ -510,6 +537,80 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     await _emitter.PublishAsync(next, now + nextDelay).ConfigureAwait(false);
     return WatchdogTickOutcome.ReArmed;
   }
+
+  /// <summary>Why a stranded item is failed; carried on the item's failed event.</summary>
+  private const string STRANDED_ITEM_MESSAGE =
+    "No terminal event was recorded for this item across every watchdog check before the stall limit; " +
+    "the worker processing it was most likely lost.";
+
+  /// <summary>
+  /// Resolves items left non-terminal once the saga has made no progress across the stall limit.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// At the stall limit no item has moved across every watchdog check. An item still non-terminal
+  /// then, with no terminal event in its per-item stream either, was being processed by a worker
+  /// that no longer exists: the message that would finish it went with the worker, so nothing will
+  /// retry it and nothing will dead-letter it. Left alone, the saga could only be abandoned —
+  /// discarding every item that did finish.
+  /// </para>
+  /// <para>
+  /// Each such item is offered to <see cref="TryRedriveStrandedItemAsync"/>; one that is not
+  /// re-dispatched is failed with a reason, so the saga completes with the failure visible instead of
+  /// hanging on it. An item the store already records as terminal is skipped: there the projection
+  /// is merely behind, which the reconciler resolves. Without an item repository nothing can be
+  /// enumerated, and the saga is abandoned exactly as before.
+  /// </para>
+  /// </remarks>
+  /// <returns>How many items were failed or re-dispatched.</returns>
+  private async Task<int> _resolveStrandedItemsAsync(SagaContext ctx, CancellationToken cancellationToken) {
+    if (_itemRepository is null) {
+      return 0;
+    }
+
+    var items = await _itemRepository.GetItemsAsync(ctx.SagaId, cancellationToken).ConfigureAwait(false);
+    var resolved = 0;
+    foreach (var item in items.Where(i => i.State is SagaItemState.Pending or SagaItemState.Running)) {
+      if (_terminalReader is not null) {
+        var stored = await _terminalReader.CheckAsync(SagaItemStreams.Of(ctx.SagaId, item.ItemIdentifier), cancellationToken)
+          .ConfigureAwait(false);
+        if (stored != SagaItemTerminalOutcome.NotTerminal) {
+          continue;
+        }
+      }
+
+      if (!await TryRedriveStrandedItemAsync(ctx, item, cancellationToken).ConfigureAwait(false)) {
+        await FailItemAsync(
+          ctx,
+          item.ItemIdentifier,
+          STRANDED_ITEM_MESSAGE,
+          $"Started {item.StartedAt:O}; attempts {item.AttemptCount}; state {item.State}.",
+          item.DisplayName,
+          cancellationToken).ConfigureAwait(false);
+      }
+      resolved++;
+    }
+    return resolved;
+  }
+
+  /// <summary>
+  /// Offers a stranded item back to the saga service before it is failed.
+  /// </summary>
+  /// <remarks>
+  /// Called when the saga has made no progress across the watchdog's stall limit and this item has no
+  /// terminal event anywhere — its worker was most likely lost. A service that can safely re-dispatch
+  /// the item's work (its handler is idempotent) should do so and return <see langword="true"/>; the
+  /// item then stays in progress and the watchdog keeps watching. The default returns
+  /// <see langword="false"/>, and the item is failed with a reason so the saga can finish.
+  /// </remarks>
+  /// <param name="ctx">The saga the item belongs to.</param>
+  /// <param name="item">The stranded item, as the item projection last recorded it.</param>
+  /// <param name="cancellationToken">Cancels the attempt.</param>
+  /// <returns><see langword="true"/> when the item's work was re-dispatched.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-items</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_ConsumerRedrivesTheItem_ItIsNotFailedAsync</tests>
+  protected virtual Task<bool> TryRedriveStrandedItemAsync(SagaContext ctx, SagaItemModel item, CancellationToken cancellationToken)
+    => Task.FromResult(false);
 
   /// <summary>
   /// Adaptive next-tick delay computation. Three branches:

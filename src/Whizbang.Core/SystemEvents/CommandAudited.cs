@@ -36,11 +36,15 @@ namespace Whizbang.Core.SystemEvents;
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitCommandAuditedAsync_SetsTimestampAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditTests.cs:CommandAudited_HasRequiredProperties_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditTests.cs:CommandAudited_ImplementsISystemEvent_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditTagPayloadTests.cs:CommandAudited_TagPayload_LeavesTheCommandBodyOutAsync</tests>
 [AuditEvent(Exclude = true, Reason = "System event - prevents infinite self-auditing loop")]
 // Same sys-audit group membership as EventAudited: wherever a CommandAudited single reaches an
 // outbox mint seam, it coalesces on the audit cadence. See SystemAuditTagAttribute for why the
-// tag is set explicitly at the usage site.
-[SystemAuditTag(Tag = Whizbang.Core.Tags.SystemTags.AUDIT)]
+// tag is set explicitly at the usage site, and why Properties leaves the unbounded body out.
+[SystemAuditTag(Tag = Whizbang.Core.Tags.SystemTags.AUDIT, Properties = [
+  nameof(Id), nameof(CommandType), nameof(Timestamp), nameof(TenantId), nameof(UserId),
+  nameof(UserName), nameof(CorrelationId), nameof(CausationId), nameof(AuditReason),
+  nameof(AuditLevel), nameof(ReceptorName), nameof(ResponseType)])]
 [PinnedId("9d574533-0ca6-4e83-a2ed-6519eab10257")]
 public sealed record CommandAudited : ISystemEvent {
   /// <summary>

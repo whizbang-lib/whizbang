@@ -184,7 +184,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       return true;
     }
 
-    var size = payload.GetRawText().Length;
+    var size = PayloadByteLength(payload);
 
     if (errorThreshold is int err && size > err) {
       throw new InvalidOperationException(
@@ -206,6 +206,21 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
 
     return true;
   }
+
+  /// <summary>
+  /// The payload's size in UTF-8 bytes — the unit the thresholds are declared, logged and compared in.
+  /// </summary>
+  /// <remarks>
+  /// Read from the element's own UTF-8 buffer, so measuring allocates nothing. The guard this serves
+  /// exists to catch an oversized payload, and it must not cost in proportion to the thing it guards
+  /// against: materializing the payload as a string to read its length allocated the whole payload
+  /// again on every check, per tag, and counted UTF-16 characters rather than bytes.
+  /// </remarks>
+  /// <docs>fundamentals/messages/message-tags#payload-size-thresholds</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:PayloadByteLength_CountsUtf8Bytes_NotCharactersAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:PayloadByteLength_DoesNotAllocateInProportionToThePayloadAsync</tests>
+  internal static int PayloadByteLength(JsonElement payload) =>
+    System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(payload).Length;
 
   /// <summary>
   /// Processes a single tag registration by creating context and invoking matching hooks.
