@@ -313,28 +313,49 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2   # the pushed merge commit and its PR-head parent (fast-forward fallback)
 
       - name: Setup .NET
         uses: ./.github/actions/setup-dotnet-retry
         with:
           dotnet-version: '10.0.x'
 
-      - name: Download queue run's determinism manifest
+      - name: Download the determinism manifest of the run that built this tree
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           QUEUE_RUN_ID: ${{ needs.queue-validated.outputs.queue-run-id }}
         run: |
           set -euo pipefail
-          ART_ID=$(gh api "repos/$REPO/actions/runs/$QUEUE_RUN_ID/artifacts?per_page=100" \
-            --jq '[.artifacts[] | select(.name | startswith("determinism-manifest-"))][0].id // ""')
+          manifest_of() {  # $1 = run id -> id of its live determinism manifest, or ""
+            gh api "repos/$REPO/actions/runs/$1/artifacts?per_page=100" \
+              --jq '[.artifacts[] | select((.name | startswith("determinism-manifest-")) and (.expired | not))][0].id // ""'
+          }
+          ART_ID=$(manifest_of "$QUEUE_RUN_ID")
+          SOURCE="queue run $QUEUE_RUN_ID"
           if [ -z "$ART_ID" ]; then
-            echo "::error::Queue run $QUEUE_RUN_ID published no determinism manifest — cannot verify the rebuild."
-            exit 1
+            # A FAST-FORWARD queue run skips its build (ff-validated): the PR run built this exact
+            # tree. Re-prove that here rather than trust the queue's verdict: this push is the queue's
+            # merge commit, whose second parent is the PR head, and the two trees must be identical.
+            PR_HEAD=$(git rev-list --parents -n 1 HEAD | awk '{print $3}')
+            if [ -z "$PR_HEAD" ] || [ "$(git rev-parse "HEAD^{tree}")" != "$(git rev-parse "$PR_HEAD^{tree}")" ]; then
+              echo "::error::Queue run $QUEUE_RUN_ID published no determinism manifest, and this push is not a fast-forward of a PR head — cannot verify the rebuild."
+              exit 1
+            fi
+            PR_RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$PR_HEAD&event=pull_request&status=success&per_page=30" \
+              --jq '[.workflow_runs[]] | sort_by(.run_started_at) | last | .id // ""')
+            ART_ID=$([ -n "$PR_RUN" ] && manifest_of "$PR_RUN" || true)
+            SOURCE="PR run $PR_RUN (fast-forward: the queue run skipped its build)"
+            if [ -z "$ART_ID" ]; then
+              echo "::error::Neither queue run $QUEUE_RUN_ID nor a green PR run for $PR_HEAD holds a live determinism manifest — cannot verify the rebuild. Set repo variable PUSH_RUN_FULL_MATRIX=true and re-run all jobs to run the full matrix instead."
+              exit 1
+            fi
           fi
+          echo "Verifying against the manifest from $SOURCE."
           gh api "repos/$REPO/actions/artifacts/$ART_ID/zip" > manifest.zip
           mkdir -p queue-manifest && unzip -o -q manifest.zip -d queue-manifest
-          echo "queue built version '$(cat queue-manifest/version.txt)' on SDK $(cat queue-manifest/sdk.txt): $(wc -l < queue-manifest/assemblies.sha256) assemblies"
+          echo "manifest: built version '$(cat queue-manifest/version.txt)' on SDK $(cat queue-manifest/sdk.txt): $(wc -l < queue-manifest/assemblies.sha256) assemblies"
 
       # The toolchain must be EXACTLY the queue's: with a different SDK even benign
       # hash differences lose their explanation, so drift fails closed before building.
@@ -580,6 +601,14 @@ jobs:
           if [ "${QUALITY_OK:-0}" -lt 1 ]; then
             emit false "PR run $PR_RUN did not run Quality to green (dependabot? re-run?) — full matrix"
           fi
+          # A skip also skips this run's Build, so the develop push's verify-rebuild will read the
+          # PR run's determinism manifest instead. Only skip while that manifest is still live.
+          MANIFEST=$(gh api "repos/$REPO/actions/runs/$PR_RUN/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select((.name | startswith("determinism-manifest-")) and (.expired | not))] | length' \
+            2>/dev/null || echo 0)
+          if [ "${MANIFEST:-0}" -lt 1 ]; then
+            emit false "PR run $PR_RUN holds no live build manifest for the push run's verify-rebuild — full matrix"
+          fi
           emit true "PR run $PR_RUN validated this exact tree ($MERGE_TREE) — skipping the redundant queue matrix"
 
   # On pushes (and dispatch) the real version must be stamped into assemblies before
@@ -650,23 +679,21 @@ jobs:
 
   build:
     name: Build
-    needs: [version, changes, release-pr]
+    needs: [version, changes, release-pr, ff-validated]
     # !failure() && !cancelled(): version is skipped (not failed) on PRs — build must
     # still run there with the placeholder version below. Pushes honor the change filter
     # too: a docs-only merge runs no build/tests and publishes no package.
     #
-    # NOT gated on the fast-forward check, though every suite and the quality gate are. The
-    # queue run's build writes the determinism manifest, and the DEVELOP PUSH reads it back:
-    # verify-rebuild downloads it from the queue run to prove the SDK and the assembly set,
-    # which is the whole safety argument for publishing queue-validated bits unre-tested.
-    # Skipping this on a fast-forward leaves no manifest to download, so verify-rebuild fails
-    # and the prerelease publish it gates never happens. Build runs on the queue.
-    #
-    # The release-PR clause is the one skip that is safe here despite the manifest argument above:
-    # it fires only when a PUSH run for this same commit is already building, and that run is the
-    # one every consumer of the manifest reads.
+    # Skipped wherever another run already built this exact tree:
+    #   - a release PR (release-pr): the release-branch push run for the same commit is building;
+    #   - a main push after a release merge (release-pr): the release-branch run built this tree;
+    #   - a fast-forward queue run (ff-validated): the PR run built this tree. The develop push's
+    #     verify-rebuild then reads the PR run's determinism manifest instead of the queue run's
+    #     (ff-validated only skips while that manifest is live, and verify-rebuild re-proves the
+    #     tree match before trusting it).
     if: >-
       ${{ !failure() && !cancelled() && needs.release-pr.outputs.skip != 'true' &&
+      needs.ff-validated.outputs.skip != 'true' &&
       (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
     permissions:
       contents: read
