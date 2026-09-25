@@ -26,6 +26,7 @@ it: the rules there are enforced by the workflows, and a step that fights them f
 | A release must not ship | F6 | Close the release PR, delete `release/vX.Y.Z`. Re-cut later with `auto`: it reuses the number if betas/rcs shipped. |
 | Production bug in the latest stable | F7 | `git switch -c release/vX.Y.(Z+1) vX.Y.Z && git push -u origin HEAD`, then commit the fix and push. CI opens the release PR itself. Continue with F3/F5. |
 | Bug in an older line someone still runs | F8 | Branch `release/vA.B.(C+1)` from the older tag and push it; put the fix on `fix/<name>` and **PR it into that branch** (a direct push is refused). Merging publishes and opens a develop-only back-merge PR; it never touches `main`. |
+| A published prerelease sorts above develop's current builds ("latest" is old code) | F9 | Usually an abandoned cut (#872). Tag the commit that first published the stale version with that version, then unlist it on nuget.org (the user runs the unlist: it needs an API key). Verify with GitVersion 6.2 `/nocache` on develop before pushing the tag. Never add `next-version` to `GitVersion.yml`. |
 | Something is stuck or red | F9 | The **Recovery** table in RELEASING.md, by symptom. |
 
 Only one release is in flight at a time. Before F2, check:
