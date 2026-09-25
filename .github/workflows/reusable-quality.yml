@@ -10,11 +10,6 @@ name: Quality (Reusable)
 
 on:
   workflow_call:
-    inputs:
-      coverage-artifact-count:
-        description: 'Number of coverage-* artifacts the test suites upload in this run'
-        type: number
-        required: true
     secrets:
       SONAR_TOKEN:
         description: "SonarCloud token"
@@ -32,7 +27,10 @@ jobs:
       contents: read
       actions: read
       pull-requests: write
-    timeout-minutes: 60
+    # Sized for runner queueing, not work: this job starts with the run and waits for suites that
+    # may sit queued for most of an hour before they start (a 60-minute budget once canceled a
+    # required check while every suite was still green).
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -168,32 +166,58 @@ jobs:
       - name: Wait for test suites to publish coverage
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED: ${{ inputs.coverage-artifact-count }}
           RUN_ID: ${{ github.run_id }}
           REPO: ${{ github.repository }}
         run: |
-          echo "Waiting for $EXPECTED coverage-* artifacts on run $RUN_ID..."
-          for i in $(seq 1 90); do
-            COUNT=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
-              --jq '[.artifacts[].name | select(startswith("coverage-"))] | length' 2>/dev/null || echo 0)
-            if [ "${COUNT:-0}" -ge "$EXPECTED" ]; then
-              echo "All $COUNT coverage artifacts present."
-              exit 0
+          # The expected coverage count is DERIVED, never configured: every suite leg is a job named
+          # "<suite> / <...> Tests" and uploads exactly one coverage-* artifact. All suites need only
+          # Build, so once Build succeeds every leg exists in the jobs list (queued or not), and the
+          # leg count is final. A hardcoded count hung this step forever after a reshard.
+          # Ends on job STATE, not a poll budget: runner queueing can delay suites for most of an
+          # hour, and the job-level timeout is the only backstop.
+          SUITE='(.name | test(" / .*Tests$"))'
+          # A SKIPPED reusable-workflow job reports under its PARENT name only ("RabbitMQ
+          # Integration", "Unit Tests"), so SUITE cannot see it — match the parent names too.
+          SKIPPED_SUITE='(.conclusion == "skipped" and (.name | test("^(Unit Tests|[A-Za-z ]+ Integration)$")))'
+          GRACE=0
+          while :; do
+            if ! JOBS=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100"); then
+              echo "::warning::Could not list jobs for run $RUN_ID; retrying"
+              sleep 30; continue
             fi
-            # Fail fast when coverage will never arrive: a test job that failed, was
-            # cancelled, or was SKIPPED (e.g. its build dependency failed), or a failed
-            # build job itself.
-            DEAD=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
-              --jq '[.jobs[] | select(((.name | test("Tests")) and (.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "skipped")) or ((.name | startswith("Build")) and (.conclusion == "failure" or .conclusion == "cancelled")))] | length' 2>/dev/null || echo 0)
-            if [ "${DEAD:-0}" -gt 0 ]; then
-              echo "::error::$DEAD job(s) failed, were cancelled, or were skipped — coverage will never arrive; aborting quality analysis."
+            BUILD=$(jq -r '[.jobs[] | select(.name | startswith("Build")) | .conclusion // "pending"] | first // "pending"' <<< "$JOBS")
+            # Fail fast when coverage will never arrive: a suite that failed, was canceled, or was
+            # SKIPPED (e.g. its build dependency failed), or a failed build job itself.
+            DEAD=$(jq "[.jobs[] | select(($SUITE and (.conclusion == \"failure\" or .conclusion == \"cancelled\" or .conclusion == \"skipped\")) or $SKIPPED_SUITE)] | length" <<< "$JOBS")
+            if [ "$BUILD" = failure ] || [ "$BUILD" = cancelled ] || [ "$DEAD" -gt 0 ]; then
+              echo "::error::Build is '$BUILD' and $DEAD suite job(s) failed, were canceled, or were skipped — coverage will never arrive; aborting quality analysis."
               exit 1
             fi
-            echo "[$i/90] $COUNT/$EXPECTED coverage artifacts present; no failed test jobs — sleeping 30s"
+            if [ "$BUILD" != success ]; then
+              echo "Build is '$BUILD'; suites not started yet — sleeping 30s"
+              sleep 30; continue
+            fi
+
+            EXPECTED=$(jq "[.jobs[] | select($SUITE)] | length" <<< "$JOBS")
+            DONE=$(jq "[.jobs[] | select($SUITE and .conclusion == \"success\")] | length" <<< "$JOBS")
+            COUNT=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+              --jq '[.artifacts[].name | select(startswith("coverage-"))] | length' || echo 0)
+            if [ "$DONE" -eq "$EXPECTED" ]; then
+              if [ "$EXPECTED" -gt 0 ] && [ "$COUNT" -ge "$EXPECTED" ]; then
+                echo "All $EXPECTED suites green; $COUNT coverage artifacts present."
+                exit 0
+              fi
+              # Every suite finished green but an artifact is missing: allow a short grace for
+              # listing lag, then fail loudly instead of hanging.
+              GRACE=$((GRACE + 1))
+              if [ "$GRACE" -gt 4 ]; then
+                echo "::error::$EXPECTED suite legs finished green but only $COUNT coverage-* artifacts exist. A suite leg stopped uploading coverage, or the suite job naming changed (legs must be named '<suite> / <...> Tests')."
+                exit 1
+              fi
+            fi
+            echo "$DONE/$EXPECTED suites green, $COUNT coverage artifacts present — sleeping 30s"
             sleep 30
           done
-          echo "::error::Timed out waiting for coverage artifacts."
-          exit 1
 
       - name: Download All Coverage Artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

@@ -758,9 +758,6 @@ jobs:
       actions: read
       pull-requests: write   # the uncovered-new-lines gate comments the list on the PR
     uses: ./.github/workflows/reusable-quality.yml
-    with:
-      # unit, postgres, inmemory, rabbitmq, azureblob + 2 servicebus shards
-      coverage-artifact-count: 11
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
