@@ -427,11 +427,138 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       .Because("the re-arm is scheduled for a future time, not fired at once");
   }
 
+  // ── Stranded items: a lost worker is resolved, not the whole saga abandoned ──
+
+  private static SagaCompletionWatchdogTickEvent _tickAtTheStallLimit(int completed, int failed) => new() {
+    StreamId = _sagaId,
+    SagaName = SAGA_NAME,
+    EntityId = _entityId,
+    RescheduleCount = 4,
+    LastObservedAt = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(10),
+    LastObservedCompleted = completed,
+    LastObservedFailed = failed,
+    ConsecutiveStallCount = 3,
+  };
+
+  private static SagaItemModel _item(string id, SagaItemState state) => new() {
+    SagaId = _sagaId,
+    SagaName = SAGA_NAME,
+    ItemIdentifier = id,
+    DisplayName = "Item " + id,
+    State = state,
+    StartedAt = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(12),
+    AttemptCount = 1,
+  };
+
+  /// <summary>
+  /// An item whose worker was lost is failed with a reason, so the saga can finish; the saga itself
+  /// is not abandoned for the sake of one item.
+  /// </summary>
+  /// <remarks>
+  /// Reaching the stall limit means no item has moved across every watchdog check. An item still
+  /// non-terminal then, with no terminal event in the store either, was being processed by a worker
+  /// that is gone: nothing will ever finish it. Abandoning the saga discarded every item that did
+  /// finish along with it.
+  /// </remarks>
+  [Test]
+  public async Task MaxConsecutiveStalls_WithAStrandedItem_FailsItAndReArmsInsteadOfAbandoningAsync() {
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(
+        agg: new SagaItemAggregate(Total: 3, Completed: 2, Failed: 0, InProgress: 1),
+        items: [_item("a", SagaItemState.Completed), _item("b", SagaItemState.Completed), _item("c", SagaItemState.Running)]),
+      terminalReader: new FakeTerminalReader(),
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 3 });
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(2, 0), CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.ReArmed);
+    await Assert.That(emitter.Published.OfType<SagaCompletionAbandonedEvent>()).IsEmpty()
+      .Because("one lost item must not throw away the items that finished");
+    var failed = emitter.Published.OfType<TestItemFailedEvent>().Single();
+    await Assert.That(failed.ItemIdentifier).IsEqualTo("c");
+    await Assert.That(failed.ErrorMessage).Contains("lost")
+      .Because("the failure has to say why it happened, or it reads as a domain error in the item itself");
+    var next = emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Single();
+    await Assert.That(next.ConsecutiveStallCount).IsEqualTo(0)
+      .Because("the failure needs time to land before the saga is judged stuck again");
+  }
+
+  [Test]
+  public async Task MaxConsecutiveStalls_ItemAlreadyTerminalInTheStore_IsNotFailedAgainAsync() {
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(
+        agg: new SagaItemAggregate(Total: 3, Completed: 2, Failed: 0, InProgress: 1),
+        items: [_item("a", SagaItemState.Completed), _item("b", SagaItemState.Completed), _item("c", SagaItemState.Running)]),
+      terminalReader: new FixedTerminalReader(SagaItemTerminalOutcome.Completed),
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 3 });
+
+    await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(2, 0), CancellationToken.None);
+
+    await Assert.That(emitter.Published.OfType<TestItemFailedEvent>()).IsEmpty()
+      .Because("the store already records this item as finished; only the projection is behind");
+  }
+
+  [Test]
+  public async Task MaxConsecutiveStalls_ConsumerRedrivesTheItem_ItIsNotFailedAsync() {
+    var emitter = new RecordingEmitter();
+    var redriven = new List<string>();
+    var svc = new TestSagaService(
+      emitter,
+      new FakeItemRepository(
+        agg: new SagaItemAggregate(Total: 2, Completed: 1, Failed: 0, InProgress: 1),
+        items: [_item("a", SagaItemState.Completed), _item("b", SagaItemState.Running)]),
+      new FakeTerminalReader(),
+      new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 2 }) {
+      Redrive = item => { redriven.Add(item.ItemIdentifier); return true; },
+    };
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(1, 0), CancellationToken.None);
+
+    await Assert.That(redriven).IsEquivalentTo(["b"]);
+    await Assert.That(emitter.Published.OfType<TestItemFailedEvent>()).IsEmpty()
+      .Because("a service that can re-dispatch the work decides; the item stays in progress");
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.ReArmed);
+  }
+
+  /// <summary>
+  /// The whole path for a worker lost mid-item: the saga ends completed with one failure, never
+  /// abandoned and never left running.
+  /// </summary>
+  /// <remarks>
+  /// Before, a saga in this state sat at "in progress" indefinitely: the item was marked started,
+  /// the message that would finish it was gone with its worker, nothing retried it and nothing
+  /// dead-lettered it. Now the stall limit resolves the item and the next check completes the saga.
+  /// </remarks>
+  [Test]
+  public async Task StrandedByALostWorker_EndsCompletedWithOneFailure_NotAbandonedAsync() {
+    var repository = new MutableItemRepository(
+      new SagaItemAggregate(Total: 3, Completed: 2, Failed: 0, InProgress: 1),
+      [_item("a", SagaItemState.Completed), _item("b", SagaItemState.Completed), _item("c", SagaItemState.Running)]);
+    var (svc, emitter) = _buildService(repository, new FakeTerminalReader(),
+      new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 3 });
+
+    var first = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(2, 0), CancellationToken.None);
+    var next = emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Single();
+
+    // The failed-item event lands, and the item projection catches up with it.
+    repository.Agg = new SagaItemAggregate(Total: 3, Completed: 2, Failed: 1, InProgress: 0);
+    repository.Items = [_item("a", SagaItemState.Completed), _item("b", SagaItemState.Completed), _item("c", SagaItemState.Failed)];
+    var second = await svc.TryRecoverViaWatchdogTickAsync(next, CancellationToken.None);
+
+    await Assert.That(first).IsEqualTo(WatchdogTickOutcome.ReArmed);
+    await Assert.That(second).IsEqualTo(WatchdogTickOutcome.Recovered);
+    await Assert.That(emitter.Published.OfType<SagaCompletionAbandonedEvent>()).IsEmpty();
+    var completed = emitter.Published.OfType<TestCompletedEvent>().Single();
+    await Assert.That(completed.CompletedItems).IsEqualTo(2);
+    await Assert.That(completed.FailedItems).IsEqualTo(1)
+      .Because("the saga reports the lost item as a failure rather than hiding it or hanging on it");
+  }
+
   // ── Builder + test doubles ─────────────────────────────────────────────
 
   private static (TestSagaService, RecordingEmitter) _buildService(
-      FakeItemRepository itemRepository,
-      FakeTerminalReader terminalReader,
+      ISagaItemRepository itemRepository,
+      ISagaItemTerminalReader terminalReader,
       BaseSagaModel projection,
       SagaOptions? options = null) {
     var emitter = new RecordingEmitter();
@@ -449,6 +576,20 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   private sealed class FakeTerminalReader : ISagaItemTerminalReader {
     public Task<SagaItemTerminalOutcome> CheckAsync(Guid perItemStreamId, CancellationToken cancellationToken)
       => Task.FromResult(SagaItemTerminalOutcome.NotTerminal);
+  }
+
+  private sealed class FixedTerminalReader(SagaItemTerminalOutcome outcome) : ISagaItemTerminalReader {
+    public Task<SagaItemTerminalOutcome> CheckAsync(Guid perItemStreamId, CancellationToken cancellationToken)
+      => Task.FromResult(outcome);
+  }
+
+  private sealed class MutableItemRepository(SagaItemAggregate agg, IReadOnlyList<SagaItemModel> items) : ISagaItemRepository {
+    public SagaItemAggregate Agg { get; set; } = agg;
+    public IReadOnlyList<SagaItemModel> Items { get; set; } = items;
+    public Task<SagaItemAggregate> GetAggregateForSagaAsync(Guid sagaId, CancellationToken cancellationToken)
+      => Task.FromResult(Agg);
+    public Task<IReadOnlyList<SagaItemModel>> GetItemsAsync(Guid sagaId, CancellationToken cancellationToken)
+      => Task.FromResult(Items);
   }
 
   private sealed class RecordingEmitter : ISagaEventEmitter {
@@ -551,6 +692,12 @@ public class TryRecoverViaWatchdogTickAsyncTests {
         SAGA_NAME, emitter, itemRepository, terminalReader, options, NullLogger<TestSagaService>.Instance) {
 
     private readonly BaseSagaModel _projection = projection;
+
+    /// <summary>When set, stands in for a service that can re-dispatch a stranded item's work.</summary>
+    public Func<SagaItemModel, bool>? Redrive { get; init; }
+
+    protected override Task<bool> TryRedriveStrandedItemAsync(SagaContext ctx, SagaItemModel item, CancellationToken cancellationToken)
+      => Redrive is null ? base.TryRedriveStrandedItemAsync(ctx, item, cancellationToken) : Task.FromResult(Redrive(item));
 
     protected override Task<BaseSagaModel?> LoadProjectionAsync(Guid sagaId, CancellationToken cancellationToken)
       => Task.FromResult<BaseSagaModel?>(_projection);
