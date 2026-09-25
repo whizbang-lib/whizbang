@@ -64,9 +64,9 @@ There is exactly one place packages are pushed to nuget.org (`nuget-push.yml`, g
 
 | Channel | Trigger | Version comes from | Completeness | Creates a git tag? | Example |
 |---|---|---|---|---|---|
-| **Develop alpha** | push/merge to `develop` | GitVersion (`highest tag` + Patch + `alpha` + height) | **changed-only** (partial) | no | `0.958.1-alpha.5` |
-| **Release-branch** | push to an existing `release/v*` (non-creation) | the **branch name** | full (all packages) | yes | `0.959.0-rc.1` |
-| **Release (final)** | merge a `chore(release): vX.Y.Z` PR into `main` | the **PR title** | full (all packages) | yes | `0.959.0` / `0.959.0-alpha.1` |
+| **Develop alpha** | push/merge to `develop` | GitVersion (`highest tag` + Minor + `alpha` + height) | **changed-only** (partial) | no | `0.2451.0-alpha.75` |
+| **Release-branch** | push to an existing **older-line** `release/v*` with no PR into `main` (non-creation); see [Hotfixes](#hotfixes) | the **branch name** | full (all packages) | yes | `0.2450.1` |
+| **Release (final)** | merge a `chore(release): vX.Y.Z` PR into `main` | the **PR title** | full (all packages) | yes | `0.2451.0` / `0.2451.0-beta.1` |
 
 > ⚠️ **Changed-only caveat.** Develop alphas republish *only the packages whose content changed* and
 > stamp lockstep inter-package dependency requirements, so a given `alpha.N` can be a partial,
@@ -78,11 +78,11 @@ flowchart LR
   subgraph dev["push to develop"]
     D1[GitVersion] --> D2["0.958.1-alpha.N<br/>changed-only"]
   end
-  subgraph rel["push to release/v*"]
-    R1[branch name] --> R2["0.959.0-rc.1<br/>full + tag"]
+  subgraph rel["push to an older-line release/v*"]
+    R1[branch name] --> R2["0.2450.1<br/>full + tag"]
   end
   subgraph main["merge chore(release) PR to main"]
-    M1[PR title] --> M2["0.959.0<br/>full + tag + GitHub Release"]
+    M1[PR title] --> M2["0.2451.0<br/>full + tag + GitHub Release"]
   end
   D2 --> GATE{{"nuget-publish<br/>approval gate"}}
   R2 --> GATE
@@ -153,7 +153,7 @@ releases.** This is a hard rule, and the branch configuration enforces it automa
 | Channel | Band | Who picks the number |
 |---|---|---|
 | develop pushes (auto prerelease) | **next-minor**: `0.(Y+1).0-alpha.N` above the last tag | GitVersion (`develop: increment: Minor`), `N` = commit height |
-| Deliberate release (`start-release`) | **minor**: `0.(Y+1).0[-alpha.1]` | You — `release_type: minor`, or `manual` into a **new minor band** |
+| Deliberate release (`start-release`) | **minor**: `0.(Y+1).0[-beta.N\|-rc.N]` | `release_type: auto` (GitVersion already computes the next minor), plus `prerelease_label` |
 | Hotfix / bugfix-only | **patch**: `0.Y.Z` on an existing release line | The `release/vX.Y.Z` **branch name** (branch-name override, not GitVersion) |
 
 **Why the rule exists (learned the hard way, 2026-07):** the develop channel auto-publishes
@@ -165,12 +165,20 @@ impossible: develop always computes one minor above the last release tag, a deli
 crystallizes a fresh minor band, and hotfixes patch old lines by branch name without touching
 either.
 
+Disjoint **labels** close the same hole structurally: `alpha` belongs to the develop channel alone,
+and a deliberate cut uses `beta`, `rc` or no label (`prerelease_label` offers nothing else). Within
+one number, precedence then falls out on its own:
+
+```
+0.Y.0-alpha.N  <  0.Y.0-beta.1  <  0.Y.0-rc.1  <  0.Y.0
+```
+
 Rules of thumb:
-- **Never** pass `manual_version` inside the current patch band. If you use `manual` (e.g. for
-  a prerelease label, since `minor` produces a bare `0.X.0`), pick the **next minor**:
-  after `v0.960.0-alpha.1`, the next deliberate release is `0.961.0-alpha.1`, not `0.960.1-*`.
-- Hotfixes: branch `release/vX.Y.Z` from the release line and push — the branch-name publish
-  channel versions it; no GitVersion involvement, no band conflict.
+- Cut with **`release_type: auto`**. For a prerelease, choose `prerelease_label`, never `manual`,
+  which is **recovery-only**. If you do recover with `manual`, pick the **next minor** band and a
+  label other than `alpha`.
+- Hotfixes: see [Hotfixes](#hotfixes). The branch name versions them, and where they merge back
+  depends on whether they patch the current line or an older one.
 - The develop channel takes care of itself — after any release tag, its next build computes in
   the following minor band automatically.
 
@@ -181,21 +189,23 @@ Rules of thumb:
 **GitVersion here derives the base version from the highest tag *repo-wide*, not by branch ancestry.**
 This is load-bearing and easy to get wrong, so it's worth proving:
 
-- The only `0.958.x` tag is `v0.958.0`.
-- `v0.958.0` is **not** reachable by ancestry from `develop` (it lives on the main-side merge commit,
-  which is never merged back — see [branching](#branching-model-gitflow)).
-- The highest tag *reachable by ancestry* from develop is ancient (`v0.10.10-alpha.1`).
-- Yet develop publishes `0.958.1-alpha.5`.
+- The highest tag is `v0.2450.0`, and it is **not** reachable by ancestry from `develop` (it lives on
+  the main-side merge commit, which is never merged back — see [branching](#branching-model-gitflow)).
+- Yet develop computes `0.2451.0-alpha.75` (GitVersion 6.2 with this repo's `GitVersion.yml`).
 
-The only way `0.958.1` can appear is GitVersion taking `v0.958.0` (the highest tag anywhere in the
-repo) and applying develop's `increment: Patch` + `label: alpha` + commit height. So:
+The only way `0.2451.0` can appear is GitVersion taking `v0.2450.0` (the highest tag anywhere in the
+repo) and applying develop's `increment: Minor` + `label: alpha` + commit height. A prerelease tag
+counts too: with `v0.2451.0-beta.1` as the highest tag, develop computes `0.2452.0-alpha.N`, even
+before the release syncs back to develop, and so does `start-release` with `release_type: auto`.
+That is why an open beta/rc series pins its number (see [Prerelease series](#prerelease-series)).
+So:
 
 ```mermaid
 flowchart LR
   CHOOSE["you choose a version<br/>(title / branch / manual)"] --> TAG["git tag vX.Y.Z<br/>on publish"]
   TAG --> HIGH["becomes the highest<br/>repo-wide tag"]
   HIGH --> GV["GitVersion base<br/>advances to X.Y.Z"]
-  GV --> NEXT["develop → X.Y.(Z+1)-alpha.N<br/>next start-release → correct base"]
+  GV --> NEXT["develop → X.(Y+1).0-alpha.N<br/>next start-release → correct base"]
   NEXT -.-> CHOOSE
 ```
 
@@ -258,12 +268,13 @@ sequenceDiagram
 
 ---
 
-## CI skips redundant matrices (queue-validated + ff-validated)
+## CI skips redundant matrices (queue-validated + ff-validated + release-pr)
 
 Every merge used to run the full test matrix **three** times — the PR run, the merge-queue run,
-and the post-merge develop push run. Two guards in `ci.yml` remove the redundant legs while
-keeping every publish gate provable. A fast-forward merge now runs the matrix **once** (the PR
-run); a real merge (develop moved) runs it **twice** (PR + queue).
+and the post-merge develop push run, and every release cut ran it twice over one commit. Three
+guards in `ci.yml` remove the redundant legs while keeping every publish gate provable. A
+fast-forward merge now runs the matrix **once** (the PR run); a real merge (develop moved) runs it
+**twice** (PR + queue); a release cut runs it **once** (the release-branch push run).
 
 ### ff-validated — skip the redundant *queue* matrix on a fast-forward
 
@@ -320,6 +331,25 @@ toolchain drift (e.g. an SDK patch released in the minutes between the queue run
 run) — the publish stays blocked until either the drifted rebuild is validated by real suites or
 the next merge lands.
 
+### release-pr — skip the redundant *release PR* matrix
+
+`start-release` pushes `release/vX.Y.Z` **and** opens the release PR at the same commit, so two CI
+runs cover identical bytes. The push run must run everything, because only it can publish; the PR
+run only gates the merge. `release-pr` (release PRs only) makes the PR run yield **format, build,
+quality and the six suites** to the push run when one exists for the PR head. The required checks on
+`main` are then satisfied by the push run's results, which carry the same check names on the same
+commit.
+
+- It yields only to a push run that can still report green. One already **canceled or failed** keeps
+  the matrix in the PR run instead.
+- Each yield posts one **sticky PR comment** naming the push run. If that run is later canceled or
+  fails, the PR blocks with no failing check of its own, and the comment is where the recovery
+  lives: **re-run the push run** (`gh run rerun <id> --failed`). Its fresh results land on the same
+  commit.
+
+**Escape hatch:** repo variable `RELEASE_PR_FULL_MATRIX=true`, then re-run the PR's CI run, forces
+the full matrix in the PR run. Unset it afterwards.
+
 ---
 
 ## `Directory.Build.props`
@@ -337,7 +367,9 @@ the next merge lands.
 ## Sync Main → Develop
 
 After a release publishes, the `sync-develop` job reconciles main into develop **via a PR, never a
-direct push** (develop is protected):
+direct push** (develop is protected). The mechanism lives in `reusable-sync-develop.yml` and has two
+callers: `release.yml` after a merge to main (source: `main`), and `ci.yml` after an older-line
+hotfix publishes (source: the hotfix commit, which never reaches main; see [Hotfixes](#hotfixes)).
 
 - It compares main and develop with a **three-dot diff** (`origin/develop...origin/main`) so it only
   considers what the *release* added, not develop's own post-cut progress.
@@ -354,11 +386,13 @@ Use `start-release` (Actions → **Start Release** → *Run workflow*, from `dev
 
 | `release_type` | Version | When |
 |---|---|---|
-| `manual` + `manual_version` | exactly what you type (e.g. `0.959.0-alpha.1`) | full control / prereleases |
-| `minor` | GitVersion base, minor bump (`0.958.0` → `0.959.0`) | normal feature release |
-| `patch` | GitVersion base, patch bump (`0.958.0` → `0.958.1`) | finish the current alpha line |
+| `auto` | GitVersion's number (already the next minor), or the open series' number; see [Prerelease series](#prerelease-series) | **every normal release** |
 | `major` | GitVersion base, major bump | breaking release |
-| `auto` | whatever GitVersion computes | rarely needed |
+| `minor` / `patch` | GitVersion base, bumped once more | rarely: `auto` already lands in the next minor band |
+| `manual` + `manual_version` | exactly what you type | **recovery only** |
+
+`prerelease_label` (`none`, `beta`, `rc`) adds a label to any type except `manual`. The iteration
+number is automatic: the next `beta.N` after the highest one tagged for that number.
 
 It creates `release/vX.Y.Z[-label]`, **merges `main` into it** (so the PR is conflict-free — see
 below), writes the version into `Directory.Build.props`, and opens a PR to `main` titled
@@ -378,15 +412,54 @@ below), writes the version into `Directory.Build.props`, and opens a PR to `main
 
 ### Prerelease vs final
 
-- A version **with** a label (`-alpha.1`, `-beta.1`, `-rc.1`) publishes as a **GitHub Pre-Release**
+- A version **with** a label (`-beta.1`, `-rc.1`) publishes as a **GitHub Pre-Release**
   (the "Create GitHub Pre-Release" step fires because the version contains `-`) and marks the nuget
   package as a prerelease. Use it to give consumers a **complete, consumable** build to validate.
-- A version **without** a label is a **stable** release. The stable tag (`v0.959.0`) is distinct from
-  any prerelease tag (`v0.959.0-alpha.1`), so promoting alpha → stable never collides.
+- A version **without** a label is a **stable** release. The stable tag (`v0.2451.0`) is distinct
+  from any prerelease tag (`v0.2451.0-beta.1`), so promoting to stable never collides.
 
-**Typical flow:** cut `0.959.0-alpha.1` → validate → cut `0.959.0` (stable). GitVersion tracks the
-highest tag throughout, so develop moves onto the `0.959.x` line automatically after the alpha tag,
-and `start-release minor` after the stable computes `0.960.0`.
+### Prerelease series
+
+**A series pins its number once opened.** The first labeled cut takes its number from GitVersion.
+Once `v0.2451.0-beta.1` is tagged, GitVersion moves on to `0.2452.0` (verified above), so without a
+rule every later cut would drift upward and the number that was betaed could never ship. An **open
+series** is the highest `X.Y.Z` that has `beta`/`rc` tags, no stable tag, and sits above the highest
+stable release. With `release_type: auto`, `start-release` continues it:
+
+| Tags so far | `prerelease_label` | Cut |
+|---|---|---|
+| (none for `0.2451.0`) | `beta` | `0.2451.0-beta.1` |
+| `-beta.1` | `beta` | `0.2451.0-beta.2` |
+| `-beta.1`, `-beta.2` | `rc` | `0.2451.0-rc.1` |
+| `-rc.1` | `beta` | **refused**: a beta would sort below the rc already shipped |
+| `-rc.1` | `none` | `0.2451.0` (the promotion) |
+| `0.2451.0` | `none` | `0.2452.0` (series closed; GitVersion again) |
+
+`major`, `minor` and `patch` start a new number instead and warn that the open series is left
+unpromoted. Old `-alpha.N` cut tags from before this rule never count as a series.
+
+---
+
+## Hotfixes
+
+A **bugfix** branches from `develop`, merges through an ordinary PR, and ships in the next release:
+nothing special. A **hotfix** ships out of band on a `release/vX.Y.Z` branch cut by hand from the line
+it patches:
+
+1. Branch from the tag of the line it patches (`git switch -c release/v0.2450.1 v0.2450.0`) and push
+   the branch **before** the fix. The creation push is ignored.
+2. Commit the fix and push.
+
+The push run's `release-guard` then decides by **line**, comparing the branch version with the
+highest stable tag:
+
+| Line | Example (highest stable `0.2451.0`) | What happens |
+|---|---|---|
+| **Current** (above it) | `release/v0.2451.1` | The guard **opens the release PR into `main`** (title `chore(release): v0.2451.1`) instead of publishing. Merging it publishes through `release.yml` and syncs develop, exactly like a release cut. |
+| **Older** (at or below it) | `release/v0.2450.1` | Publishes from the push (after the approval gate), then opens a **develop-only** back-merge PR. It never touches `main`, which would regress main to an older release. |
+
+Either way the fix reaches develop, so the next cut from develop cannot silently ship without it. The
+back-merge PR may conflict when the lines have diverged; resolve it like any PR.
 
 ---
 
@@ -423,5 +496,22 @@ and `start-release minor` after the stable computes `0.960.0`.
   `ci.yml`'s `release-publish`, and the merge to main publishes via `release.yml` — both would target
   the same version+tag. The `release-guard` job skips `release-publish` whenever the branch has an
   **open PR into main** (the merge will publish), so a conflict fix or stabilization push to a release
-  branch never spawns a competing approval-gate deployment. Only standalone (no-PR) release branches
-  publish on push.
+  branch never spawns a competing approval-gate deployment. Only older-line hotfix branches publish on
+  push; a current-line one gets a PR instead (see [Hotfixes](#hotfixes)).
+- **GitHub applies `success()` to a job implicitly, unless its `if` contains a status-check
+  function.** Most jobs in `ci.yml` open with `!failure() && !cancelled()` so a skipped need does not
+  poison them, which also removes the implicit gate. Both publish jobs (`prerelease-publish`,
+  `release-publish`) therefore **name every result they depend on**. Never collapse those back into
+  an implicit gate: adding a status-check function to a plain `if` silently deletes the whole test
+  gate.
+- **Address workflow runs by path, never by `.name`.** `ci.yml` sets a `run-name` (a `release/v*`
+  push is a "release cut", a develop push "post-merge"), so no run is named plain "CI". Look runs up
+  with `repos/$REPO/actions/workflows/ci.yml/runs?...`; filtering on `.name` silently matches
+  nothing, and has broken two gates.
+- **Quality derives its coverage count.** It waits for one `coverage-*` artifact per suite leg,
+  counting legs from the jobs list once Build succeeds. Suite legs must stay named
+  `<suite> / <...> Tests`; a finished-green set with a missing artifact fails loudly. Its job budget
+  (180 minutes) is sized for runner queueing, because it starts with the run and waits.
+- **`main` is protected by a ruleset, not classic branch protection.** `.../branches/main/protection`
+  returns 404 "Branch not protected"; the 13 required checks are at
+  `gh api repos/<owner>/<repo>/rules/branches/main`.
