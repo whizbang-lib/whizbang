@@ -103,6 +103,31 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
       return this;
     }
 
+    // Replace the element with the same key where it stands, or append it — the SQL path's semantics. The new
+    // list is built now from the pre-apply state and written at Flush, like every other setter here. A null
+    // list is created; a list that is not writable in place is replaced with a writable copy.
+    public ICollectiveSetters<TModel> UpsertElement<TElement, TKey>(
+        Expression<Func<TModel, IEnumerable<TElement>?>> collection,
+        Expression<Func<TElement, TKey>> key,
+        TElement element) {
+      var property = _property(collection);
+      if (!property.PropertyType.IsAssignableFrom(typeof(List<TElement>))) {
+        throw new NotSupportedException(
+          $"CollectiveInMemoryEvaluator<{typeof(TModel).Name}> can upsert into {property.Name} only when a List<{typeof(TElement).Name}> can be assigned to it.");
+      }
+      var keyOf = key.Compile();
+      var target = keyOf(element);
+      var list = new List<TElement>(collection.Compile().Invoke(original) ?? []);
+      var index = list.FindIndex(e => EqualityComparer<TKey>.Default.Equals(keyOf(e), target));
+      if (index >= 0) {
+        list[index] = element;
+      } else {
+        list.Add(element);
+      }
+      _writes.Add((property, list));
+      return this;
+    }
+
     public void Flush() {
       foreach (var (property, value) in _writes) {
         property.SetValue(original, value);

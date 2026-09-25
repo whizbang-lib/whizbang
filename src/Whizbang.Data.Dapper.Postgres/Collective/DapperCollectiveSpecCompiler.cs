@@ -151,6 +151,28 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
     public Dictionary<string, object?> Parameters { get; } = new(StringComparer.Ordinal);
 
     protected override Expression VisitMethodCall(MethodCallExpression node) {
+      // Match: ICollectiveSetters<TModel>.UpsertElement<TElement, TKey>(collection, key, element). The array is
+      // rewritten in place by the shared upsert expression, so it rides the same jsonb_set chain.
+      if (node.Method.DeclaringType is { IsGenericType: true } upsertDeclaring &&
+          upsertDeclaring.GetGenericTypeDefinition() == typeof(ICollectiveSetters<>) &&
+          node.Method.Name == "UpsertElement" &&
+          node.Arguments.Count == 3) {
+        var collection = _extractScalarPropertyName(_unwrapLambda(node.Arguments[0]));
+        var key = _tryPropertyName(_unwrapLambda(node.Arguments[1]).Body)
+          ?? throw new NotSupportedException(
+            "UpsertElement's key must be a direct property of the element (c => c.Key); nested or computed keys are not supported.");
+        var element = _evaluateValue(node.Arguments[2])
+          ?? throw new ArgumentException($"UpsertElement on {collection} needs an element; null cannot be keyed.");
+        var paramName = _nextParam(collection);
+        Parameters[paramName] = JsonSerializer.Serialize(element, element.GetType(), _jsonOptions);
+        Properties.Add(new PropertyAssignment(collection,
+          Whizbang.Data.Postgres.Collective.CollectiveElementUpsertSql.ValueSql(collection, key, $"@{paramName}::jsonb")));
+        if (node.Object is not null) {
+          Visit(node.Object);
+        }
+        return node;
+      }
+
       // Match: ICollectiveSetters<TModel>.SetProperty<TProp>(selector, value)
       if (node.Method.DeclaringType is { IsGenericType: true } declaring &&
           declaring.GetGenericTypeDefinition() == typeof(ICollectiveSetters<>) &&

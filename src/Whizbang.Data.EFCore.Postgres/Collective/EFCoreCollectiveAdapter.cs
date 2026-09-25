@@ -109,9 +109,13 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     var setExpr = new StringBuilder("data");
     for (var i = 0; i < assignments.Count; i++) {
       var idx = i.ToString(CultureInfo.InvariantCulture);
-      var valueSql = assignments[i].Comparison is { } cmp
-        ? "to_jsonb((data->'" + cmp.ComparedProperty + "')::jsonb " + cmp.SqlOperator + " @p" + idx + "::jsonb)"
-        : "@p" + idx + "::jsonb";
+      var valueSql = assignments[i] switch {
+        { ElementKey: { } key } => Whizbang.Data.Postgres.Collective.CollectiveElementUpsertSql.ValueSql(
+          assignments[i].PathName, key, "@p" + idx + "::jsonb"),
+        { Comparison: { } cmp } =>
+          "to_jsonb((data->'" + cmp.ComparedProperty + "')::jsonb " + cmp.SqlOperator + " @p" + idx + "::jsonb)",
+        _ => "@p" + idx + "::jsonb",
+      };
       setExpr.Insert(0, "jsonb_set(")
         .Append(", @path").Append(idx).Append(", ").Append(valueSql).Append(')');
     }

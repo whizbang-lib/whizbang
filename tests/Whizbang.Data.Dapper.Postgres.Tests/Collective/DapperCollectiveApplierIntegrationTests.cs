@@ -471,6 +471,117 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     SpecKind: CollectiveSpecKind.Linq,
     Invoker: static (h, e, _) => ((DraftPerspective)h).ArchiveDrafts((ArchiveEvent)e));
 
+  // ── Keyed-array element upsert (Dapper) ─────────────────────────────
+
+  private async Task _seedCellsAsync(Guid id, string tenantId, string dataJson) {
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    await conn.ExecuteAsync(
+      $"INSERT INTO {TABLE} (id, data, scope) VALUES (@id, @data::jsonb, @scope::jsonb)",
+      new { id, data = dataJson, scope = $"{{\"t\": \"{tenantId}\"}}" });
+  }
+
+  private async Task<List<string>> _cellsAsync(Guid id) {
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    var json = await conn.ExecuteScalarAsync<string>(
+      $"SELECT COALESCE(data->'Cells', '[]'::jsonb)::text FROM {TABLE} WHERE id = @id", new { id });
+    using var doc = System.Text.Json.JsonDocument.Parse(json!);
+    return [.. doc.RootElement.EnumerateArray().Select(e => $"{e.GetProperty("Key").GetString()}={e.GetProperty("Value").GetString()}")];
+  }
+
+  private Task<int> _upsertCellAsync(string tenant, string key, string value, string? tag = null) =>
+    DapperCollectiveEventApplier<CellsModel>.ApplyAsync(
+      new CollectiveApplyEntry(
+        ModelType: typeof(CellsModel), EventType: typeof(UpsertCellEvent), HandlerType: typeof(CellsPerspective),
+        MethodName: nameof(CellsPerspective.Upsert), ScopeHandling: CollectiveScopeHandling.Framework,
+        SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, _) => ((CellsPerspective)h).Upsert((UpsertCellEvent)e)),
+      new CellsPerspective(),
+      new UpsertCellEvent { Scope = new TenantCollectiveScope(tenant), Key = key, Value = value, Tag = tag },
+      new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings, CollectiveApplyOptions.Default);
+
+  private const string TWO_CELLS = """{"Tag":"t","Cells":[{"Key":"k1","Value":"v1"},{"Key":"k2","Value":"v2"}]}""";
+
+  [Test]
+  public async Task UpsertElement_ReplacesTheMatchingElement_KeepingOrder_WithinScopeAsync() {
+    await _createTableAsync();
+    var id = Guid.NewGuid();
+    var other = Guid.NewGuid();
+    await _seedCellsAsync(id, "t-A", TWO_CELLS);
+    await _seedCellsAsync(other, "t-B", TWO_CELLS);
+
+    await _upsertCellAsync("t-A", "k1", "new");
+
+    await Assert.That(await _cellsAsync(id)).IsEquivalentTo(["k1=new", "k2=v2"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(await _cellsAsync(other)).IsEquivalentTo(["k1=v1", "k2=v2"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  public async Task UpsertElement_AppendsWhenNoElementHasTheKeyAsync() {
+    await _createTableAsync();
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, "t-A", TWO_CELLS);
+
+    await _upsertCellAsync("t-A", "k3", "v3");
+
+    await Assert.That(await _cellsAsync(id)).IsEquivalentTo(["k1=v1", "k2=v2", "k3=v3"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  [Arguments("""{"Tag":"t"}""")]
+  [Arguments("""{"Tag":"t","Cells":null}""")]
+  public async Task UpsertElement_OnAMissingArray_WritesAOneElementArrayAsync(string dataJson) {
+    await _createTableAsync();
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, "t-A", dataJson);
+
+    await _upsertCellAsync("t-A", "k1", "v1");
+
+    await Assert.That(await _cellsAsync(id)).IsEquivalentTo(["k1=v1"]);
+  }
+
+  [Test]
+  public async Task UpsertElement_ComposesWithSetPropertyAsync() {
+    await _createTableAsync();
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, "t-A", TWO_CELLS);
+
+    await _upsertCellAsync("t-A", "k2", "new", tag: "after");
+
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    await Assert.That(await conn.ExecuteScalarAsync<string>($"SELECT data->>'Tag' FROM {TABLE} WHERE id = @id", new { id })).IsEqualTo("after");
+    await Assert.That(await _cellsAsync(id)).IsEquivalentTo(["k1=v1", "k2=new"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  private sealed class CellsModel {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S1144:Unused private types or members should be removed", Justification = "The document shape the collective writes; the setter is exercised by the UPDATE, not by C#.")]
+    public string? Tag { get; set; }
+    public List<Cell> Cells { get; set; } = [];
+  }
+
+  private sealed class Cell {
+    public string Key { get; set; } = "";
+    public string Value { get; set; } = "";
+  }
+
+  private sealed class CellsPerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<CellsModel> Upsert(UpsertCellEvent e) {
+      var cell = new Cell { Key = e.Key, Value = e.Value };
+      return e.Tag is null
+        ? new Spec(s => s.UpsertElement(m => m.Cells, c => c.Key, cell))
+        : new Spec(s => s.SetProperty(m => m.Tag, e.Tag).UpsertElement(m => m.Cells, c => c.Key, cell));
+    }
+
+    private sealed record Spec(Expression<Action<ICollectiveSetters<CellsModel>>> Setters)
+      : ICollectiveSpec<CellsModel>;
+  }
+
+  private sealed record UpsertCellEvent : ICollectiveEvent {
+    public required CollectiveScope Scope { get; init; }
+    public required string Key { get; init; }
+    public required string Value { get; init; }
+    public string? Tag { get; init; }
+  }
+
   private sealed class JobModel {
     public string Status { get; set; } = "";
   }
