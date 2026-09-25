@@ -732,21 +732,26 @@ jobs:
     # restricted context, so it can never recover. Skipping is safe because ci-result
     # accepts skipped jobs, and the merge queue re-runs quality with full secrets
     # before anything lands on develop.
-    needs: [changes, queue-validated, ff-validated, release-pr]
+    needs: [changes, queue-validated, ff-validated]
     # !failure() && !cancelled() is REQUIRED here: queue-validated and ff-validated are each
     # skipped on every event but their own (push / merge_group), and a skipped need would
     # otherwise poison the implicit success() check and silently skip quality everywhere. The
     # queue-validated clause skips quality on a queue-validated develop push; the ff-validated
     # clause skips it on a fast-forward queue run (the PR run's Sonar already covered this exact
-    # tree); the release-pr clause skips it on a release PR whose push run is analyzing the same
-    # commit. Coverage still reaches Codecov — via reupload-reports on the push, or the PR run's
-    # own upload on a fast-forward, or the push run's own on a release cut.
+    # tree). Coverage still reaches Codecov — via reupload-reports on the push, or the PR run's
+    # own upload on a fast-forward.
+    #
+    # NOT gated on the release-PR check, though format, build and the six suites are. Those are
+    # equivalent across the two runs covering a release cut: same commit, same bytes, same tests.
+    # This job is NOT, because it behaves differently per EVENT — SonarScanner Begin/End run only
+    # on a pull request or on main, so the push run for a release branch deliberately skips the
+    # scanner. Yielding here removed the only context that ever analyzes a release PR, and the
+    # release then merged to main carrying no analysis of its own.
     if: >-
       !failure() && !cancelled() &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
       needs.queue-validated.outputs.validated != 'true' &&
       needs.ff-validated.outputs.skip != 'true' &&
-      needs.release-pr.outputs.skip != 'true' &&
       (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group')
     permissions:
       contents: read
