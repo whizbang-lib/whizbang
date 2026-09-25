@@ -162,7 +162,7 @@ internal sealed class ScheduledIntegritySweepReceptorRegistrar(
 
   public Task StartAsync(CancellationToken cancellationToken) {
     var registry = services.GetService<IReceptorRegistry>();
-    if (registry is null) {
+    if (registry is null or INullDefault) {
       return Task.CompletedTask;
     }
     var receptor = new ScheduledIntegritySweepReceptor(scopeFactory, receptorLogger);
