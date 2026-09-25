@@ -8,10 +8,10 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Priority;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Workers;
-using Whizbang.Core.Priority;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
