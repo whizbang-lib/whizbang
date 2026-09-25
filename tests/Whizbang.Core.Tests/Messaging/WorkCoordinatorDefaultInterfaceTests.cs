@@ -335,6 +335,18 @@ public class WorkCoordinatorDefaultInterfaceTests {
     await Assert.That(discarded).IsEqualTo(0L);
   }
 
+  /// <summary>
+  /// A coordinator that cannot tell which streams have a message waiting says so with null rather than
+  /// an empty set: empty would read as "nothing is coming", and the saga sweep would wake sagas that
+  /// still have a watchdog tick on the way.
+  /// </summary>
+  [Test]
+  public async Task GetStreamsWithPendingMessagesAsync_DefaultImplementation_AnswersUnknownAsync() {
+    var pending = await _coordinator.GetStreamsWithPendingMessagesAsync([Guid.Parse("00000000-0000-0000-0000-000000000001")], ["Any.Type, Any"]);
+
+    await Assert.That(pending).IsNull();
+  }
+
   [Test]
   public async Task FindStuckOutboxRowsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
     var rows = await _coordinator.FindStuckOutboxRowsAsync(5, 100);
