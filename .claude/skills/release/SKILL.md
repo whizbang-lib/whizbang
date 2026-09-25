@@ -25,7 +25,7 @@ it: the rules there are enforced by the workflows, and a step that fights them f
 | "Ship it" / stable | F5 | Merge the release PR **with a merge commit**: `gh pr merge <n> --merge` (or `--auto --merge`). Then the `nuget-publish` approval. |
 | A release must not ship | F6 | Close the release PR, delete `release/vX.Y.Z`. Re-cut later with `auto`: it reuses the number if betas/rcs shipped. |
 | Production bug in the latest stable | F7 | `git switch -c release/vX.Y.(Z+1) vX.Y.Z && git push -u origin HEAD`, then commit the fix and push. CI opens the release PR itself. Continue with F3/F5. |
-| Bug in an older line someone still runs | F8 | Same, branched from the older tag. It publishes from the push and opens a develop-only back-merge PR; it never touches `main`. |
+| Bug in an older line someone still runs | F8 | Branch `release/vA.B.(C+1)` from the older tag and push it; put the fix on `fix/<name>` and **PR it into that branch** (a direct push is refused). Merging publishes and opens a develop-only back-merge PR; it never touches `main`. |
 | Something is stuck or red | F9 | The **Recovery** table in RELEASING.md, by symptom. |
 
 Only one release is in flight at a time. Before F2, check:
@@ -69,6 +69,9 @@ Work out the version from facts, not guesses:
 - **Never** put anything after the version in a release PR title (`chore(release): vX.Y.Z` exactly).
 - **Never** delete a published tag: GitHub keeps a tombstone for immutable releases and the number is
   gone. A wrong tag is superseded by a higher one.
+- **Never** try to publish a commit that skipped the PR gate (100% coverage of new lines, zero Sonar
+  findings). The gate runs only on pull requests; betas, rcs and hotfixes refuse anything else, and
+  so should you: route the change through a PR.
 - **Never** park a flaky failure in a release run. Re-run the failed jobs to unblock the release,
   **and** fix the flake in its own PR.
 - **Never** name a client, consumer, tenant or environment anywhere: titles, bodies, tags, notes.

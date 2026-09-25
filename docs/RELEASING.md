@@ -10,6 +10,11 @@
 - **Three channels, one per gitflow branch.** `develop` publishes **alpha** automatically on every
   merge. An open `release/vX.Y.Z` branch publishes **beta** and **rc** when asked. `main` publishes
   **stable** when the release PR merges. Hotfixes are release branches too.
+- **Nothing publishes past the PR gate: 100% coverage of new lines and zero Sonar findings.** That
+  gate runs only on pull-request events, so every publish path requires a commit whose PR gate
+  passed: develop merges and release PRs by merging, betas and rcs by the open release PR's gate on
+  exactly that commit, an older-line hotfix by the fix PR merged into its branch
+  (`.github/actions/require-pr-gate`).
 - **Every published package is the tested build.** Nothing is rebuilt to publish: stable promotes the
   release branch's tested packages, and a beta or rc repacks its tested binaries at the prerelease
   version (byte-identical DLLs).
@@ -35,12 +40,12 @@ the enforcement points named in the last column refuse it.
 |---|---|---|---|---|
 | F1 | Ship a change | PR from `feat/*`, `fix/*`, `test/*`, `ci/*`, … into `develop`; merge through the queue | CI (1 pre-merge, 2 merge queue, 3 post-merge); develop publishes the changed packages as **`0.Y.0-alpha.N`** | gitflow check; `develop` ruleset |
 | F2 | Cut a release | Actions → **Start Release** from `develop`, `release_type: auto` | Creates `release/vX.Y.Z` and the PR `chore(release): vX.Y.Z` into `main`; CI 4 release candidate | one release in flight; branch must not exist |
-| F3 | Publish a **beta** or **rc** | Actions → **Release Prerelease**, "Use workflow from" = the release branch, pick `beta` or `rc` | Repacks the branch head's tested build as **`X.Y.Z-beta.N`** / **`-rc.N`**, publishes, tags it on the branch. Nothing merges | release branch only; green CI; no beta after rc; not after stable |
+| F3 | Publish a **beta** or **rc** | Actions → **Release Prerelease**, "Use workflow from" = the release branch, pick `beta` or `rc` | Repacks the branch head's tested build as **`X.Y.Z-beta.N`** / **`-rc.N`**, publishes, tags it on the branch. Nothing merges | release branch only; the open release PR's head is this commit and its coverage/Sonar gate passed on it; green CI; no beta after rc; not after stable |
 | F4 | Fix something in an open release | PR from `fix/*` (or `bugfix/*`, `hotfix/*`) into `release/vX.Y.Z` | The branch re-tests; publish the next beta or rc when ready (F3); the fix reaches develop after release (F5) | gitflow check |
 | F5 | Ship the **stable** release | Merge the release PR (merge commit) and approve `nuget-publish` | Promotes the release branch's tested packages as **`X.Y.Z`**, tags `main`, syncs `main` back to `develop` by PR; CI 5 released reuses the release branch's results | release PR must come from `release/vX.Y.Z` with its own stable number; tested tree must equal the tagged tree |
 | F6 | Abandon a release | Close the release PR, delete the branch | Nothing publishes. A re-cut with `auto` reuses the same number if betas or rcs already shipped for it | — |
 | F7 | Hotfix the **current** line | Branch `release/vX.Y.(Z+1)` from tag `vX.Y.Z`, push it, then push the fix | The push run opens the release PR into `main` itself; continue with F3/F5 | release guard |
-| F8 | Patch an **older** line | Branch `release/vA.B.(C+1)` from tag `vA.B.C`, push it, then push the fix | Publishes **`A.B.(C+1)`** from the push, then opens a develop-only back-merge PR; never touches `main` | release guard |
+| F8 | Patch an **older** line | Branch `release/vA.B.(C+1)` from tag `vA.B.C` and push it; put the fix on `fix/*` and PR it **into** `release/vA.B.(C+1)` | Merging the fix PR publishes **`A.B.(C+1)`**, then opens a develop-only back-merge PR; never touches `main` | release guard: a direct push is refused; the fix PR's coverage/Sonar gate must have passed |
 | F9 | Recover a stuck release | See [Recovery](#recovery) | — | — |
 
 **Deliberately unsupported:** a deliberate `alpha` cut (alpha is develop's channel; the first
@@ -496,7 +501,8 @@ tag of the line it patches:
 
 1. `git switch -c release/v0.2450.1 v0.2450.0` and push the branch **before** the fix. The creation
    push is ignored.
-2. Commit the fix and push.
+2. Current line: commit the fix and push; the release PR it opens runs the gate. Older line: put the
+   fix on `fix/<name>` and open a PR into the hotfix branch; merging it publishes.
 
 The push run's `Plan · Route the hotfix by line` compares the branch version with the highest stable
 tag:
@@ -504,7 +510,7 @@ tag:
 | Line | Example (highest stable `0.2451.0`) | What happens |
 |---|---|---|
 | **Current** (above it), F7 | `release/v0.2451.1` | It **opens the release PR into `main`** (title `chore(release): v0.2451.1`) instead of publishing. From there it is an ordinary release: beta/rc if wanted (F3), then merge (F5), which syncs develop. |
-| **Older** (at or below it), F8 | `release/v0.2450.1` | `Publish · Hotfix (older line)` publishes from the push (after the approval gate), then `Merge back · Hotfix to develop` opens a **develop-only** back-merge PR. It never touches `main`, which would regress main to an older release. |
+| **Older** (at or below it), F8 | `release/v0.2450.1` | The fix must arrive as a PR **into** the hotfix branch (a direct push is refused), so its coverage and Sonar gate runs on it. Merging that PR publishes through `Publish · Hotfix (older line)` (after the approval gate), then `Merge back · Hotfix to develop` opens a **develop-only** back-merge PR. It never touches `main`, which would regress main to an older release. |
 
 Either way the fix reaches develop, so the next cut cannot silently ship without it. The back-merge
 PR may conflict when the lines have diverged; resolve it like any PR.
@@ -520,6 +526,8 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | `Plan · Locate the tested packages` failed: expired or not green | the release PR sat open past 7 days, or its run went red | Re-run the release-branch CI run (all jobs), then `gh workflow run release.yml --ref main -f version=X.Y.Z -f release_type=auto -f dry_run=false` |
 | `Plan · Is this a release?` refused the merged PR | the title or branch didn't match `chore(release): vX.Y.Z` from `release/vX.Y.Z` | Re-dispatch as above with the right version; never re-title and re-merge |
 | Release Prerelease refused: "build has expired" / "not green" | the branch head's run is older than 7 days, running, or red | Re-run that CI run (or push), wait for green, retry |
+| Release Prerelease refused: "gate did not pass" / "PR's head is not this commit" | the release PR's Quality or SonarCloud check failed, or is still running, on the branch head | Fix it in the release branch through a PR until the release PR is green on its head, then retry |
+| Older-line hotfix refused: "pushed directly" | the fix was pushed to the hotfix branch instead of merged through a PR | Put the fix on `fix/<name>`, PR it into the hotfix branch, merge when green |
 | Start Release refused: "release PR still open" | one release is in flight | Merge it (F5) or close it (F6), then retry |
 | Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
 | A job in a release run failed for a flaky test | a real flake | Re-run the failed jobs to unblock, **and** fix the flake in a PR (flakes are fixed on sight, never parked) |

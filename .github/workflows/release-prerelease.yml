@@ -40,7 +40,9 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      actions: read   # find the branch's CI run and its build
+      actions: read         # find the branch's CI run and its build
+      checks: read          # the release PR's SonarCloud check
+      pull-requests: read   # the release PR itself
     outputs:
       version: ${{ steps.plan.outputs.version }}
       run-id: ${{ steps.plan.outputs.run-id }}
@@ -95,9 +97,32 @@ jobs:
             echo "::error::The build from CI run $RUN_ID has expired. Re-run that run (all jobs) to rebuild and re-test it, then retry."
             exit 1
           fi
+          # The coverage and Sonar gate (100% of new lines, zero findings) runs only on pull-request
+          # events, so this commit must be the head of the open release PR, whose gate is checked below.
+          PR_HEAD=$(gh pr list --repo "$REPO" --head "${REF#refs/heads/}" --base main --state open --json headRefOid --jq '.[0].headRefOid // ""')
+          if [ -z "$PR_HEAD" ]; then
+            echo "::error::No open release PR from ${REF#refs/heads/} into main. Prereleases publish while the release PR is open, so its gate covers what ships."
+            exit 1
+          fi
+          if [ "$PR_HEAD" != "$SHA" ]; then
+            echo "::error::The release PR's head is $PR_HEAD, not $SHA. Wait for the PR to catch up with the branch, then retry."
+            exit 1
+          fi
           echo "Publishing v$VERSION from CI run $RUN_ID ($SHA)."
           { echo "version=$VERSION"; echo "run-id=$RUN_ID"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
           echo "### v$VERSION from the tested build of CI run $RUN_ID (\`$SHA\`)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout the gate action
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+
+      # 100% coverage of new lines and zero Sonar findings, on exactly the commit that ships.
+      - name: Require the release PR's gate on this commit
+        uses: ./.github/actions/require-pr-gate
+        with:
+          sha: ${{ steps.plan.outputs.sha }}
+          token: ${{ github.token }}
 
   pack:
     name: Build · Repack the tested build

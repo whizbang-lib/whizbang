@@ -1108,6 +1108,9 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created
     runs-on: ubuntu-latest
     permissions:
+      contents: read        # the gate action
+      actions: read         # the fix PR's CI run
+      checks: read          # the fix PR's SonarCloud check
       pull-requests: read
     outputs:
       should_publish: ${{ steps.check.outputs.should_publish }}
@@ -1166,9 +1169,32 @@ jobs:
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
             echo "### Current-line hotfix → release PR into main opened; the merge publishes." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "No open release PR to main and an older line — publishing from the release-branch push; develop gets a back-merge PR."
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            # An older-line fix publishes straight from this push, with no release PR to gate it, so it
+            # must arrive through a PR into this branch: that PR's run is where 100% coverage of new
+            # lines and zero Sonar findings are enforced. A direct push is refused, loudly.
+            FIX_PR=$(gh api "repos/$REPO/commits/$GITHUB_SHA/pulls" \
+              | jq -r '[.[] | select(.merged_at != null and .base.ref == env.BRANCH)][0] | if . == null then "" else "\(.number) \(.head.sha)" end')
+            if [ -z "$FIX_PR" ]; then
+              echo "::error::$GITHUB_SHA was pushed to $BRANCH directly. An older-line hotfix publishes only a fix merged through a PR into $BRANCH (fix/* -> $BRANCH), so its coverage and Sonar gate runs. Open that PR."
+              exit 1
+            fi
+            echo "Older line; fix PR #${FIX_PR%% *} merged. Publishing once its gate is confirmed; develop gets a back-merge PR."
+            { echo "should_publish=true"; echo "gate_sha=${FIX_PR##* }"; } >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Checkout the gate action
+        if: steps.check.outputs.should_publish == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+
+      # 100% coverage of new lines and zero Sonar findings, on the fix PR that brought this commit.
+      - name: Require the fix PR's gate
+        if: steps.check.outputs.should_publish == 'true'
+        uses: ./.github/actions/require-pr-gate
+        with:
+          sha: ${{ steps.check.outputs.gate_sha }}
+          token: ${{ github.token }}
 
   release-publish:
     name: Publish · Hotfix (older line)
