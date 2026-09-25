@@ -74,7 +74,7 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
     }
 
     var paths = new List<AccessorPath>();
-    _walk(model, prefix: "", depth: 0, paths);
+    _walk(model, prefix: "", access: "", depth: 0, paths);
 
     if (paths.Count == 0) {
       return null;
@@ -109,37 +109,69 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
   }
 
   /// <summary>Collects the paths of a model and, to a bounded depth, of the objects it holds.</summary>
-  private static void _walk(INamedTypeSymbol type, string prefix, int depth, List<AccessorPath> paths) {
+  /// <param name="type">The type being walked.</param>
+  /// <param name="prefix">The dotted path so far, as a filter names it.</param>
+  /// <param name="access">
+  /// The same path as an expression to emit, which differs from <paramref name="prefix"/> once a
+  /// hop is nullable: reaching through it needs the null-forgiving operator, or the consumer's own
+  /// build raises CS8602 on a file it did not write.
+  /// </param>
+  /// <param name="depth">How deep the walk is, against <c>MAX_DEPTH</c>.</param>
+  /// <param name="paths">The paths collected so far.</param>
+  private static void _walk(
+      INamedTypeSymbol type, string prefix, string access, int depth, List<AccessorPath> paths) {
     if (depth >= MAX_DEPTH) {
       return;
     }
 
     foreach (var property in type.GetAllProperties()) {
-      if (property.DeclaredAccessibility != Accessibility.Public || property.GetMethod is null || property.IsStatic) {
+      if (!_isAddressable(property)) {
         continue;
       }
 
       var path = prefix.Length == 0 ? property.Name : prefix + "." + property.Name;
-      // The annotation is part of the type the accessor yields. Without it the lambda returning a
-      // property that may be null is a nullable warning in the consumer's own build, which is their
-      // build broken by generated code rather than by anything they wrote.
-      var nullable = property.NullableAnnotation == NullableAnnotation.Annotated && property.Type.IsReferenceType
-        ? "?"
-        : string.Empty;
+      var propertyAccess = access.Length == 0 ? property.Name : access + "." + property.Name;
+      // Rendered WITH nullability rather than appending the outer annotation by hand, because the
+      // annotations inside a generic argument count too: a List<string?> declared as a List<string>
+      // is a nullability mismatch on the assignment itself (CS8619), not merely a laxer type.
+      paths.Add(new AccessorPath(path, TypeNameUtilities.FullyQualifiedWithNullability(property.Type), propertyAccess));
 
-      paths.Add(new AccessorPath(path, TypeNameUtilities.FullyQualified(property.Type) + nullable));
-
-      // Only a plain object is descended into. A collection's elements have no path of their own
-      // that a filter could name, and a primitive has nothing beneath it.
-      if (property.Type is INamedTypeSymbol nested
-          && nested.TypeKind == TypeKind.Class
-          && nested.SpecialType == SpecialType.None
-          && !nested.AllInterfaces.Any(i => i.Name == "IEnumerable")) {
-        _walk(nested, path, depth + 1, paths);
+      if (property.Type is INamedTypeSymbol nested && _hasPathsBeneath(nested)) {
+        // Only a nullable hop is forgiven, and only the hop itself: the leaf keeps whatever
+        // nullability it has, so nothing downstream is claimed to be non-null on its behalf.
+        _walk(nested, path, propertyAccess + (_isNullableHop(property) ? "!" : ""), depth + 1, paths);
       }
     }
-
   }
+
+  /// <summary>Whether a filter could name this property at all.</summary>
+  /// <param name="property">The property being considered.</param>
+  /// <returns><see langword="true"/> when it is public, readable and not static.</returns>
+  private static bool _isAddressable(IPropertySymbol property) =>
+    property.DeclaredAccessibility == Accessibility.Public
+    && property.GetMethod is not null
+    && !property.IsStatic;
+
+  /// <summary>
+  /// Whether reaching through this property needs the null-forgiving operator — that is, whether
+  /// the property itself may be null.
+  /// </summary>
+  /// <param name="property">The hop being reached through.</param>
+  /// <returns><see langword="true"/> when the hop is an annotated reference type.</returns>
+  private static bool _isNullableHop(IPropertySymbol property) =>
+    property.NullableAnnotation == NullableAnnotation.Annotated && property.Type.IsReferenceType;
+
+  /// <summary>
+  /// Whether a type has paths of its own worth walking. Only a plain object does: a collection's
+  /// elements have no path a filter could name, and a primitive has nothing beneath it.
+  /// </summary>
+  /// <param name="type">The candidate type.</param>
+  /// <returns><see langword="true"/> when the walk should descend into it.</returns>
+  private static bool _hasPathsBeneath(INamedTypeSymbol type) =>
+    type.TypeKind == TypeKind.Class
+    && type.SpecialType == SpecialType.None
+    && !type.AllInterfaces.Any(i => i.Name == "IEnumerable");
+
 
   /// <summary>Writes one accessor class per model.</summary>
   private static void _emit(SourceProductionContext context, ImmutableArray<AccessorModel?> candidates) {
@@ -165,7 +197,7 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
         var member = path.Path.Replace(".", "");
         sb.AppendLine($"  /// <summary>The <c>{path.Path}</c> property.</summary>");
         sb.AppendLine(
-          $"  public static Expression<Func<{model.FullyQualifiedName}, {path.TypeName}>> {member} {{ get; }} = _m => _m.{path.Path};");
+          $"  public static Expression<Func<{model.FullyQualifiedName}, {path.TypeName}>> {member} {{ get; }} = _m => _m.{path.Access};");
       }
 
       sb.AppendLine();
@@ -201,5 +233,11 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
 internal sealed record AccessorModel(
     string Name, string? Namespace, string FullyQualifiedName, bool IsPublic, ImmutableArray<AccessorPath> Paths);
 
-/// <summary>One addressable property path and the type it yields.</summary>
-internal sealed record AccessorPath(string Path, string TypeName);
+/// <summary>One addressable property path, the type it yields, and how to reach it.</summary>
+/// <param name="Path">The dotted path a filter names.</param>
+/// <param name="TypeName">The type the accessor yields, annotation included.</param>
+/// <param name="Access">
+/// The path as emitted, which carries a null-forgiving operator on every nullable hop it reaches
+/// through. Identical to <paramref name="Path"/> when nothing on the way can be null.
+/// </param>
+internal sealed record AccessorPath(string Path, string TypeName, string Access);
