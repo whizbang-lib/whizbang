@@ -222,6 +222,36 @@ public sealed partial class DispatcherSecurityBuilder {
   }
 
   /// <summary>
+  /// Publishes an event at most once per claim key, with explicit security context.
+  /// </summary>
+  /// <remarks>
+  /// The exactly-once primitive of <see cref="IDispatcher.PublishOnceAsync{TEvent}"/> under an explicit
+  /// identity. Background work that has no caller of its own (a maintenance sweep acting for a
+  /// tenant's record) needs both at once: the claim, so every instance and every restart arrive at one
+  /// emission, and the tenant, so the event is handled in the scope it belongs to.
+  /// </remarks>
+  /// <typeparam name="TEvent">The event type.</typeparam>
+  /// <param name="claimKey">The key every would-be publisher of this emission shares.</param>
+  /// <param name="eventData">The event to publish.</param>
+  /// <param name="cancellationToken">Cancels the claim and the publish.</param>
+  /// <returns><see langword="true"/> when this caller won the claim and published.</returns>
+  /// <docs>fundamentals/security/scope-propagation#system-operations</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSecurityBuilderPublishOnceTests.cs</tests>
+  public async Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) {
+    var previousContext = ScopeContextAccessor.CurrentContext;
+    var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
+    try {
+      ScopeContextAccessor.CurrentContext = _createExplicitContext();
+      // Cleared for the same reason as PublishAsync: the getter reads the initiating context first.
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+      return await _dispatcher.PublishOnceAsync(claimKey, eventData, cancellationToken);
+    } finally {
+      ScopeContextAccessor.CurrentContext = previousContext;
+      ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
+    }
+  }
+
+  /// <summary>
   /// Invokes a receptor in-process with explicit security context and returns the typed business result.
   /// </summary>
   /// <typeparam name="TMessage">The message type.</typeparam>

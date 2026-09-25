@@ -74,6 +74,37 @@ public class DispatcherSagaEventEmitterTests {
     await Assert.That(dispatcher.OptionsCallCount).IsEqualTo(0);
   }
 
+  /// <summary>
+  /// The stranded-saga sweep publishes from a maintenance worker with no request of its own; the tick
+  /// must reach the dispatcher as the system acting in the saga's tenant, claim-keyed.
+  /// </summary>
+  [Test]
+  [NotInParallel("ScopeContextAccessor")]
+  public async Task PublishOnceInTenantAsync_PublishesAsTheSystemInThatTenantAsync() {
+    var dispatcher = new RecordingDispatcher();
+    var emitter = new DispatcherSagaEventEmitter(dispatcher);
+
+    var won = await ((ISagaEventEmitter)emitter).PublishOnceInTenantAsync("tenant-a", "sweep:1", new TestEvent(), CancellationToken.None);
+
+    await Assert.That(won).IsTrue();
+    await Assert.That(dispatcher.LastPublishOnceClaimKey).IsEqualTo("sweep:1");
+    await Assert.That(dispatcher.LastPublishOnceScope?.TenantId).IsEqualTo("tenant-a")
+      .Because("the tick is handled where it is received, in the scope it was published with");
+    await Assert.That(dispatcher.LastPublishOnceScope?.UserId).IsEqualTo("SYSTEM");
+  }
+
+  /// <summary>Sagas that are not tenant-scoped are swept for all tenants.</summary>
+  [Test]
+  [NotInParallel("ScopeContextAccessor")]
+  public async Task PublishOnceInTenantAsync_NoTenant_PublishesForAllTenantsAsync() {
+    var dispatcher = new RecordingDispatcher();
+    var emitter = new DispatcherSagaEventEmitter(dispatcher);
+
+    await ((ISagaEventEmitter)emitter).PublishOnceInTenantAsync(null, "sweep:2", new TestEvent(), CancellationToken.None);
+
+    await Assert.That(dispatcher.LastPublishOnceScope?.TenantId).IsEqualTo(Whizbang.Core.Lenses.TenantConstants.AllTenants);
+  }
+
   [Test]
   public async Task PublishOnceAsync_ForwardsClaimKeyAndEventToDispatcherAsync() {
     var dispatcher = new RecordingDispatcher();
@@ -107,6 +138,7 @@ public class DispatcherSagaEventEmitterTests {
     public int PublishOnceCallCount { get; private set; }
     public DispatchOptions? LastCapturedOptions { get; private set; }
     public string? LastPublishOnceClaimKey { get; private set; }
+    public Whizbang.Core.Lenses.PerspectiveScope? LastPublishOnceScope { get; private set; }
 
     private static DeliveryReceipt _noopReceipt() =>
       DeliveryReceipt.Accepted(new MessageId(Guid.NewGuid()), destination: "test");
@@ -125,6 +157,7 @@ public class DispatcherSagaEventEmitterTests {
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) {
       PublishOnceCallCount++;
       LastPublishOnceClaimKey = claimKey;
+      LastPublishOnceScope = Whizbang.Core.Security.ScopeContextAccessor.CurrentContext?.Scope;
       return Task.FromResult(true);
     }
 

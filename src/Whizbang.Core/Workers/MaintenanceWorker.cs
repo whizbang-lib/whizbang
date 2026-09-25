@@ -17,7 +17,7 @@ namespace Whizbang.Core.Workers;
 /// (returns an empty list). Engines with active housekeeping (stale-instance purge,
 /// dead-letter cleanup, dedup pruning) light up automatically.
 /// </remarks>
-/// <docs>fundamentals/work-coordinator/maintenance</docs>
+/// <docs>fundamentals/workers/maintenance-steps</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
 public sealed partial class MaintenanceWorker(
   IServiceScopeFactory scopeFactory,
@@ -309,6 +309,26 @@ public sealed partial class MaintenanceWorker(
     // indexes added in migration 054 for O(log N) scan on a ~0-sized index.
     if (_options.StuckRowSentinelEnabled) {
       await _runStuckRowSentinelAsync(coordinator, ct);
+    }
+
+    // Steps other packages add. Last, so everything they read has been through this cycle's own
+    // housekeeping first.
+    await _runMaintenanceStepsAsync(sp, ct).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Runs the steps other packages registered, in registration order. Best-effort per step: a step
+  /// that throws is logged by name and the next one runs; cancellation is shutdown and propagates.
+  /// </summary>
+  private async Task _runMaintenanceStepsAsync(IServiceProvider sp, CancellationToken ct) {
+    foreach (var step in sp.GetServices<IMaintenanceStep>()) {
+      try {
+        await step.RunAsync(sp, ct).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogMaintenanceStepFailed(_logger, step.Name, ex);
+      }
     }
   }
 
@@ -1007,6 +1027,10 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 46, Level = LogLevel.Information,
     Message = "Settled apply-path fold: {FoldedCount} idle stream(s) folded into the signature counts")]
   private static partial void LogSettledFold(ILogger logger, int foldedCount);
+
+  [LoggerMessage(EventId = 59, Level = LogLevel.Warning,
+    Message = "Maintenance step {StepName} failed; the remaining steps still ran and it retries next cycle")]
+  private static partial void LogMaintenanceStepFailed(ILogger logger, string stepName, Exception exception);
 
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "Stuck inbox row sentinel: message_id={MessageId} type={MessageType} stream={StreamId} attempts={Attempts} since={ClaimedSince:o} — row claimed past MaxInboxAttempts but never drained. Investigate; see operations/observability/stuck-row-sentinel.")]

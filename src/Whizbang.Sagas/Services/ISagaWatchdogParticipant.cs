@@ -31,4 +31,18 @@ public interface ISagaWatchdogParticipant {
   Task<WatchdogTickOutcome> TryRecoverViaWatchdogTickAsync(
       SagaCompletionWatchdogTickEvent tick,
       CancellationToken cancellationToken);
+
+  /// <summary>
+  /// Arms one watchdog tick for each of this saga's incomplete sagas whose chain has ended.
+  /// </summary>
+  /// <remarks>
+  /// Called by the stranded-saga sweep in the maintenance cycle. The default arms nothing, for a
+  /// participant that cannot enumerate its sagas; <c>BaseSagaService</c> implements it.
+  /// </remarks>
+  /// <param name="wakes">Which sagas still have a tick coming.</param>
+  /// <param name="cancellationToken">Cancels the sweep.</param>
+  /// <returns>How many ticks this call armed.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
+  Task<int> ArmStrandedSagasAsync(ISagaWakeLookup wakes, CancellationToken cancellationToken)
+    => Task.FromResult(0);
 }

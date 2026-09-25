@@ -39,4 +39,20 @@ public interface ISagaEventEmitter {
   /// completion handlers collapse to exactly one emission.
   /// </summary>
   Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken) where TEvent : IEvent;
+
+  /// <summary>
+  /// Publishes at most once per <paramref name="claimKey"/>, as the system acting in
+  /// <paramref name="tenantId"/>.
+  /// </summary>
+  /// <remarks>
+  /// For background work with no request of its own, such as the stranded-saga sweep: the claim makes
+  /// every instance and restart arrive at one emission, and the tenant makes the event handled where
+  /// it belongs. <see langword="null"/> publishes for all tenants. The default ignores the tenant and
+  /// claims as <see cref="PublishOnceAsync{TEvent}"/> does, for an emitter with no notion of scope.
+  /// </remarks>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/DispatcherSagaEventEmitterTests.cs</tests>
+  Task<bool> PublishOnceInTenantAsync<TEvent>(string? tenantId, string claimKey, TEvent eventData, CancellationToken cancellationToken)
+      where TEvent : IEvent
+    => PublishOnceAsync(claimKey, eventData, cancellationToken);
 }

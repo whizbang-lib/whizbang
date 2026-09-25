@@ -2262,6 +2262,40 @@ public interface IWorkCoordinator {
     => Task.FromResult(0L);
 
   /// <summary>
+  /// Of <paramref name="streamIds"/>, the streams that still have a message of one of
+  /// <paramref name="messageTypeNames"/> waiting: an outbox row not yet published (including one
+  /// scheduled for later) or an inbox row not yet finished (including one being handled now).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Answers "is a wake-up still coming for this stream?" without reading the payloads. The saga
+  /// sweep asks it before re-arming a saga's completion watchdog, so it never wakes a saga early or
+  /// starts a second chain beside a live one.
+  /// </para>
+  /// <para>
+  /// Type names match by containment, like the discard sweeps: a stored <c>message_type</c> may carry
+  /// assembly version metadata or an envelope wrapper around the normalized name. A message on the
+  /// transport between the two tables is in neither, which the caller covers with its own guard.
+  /// </para>
+  /// <para>
+  /// The default returns <see langword="null"/>: this coordinator cannot tell. A caller must then act
+  /// as if every stream had a wake coming, which is the side on which nothing is duplicated.
+  /// </para>
+  /// </remarks>
+  /// <param name="streamIds">The streams to check.</param>
+  /// <param name="messageTypeNames">Normalized type names to look for.</param>
+  /// <param name="cancellationToken">Cancels the query.</param>
+  /// <returns>The subset of <paramref name="streamIds"/> with such a message waiting, or <see langword="null"/> when unknown.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamsWithPendingMessagesSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamsWithPendingMessagesTests.cs</tests>
+  Task<IReadOnlySet<Guid>?> GetStreamsWithPendingMessagesAsync(
+    IReadOnlyList<Guid> streamIds,
+    IReadOnlyList<string> messageTypeNames,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlySet<Guid>?>(null);
+
+  /// <summary>
   /// v0.657 slice 5: structural canary for the "row claimed but never drained"
   /// bug class. Returns <c>wh_outbox</c> rows whose <c>attempts</c> exceeds
   /// <paramref name="maxAttempts"/> AND have not been processed.

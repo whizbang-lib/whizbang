@@ -5311,6 +5311,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
         + "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)",
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), messageTypeNames, cancellationToken);
 
+  /// <inheritdoc />
+  public async Task<IReadOnlySet<Guid>?> GetStreamsWithPendingMessagesAsync(
+      IReadOnlyList<Guid> streamIds,
+      IReadOnlyList<string> messageTypeNames,
+      CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var command = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    return await Whizbang.Data.Postgres.StreamsWithPendingMessagesSql.ExecuteAsync(
+      command, schema, streamIds, messageTypeNames, cancellationToken);
+  }
+
   /// <summary>
   /// The maintenance sweep behind "a feature that is off leaves nothing behind", for one table.
   /// Containment, not equality: a stored message_type may carry assembly version metadata or an envelope
