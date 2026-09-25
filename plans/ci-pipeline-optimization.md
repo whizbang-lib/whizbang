@@ -89,6 +89,25 @@ invisible from the PR. This shape was hit during this session when #851's runs w
 
 Reshard the suites and Quality waits forever on artifacts that never arrive.
 
+### F5b — `quality`'s 60-minute timeout races the suites, and loses intermittently
+
+**Raised in priority after it bit twice in one night.** `quality` starts early by design (it runs its
+own Sonar-wrapped build while the suites run, then waits for their coverage internally) and carries
+`timeout-minutes: 60`. The four EFCore PostgreSQL shards have been observed running past **65
+minutes**. When they do, quality's wait is cancelled — and a cancelled *required* context is not a
+pass, so the merge blocks with nothing in the run marked red.
+
+Observed: cancelled on release PR #853 (contributed to dropping that cut); passed on #857 roughly an
+hour later with no change to either. So it is intermittent, which makes it worse than a reliable
+failure — it will be dismissed as a flake.
+
+Until the duplicate PR-run quality was removed (#852), the second run reported a pass under the same
+check name and masked this entirely. Removing the duplication did not cause the problem, it revealed
+it.
+
+**Do not simply widen the timeout.** That restores the masking. The fix is either to make the wait
+bounded by the suites' own completion rather than a wall clock, or to shorten the shards.
+
 ### F6 — the release globs disagree
 
 `push` uses `release/v**`; `pull_request` uses `release/**`. A PR into `release/foo` gets CI; a push
@@ -164,7 +183,7 @@ One PR — each PR costs a full matrix. Ordered by value.
 | **P2** | Skip the six suites and the pack on a `main` push; republish the release run's coverage and TRX so Quality still analyzes real coverage. Same pattern as `queue-validated` + `reupload-reports`. | **~46 min per release** |
 | **P3** | Make `release-publish`'s gate explicit, mirroring `prerelease-publish`. | no saving; removes the F3 trap |
 | **P4** | Name the run `release-pr` yielded to, and how to take the matrix back, somewhere visible from the PR. | recoverability |
-| **P5** | Derive `coverage-artifact-count` instead of hardcoding `11`. | removes a silent hang |
+| **P5** | Derive `coverage-artifact-count` instead of hardcoding `11`, and stop `quality`'s wait racing a wall clock (F5b). | removes a silent hang and an intermittent merge block |
 | **P6** | Align `release/v**` and `release/**`. | consistency |
 | **P7** | Close the F9 documentation drift in `RELEASING.md`. | — |
 | **P8** | `prerelease_label` input on `start-release` (choice: `beta`, `rc`, none), with series-number pinning and automatic iteration; reserve `alpha` for the develop channel. | unlocks beta/rc without hand-picking a number |
