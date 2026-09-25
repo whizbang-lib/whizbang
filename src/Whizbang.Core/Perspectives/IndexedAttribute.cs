@@ -55,6 +55,27 @@ public enum IndexKinds {
   /// anything else. Not every driver can provide it, and a driver that cannot reports that too.
   /// </remarks>
   Substring = 2,
+
+  /// <summary>
+  /// Answers a forgiving substring search: <c>Contains</c> that ignores case and typographic variants of
+  /// quotes, dashes and spaces, the way a person types a search box.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The value is indexed through the framework's fold, <c>wh_fold</c>, with a trigram index, and a
+  /// <c>Contains</c> on the field in a query is translated to the same fold on both sides:
+  /// <c>wh_fold(value) LIKE wh_fold_pattern(term)</c>. Nothing extra is stored, so declaring it on a
+  /// field of a model that already has rows needs no migration of those rows; building the index covers
+  /// them. The term and the value are folded by one function, so they cannot drift apart.
+  /// </para>
+  /// <para>
+  /// A <c>Contains</c> on such a field is therefore case-insensitive and quote-insensitive by
+  /// declaration. Text fields only, and it needs the trigram extension; where the server refuses it the
+  /// index is skipped with a warning and the search scans, still folded and still correct.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/physical-fields#search</docs>
+  Search = 4,
 }
 
 /// <summary>

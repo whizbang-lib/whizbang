@@ -97,7 +97,8 @@ public sealed record JsonIndexInfo(
     bool Ordered,
     bool Substring,
     bool CaseInsensitive,
-    JsonIndexCast Superseded = JsonIndexCast.None
+    JsonIndexCast Superseded = JsonIndexCast.None,
+    bool Search = false
 );
 
 /// <summary>
@@ -207,6 +208,14 @@ public static class JsonIndexSql {
       }
 
       yield return $"CREATE INDEX IF NOT EXISTS {name} ON {qualifiedTable} ({element});";
+    }
+
+    if (index.Search) {
+      // Over the framework's fold of the raw value, which is exactly what the query side produces for a
+      // Contains on this field: wh_fold(value) LIKE wh_fold_pattern(term). Named apart from the plain
+      // trigram index because it is a different expression, and a field may carry both.
+      yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}_fold_trgm "
+          + $"ON {qualifiedTable} USING gin ({_schemaOf(qualifiedTable)}wh_fold(data ->> '{index.JsonKey}') gin_trgm_ops);";
     }
 
     if (index.Substring) {

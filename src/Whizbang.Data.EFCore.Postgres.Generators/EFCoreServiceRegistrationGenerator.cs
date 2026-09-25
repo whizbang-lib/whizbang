@@ -653,6 +653,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     var physicalFields = new System.Collections.Generic.List<PhysicalFieldInfo>();
+    // A Split model keeps its physical fields in the column only, so the document has no copy of them
+    // to backfill a column from. FieldStorageMode.Split is 2.
+    var isSplit = modelType.GetAttributes().Any(a =>
+        TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PerspectiveStorageAttribute") &&
+        a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is 2);
     var properties = modelType.GetMembers()
         .OfType<IPropertySymbol>()
         .Where(p => !p.IsStatic);
@@ -666,7 +671,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       if (physicalFieldAttr is not null) {
         var info = _extractPhysicalFieldInfo(property, physicalFieldAttr);
         if (info is not null) {
-          physicalFields.Add(info);
+          physicalFields.Add(info with { IsSplit = isSplit });
         }
       } else if (vectorFieldAttr is not null) {
         var info = _extractVectorFieldInfo(property, vectorFieldAttr);
@@ -826,7 +831,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // document field does: [PhysicalField] says promote, [Indexed] says index, and together they say
     // promote and index. [PhysicalField(Indexed = true)] is gone rather than deprecated, so the
     // named arguments below are the ones that describe the column itself.
-    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0;
+    // Search is served by its own trigram index over the fold, so it does not ask for a btree; any other
+    // declared kind does, as before.
+    var declaredKind = JsonIndexDiscovery.DeclaredKind(property) ?? 0;
+    bool isSearch = JsonIndexDiscovery.IncludesSearch(declaredKind)
+      && JsonIndexDiscovery.CastFor(property.Type) == JsonIndexCast.None;
+    bool isIndexed = (declaredKind & ~4) > 0;
 
     bool isUnique = false;
     string? columnName = null;
@@ -871,7 +881,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         VectorDistanceMetric: null,
         VectorIndexType: null,
         VectorIndexLists: null,
-        ColumnType: columnType
+        ColumnType: columnType,
+        IsSearch: isSearch
     );
   }
 
@@ -1655,6 +1666,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     foreach (var field in model.PhysicalFields) {
       var isVector = field.IsVector ? "true" : "false";
       sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.PhysicalFieldRegistry.Register<{model.ModelTypeName}>(\"{field.PropertyName}\", \"{field.ColumnName}\", isVector: {isVector});");
+      if (field.IsSearch) {
+        // Told apart from its column registration: the search rewrite runs first, on the member access,
+        // and the redirect then points the folded search at the column.
+        sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.JsonIndexRegistry.Register<{model.ModelTypeName}>(\"{field.PropertyName}\", Whizbang.Core.Perspectives.IndexKinds.Search);");
+      }
     }
 
     // A declared index has to be known at run time as well as created, because the containment
@@ -1668,6 +1684,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
       if (index.Substring) {
         kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Substring");
+      }
+      if (index.Search) {
+        kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Search");
       }
 
       var kindExpression = string.Join(" | ", kinds);
@@ -1849,7 +1868,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           : [.. perspectives.Where(p => _matchesDbContext(p, dbContext))];
 
       var hasVectorFields = matchingPerspectives.Any(m => m.PhysicalFields.Any(f => f.IsVector));
-      var hasPhysicalFields = matchingPerspectives.Any(m => m.PhysicalFields.Length > 0);
+      // "Needs the query interceptor": a promoted field has to be redirected to its column, and a Search
+      // field's Contains has to be rewritten to the fold its index is built over. A model with only Search
+      // fields and no promoted ones still needs the interceptor, or its Contains scans unfolded.
+      var hasPhysicalFields = matchingPerspectives.Any(m => m.PhysicalFields.Length > 0 || m.JsonIndexes.Any(i => i.Search));
 
       var sb = new StringBuilder();
 
@@ -2626,6 +2648,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
     sb.AppendLine(");");
+    _appendPhysicalColumnMigrationSql(sb, perspective, quotedSchema);
     // Additive for tables created before E2-4d — CREATE ... IF NOT EXISTS above skips existing tables.
     sb.AppendLine($"ALTER TABLE {quotedSchema}.{perspective.TableName} ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;");
     _appendSystemTimeMigrationSql(sb, perspective, quotedSchema);
@@ -2800,6 +2823,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       PerspectiveModelInfo perspective,
       string quotedSchema) {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
+    _appendPhysicalSearchIndexes(sb, perspective, quotedSchema, shortName);
 
     foreach (var field in perspective.PhysicalFields) {
       if (!field.IsIndexed) {
@@ -2815,6 +2839,27 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine();
       }
     }
+  }
+
+  /// <summary>
+  /// The trigram index over the fold of each promoted Search field's column, in one optional-extension
+  /// block so a server that refuses the trigram extension skips them with a warning rather than failing.
+  /// </summary>
+  /// <remarks>Over <c>wh_fold(column)</c>: exactly what the query side produces for a <c>Contains</c> on the
+  /// field once the promoted-field redirect has pointed it at the column.</remarks>
+  private static void _appendPhysicalSearchIndexes(
+      StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema, string shortName) {
+    var search = perspective.PhysicalFields.Where(f => f.IsSearch).ToList();
+    if (search.Count == 0) {
+      return;
+    }
+    sb.AppendLine(JsonIndexSql.OPTIONAL_EXTENSION_BEGIN + JsonIndexSql.TRIGRAM_EXTENSION);
+    sb.AppendLine($"CREATE EXTENSION IF NOT EXISTS {JsonIndexSql.TRIGRAM_EXTENSION};");
+    foreach (var field in search) {
+      sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_fold_trgm ON {quotedSchema}.{perspective.TableName} "
+        + $"USING gin ({quotedSchema}.wh_fold({field.ColumnName}) gin_trgm_ops);");
+    }
+    sb.AppendLine(JsonIndexSql.OPTIONAL_EXTENSION_END);
   }
 
   /// <summary>
@@ -2941,10 +2986,35 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
     perspSql.AppendLine(");");
+    _appendPhysicalColumnMigrationSql(perspSql, perspective, quotedSchema);
     // Additive for tables created before E2-4d (CREATE ... IF NOT EXISTS skips existing tables).
     perspSql.AppendLine($"ALTER TABLE {quotedSchema}.{perspective.TableName} ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;");
     _appendSystemTimeMigrationSql(perspSql, perspective, quotedSchema);
     _appendLengthConstraintSql(perspSql, perspective, quotedSchema);
+  }
+
+  /// <summary>
+  /// Brings every physical column into a table that already exists: add it, then fill it from the
+  /// document for the rows written before it existed.
+  /// </summary>
+  /// <remarks>
+  /// <c>CREATE TABLE IF NOT EXISTS</c> skips an existing table, so a field promoted after the table was
+  /// created never reached it: its index then failed the schema pass, and the query translator, which
+  /// redirects the property to the column, read the missing or empty column for every older row. Emitted
+  /// before the length constraints and indexes, which need the column. A table this creates has the
+  /// column already and no rows, so both statements find nothing to do. The backfill touches only rows
+  /// with the value in the document and not in the column, so it is idempotent; which fields it covers
+  /// is decided by <see cref="PhysicalColumnSql.Backfill"/>.
+  /// </remarks>
+  private static void _appendPhysicalColumnMigrationSql(
+      StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
+    var table = $"{quotedSchema}.{perspective.TableName}";
+    foreach (var field in perspective.PhysicalFields) {
+      sb.AppendLine(PhysicalColumnSql.AddColumn(table, field.ColumnName, _getPostgresColumnType(field)));
+      if (PhysicalColumnSql.Backfill(table, field) is { } backfill) {
+        sb.AppendLine(backfill);
+      }
+    }
   }
 
   /// <summary>
@@ -2971,6 +3041,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static void _generatePerspectiveIndexSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
+    _appendPhysicalSearchIndexes(perspSql, perspective, quotedSchema, shortName);
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_created_at ON {quotedSchema}.{perspective.TableName} (created_at);");
     // See _appendStandardIndexes: updated_at serves the sliding retention predicate.
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_updated_at ON {quotedSchema}.{perspective.TableName} (updated_at);");
