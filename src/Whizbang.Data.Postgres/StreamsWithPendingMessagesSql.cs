@@ -31,8 +31,8 @@ public static class StreamsWithPendingMessagesSql {
     $"SELECT o.stream_id FROM \"{schema}\".wh_outbox o "
     + "WHERE o.stream_id = ANY(@stream_ids) AND o.processed_at IS NULL "
     + "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(o.message_type, t.name) > 0) "
-    + $"UNION SELECT s.stream_id FROM \"{schema}\".wh_inbox_state s "
-    + $"JOIN \"{schema}\".wh_inbox i ON i.message_id = s.message_id "
+    // Work state (processed_at) is read from wh_inbox_state; wh_inbox is joined only for message_type.
+    + $"UNION SELECT s.stream_id FROM \"{schema}\".wh_inbox_state s JOIN \"{schema}\".wh_inbox i ON i.message_id = s.message_id "
     + "WHERE s.stream_id = ANY(@stream_ids) AND s.processed_at IS NULL "
     + "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(i.message_type, t.name) > 0)";
 
