@@ -82,7 +82,7 @@ jobs:
           echo "hashed $(wc -l < build-determinism/assemblies.sha256) assemblies at version '${VERSION:-<props default>}'"
 
       - name: Upload determinism manifest
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: determinism-manifest-${{ github.run_id }}
           path: build-determinism/
@@ -92,7 +92,7 @@ jobs:
           retention-days: 3
 
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Test jobs execute test modules directly from bin/ (Run-Tests.ps1 -NoBuild uses
           # --test-modules, no MSBuild), so only PACKABLE projects (src/ + tools/ — CLI,
@@ -200,7 +200,7 @@ jobs:
           echo "packable output is clean"
 
       - name: Upload Instrumented Assemblies
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Overlay only — the instrumented DLLs at their original relative paths. Test jobs
           # download build-<run> first, then this on top, and the paths line up so the
