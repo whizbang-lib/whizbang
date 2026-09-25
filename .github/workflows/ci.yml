@@ -172,11 +172,17 @@ jobs:
     name: Release PR Duplicate Check
     # start-release pushes release/v** AND opens the release PR at the SAME commit, so two runs
     # of this workflow cover identical bytes: the push run, which must run the matrix because it
-    # publishes, and the PR run, which gates the merge to main. Both ran the full matrix — two
-    # integration matrices per release cut, testing one tree twice.
+    # publishes, and the PR run, which gates the merge to main. Both ran everything — two builds,
+    # two Sonar analyses and two integration matrices per release cut, over one tree.
     #
-    # The PR run yields. The push run's results are what the merge is gated on, and they are the
-    # same check NAMES on the same commit, so branch protection reads them either way.
+    # The PR run yields EVERY job that costs a runner: format, build, quality and the six suites.
+    # Yielding only the suites left the two most expensive jobs still doubled, because build and
+    # quality are gated on their own change filter rather than on the matrix's. What remains
+    # doubled is the handful of jobs that resolve an expression and stop (Detect Changes, and the
+    # event-exclusive guards that skip here anyway), which cost seconds, not minutes.
+    #
+    # The push run's results are what the merge reads, and they are the same check NAMES on the
+    # same commit, so a ruleset on main would read them either way.
     #
     # Why yielding is safe in this direction and not the other: these jobs are skipped by an
     # expression, which resolves in seconds, while the push run's real results land minutes later
@@ -532,12 +538,15 @@ jobs:
 
   format:
     name: Verify Code Formatting
-    # Gated on the fast-forward check only, never on queue-validated: a queue run ships nothing,
-    # so skipping there costs nothing, while the publish jobs on a develop push need this job's
-    # own success and a skipped one is not a success. On a fast-forward the tree is byte-identical
-    # to the one the pull request run already checked.
-    needs: [ff-validated]
-    if: ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' }}
+    # Gated on the two checks that mean "another run already covered this exact tree" — the
+    # fast-forward check and the release-PR check — and never on queue-validated: a queue run ships
+    # nothing, so skipping there costs nothing, while the publish jobs on a develop push need this
+    # job's own success and a skipped one is not a success. Both gates are inert on a push, which
+    # is the event those publish jobs run on, so neither can strand a release.
+    needs: [ff-validated, release-pr]
+    if: >-
+      ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
+      needs.release-pr.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -572,7 +581,7 @@ jobs:
 
   build:
     name: Build
-    needs: [version, changes]
+    needs: [version, changes, release-pr]
     # !failure() && !cancelled(): version is skipped (not failed) on PRs — build must
     # still run there with the placeholder version below. Pushes honor the change filter
     # too: a docs-only merge runs no build/tests and publishes no package.
@@ -583,7 +592,13 @@ jobs:
     # which is the whole safety argument for publishing queue-validated bits unre-tested.
     # Skipping this on a fast-forward leaves no manifest to download, so verify-rebuild fails
     # and the prerelease publish it gates never happens. Build runs on the queue.
-    if: ${{ !failure() && !cancelled() && (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
+    #
+    # The release-PR clause is the one skip that is safe here despite the manifest argument above:
+    # it fires only when a PUSH run for this same commit is already building, and that run is the
+    # one every consumer of the manifest reads.
+    if: >-
+      ${{ !failure() && !cancelled() && needs.release-pr.outputs.skip != 'true' &&
+      (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-build.yml
@@ -711,19 +726,21 @@ jobs:
     # restricted context, so it can never recover. Skipping is safe because ci-result
     # accepts skipped jobs, and the merge queue re-runs quality with full secrets
     # before anything lands on develop.
-    needs: [changes, queue-validated, ff-validated]
+    needs: [changes, queue-validated, ff-validated, release-pr]
     # !failure() && !cancelled() is REQUIRED here: queue-validated and ff-validated are each
     # skipped on every event but their own (push / merge_group), and a skipped need would
     # otherwise poison the implicit success() check and silently skip quality everywhere. The
     # queue-validated clause skips quality on a queue-validated develop push; the ff-validated
     # clause skips it on a fast-forward queue run (the PR run's Sonar already covered this exact
-    # tree). Coverage still reaches Codecov — via reupload-reports on the push, or the PR run's
-    # own upload on a fast-forward.
+    # tree); the release-pr clause skips it on a release PR whose push run is analyzing the same
+    # commit. Coverage still reaches Codecov — via reupload-reports on the push, or the PR run's
+    # own upload on a fast-forward, or the push run's own on a release cut.
     if: >-
       !failure() && !cancelled() &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
       needs.queue-validated.outputs.validated != 'true' &&
       needs.ff-validated.outputs.skip != 'true' &&
+      needs.release-pr.outputs.skip != 'true' &&
       (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group')
     permissions:
       contents: read
