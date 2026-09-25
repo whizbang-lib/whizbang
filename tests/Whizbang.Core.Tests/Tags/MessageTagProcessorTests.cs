@@ -1681,6 +1681,48 @@ public class MessageTagProcessorTests {
 
   #region Payload Size Threshold Tests
 
+  /// <summary>
+  /// The threshold is declared and logged in bytes, so the measurement is in bytes.
+  /// </summary>
+  /// <remarks>
+  /// Measuring by the length of the payload's text counted UTF-16 characters, which under-reports
+  /// any payload carrying non-ASCII content — three-byte characters counted as one.
+  /// </remarks>
+  [Test]
+  public async Task PayloadByteLength_CountsUtf8Bytes_NotCharactersAsync() {
+    // Parsed from literal UTF-8, so the euro signs stay three bytes each in the raw value.
+    using var doc = JsonDocument.Parse(System.Text.Encoding.UTF8.GetBytes("{\"a\":\"€€€\"}"));
+
+    var bytes = MessageTagProcessor.PayloadByteLength(doc.RootElement);
+
+    await Assert.That(bytes).IsEqualTo(System.Text.Encoding.UTF8.GetByteCount("{\"a\":\"€€€\"}"))
+      .Because("three euro signs are nine bytes, not three characters");
+    await Assert.That(bytes).IsNotEqualTo(doc.RootElement.GetRawText().Length);
+  }
+
+  /// <summary>
+  /// Measuring a payload costs nothing proportional to the payload.
+  /// </summary>
+  /// <remarks>
+  /// The guard exists to catch an oversized payload, so its cost must not grow with the thing it is
+  /// guarding against. Materializing the payload as a string to read its length allocated the whole
+  /// payload again on every check — 22.4 MB per call on a real bulk operation, repeated per tag —
+  /// and pushed a service to 90 percent of its memory limit while reporting that the payload was big.
+  /// </remarks>
+  [Test]
+  public async Task PayloadByteLength_DoesNotAllocateInProportionToThePayloadAsync() {
+    var big = JsonSerializer.SerializeToElement(new Dictionary<string, string> { ["Body"] = new string('x', 2_000_000) });
+    _ = MessageTagProcessor.PayloadByteLength(big);  // warm the path so first-call costs are not counted
+
+    var before = GC.GetAllocatedBytesForCurrentThread();
+    var bytes = MessageTagProcessor.PayloadByteLength(big);
+    var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+    await Assert.That(bytes).IsGreaterThan(2_000_000);
+    await Assert.That(allocated).IsLessThan(1024)
+      .Because("measuring a 2 MB payload must not allocate a second copy of it");
+  }
+
   [Test]
   [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_PayloadExceedsErrorThreshold_ThrowsAsync() {
