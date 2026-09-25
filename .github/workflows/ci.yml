@@ -24,7 +24,9 @@ on:
       - main           # a release landing here is what analyzes the main line (see below)
       - 'release/v**'  # branch-name-versioned publish (release-publish job)
   pull_request:
-    branches: [main, develop, 'release/**']
+    # Same release glob as push: every release branch is release/vX.Y.Z[-label] (the version is
+    # parsed from the name), so a PR into anything else under release/ is not a release.
+    branches: [main, develop, 'release/v**']
   merge_group:       # the queue's own run, on the prospective merge commit
   workflow_dispatch:
 
@@ -34,7 +36,7 @@ on:
 # that push: release.yml merges the release PR and calls no quality workflow, so main went
 # unanalyzed from one release to the next and the badge kept reporting a months-old verdict on
 # months-old code. Main receives one merge per release, so this costs one matrix per release, and
-# every publish job here is guarded to develop or release/** and cannot fire from it.
+# every publish job here is guarded to develop or release/v** and cannot fire from it.
 
 # Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
 # what it needs. Only the publish jobs get contents/id-token write, and only
@@ -1164,7 +1166,20 @@ jobs:
   release-publish:
     name: Publish Release NuGet
     needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, release-guard]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created && needs.release-guard.outputs.should_publish == 'true'
+    # EXPLICIT gate, mirroring prerelease-publish. GitHub applies success() implicitly only while an
+    # `if` contains no status-check function, so the old plain `if` gated on every need implicitly
+    # — and adding the `!failure() && !cancelled()` every other job opens with would have silently
+    # deleted the whole test gate on the path that publishes STABLE releases. Naming each result
+    # makes the gate survive that edit. Every suite runs on a release/v push (the queue-validated
+    # and release-pr skips never apply to one), so all six must be green.
+    if: >-
+      !failure() && !cancelled() &&
+      github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created &&
+      needs.release-guard.outputs.should_publish == 'true' &&
+      needs.version.result == 'success' && needs.pack.result == 'success' && needs.format.result == 'success' &&
+      needs.unit-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
+      needs.inmemory-integration.result == 'success' && needs.rabbitmq-integration.result == 'success' &&
+      needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success'
     permissions:
       contents: write       # nuget-publish creates the tag + GitHub release
       id-token: write       # NuGet OIDC trusted publishing
