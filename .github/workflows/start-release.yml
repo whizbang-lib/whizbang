@@ -18,6 +18,19 @@ on:
         description: 'Manual version (only used when release_type is "manual", e.g., 1.2.3 or 1.2.3-beta.1)'
         required: false
         type: string
+      prerelease_label:
+        # An ordered choice, never free text: prerelease identifiers compare ASCII-wise, so an
+        # ad-hoc label sorts somewhere nobody predicted. alpha is NOT offered — it is reserved for
+        # the develop channel (-alpha.N), and a deliberate cut sharing it is what let
+        # 0.959.1-alpha.1 sort under an already-published 0.959.1-alpha.12. See docs/RELEASING.md.
+        description: 'Prerelease label for this cut (none = stable). Iterates automatically: beta.1, beta.2, ...'
+        required: true
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - beta
+          - rc
 
 env:
   DOTNET_NOLOGO: true
@@ -89,7 +102,12 @@ jobs:
         env:
           INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
           INPUT_MANUAL_VERSION: ${{ inputs.manual_version }}
+          INPUT_PRERELEASE_LABEL: ${{ inputs.prerelease_label }}
         run: |
+          if [ "$INPUT_RELEASE_TYPE" = "manual" ] && [ "$INPUT_PRERELEASE_LABEL" != "none" ]; then
+            echo "::error::prerelease_label does not apply to release_type=manual — put the label in manual_version."
+            exit 1
+          fi
           if [ "$INPUT_RELEASE_TYPE" = "manual" ]; then
             # Use manually specified version
             MANUAL_VER="$INPUT_MANUAL_VERSION"
@@ -140,10 +158,51 @@ jobs:
                 ;;
             esac
 
-            if [ -n "$PRERELEASE" ]; then
-              SEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+            BASE="${MAJOR}.${MINOR}.${PATCH}"
+            LABEL="$INPUT_PRERELEASE_LABEL"
+            [ "$LABEL" = none ] && LABEL=""
+            TAGS=$(git tag -l 'v*')
+            HIGHEST_STABLE=$(sed -n 's/^v\([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p' <<< "$TAGS" | sort -V | tail -1)
+
+            # A SERIES PINS ITS NUMBER ONCE OPENED. Once vX.Y.Z-beta.1 is tagged, GitVersion moves
+            # past X.Y.Z (verified: with v0.2451.0-beta.1 as the highest tag, auto computes 0.2452.0),
+            # so without this every later cut — beta.2, rc.1, the stable promotion — would drift
+            # upward and the number that was betaed could never ship. An open series is the highest
+            # X.Y.Z with beta/rc tags, no stable tag, and above the highest stable release.
+            OPEN=""
+            while read -r v; do
+              [ -z "$v" ] && continue
+              grep -qx "v$v" <<< "$TAGS" && continue
+              if [ -n "$HIGHEST_STABLE" ] && [ "$(printf '%s\n%s\n' "$HIGHEST_STABLE" "$v" | sort -V | tail -1)" = "$HIGHEST_STABLE" ]; then
+                continue
+              fi
+              OPEN="$v"
+            done <<< "$(sed -nE 's/^v([0-9]+\.[0-9]+\.[0-9]+)-(beta|rc)\.[0-9]+$/\1/p' <<< "$TAGS" | sort -uV)"
+            if [ -n "$OPEN" ] && [ "$INPUT_RELEASE_TYPE" = auto ]; then
+              echo "::notice::Series v$OPEN is open (prerelease tags, no stable) — this cut continues it instead of GitVersion's $BASE."
+              BASE="$OPEN"
+            elif [ -n "$OPEN" ]; then
+              echo "::warning::Series v$OPEN is open; release_type=$INPUT_RELEASE_TYPE starts $BASE instead and leaves v$OPEN unpromoted."
+            fi
+
+            if [ -n "$LABEL" ]; then
+              ESCAPED="${BASE//./\\.}"
+              # Precedence within a series is alpha < beta < rc < stable. Refuse a cut that would
+              # sort below one already shipped, or latest-version resolution would never pick it.
+              if [ "$LABEL" = beta ] && grep -qE "^v${ESCAPED}-rc\.[0-9]+$" <<< "$TAGS"; then
+                echo "::error::v$BASE already has an rc; a beta would sort below it. Cut rc or stable."
+                exit 1
+              fi
+              LAST=$(sed -nE "s/^v${ESCAPED}-${LABEL}\.([0-9]+)$/\1/p" <<< "$TAGS" | sort -n | tail -1)
+              SEMVER="${BASE}-${LABEL}.$(( ${LAST:-0} + 1 ))"
+            elif [ -n "$PRERELEASE" ] && [ "$BASE" != "$OPEN" ]; then
+              SEMVER="${BASE}-${PRERELEASE}"
             else
-              SEMVER="${MAJOR}.${MINOR}.${PATCH}"
+              SEMVER="$BASE"
+            fi
+            if grep -qx "v$SEMVER" <<< "$TAGS"; then
+              echo "::error::v$SEMVER is already tagged."
+              exit 1
             fi
           fi
 
