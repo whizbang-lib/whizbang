@@ -1441,7 +1441,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var (dbContext, models) in dbContextGroups) {
       var dbContextHasVectorFields = models.Any(m => m.PhysicalFields.Any(f => f.IsVector));
-      var dbContextHasPhysicalFields = models.Any(m => m.PhysicalFields.Length > 0);
+      // Same test as the Add{Context} extension: a Search field needs the query rewrite as much as a promoted
+      // field does, and the turnkey path is the one most hosts use.
+      var dbContextHasPhysicalFields = models.Any(m => m.PhysicalFields.Length > 0 || m.JsonIndexes.Any(i => i.Search));
       _generateDbContextRegistrationCallback(sb, dbContext, dbContextHasVectorFields, dbContextHasPhysicalFields);
     }
 
@@ -1582,7 +1584,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Npgsql namespace provides NpgsqlDataSourceBuilder.UseVector() extension (from Pgvector package)
     // Pgvector.EntityFrameworkCore provides NpgsqlDbContextOptionsBuilder.UseVector() extension
     var anyVectorFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector)));
-    var anyPhysicalFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Length > 0));
+    // Matches the test the registration callback uses, so the call it emits always has its namespace.
+    var anyPhysicalFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Length > 0 || m.JsonIndexes.Any(i => i.Search)));
     if (anyVectorFields) {
       sb.AppendLine("using Npgsql;");
       sb.AppendLine("using Pgvector.EntityFrameworkCore;");

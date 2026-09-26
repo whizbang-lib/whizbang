@@ -123,4 +123,54 @@ public class SearchIndexGenerationTests {
 
     await Assert.That(output).Contains("JsonIndexRegistry.Register<global::TestApp.JobModel>(\"Code\", Whizbang.Core.Perspectives.IndexKinds.Search)", StringComparison.Ordinal);
   }
+
+  private const string SEARCH_ONLY_MODEL = """
+    using System;
+    using Microsoft.EntityFrameworkCore;
+    using Whizbang.Core;
+    using Whizbang.Core.Perspectives;
+    using Whizbang.Data.EFCore.Custom;
+
+    namespace TestApp;
+
+    public record TestEvent : IEvent;
+
+    public record TitleModel {
+      [StreamId]
+      public Guid Id { get; init; }
+
+      [Indexed(IndexKinds.Search)]
+      public string Title { get; init; } = "";
+    }
+
+    public class TitlePerspective : IPerspectiveFor<TitleModel, TestEvent> {
+      public TitleModel Apply(TitleModel currentData, TestEvent @event) => currentData;
+    }
+
+    [WhizbangDbContext]
+    public class TestDbContext : DbContext {
+      public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+    }
+    """;
+
+  [Test]
+  public async Task ASearchOnlyModel_InstallsTheQueryRewrite_OnEveryRegistrationPathAsync() {
+    // The turnkey path (AddWhizbang().WithEFCore<T>()) and the generated Add{Context} extension register the
+    // context separately. A model whose only special field is a Search field has no promoted column, but its
+    // Contains still has to be rewritten to the fold, so both must install the rewrite; missing it on one path
+    // leaves search unfolded (case- and quote-sensitive) and scanning, silently.
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(SEARCH_ONLY_MODEL);
+    var registrations = result.GeneratedSources
+      .Select(s => s.SourceText.ToString())
+      .Where(s => s.Contains("DbContextRegistrationRegistry.Register<", StringComparison.Ordinal)
+        || s.Contains("public static IServiceCollection Add", StringComparison.Ordinal))
+      .ToList();
+
+    await Assert.That(registrations.Count).IsGreaterThanOrEqualTo(2);
+    foreach (var source in registrations) {
+      await Assert.That(source).Contains(".UseWhizbangPhysicalFields();", StringComparison.Ordinal);
+      await Assert.That(source).Contains("using Whizbang.Data.EFCore.Postgres.QueryTranslation;", StringComparison.Ordinal)
+        .Because("the call is emitted unqualified, so its file needs the namespace or the consumer does not compile");
+    }
+  }
 }
