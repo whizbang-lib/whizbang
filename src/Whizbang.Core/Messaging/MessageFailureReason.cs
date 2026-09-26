@@ -180,6 +180,13 @@ public enum MessageFailureReason {
   BodyClaimCipherUnknown = 19,
 
   /// <summary>
+  /// The message's payload is larger than the limit that applies to it. Not retried: the same message is the
+  /// same size every time. Recorded with the error code <c>WHIZ-PAYLOAD-TOO-LARGE</c> and both sizes.
+  /// </summary>
+  /// <docs>fundamentals/messages/payload-size-limit</docs>
+  MessagePayloadTooLarge = 20,
+
+  /// <summary>
   /// Unclassified error - reason not determined. Numbered far above the classified reasons so a
   /// new one can be appended without moving it, and last so the members read in value order.
   /// </summary>

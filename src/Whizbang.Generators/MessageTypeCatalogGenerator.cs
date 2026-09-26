@@ -136,7 +136,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         SchemaHash: _computeSchemaHash(typeSymbol),
         IsCollective: _implementsInterface(typeSymbol, COLLECTIVE_EVENT_INTERFACE),
         IsComposite: _implementsInterface(typeSymbol, COMPOSITE_EVENT_INTERFACE),
-        IsCompacted: _implementsInterface(typeSymbol, COMPACTED_EVENT_INTERFACE)
+        IsCompacted: _implementsInterface(typeSymbol, COMPACTED_EVENT_INTERFACE),
+        MaxPayloadBytes: _maxPayloadBytes(typeSymbol)
     );
   }
 
@@ -149,6 +150,21 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   // The two kinds the catalog records, spelled as they appear in the emitted metadata.
   private const string COMMAND_KIND = "command";
   private const string EVENT_KIND = "event";
+
+  private const string MAX_PAYLOAD_SIZE_ATTRIBUTE = "global::Whizbang.Core.Attributes.MaxPayloadSizeAttribute";
+
+  // The type's own payload limit, from [MaxPayloadSize] on it or the nearest base type that declares
+  // one (the attribute is inherited), or null when none does and the framework default applies.
+  private static long? _maxPayloadBytes(INamedTypeSymbol typeSymbol) {
+    for (var type = typeSymbol; type is not null; type = type.BaseType) {
+      var attribute = type.GetAttributes().FirstOrDefault(a =>
+        a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == MAX_PAYLOAD_SIZE_ATTRIBUTE);
+      if (attribute?.ConstructorArguments.FirstOrDefault().Value is { } value) {
+        return System.Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+      }
+    }
+    return null;
+  }
 
   private static bool _implementsInterface(INamedTypeSymbol typeSymbol, string fullyQualifiedInterface)
     => typeSymbol.AllInterfaces.Any(i =>
@@ -294,6 +310,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       if (info.IsCompacted) {
         initParts.Add("IsCompacted = true");
       }
+      if (info.MaxPayloadBytes is { } maxPayloadBytes) {
+        initParts.Add($"MaxPayloadBytes = {maxPayloadBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}L");
+      }
       // Type-definition fingerprint (F-3): every entry carries its deterministic settings + schema hashes.
       // These two are always added, so initParts is never empty — the initializer is unconditional.
       initParts.Add($"SettingsHash = \"{info.SettingsHash}\"");
@@ -341,5 +360,6 @@ internal sealed record MessageTypeCatalogEntryInfo(
     string SchemaHash = "",
     bool IsCollective = false,
     bool IsComposite = false,
-    bool IsCompacted = false
+    bool IsCompacted = false,
+    long? MaxPayloadBytes = null
 );

@@ -167,6 +167,13 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   public int Priority { get; set; }
 
   /// <summary>
+  /// The dispatch's own payload limit (<c>DispatchOptions.WithMaxPayloadBytes</c>), carried from the dispatch
+  /// call to the point where the envelope is serialized. Never serialized: the limit is the producer's.
+  /// </summary>
+  [JsonIgnore]
+  internal long? PayloadLimitOverride { get; set; }
+
+  /// <summary>
   /// Parameterless constructor for object initializer syntax.
   /// </summary>
   public MessageEnvelope() {
