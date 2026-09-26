@@ -20,50 +20,36 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/MessagePayloadLimitsTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
   Justification = "The exception is only meaningful with its measurements; the standard constructors would produce one without them.")]
-public sealed class MessagePayloadTooLargeException : Exception {
+public sealed class MessagePayloadTooLargeException(MessagePayloadSizeContext context, string? userMessage = null, string? errorCode = null)
+    : Exception(_format(context, userMessage)) {
 
   /// <summary>The framework's error code for this failure, recorded on the message in the store.</summary>
   public const string DEFAULT_ERROR_CODE = "WHIZ-PAYLOAD-TOO-LARGE";
 
-  /// <summary>Creates the exception from the measurements that caused it.</summary>
-  /// <param name="context">The message, its size, and the limit it broke.</param>
-  /// <param name="userMessage">A message for the end user, when a hook supplied one.</param>
-  /// <param name="errorCode">The application's error code, when a hook supplied one.</param>
-  public MessagePayloadTooLargeException(MessagePayloadSizeContext context, string? userMessage = null, string? errorCode = null)
-      : base(_format(context ?? throw new ArgumentNullException(nameof(context)), userMessage)) {
-    ErrorCode = errorCode ?? DEFAULT_ERROR_CODE;
-    UserMessage = userMessage;
-    MessageType = context.MessageType;
-    MessageId = context.MessageId;
-    StreamId = context.StreamId;
-    PayloadBytes = context.PayloadBytes;
-    LimitBytes = context.LimitBytes;
-    LimitSource = context.LimitSource;
-  }
+  // Initializers run before the base constructor's argument is built, so the first one validates.
+  /// <summary>The message type.</summary>
+  public string MessageType { get; } = (context ?? throw new ArgumentNullException(nameof(context))).MessageType;
 
   /// <summary>The error code: the application's, when a hook supplied one, otherwise <see cref="DEFAULT_ERROR_CODE"/>.</summary>
-  public string ErrorCode { get; }
+  public string ErrorCode { get; } = errorCode ?? DEFAULT_ERROR_CODE;
 
   /// <summary>A message meant for an end user, when a hook supplied one.</summary>
-  public string? UserMessage { get; }
-
-  /// <summary>The message type.</summary>
-  public string MessageType { get; }
+  public string? UserMessage { get; } = userMessage;
 
   /// <summary>The message id.</summary>
-  public Guid MessageId { get; }
+  public Guid MessageId { get; } = context.MessageId;
 
   /// <summary>The stream, when the message has one.</summary>
-  public Guid? StreamId { get; }
+  public Guid? StreamId { get; } = context.StreamId;
 
   /// <summary>The serialized payload's size in UTF-8 bytes.</summary>
-  public long PayloadBytes { get; }
+  public long PayloadBytes { get; } = context.PayloadBytes;
 
   /// <summary>The limit that applied.</summary>
-  public long LimitBytes { get; }
+  public long LimitBytes { get; } = context.LimitBytes;
 
   /// <summary>Where that limit came from.</summary>
-  public PayloadLimitSource LimitSource { get; }
+  public PayloadLimitSource LimitSource { get; } = context.LimitSource;
 
   private static string _format(MessagePayloadSizeContext context, string? userMessage) =>
     $"{DEFAULT_ERROR_CODE}: {context.MessageType} (message_id={context.MessageId}) has a {context.PayloadBytes:N0}-byte payload, "

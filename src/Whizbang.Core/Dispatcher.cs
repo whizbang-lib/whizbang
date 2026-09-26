@@ -4399,11 +4399,13 @@ public abstract partial class Dispatcher(
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
-      // Queue message for batched processing — async path routes through the per-stream batcher.
-      await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
+      // Queue message for batched processing — async path routes through the per-stream batcher. The
+      // caller's cancellation, when it dispatched with options, reaches the queue and the flush.
+      var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
+      await strategy.QueueOutboxMessageAsync(newOutboxMessage, cancellationToken).ConfigureAwait(false);
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, cancellationToken);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -4487,11 +4489,13 @@ public abstract partial class Dispatcher(
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
-      // Queue message for batched processing — async path routes through the per-stream batcher.
-      await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
+      // Queue message for batched processing — async path routes through the per-stream batcher. The
+      // caller's cancellation, when it dispatched with options, reaches the queue and the flush.
+      var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
+      await strategy.QueueOutboxMessageAsync(newOutboxMessage, cancellationToken).ConfigureAwait(false);
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, cancellationToken);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
