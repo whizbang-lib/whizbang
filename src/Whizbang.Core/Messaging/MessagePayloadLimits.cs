@@ -58,7 +58,8 @@ public sealed partial class MessagePayloadLimits {
     return new MessagePayloadLimits(
       services.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions(),
       services.GetService<IMessageTypeCatalog>() ?? NullMessageTypeCatalog.Instance,
-      services.GetServices<IMessagePayloadSizeHook>(),
+      // Not GetServices: a provider outside the container answers null for the list, and GetServices throws.
+      services.GetService<IEnumerable<IMessagePayloadSizeHook>>() ?? [],
       services.GetService<ILogger<MessagePayloadLimits>>() ?? NullLogger<MessagePayloadLimits>.Instance);
   }
 

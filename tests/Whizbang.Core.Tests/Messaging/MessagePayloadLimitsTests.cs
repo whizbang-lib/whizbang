@@ -330,4 +330,19 @@ public class MessagePayloadLimitsTests {
 
     await Assert.That(attribute.Bytes).IsEqualTo(20_000_000L);
   }
+
+  /// <summary>A provider that knows no services at all, as a hand-built one in a host or test may be.</summary>
+  private sealed class EmptyProvider : IServiceProvider {
+    public object? GetService(Type serviceType) => null;
+  }
+
+  [Test]
+  public async Task Resolve_FromAProviderThatKnowsNothing_UsesTheDefaultsAsync() {
+    // Asking such a provider for "every hook" answers null rather than an empty list; the dispatcher
+    // resolves the limits at construction, so a throw here broke every dispatcher built that way.
+    var limits = MessagePayloadLimits.Resolve(new EmptyProvider());
+
+    await Assert.That(() => limits.Enforce(_payload(5 * 1024 * 1024 + 1), typeof(PlainMessage), _messageId, null))
+      .Throws<MessagePayloadTooLargeException>();
+  }
 }
