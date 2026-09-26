@@ -616,7 +616,7 @@ and publishes nothing.
 - **One list of inert paths.** `.github/inert-paths.txt` is the only definition of "cannot affect the
   build or tests". `Plan · Detect changes` treats every other file as code (a PR touching only inert
   paths skips build and tests), and the queue and release reuse accept an inert-only difference
-  through the same script, `.github/scripts/inert-diff.sh`. Add a path only if nothing reads it
+  through the same script, `.github/scripts/Test-InertDiff.ps1`. Add a path only if nothing reads it
   during build, test, analysis or versioning; `.editorconfig`, `BannedSymbols*.txt`, the signing key,
   the coverage and Sonar config and `GitVersion.yml` are code.
 - **Quality derives its coverage count.** It waits for one `coverage-*` artifact per suite leg,

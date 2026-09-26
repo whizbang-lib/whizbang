@@ -118,7 +118,7 @@ jobs:
           if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
             echo "No base to compare against ($EVENT): treating as code."
             echo "code=true" >> "$GITHUB_OUTPUT"
-          elif bash .github/scripts/inert-diff.sh "$BASE" "$HEAD"; then
+          elif pwsh -NoProfile -File .github/scripts/Test-InertDiff.ps1 -Base "$BASE" -Head "$HEAD"; then
             echo "code=false" >> "$GITHUB_OUTPUT"
           else
             echo "code=true" >> "$GITHUB_OUTPUT"
@@ -589,7 +589,7 @@ jobs:
           # tested, however unrelated it looks (a changed interface and a new caller can sit in
           # different files), so it runs the full matrix.
           if [ "$MERGE_TREE" != "$PR_TREE" ]; then
-            if INERT=$(bash .github/scripts/inert-diff.sh "$PR_HEAD" "$(git rev-parse HEAD)"); then
+            if INERT=$(pwsh -NoProfile -File .github/scripts/Test-InertDiff.ps1 -Base "$PR_HEAD" -Head "$(git rev-parse HEAD)"); then
               echo "develop moved since the PR was cut, but only by inert paths ($INERT)"
             else
               emit false "develop moved since the PR was cut by code ($INERT) — full matrix"
@@ -1087,7 +1087,7 @@ jobs:
       - name: The version to publish is at or above everything on nuget.org
         env:
           VERSION: ${{ needs.version.outputs.semver }}
-        run: python3 .github/scripts/nuget-floor.py "$VERSION"
+        run: pwsh -NoProfile -File .github/scripts/Test-NuGetFloor.ps1 -Version "$VERSION"
 
   prerelease-publish:
     name: Publish · Alpha (develop)

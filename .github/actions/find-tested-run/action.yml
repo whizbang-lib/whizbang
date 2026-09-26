@@ -70,7 +70,7 @@ runs:
           PR_TREE=$(gh api "repos/$REPO/commits/$PR_HEAD" --jq '.commit.tree.sha' 2>/dev/null || echo "")
           # Identical trees, or trees differing only in inert paths (ff-validated applies the same
           # rule when it lets the queue skip): either way the PR run tested everything that builds.
-          if [ -n "$TREE" ] && { [ "$TREE" = "$PR_TREE" ] || bash "$GITHUB_ACTION_PATH/../../scripts/inert-diff.sh" "$PR_HEAD" "$SHA" > /dev/null; }; then
+          if [ -n "$TREE" ] && { [ "$TREE" = "$PR_TREE" ] || pwsh -NoProfile -File "$GITHUB_ACTION_PATH/../../scripts/Test-InertDiff.ps1" -Base "$PR_HEAD" -Head "$SHA" > /dev/null; }; then
             PR_RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$PR_HEAD&event=pull_request&status=success&per_page=30" \
               --jq '[.workflow_runs[]] | sort_by(.run_started_at) | last | .id // ""' 2>/dev/null || echo "")
           fi
