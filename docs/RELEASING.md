@@ -94,10 +94,26 @@ from a reusable workflow shows as `Phase · Subject / Action`, e.g. `Test · Uni
 `Build · Compile / Compile and hash`, `Analyze · Quality / Sonar and coverage`. A **skipped**
 reusable job shows only its parent name (`Test · Unit`), which is how a yielded suite reads.
 
-The required checks are these names: `Gate · CI result` on `develop`; on `main`,
-`Build · Compile / Compile and hash`, every suite leg except Azure Blob,
-`Analyze · Quality / Sonar and coverage` and SonarCloud's own `SonarCloud Code Analysis`. Renaming a
-job renames its check, so the branch rulesets must change in the same moment.
+The required checks are `Gate · CI result` on `develop`, and `Gate · CI result` plus SonarCloud's
+own `SonarCloud Code Analysis` on `main`. No suite is required by name, so suites can be renamed,
+sharded or reused without a ruleset change.
+
+**What the gate proves.** `Gate · CI result` passes only when every suite ran green in this run, or
+was skipped on a path that proves the same tree was tested green elsewhere. Any failed or canceled
+job fails it on every path. The rules are `.github/scripts/Test-CiResult.ps1`, tested by
+`Test · Pipeline scripts`:
+
+| Path | When | Evidence the gate requires |
+|---|---|---|
+| yielded | a release PR, or the main push after one (`release-pr`) | the yielded-to run's own `Gate · CI result` ends green (the gate waits for it, up to 90 minutes), and Quality is green here |
+| fast-forward | a queue run over a tree its PR run covered (`ff-validated`) | `ff-validated` succeeded (it already required the PR run green, Quality included) |
+| reused | a develop push or release cut (`queue-validated`) | `Build · Compile`, `Build · Verify rebuild matches the tested build` and `Report · Republish the tested run's coverage` all green |
+| docs-only | a push or PR whose change detector found only inert paths | `Plan · Detect changes` succeeded and said so |
+| tested here | everything else | build, all six suites and Quality green; **a skip fails** (Quality may skip only on a Dependabot PR) |
+
+Chaining is safe because each link is a gate: a release PR's gate reads the release-branch run's
+gate, which itself required verified reuse or its own suites. Before this, the gate accepted any
+skip, and a release PR reached `main` with no suite result anywhere (#905).
 
 ---
 
@@ -384,9 +400,10 @@ build and the six suites** (and so pack) to that run:
 
 - **The release PR.** `start-release` pushes `release/vX.Y.Z` **and** opens the release PR at the same
   commit. The push run must run everything, because only it can publish; the PR run only gates the
-  merge. The required checks on `main` are satisfied by the push run's results, which carry the same
-  check names on the same commit. It yields only to a push run that can still report green: one
-  already **canceled or failed** keeps the matrix in the PR run.
+  merge. The PR's `Gate · CI result` waits for the push run's gate and passes only if it ends green;
+  the push run may itself have reused develop's tested results, so its suite checks can be absent,
+  and nothing on `main` requires them by name. It yields only to a push run that can still report
+  green: one already **canceled or failed** keeps the matrix in the PR run.
 - **The main push.** Merging the release PR pushes `main`, whose tree is byte-identical to the
   release-branch tree that just went green (`start-release` merges main in first). The push to main
   yields to that release-branch run: about 46 minutes per release. It fails safe: a non-merge push,
@@ -399,9 +416,8 @@ run it yielded to** (`coverage-run-id`), waiting for that run's suites, because 
 produces none.
 
 Each release-PR yield posts one **sticky PR comment** naming the push run. If that run is later
-canceled or fails, the PR blocks with no failing check of its own, and the comment is where the
-recovery lives: **re-run the push run** (`gh run rerun <id> --failed`). Its fresh results land on
-the same commit.
+canceled or fails, the PR's gate fails and names it: **re-run the push run**
+(`gh run rerun <id> --failed`), then re-run the PR's failed jobs so its gate reads the new result.
 
 **Escape hatches:** repo variable `RELEASE_PR_FULL_MATRIX=true` (then re-run the PR's CI run) forces
 the full matrix in a release PR run; `MAIN_PUSH_FULL_MATRIX=true` does the same for a main push.
@@ -542,7 +558,8 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 
 | Symptom | Cause | Do this |
 |---|---|---|
-| Release PR blocked, no failing check of its own | the release-branch push run it yielded to was canceled or failed | Re-run that run: `gh run rerun <id> --failed` (the sticky PR comment names it). Or set `RELEASE_PR_FULL_MATRIX=true` and re-run the PR's CI, then unset it |
+| Release PR's `Gate · CI result` failed: "the suites ran in run N, whose gate ended ..." | the release-branch push run it yielded to was canceled or failed | Re-run that run: `gh run rerun <id> --failed` (the sticky PR comment names it), then re-run the PR's failed jobs. Or set `RELEASE_PR_FULL_MATRIX=true` and re-run the PR's CI, then unset it |
+| `Gate · CI result` failed: "X is skipped, but nothing proves this tree was tested anywhere else" | a suite was skipped by a condition that is not one of the gate's proven paths | A workflow bug: find why the job's `if` skipped it. Never re-run to get past it |
 | `Analyze · Quality` canceled at its time limit | runners queued the suites for hours | Re-run the failed jobs; the suites' coverage is still there |
 | `Plan · Locate the tested packages` failed: expired or not green | the release PR sat open past 7 days, or its run went red | Re-run the release-branch CI run (all jobs), then `gh workflow run release.yml --ref main -f version=X.Y.Z -f release_type=auto -f dry_run=false` |
 | `Plan · Is this a release?` refused the merged PR | the title or branch didn't match `chore(release): vX.Y.Z` from `release/vX.Y.Z` | Re-dispatch as above with the right version; never re-title and re-merge |
@@ -570,9 +587,10 @@ and publishes nothing.
   never cancel the release-branch **push** run (a publish must never be canceled mid-push). Don't
   collapse them back into one group — that reintroduces the spurious canceled `Gate · CI result` that
   blocks release merges.
-- **Required status checks** on `main`/`develop` must match the *current* CI job names. If you rename
-  a job (e.g. split "Service Bus Integration" into `(whizbang)`/`(ecommerce)`), update the branch
-  ruleset's required checks or every merge wedges on a phantom "expected" check.
+- **Required status checks** are `Gate · CI result` (both branches) and `SonarCloud Code Analysis`
+  (main). Renaming either wedges every merge on a phantom "expected" check. A new suite job must be
+  added to the gate's `needs` and to `$Suites` in `.github/scripts/Test-CiResult.ps1`, or the gate
+  cannot see it.
 - **Tags are forever.** Because GitVersion keys on the highest repo-wide tag, a stray high tag
   (e.g. an accidental `v9.9.9`) will hijack every subsequent version. Delete mistaken tags promptly.
 - **The develop-push matrix skip is SHA-keyed and fails closed.** `queue-validated` skips the
@@ -627,5 +645,5 @@ and publishes nothing.
   release PR always starts a CI run. Its jobs can yield (release-pr), but the run itself cannot be
   prevented, which is why a release PR still shows a row per yielded job.
 - **`main` is protected by a ruleset, not classic branch protection.** `.../branches/main/protection`
-  returns 404 "Branch not protected"; the 13 required checks are at
+  returns 404 "Branch not protected"; the required checks are at
   `gh api repos/<owner>/<repo>/rules/branches/main`.

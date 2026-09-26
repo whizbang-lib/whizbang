@@ -232,8 +232,9 @@ jobs:
     #
     # RELEASE PR. start-release pushes release/v** AND opens the release PR at the SAME commit. The
     # push run must run the matrix because it publishes; the PR run only gates the merge. The PR run
-    # yields format, build and the six suites to the push run, whose results carry the same check
-    # NAMES on the same commit, so the ruleset on main reads them either way.
+    # yields format, build and the six suites to the push run. That run may itself have reused
+    # develop's tested results (queue-validated), so its suite checks can be absent: the proof main
+    # merges on is this run's Gate · CI result, which waits for the push run's gate to end green.
     #
     # MAIN PUSH. Merging a release PR pushes main, which is a push trigger only so Quality records a
     # main-line analysis. Its tree is byte-identical to the release-branch tree that just went green
@@ -294,10 +295,10 @@ jobs:
             URL="https://github.com/$REPO/actions/runs/$RUN_ID"
             BODY=$(cat <<EOF
           $MARKER
-          **The build and test suites for this release PR run in the release-branch push run [$RUN_ID]($URL)** for commit \`$SHA\`, not in this PR's own run. Their results are the required checks this PR merges on, and this PR's Quality analyzes the coverage they produce.
+          **The build and test suites for this release PR are covered by the release-branch push run [$RUN_ID]($URL)** for commit \`$SHA\`, not by this PR's own run. This PR's \`Gate · CI result\` waits for that run's gate and passes only if it ends green, and this PR's Quality analyzes the coverage it produced.
 
-          If that run is canceled or fails, this PR blocks with no failing check to point at. To recover:
-          - **Re-run it:** \`gh run rerun $RUN_ID --failed\` (or re-run its jobs in the Actions UI). Its fresh results land on this same commit.
+          If that run is canceled or fails, this PR's gate fails and names it. To recover:
+          - **Re-run it:** \`gh run rerun $RUN_ID --failed\` (or re-run its jobs in the Actions UI), then re-run this PR's failed jobs so its gate reads the new result.
           - **Or take the matrix back:** set the repository variable \`RELEASE_PR_FULL_MATRIX=true\`, re-run this PR's CI run, then unset the variable.
           EOF
             )
@@ -972,30 +973,59 @@ jobs:
   # CI Result - the ONE ruleset-required status check
   # ============================================================================
 
+  script-tests:
+    name: Test · Pipeline scripts
+    # The gate's decision logic is code that decides what merges, so it has tests of its own. Cheap
+    # (seconds, no build) and run on every event, so a broken rule can never reach a protected branch.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+      - name: Run the pipeline script tests
+        shell: pwsh
+        run: |
+          $c = New-PesterConfiguration
+          $c.Run.Path = '.github/scripts/tests'
+          $c.Run.Exit = $true
+          $c.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $c
+
   ci-result:
     name: Gate · CI result
-    # Sole required context in the develop ruleset. Skipped jobs are fine — docs-only
-    # PRs/pushes skip the matrix by design, and version/pr-version are event-exclusive —
-    # but any failure or cancellation fails the gate. Requiring only this context also
-    # means test jobs can be renamed/sharded without touching the ruleset.
-    # queue-validated / verify-rebuild / reupload-reports are push-only (skipped
-    # elsewhere, which this gate tolerates); listing them means a failed rebuild
-    # verification or report republish turns the develop push run red here too.
-    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, alpha-floor]
+    # The one required check on develop AND main. It passes only when every suite ran green in this
+    # run, or was skipped on a path that proves the same tree was tested green elsewhere: yielded to
+    # another run (whose own gate must end green; this waits for it), a fast-forward queue run, a
+    # verified reuse (build + verify-rebuild + reupload-reports), or a docs-only change. A skip with
+    # no such proof fails, which is what a release PR once got through with no suite results (#905).
+    # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
+    # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
+    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests]
     if: always()
     runs-on: ubuntu-latest
-    permissions: {}
+    # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has
+    # already waited for that run's coverage by the time this starts).
+    timeout-minutes: 100
+    permissions:
+      contents: read
+      actions: read   # the yielded-to run's gate
     steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
       - name: Evaluate required jobs
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: |
-          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          if echo "$RESULTS" | jq -e '[.[] | select(.result == "failure" or .result == "cancelled")] | length > 0' > /dev/null; then
-            echo "::error::One or more required jobs failed or were cancelled."
-            exit 1
-          fi
-          echo "All jobs succeeded or were legitimately skipped."
+          EVENT: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: pwsh -NoProfile -File .github/scripts/Test-CiResult.ps1 -Needs "$RESULTS" -EventName "$EVENT" -Actor "$ACTOR"
 
   # ============================================================================
   # Pack NuGet Packages - validates packability and produces artifacts

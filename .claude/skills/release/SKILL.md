@@ -81,7 +81,9 @@ Work out the version from facts, not guesses:
 
 A change to any release workflow, the version logic or the branch rules updates, **in the same PR**:
 `docs/RELEASING.md` (flows, recovery, reading a run), this skill, and, if branch directions change,
-the list in `.github/workflows/git-flow-check.yml`. Run `actionlint` on every changed workflow. If a
-job is renamed, its status-check name changes, and the `main`/`develop` rulesets must be updated at
-the moment the PR merges (`gh api repos/whizbang-lib/whizbang/rules/branches/main` shows the
-required names), or every release PR waits forever on a check that no longer exists.
+the list in `.github/workflows/git-flow-check.yml`. Run `actionlint` on every changed workflow.
+Both rulesets require `Gate · CI result` (and `main` also `SonarCloud Code Analysis`), never a suite
+by name, so suites can be renamed or sharded freely, but a new suite must join the gate's `needs` and
+`$Suites` in `.github/scripts/Test-CiResult.ps1`. Any new way to skip suites must become a path in that
+script with its own evidence and tests (`Test · Pipeline scripts`); the gate fails a skip it cannot
+prove. Renaming the gate itself wedges every merge.
