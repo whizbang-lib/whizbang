@@ -981,7 +981,7 @@ jobs:
     # queue-validated / verify-rebuild / reupload-reports are push-only (skipped
     # elsewhere, which this gate tolerates); listing them means a failed rebuild
     # verification or report republish turns the develop push run red here too.
-    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated]
+    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, alpha-floor]
     if: always()
     runs-on: ubuntu-latest
     permissions: {}
@@ -1065,16 +1065,42 @@ jobs:
   # docs/RELEASING.md.
   # ============================================================================
 
+  alpha-floor:
+    name: Gate · Alpha is not below NuGet
+    # Develop's computed version can fall below alphas it already published: an abandoned release
+    # cut rewinds it (#872), and nothing else notices, because the lower publish succeeds and simply
+    # sorts under the old one for every "latest" consumer. Refuse it here, loudly, with the recovery
+    # named. Equal passes (a re-run of a run that already published). Release branches are not
+    # checked: an older-line hotfix is meant to publish below the current line.
+    needs: [version]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the package list and the check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+
+      - name: The version to publish is at or above everything on nuget.org
+        env:
+          VERSION: ${{ needs.version.outputs.semver }}
+        run: python3 .github/scripts/nuget-floor.py "$VERSION"
+
   prerelease-publish:
     name: Publish · Alpha (develop)
-    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, queue-validated, verify-rebuild]
+    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, queue-validated, verify-rebuild, alpha-floor]
     # The explicit per-suite results replace the old implicit success() (which a
     # skipped suite would poison). Publish requires pack + format green AND either
-    # the full same-run matrix or the queue-validated + verified-rebuild pair.
+    # the full same-run matrix or the queue-validated + verified-rebuild pair, AND a version that
+    # does not sort below anything already on nuget.org (alpha-floor).
     if: >-
       !failure() && !cancelled() &&
       github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
       needs.pack.result == 'success' && needs.format.result == 'success' &&
+      needs.alpha-floor.result == 'success' &&
       ((needs.unit-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
         needs.inmemory-integration.result == 'success' && needs.rabbitmq-integration.result == 'success' &&
         needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success') ||

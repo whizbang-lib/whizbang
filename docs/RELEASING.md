@@ -552,7 +552,7 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Start Release refused: "release PR still open" | one release is in flight | Merge it (F5) or close it (F6), then retry |
 | Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
 | Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
-| A published prerelease out-sorts develop's current builds ("latest" resolves to old code) | a release cut was abandoned after develop had published in the cut's next band (#872): the open branch raised develop's number, deleting it lowered it again | Find the commit that first published the stale version (its develop run's push log), **tag it with that version** (`git tag -a vX.Y.Z-alpha.N <sha>`; it records a version that really shipped, and develop then computes above it), and **unlist** that version on nuget.org for every package. Never set a version floor in `GitVersion.yml`: versions come from tags only |
+| `Gate · Alpha is not below NuGet` is red on a develop push, or a published prerelease out-sorts develop's current builds ("latest" resolves to old code) | a release cut was abandoned after develop had published in the cut's next band (#872): the open branch raised develop's number, deleting it lowered it again | Find the commit that first published the stale version (its develop run's push log), **tag it with that version** (`git tag -a vX.Y.Z-alpha.N <sha>`; it records a version that really shipped, and develop then computes above it), and **unlist** that version on nuget.org for every package. Never set a version floor in `GitVersion.yml`: versions come from tags only |
 | A job in a release run failed for a flaky test | a real flake | Re-run the failed jobs to unblock, **and** fix the flake in a PR (flakes are fixed on sight, never parked) |
 
 `dry_run` on `release.yml` defaults to `true`: a dispatch without `-f dry_run=false` reports success
@@ -607,6 +607,12 @@ and publishes nothing.
   push is a "release cut", a develop push "post-merge"), so no run is named plain "CI". Look runs up
   with `repos/$REPO/actions/workflows/ci.yml/runs?...`; filtering on `.name` silently matches
   nothing, and has broken two gates.
+- **Develop never publishes below NuGet.** `Gate · Alpha is not below NuGet` compares the version a
+  develop push is about to publish with the highest version nuget.org holds for any package in
+  `.github/nuget-packages.txt` (unlisted versions included: they still exist), and refuses a lower
+  one before anything is pushed; equal passes, so a re-run is fine. It exists because an abandoned
+  release cut rewinds develop's computed version (#872) and nothing else notices. An unreadable feed
+  fails it too. Release branches are not checked: an older-line hotfix is meant to sort lower.
 - **One list of inert paths.** `.github/inert-paths.txt` is the only definition of "cannot affect the
   build or tests". `Plan · Detect changes` treats every other file as code (a PR touching only inert
   paths skips build and tests), and the queue and release reuse accept an inert-only difference
