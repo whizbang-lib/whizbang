@@ -977,9 +977,9 @@ public static class JsonContextRegistry {
     var objectInfo = new JsonObjectInfoValues<MessageEnvelope<TBase>> {
       ObjectCreator = null,
       ObjectWithParameterizedConstructorCreator = args => new MessageEnvelope<TBase>(
-        (ValueObjects.MessageId)args[0]!,
-        (TBase)args[1]!,
-        (List<MessageHop>)args[2]!),
+        (ValueObjects.MessageId)args[0],
+        (TBase)args[1],
+        (List<MessageHop>)args[2]),
       ConstructorParameterMetadataInitializer = () => ctorParams,
       PropertyMetadataInitializer = _ => properties
     };
