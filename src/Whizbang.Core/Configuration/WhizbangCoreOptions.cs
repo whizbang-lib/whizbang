@@ -218,6 +218,26 @@ public sealed class WhizbangCoreOptions {
   /// </remarks>
   /// <docs>operations/configuration/empty-stream-id-policy</docs>
   public EmptyStreamIdPolicy EmptyStreamIdPolicy { get; set; } = EmptyStreamIdPolicy.Reject;
+
+  /// <summary>
+  /// The largest serialized message payload the framework accepts, in bytes. Default 5 MiB; null or zero
+  /// turns the limit off.
+  /// </summary>
+  /// <remarks>
+  /// Every consumer of a message materializes its whole payload, so one oversized message can exhaust the
+  /// memory of every service that receives it. Checked where the message is serialized, before it is stored
+  /// or sent, and thrown as <see cref="Messaging.MessagePayloadTooLargeException"/>. A message type overrides
+  /// it with <c>[MaxPayloadSize]</c>, and one dispatch with <c>DispatchOptions.WithMaxPayloadBytes</c>.
+  /// </remarks>
+  /// <docs>fundamentals/messages/payload-size-limit</docs>
+  public long? MaxMessagePayloadBytes { get; set; } = 5L * 1024 * 1024;
+
+  /// <summary>
+  /// The fraction of the limit at which a payload is logged and metered as a warning, without being rejected,
+  /// so growth is visible before it breaks anything. Default 0.8.
+  /// </summary>
+  /// <docs>fundamentals/messages/payload-size-limit</docs>
+  public double MessagePayloadWarningRatio { get; set; } = 0.8;
 }
 
 /// <summary>

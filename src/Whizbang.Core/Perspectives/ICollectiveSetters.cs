@@ -77,4 +77,39 @@ public interface ICollectiveSetters<TModel> where TModel : class {
   ICollectiveSetters<TModel> SetProperty<TProp>(
     Expression<Func<TModel, TProp>> selector,
     Expression<Func<TModel, TProp>> computed);
+
+  /// <summary>
+  /// Replaces the element of <paramref name="collection"/> whose <paramref name="key"/> equals
+  /// <paramref name="element"/>'s, or appends <paramref name="element"/> when no element has that key.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// For a read model that keeps a second, rendered copy of a field inside a keyed array (one element
+  /// per field, keyed by a field id): setting the top-level property alone leaves that element, and
+  /// every surface that reads it, showing the old value.
+  /// </para>
+  /// <para>
+  /// Still one set-based UPDATE: the element is serialized once, exactly as the model's writer
+  /// serializes it, and the array is rewritten in place for every row of the cohort, keeping the
+  /// order of the other elements. A missing or null array is treated as empty. The key is compared as
+  /// stored JSON, so any key type works. Composes with <c>SetProperty</c> in the same spec.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// s.SetProperty(m =&gt; m.FamilyName, e.FamilyName)
+  ///  .UpsertElement(m =&gt; m.Cells, c =&gt; c.FieldId, familyCell);
+  /// </code>
+  /// </example>
+  /// <typeparam name="TElement">The array's element type.</typeparam>
+  /// <typeparam name="TKey">The type of the element property that identifies it.</typeparam>
+  /// <param name="collection">The model's array property (top-level).</param>
+  /// <param name="key">The element property that identifies an element.</param>
+  /// <param name="element">The element to write.</param>
+  /// <docs>fundamentals/messaging/collective-events#keyed-array-elements</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs</tests>
+  ICollectiveSetters<TModel> UpsertElement<TElement, TKey>(
+    Expression<Func<TModel, IEnumerable<TElement>?>> collection,
+    Expression<Func<TElement, TKey>> key,
+    TElement element);
 }

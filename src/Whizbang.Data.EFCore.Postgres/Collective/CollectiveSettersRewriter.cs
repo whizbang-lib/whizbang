@@ -59,7 +59,13 @@ internal static class CollectiveSettersRewriter {
   /// <see cref="IsNull"/> is carried so a null setter serializes to JSON <c>null</c> (which EF Core 10
   /// cannot express against a <c>ComplexProperty().ToJson()</c> sub-property via <c>ExecuteUpdate</c>).
   /// </summary>
-  public sealed record CollectiveSetterAssignment(string PathName, string JsonValue, bool IsNull, CollectiveComputedComparison? Comparison = null);
+  /// <remarks>
+  /// <see cref="ElementKey"/> is set for an <c>UpsertElement</c> setter: <see cref="PathName"/> is the array
+  /// property, <see cref="JsonValue"/> the element, and the adapter assigns
+  /// <c>CollectiveElementUpsertSql.ValueSql(PathName, ElementKey, …)</c> instead of the value itself.
+  /// </remarks>
+  public sealed record CollectiveSetterAssignment(
+    string PathName, string JsonValue, bool IsNull, CollectiveComputedComparison? Comparison = null, string? ElementKey = null);
 
   /// <summary>
   /// A computed setter of the shape <c>j =&gt; j.SomeProp == value</c> (or <c>!=</c>): the new value is a
@@ -94,7 +100,7 @@ internal static class CollectiveSettersRewriter {
       // runtime type (comparison) or the target property type (constant).
       var valueType = a.Value?.GetType() ?? (a.Comparison is null ? a.Property.PropertyType : typeof(object));
       var json = JsonSerializer.Serialize(a.Value, valueType, _persistenceJsonOptions);
-      result.Add(new CollectiveSetterAssignment(a.Property.Name, json, a.Value is null && a.Comparison is null, a.Comparison));
+      result.Add(new CollectiveSetterAssignment(a.Property.Name, json, a.Value is null && a.Comparison is null, a.Comparison, a.ElementKey));
     }
     return result;
   }
@@ -116,7 +122,7 @@ internal static class CollectiveSettersRewriter {
     return result;
   }
 
-  private sealed record PropertyAssignment(PropertyInfo Property, object? Value, CollectiveComputedComparison? Comparison);
+  private sealed record PropertyAssignment(PropertyInfo Property, object? Value, CollectiveComputedComparison? Comparison, string? ElementKey = null);
 
   /// <summary>
   /// Walks the spec body and accumulates one
@@ -128,6 +134,17 @@ internal static class CollectiveSettersRewriter {
     public List<PropertyAssignment> Assignments { get; } = [];
 
     protected override Expression VisitMethodCall(MethodCallExpression node) {
+      if (_isSetter(node, "UpsertElement", 3)) {
+        if (node.Object is not null) {
+          Visit(node.Object);
+        }
+        var collection = _extractScalarProperty(_unwrapLambda(node.Arguments[0]));
+        var key = _elementMemberName(_unwrapLambda(node.Arguments[1]));
+        var element = _evaluateValue(node.Arguments[2])
+          ?? throw new ArgumentException($"UpsertElement on {collection.Name} needs an element; null cannot be keyed.");
+        Assignments.Add(new PropertyAssignment(collection, element, Comparison: null, ElementKey: key));
+        return node;
+      }
       if (node.Method.Name != "SetProperty" ||
           node.Method.DeclaringType is not { IsGenericType: true } declaring ||
           declaring.GetGenericTypeDefinition() != typeof(ICollectiveSetters<>) ||
@@ -156,6 +173,19 @@ internal static class CollectiveSettersRewriter {
       Assignments.Add(new PropertyAssignment(property, _evaluateValue(valueExpr), Comparison: null));
       return node;
     }
+
+    private static bool _isSetter(MethodCallExpression node, string name, int arguments) =>
+      node.Method.Name == name &&
+      node.Method.DeclaringType is { IsGenericType: true } declaring &&
+      declaring.GetGenericTypeDefinition() == typeof(ICollectiveSetters<>) &&
+      node.Arguments.Count == arguments;
+
+    // The element's key: a direct member of the element (c => c.FieldId), named as the writer stores it.
+    private static string _elementMemberName(LambdaExpression key) =>
+      _stripConvert(key.Body) is MemberExpression { Expression: ParameterExpression, Member: PropertyInfo prop }
+        ? prop.Name
+        : throw new NotSupportedException(
+          "UpsertElement's key must be a direct property of the element (c => c.Key); nested or computed keys are not supported.");
 
     private (CollectiveComputedComparison Comparison, object? Rhs) _parseComputedComparison(Expression valueExpr, string targetProperty) {
       var lambda = _unwrapLambda(valueExpr);

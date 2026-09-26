@@ -20,6 +20,14 @@ namespace Whizbang.Generators.Shared.Models;
 /// The author's own PostgreSQL type for the column, or null to derive one from the CLR type. Last in
 /// the list and defaulted so the construction sites that do not set it are unaffected.
 /// </param>
+/// <param name="IsSplit">
+/// True when the model stores this field in the column only (Split storage), so the document has no copy
+/// of it to backfill a new column from. Last and defaulted for the same reason as <c>ColumnType</c>.
+/// </param>
+/// <param name="IsSearch">
+/// True when a text field declares <c>IndexKinds.Search</c>: its column gets a trigram index over the
+/// framework's fold, and a <c>Contains</c> on it is folded to match.
+/// </param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Models/PhysicalFieldInfoTests.cs</tests>
 public sealed record PhysicalFieldInfo(
@@ -34,7 +42,9 @@ public sealed record PhysicalFieldInfo(
     GeneratorVectorDistanceMetric? VectorDistanceMetric,
     GeneratorVectorIndexType? VectorIndexType,
     int? VectorIndexLists,
-    string? ColumnType = null
+    string? ColumnType = null,
+    bool IsSplit = false,
+    bool IsSearch = false
 );
 
 /// <summary>

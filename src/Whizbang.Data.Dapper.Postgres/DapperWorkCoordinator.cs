@@ -638,6 +638,18 @@ public partial class DapperWorkCoordinator(
       CancellationToken cancellationToken = default)
     => _discardPendingAsync(DISCARD_PENDING_OUTBOX_SQL, messageTypeNames, cancellationToken);
 
+  /// <inheritdoc />
+  public async Task<IReadOnlySet<Guid>?> GetStreamsWithPendingMessagesAsync(
+      IReadOnlyList<Guid> streamIds,
+      IReadOnlyList<string> messageTypeNames,
+      CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    await using var command = __scope.Connection.CreateCommand();
+    command.CommandTimeout = 30;
+    return await Whizbang.Data.Postgres.StreamsWithPendingMessagesSql.ExecuteAsync(
+      command, "public", streamIds, messageTypeNames, cancellationToken);
+  }
+
   private const string DISCARD_PENDING_WHERE =
     "WHERE r.processed_at IS NULL AND r.instance_id IS NULL " +
     "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)";

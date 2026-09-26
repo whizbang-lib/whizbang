@@ -26,6 +26,7 @@ public static class JsonIndexDiscovery {
   /// <summary>The kinds as the attribute's flag enumeration spells them.</summary>
   private const int KIND_ORDERED = 1;
   private const int KIND_SUBSTRING = 2;
+  private const int KIND_SEARCH = 4;
 
   /// <summary>
   /// The store type a field's extraction is cast to, or null when its extraction cannot carry an
@@ -270,7 +271,8 @@ public static class JsonIndexDiscovery {
         CaseInsensitive: caseInsensitive,
         Superseded: CanonicalTemporalDiscovery.KindOf(property.Type) == CanonicalTemporalKind.Day
           ? JsonIndexCast.Int4
-          : JsonIndexCast.None);
+          : JsonIndexCast.None,
+        Search: IncludesSearch(kind) && text);
 
   /// <summary>
   /// The composite and partial indexes a model declares with <c>[PerspectiveIndex]</c>.
@@ -451,6 +453,11 @@ public static class JsonIndexDiscovery {
   /// of a magic number is how they would come to disagree about what a declaration said.
   /// </remarks>
   public static bool IncludesSubstring(int kind) => (kind & KIND_SUBSTRING) != 0;
+
+  /// <summary>Whether a declared kind asks for a folded search index.</summary>
+  /// <param name="kind">The declared kinds.</param>
+  /// <returns>True when <c>IndexKinds.Search</c> is among them.</returns>
+  public static bool IncludesSearch(int kind) => (kind & KIND_SEARCH) != 0;
 
   /// <summary>
   /// Whether a combined kind includes the ordered capability.

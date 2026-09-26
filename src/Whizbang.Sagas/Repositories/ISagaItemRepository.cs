@@ -29,4 +29,17 @@ public interface ISagaItemRepository {
   /// <see cref="Helpers.SagaItemCompletionReconciler"/>.
   /// </summary>
   Task<IReadOnlyList<SagaItemModel>> GetItemsAsync(Guid sagaId, CancellationToken cancellationToken);
+
+  /// <summary>When any of the saga's items last changed, or <see langword="null"/> when it has none.</summary>
+  /// <remarks>
+  /// The stranded-saga sweep reads it to tell a saga that is still moving from one that has stopped.
+  /// The default reads every item row; a repository over a database should override it with a single
+  /// <c>MAX(updated_at)</c>-style query.
+  /// </remarks>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs</tests>
+  async Task<DateTimeOffset?> GetLastActivityAsync(Guid sagaId, CancellationToken cancellationToken) {
+    var items = await GetItemsAsync(sagaId, cancellationToken).ConfigureAwait(false);
+    return items.Count == 0 ? null : items.Max(i => i.UpdatedAt);
+  }
 }

@@ -683,9 +683,13 @@ public sealed partial class InboxDrainWorker(
 
     var admitted = 0;
     for (var i = 0; i < rows.Count; i++) {
-      var d = _poisonPolicy.Evaluate(effective(rows[i]), rows.Count, share);
-      plan[i] = d.Admit;
-      if (d.Admit) {
+      // A row past its ceiling is handed on to be RETIRED, never deferred: the dispatcher is the only
+      // place that dead-letters it. Deferring it here left it leased and unprocessed, so it lapsed, was
+      // re-claimed with one more attempt, and was deferred again, for ever. Raw attempts, not
+      // effective: a crash loop must converge on the ceiling as surely as a reported failure does.
+      plan[i] = rows[i].Attempts > settings.MaxAttempts
+        || _poisonPolicy.Evaluate(effective(rows[i]), rows.Count, share).Admit;
+      if (plan[i]) {
         admitted++;
       }
     }

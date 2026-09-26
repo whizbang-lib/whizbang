@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Whizbang.Core.Observability;
 using Whizbang.Sagas.Observability;
@@ -43,6 +44,10 @@ public static class SagaServiceCollectionExtensions {
     // with [Saga] gets a generated receiver for it; a hand-written one relies on this router, which
     // routes each tick by saga name to the services registered with AddSagaService.
     services.AddHostedService<SagaWatchdogTickRouterRegistrar>();
+
+    // A lost tick ends a saga's watchdog chain for good. The maintenance cycle re-arms sagas whose
+    // chain has ended; TryAddEnumerable so calling this twice does not sweep twice.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<Whizbang.Core.Workers.IMaintenanceStep, StrandedSagaSweepStep>());
 
     return services;
   }

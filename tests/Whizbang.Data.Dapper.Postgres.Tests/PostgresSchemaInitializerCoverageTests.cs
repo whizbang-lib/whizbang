@@ -200,6 +200,46 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// A physical column added to a perspective that already has rows is filled from each row's document, so a
+  /// query or index that reads the column sees the value rather than NULL. The backfill statements are the
+  /// ones the schema generator emits after the table; the column-copy swap runs them against the new table.
+  /// </summary>
+  [Test]
+  public async Task InitializeSchemaAsync_ColumnCopyAddingPhysicalColumns_BackfillsExistingRowsAsync() {
+    await new PostgresSchemaInitializer(_testConnectionString, [
+      new KeyValuePair<string, string>("CovBackfillPerspective",
+        "CREATE TABLE IF NOT EXISTS wh_per_covbackfill (id UUID PRIMARY KEY, data JSONB NOT NULL);")
+    ]).InitializeSchemaAsync();
+    await using (var seed = new NpgsqlConnection(_testConnectionString)) {
+      await seed.ExecuteAsync("""
+        INSERT INTO wh_per_covbackfill (id, data) VALUES
+          ('00000000-0000-0000-0000-000000000001', '{"Sku":"a-1","Amount":12.5,"PlacedAt":1772600767000000}'),
+          ('00000000-0000-0000-0000-000000000002', '{"Sku":null,"Amount":3}')
+        """);
+    }
+
+    await new PostgresSchemaInitializer(_testConnectionString, [
+      new KeyValuePair<string, string>("CovBackfillPerspective", """
+        CREATE TABLE IF NOT EXISTS wh_per_covbackfill (id UUID PRIMARY KEY, data JSONB NOT NULL, sku TEXT, amount DECIMAL, placed_at TIMESTAMPTZ);
+        UPDATE wh_per_covbackfill SET sku = (data ->> 'Sku') WHERE sku IS NULL AND jsonb_typeof(data -> 'Sku') <> 'null';
+        UPDATE wh_per_covbackfill SET amount = (data ->> 'Amount')::numeric WHERE amount IS NULL AND jsonb_typeof(data -> 'Amount') <> 'null';
+        UPDATE wh_per_covbackfill SET placed_at = (TIMESTAMPTZ 'epoch' + (data ->> 'PlacedAt')::bigint * INTERVAL '1 microsecond') WHERE placed_at IS NULL AND jsonb_typeof(data -> 'PlacedAt') <> 'null';
+        """)
+    ]).InitializeSchemaAsync();
+
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    var rows = (await connection.QueryAsync<(Guid Id, string? Sku, decimal? Amount, DateTimeOffset? PlacedAt)>(
+      "SELECT id, sku, amount, placed_at FROM wh_per_covbackfill ORDER BY id")).ToList();
+    await Assert.That(rows[0].Sku).IsEqualTo("a-1");
+    await Assert.That(rows[0].Amount).IsEqualTo(12.5m);
+    await Assert.That(rows[0].PlacedAt).IsEqualTo(new DateTimeOffset(2026, 3, 4, 5, 6, 7, TimeSpan.Zero))
+      .Because("the document holds microseconds since the epoch, rebuilt exactly into the instant");
+    await Assert.That(rows[1].Sku).IsNull().Because("a null in the document stays null in the column");
+    await Assert.That(rows[1].Amount).IsEqualTo(3m);
+    await Assert.That(rows[1].PlacedAt).IsNull().Because("an absent property leaves the column null");
+  }
+
+  /// <summary>
   /// A pure additive change with no trailing DDL must still complete the swap without error — the
   /// post-table-DDL branch has to tolerate "nothing to run" exactly as cleanly as "something to run".
   /// </summary>

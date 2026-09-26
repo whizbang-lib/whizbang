@@ -347,6 +347,9 @@ public sealed class DeadLetterRecoveryOptions {
     // (measured in production at ~190 rows/minute, throttled only by the loop breaker).
     // Hold it where an operator can see it; auto-re-drive is the one certainly-wrong answer.
     [MessageFailureReason.PoisonRedeliveryLoop] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    // The same message is the same size every time: re-driving it sends the same bytes to the same
+    // consumer. The fix is in the producer (split the work, or raise the type's limit), so hold it.
+    [MessageFailureReason.MessagePayloadTooLarge] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
   };
 }
 

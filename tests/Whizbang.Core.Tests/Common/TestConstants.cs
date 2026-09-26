@@ -88,7 +88,10 @@ public static class TestConstants {
   ///     "DispatchModes.None dispatched nothing" assertion cannot pass merely because no
   ///     receptor was ever wired)</para>
   ///
-  /// <para>Total: 123 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>- 1 receptor from DispatcherSecurityBuilderPublishOnceTests.cs
+  ///     (SecuredOnceEventReceptor — observes the security context a publish-once runs under)</para>
+  ///
+  /// <para>Total: 124 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 123;
+  public const int EXPECTED_RECEPTOR_COUNT = 124;
 }

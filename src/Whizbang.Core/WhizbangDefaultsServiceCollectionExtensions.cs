@@ -99,6 +99,8 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     // what "no resolver" meant before. Generated registrations supply the same types over a real catalog.
     services.TryAddSingleton<IEventMarkerResolver, EventMarkerResolver>();
     services.TryAddSingleton<IEphemeralModeResolver, EphemeralModeResolver>();
+    // The payload limit reads the options, the catalog and every registered hook once, at first use.
+    services.TryAddSingleton(Messaging.MessagePayloadLimits.Create);
     services.AddMetrics();
     services.TryAddEmptyConfiguration();
     return services;
