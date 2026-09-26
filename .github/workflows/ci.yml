@@ -94,30 +94,35 @@ jobs:
       # green on nothing, and the queue would merge untested code.
       - name: Detect changed paths
         if: github.event_name != 'merge_group'
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
-        with:
-          filters: |
-            code:
-              # Workflow/script changes must run the full matrix — they can break the
-              # build/test/publish contracts they define (a workflow-only PR otherwise
-              # skips the very checks that validate it).
-              - '.github/workflows/**'
-              - '.github/actions/**'
-              - 'scripts/**'
-              - 'src/**'
-              - 'tests/**'
-              - 'samples/**'
-              - 'tools/**'
-              - 'benchmarks/**'
-              - '*.sln*'
-              - '**/*.csproj'
-              - '**/*.props'
-              - '**/*.targets'
-              - 'Directory.Build.*'
-              - 'Directory.Packages.props'
-              - 'global.json'
-              - 'nuget.config'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # Code is anything NOT listed in .github/inert-paths.txt, the one definition of
+          # "docs-only" (the queue and the release reuse read the same list through the same
+          # script). An allow-list of code paths used to live here and missed files that change the
+          # build (.editorconfig, BannedSymbols*.txt, the signing key, the coverage and Sonar
+          # config, GitVersion.yml, .config/), so a PR touching only those skipped CI entirely.
+          # Fails toward code: an unknown base (a new branch, a dispatch) or a failed lookup runs
+          # everything.
+          case "$EVENT" in
+            pull_request) BASE="$PR_BASE"; HEAD="$PR_HEAD" ;;
+            push)         BASE="$BEFORE";  HEAD="$GITHUB_SHA" ;;
+            *)            BASE="";         HEAD="" ;;
+          esac
+          if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            echo "No base to compare against ($EVENT): treating as code."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          elif bash .github/scripts/inert-diff.sh "$BASE" "$HEAD"; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
 
   # ============================================================================
   # Queue-validated push optimization
@@ -578,8 +583,17 @@ jobs:
           MERGE_TREE=$(git rev-parse "HEAD^{tree}") || emit false "cannot read merge tree — full matrix"
           PR_TREE=$(git rev-parse "${PR_HEAD}^{tree}" 2>/dev/null) \
             || emit false "PR head tree not present — full matrix"
+          # A moved base keeps the PR run's verdict only when what moved is inert (docs, plans; the
+          # one list in .github/inert-paths.txt): the combination differs from what the PR run tested
+          # only in files nothing builds or tests. ANY other difference is a combination no run has
+          # tested, however unrelated it looks (a changed interface and a new caller can sit in
+          # different files), so it runs the full matrix.
           if [ "$MERGE_TREE" != "$PR_TREE" ]; then
-            emit false "develop moved since the PR was cut (real merge) — full matrix"
+            if INERT=$(bash .github/scripts/inert-diff.sh "$PR_HEAD" "$(git rev-parse HEAD)"); then
+              echo "develop moved since the PR was cut, but only by inert paths ($INERT)"
+            else
+              emit false "develop moved since the PR was cut by code ($INERT) — full matrix"
+            fi
           fi
 
           # The PR run for this exact PR head must have gone fully green INCLUDING Quality,

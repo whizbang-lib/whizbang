@@ -312,9 +312,12 @@ quality in the queue run:
 
 - It reads the queue commit's parents: exactly two (base + one PR head) means a single-PR group;
   more means a batch, which the PR runs never tested as-merged → full matrix.
-- It requires the queue commit's **tree** to equal the PR head's tree (the merge added nothing —
-  a true fast-forward). develop is append-only, so an identical tree proves the PR run's own
-  test-merge was this exact tree.
+- It requires the queue commit's **tree** to equal the PR head's tree (the merge added nothing: a
+  true fast-forward), **or to differ only in inert paths** (`.github/inert-paths.txt`: docs, plans,
+  root Markdown). develop is append-only, so an identical tree proves the PR run's own test-merge
+  was this exact tree; an inert-only difference changes nothing that builds or tests. A difference
+  in any other file, however unrelated it looks, is a combination no run tested and runs the full
+  matrix. (Measured: docs-only moves are rare here; this mostly matters for fast-forwards.)
 - It requires the PR run for that head to have gone fully green **including Quality**, so a
   dependabot PR (whose Quality is skipped) still gets a real queue run.
 - It requires that PR run's **build manifest** to still be live, because a skip also skips the
@@ -604,6 +607,12 @@ and publishes nothing.
   push is a "release cut", a develop push "post-merge"), so no run is named plain "CI". Look runs up
   with `repos/$REPO/actions/workflows/ci.yml/runs?...`; filtering on `.name` silently matches
   nothing, and has broken two gates.
+- **One list of inert paths.** `.github/inert-paths.txt` is the only definition of "cannot affect the
+  build or tests". `Plan · Detect changes` treats every other file as code (a PR touching only inert
+  paths skips build and tests), and the queue and release reuse accept an inert-only difference
+  through the same script, `.github/scripts/inert-diff.sh`. Add a path only if nothing reads it
+  during build, test, analysis or versioning; `.editorconfig`, `BannedSymbols*.txt`, the signing key,
+  the coverage and Sonar config and `GitVersion.yml` are code.
 - **Quality derives its coverage count.** It waits for one `coverage-*` artifact per suite leg,
   counting legs from the jobs list once Build succeeds. Suite legs must stay named
   `<suite> / <...> Tests`; a finished-green set with a missing artifact fails loudly. Its job budget
