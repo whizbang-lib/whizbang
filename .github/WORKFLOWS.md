@@ -27,7 +27,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 
 | File | Used by | Purpose |
 |---|---|---|
-| `reusable-build.yml` | CI | Compile, hash the assemblies (determinism manifest), upload the build |
+| `reusable-build.yml` | CI | Compile, hash the assemblies (determinism manifest), upload the build, instrument the test-side copies for coverage while it uploads |
 | `reusable-test-*.yml` | CI | One suite each: unit, PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob |
 | `reusable-quality.yml` | CI | Sonar analysis and the coverage gates, on this run's or a covering run's coverage |
 | `reusable-pack.yml` | CI, Release Prerelease | Pack a tested build without rebuilding |
