@@ -982,10 +982,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout the pipeline scripts
+      # A full checkout: the inert-list test checks every tracked file the list matches.
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          sparse-checkout: .github
       - name: Run the pipeline script tests
         shell: pwsh
         run: |
