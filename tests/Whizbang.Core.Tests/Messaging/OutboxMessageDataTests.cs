@@ -28,7 +28,7 @@ public class OutboxMessageDataTests {
 
   [Test]
   public async Task Construction_ExposesAllPropertiesAsync() {
-    var messageId = MessageId.From((Guid)TrackedGuid.NewMedo());
+    var messageId = MessageId.From((Guid)TrackedGuid.New());
     using var doc = JsonDocument.Parse("{\"answer\":42}");
     var data = new OutboxMessageData {
       MessageId = messageId,
@@ -166,7 +166,7 @@ public class OutboxMessageDataTests {
   private static OutboxMessageData _createData(string payloadJson) {
     using var doc = JsonDocument.Parse(payloadJson);
     return new OutboxMessageData {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = doc.RootElement.Clone(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
     };

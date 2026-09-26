@@ -222,8 +222,8 @@ public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
   /// </summary>
   private static async Task<(Guid StreamId, Guid EventId)> _seedOrphanAsync(
       NpgsqlConnection connection, string? scope = "{}", string eventData = "{}") {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
 
     await using (var ins = connection.CreateCommand()) {
       ins.CommandText = @"

@@ -20,9 +20,7 @@ public class AssemblyStrongNamingTests {
   /// never validates strong names at load). Additions require the same deliberation:
   /// prefer a signed variant of the package when one exists.
   /// </summary>
-  private static readonly string[] _unsignedReferenceAllowlist = [
-    "Medo.Uuid7",
-  ];
+  private static readonly string[] _unsignedReferenceAllowlist = [];
 
   [Test]
   public async Task WhizbangCore_IsStrongNamedAsync() {

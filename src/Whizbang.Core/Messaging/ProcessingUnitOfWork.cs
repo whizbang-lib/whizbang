@@ -10,8 +10,8 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 public class ProcessingUnitOfWork {
   /// <summary>
-  /// Unique time-ordered identifier for this unit (Uuid7).
-  /// Generated via Uuid7.NewUuid7().ToGuid() for chronological ordering.
+  /// Unique time-ordered identifier for this unit (UUIDv7).
+  /// Generated via TrackedGuid.New() for chronological ordering.
   /// </summary>
   public Guid UnitId { get; init; }
 

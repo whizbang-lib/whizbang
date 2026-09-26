@@ -109,12 +109,12 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
   }
 
   private static IntegrityRepairLedger.DivergenceKey _key(Guid origin) =>
-    new(origin, "tenant-a", "Contracts.TypeX", TrackedGuid.NewMedo().Value);
+    new(origin, "tenant-a", "Contracts.TypeX", TrackedGuid.New().Value);
 
   [Test]
   public async Task ReportBatch_UsesTheCoordinatorBatch_WhenSupportedAsync() {
     var (ledger, coordinator) = _build();
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     coordinator.BatchAnswer = [true, false];
 
     var flags = await ledger.TryBeginReportBatchAsync(
@@ -130,7 +130,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
   [Test]
   public async Task ReportBatch_UnsupportedEngine_FallsBackToTheSinglesAsync() {
     var (ledger, coordinator) = _build();
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     coordinator.BatchAnswer = null;   // the DIM default: engine cannot batch
 
     var flags = await ledger.TryBeginReportBatchAsync(
@@ -145,7 +145,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
   [Test]
   public async Task ReportBatch_BatchFailure_FallsBackToTheSinglesAsync() {
     var (ledger, coordinator) = _build();
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     coordinator.ThrowOnBatch = true;
 
     var flags = await ledger.TryBeginReportBatchAsync(
@@ -159,7 +159,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
   [Test]
   public async Task RepairBatch_PassesTheGrantCapThrough_AndFallsBackCappedAsync() {
     var (ledger, coordinator) = _build();
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     coordinator.BatchAnswer = [true, true, false];
 
     _ = await ledger.TryBeginRepairBatchAsync(
@@ -180,7 +180,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
   [Test]
   public async Task RepairBatch_ZeroGrantBudget_ConsultsNothingAsync() {
     var (ledger, coordinator) = _build();
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
 
     var flags = await ledger.TryBeginRepairBatchAsync(
       [_key(origin)], DateTimeOffset.UtcNow, TimeSpan.FromSeconds(300), maxAttempts: 8, maxGrants: 0);
@@ -194,7 +194,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
   [Test]
   public async Task HealedBatch_UsesTheBatch_AndFallsBackWhenUnhandledAsync() {
     var (ledger, coordinator) = _build();
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
 
     await ledger.MarkHealedBatchAsync([_key(origin), _key(origin)]);
     await Assert.That(coordinator.BatchCalls).IsEqualTo(1);
@@ -223,7 +223,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
   public async Task InMemoryLedger_BatchDefaults_LoopTheSingles_WithTheGrantCapAsync() {
     // The interface DEFAULTS: any implementation that only knows the singles still gets correct
     // batch behavior — including the stop-consulting-past-the-cap rule.
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     IIntegrityRepairLedger ledger = new IntegrityRepairLedger();
     var keys = Enumerable.Range(0, 4).Select(_ => _key(origin)).ToList();
     var now = DateTimeOffset.UtcNow;

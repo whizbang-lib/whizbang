@@ -4634,7 +4634,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
-      cmd.Parameters.AddWithValue("p_dead_letter_id", (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo());
+      cmd.Parameters.AddWithValue("p_dead_letter_id", (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New());
       cmd.Parameters.AddWithValue("p_message_id", import.MessageId);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_STREAM_ID, NpgsqlTypes.NpgsqlDbType.Uuid) {
         Value = (object?)import.StreamId ?? DBNull.Value

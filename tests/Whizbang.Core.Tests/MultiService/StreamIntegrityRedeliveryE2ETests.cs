@@ -91,7 +91,7 @@ public class StreamIntegrityRedeliveryE2ETests {
     var missing = healthyRows.Where(r => _x(r) is 2 or 3).OrderBy(_x).ToList();
     await Assert.That(missing.Count).IsEqualTo(2);
     var missingIds = missing.ConvertAll(m => m.MessageId);
-    var streamId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
     var events = missing.Select((row, i) => new RedeliveryEvent {
       EventId = row.MessageId,
       StreamId = streamId,
@@ -112,7 +112,7 @@ public class StreamIntegrityRedeliveryE2ETests {
       envelopeSerializer: new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()),
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       compositeFactory: new CompositeFactory());
-    var originServiceId = TrackedGuid.NewMedo().Value;
+    var originServiceId = TrackedGuid.New().Value;
     var published = await pump.PublishAsync(
       events, MultiServiceHarnessDefaults.SHARED_TOPIC, target: "damaged-svc", originServiceId: originServiceId);
     await Assert.That(published).IsEqualTo(1);

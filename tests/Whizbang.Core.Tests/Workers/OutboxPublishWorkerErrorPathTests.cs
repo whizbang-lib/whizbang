@@ -394,7 +394,7 @@ public class OutboxPublishWorkerErrorPathTests {
   private const string VALID_TRACEPARENT = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
 
   private static OutboxWork _work(string? destination = "test-topic", string? traceParent = null) {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     List<MessageHop> hops = traceParent is null
       ? []
       : [
@@ -416,7 +416,7 @@ public class OutboxPublishWorkerErrorPathTests {
       },
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,

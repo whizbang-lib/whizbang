@@ -48,9 +48,9 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
     // so message_ids match insertion order — that's the contract the function relies on
     // per feedback_use_trackedguid.
     var ids = new[] {
-      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
-      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
-      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo()
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New()
     };
     var times = new[] {
       DateTimeOffset.UtcNow.AddSeconds(-30),
@@ -184,7 +184,7 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
     }
 
     var instanceId = Guid.NewGuid();
-    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     await _registerInstanceAsync(connection, instanceId);
     await _insertOutboxRowAsync(connection, messageId, streamId: Guid.Empty, instanceId);
 
@@ -210,7 +210,7 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
     }
 
     var instanceId = Guid.NewGuid();
-    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     await _registerInstanceAsync(connection, instanceId);
     await _insertOutboxRowWithNullStreamAsync(connection, messageId, instanceId);
 
@@ -234,8 +234,8 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
     }
 
     var instanceId = Guid.NewGuid();
-    var streamId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
-    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    var streamId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     await _registerInstanceAsync(connection, instanceId);
     await _insertOutboxRowAsync(connection, messageId, streamId, instanceId);
 
@@ -260,10 +260,10 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
     }
 
     var instanceId = Guid.NewGuid();
-    var realStreamA = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
-    var realStreamB = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
-    var rowAMessage = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
-    var rowBMessage = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    var realStreamA = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var realStreamB = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var rowAMessage = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var rowBMessage = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     await _registerInstanceAsync(connection, instanceId);
     await _insertOutboxRowAsync(connection, rowAMessage, realStreamA, instanceId);
     await _insertOutboxRowAsync(connection, rowBMessage, realStreamB, instanceId);

@@ -34,7 +34,7 @@ namespace Whizbang.Core.SystemEvents;
 public sealed record PerspectiveIndexAdvised : ISystemEvent {
   /// <summary>Unique identifier for this event.</summary>
   [StreamId]
-  public Guid Id { get; init; } = TrackedGuid.NewMedo();
+  public Guid Id { get; init; } = TrackedGuid.New();
 
   /// <summary>The perspective model the finding is about.</summary>
   public required string ModelName { get; init; }

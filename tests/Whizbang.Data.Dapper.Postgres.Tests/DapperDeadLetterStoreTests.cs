@@ -37,12 +37,12 @@ public class DapperDeadLetterStoreTests : PostgresTestBase {
     var store = _newStore();
 
     await Assert.That(async () => await store.MoveAsync(
-        deadLetterId: (Guid)TrackedGuid.NewMedo(),
+        deadLetterId: (Guid)TrackedGuid.New(),
         sourceTable: null!,
-        sourceId: (Guid)TrackedGuid.NewMedo(),
+        sourceId: (Guid)TrackedGuid.New(),
         failureReason: MessageFailureReason.MaxAttemptsExceeded,
         errorText: "err",
-        instanceId: (Guid)TrackedGuid.NewMedo(),
+        instanceId: (Guid)TrackedGuid.New(),
         generation: "v0.502"))
       .Throws<ArgumentException>();
   }
@@ -52,12 +52,12 @@ public class DapperDeadLetterStoreTests : PostgresTestBase {
     var store = _newStore();
 
     await Assert.That(async () => await store.MoveAsync(
-        deadLetterId: (Guid)TrackedGuid.NewMedo(),
+        deadLetterId: (Guid)TrackedGuid.New(),
         sourceTable: "",
-        sourceId: (Guid)TrackedGuid.NewMedo(),
+        sourceId: (Guid)TrackedGuid.New(),
         failureReason: MessageFailureReason.MaxAttemptsExceeded,
         errorText: "err",
-        instanceId: (Guid)TrackedGuid.NewMedo(),
+        instanceId: (Guid)TrackedGuid.New(),
         generation: "v0.502"))
       .Throws<ArgumentException>();
   }
@@ -67,12 +67,12 @@ public class DapperDeadLetterStoreTests : PostgresTestBase {
     var store = _newStore();
 
     await Assert.That(async () => await store.MoveAsync(
-        deadLetterId: (Guid)TrackedGuid.NewMedo(),
+        deadLetterId: (Guid)TrackedGuid.New(),
         sourceTable: DeadLetterSourceTable.OUTBOX,
-        sourceId: (Guid)TrackedGuid.NewMedo(),
+        sourceId: (Guid)TrackedGuid.New(),
         failureReason: MessageFailureReason.MaxAttemptsExceeded,
         errorText: "err",
-        instanceId: (Guid)TrackedGuid.NewMedo(),
+        instanceId: (Guid)TrackedGuid.New(),
         generation: null!))
       .Throws<ArgumentException>();
   }
@@ -82,12 +82,12 @@ public class DapperDeadLetterStoreTests : PostgresTestBase {
     var store = _newStore();
 
     await Assert.That(async () => await store.MoveAsync(
-        deadLetterId: (Guid)TrackedGuid.NewMedo(),
+        deadLetterId: (Guid)TrackedGuid.New(),
         sourceTable: DeadLetterSourceTable.OUTBOX,
-        sourceId: (Guid)TrackedGuid.NewMedo(),
+        sourceId: (Guid)TrackedGuid.New(),
         failureReason: MessageFailureReason.MaxAttemptsExceeded,
         errorText: "err",
-        instanceId: (Guid)TrackedGuid.NewMedo(),
+        instanceId: (Guid)TrackedGuid.New(),
         generation: ""))
       .Throws<ArgumentException>();
   }
@@ -99,17 +99,17 @@ public class DapperDeadLetterStoreTests : PostgresTestBase {
     var store = _newStore();
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     await _insertOutboxRowAsync(conn, messageId);
 
-    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
     var result = await store.MoveAsync(
       deadLetterId: dlqId,
       sourceTable: DeadLetterSourceTable.OUTBOX,
       sourceId: messageId,
       failureReason: MessageFailureReason.Throttled,
       errorText: "throttle exhausted",
-      instanceId: (Guid)TrackedGuid.NewMedo(),
+      instanceId: (Guid)TrackedGuid.New(),
       generation: "v0.502-dapper");
 
     await Assert.That(result).IsEqualTo(dlqId);
@@ -127,12 +127,12 @@ public class DapperDeadLetterStoreTests : PostgresTestBase {
     var store = _newStore();
 
     var result = await store.MoveAsync(
-      deadLetterId: (Guid)TrackedGuid.NewMedo(),
+      deadLetterId: (Guid)TrackedGuid.New(),
       sourceTable: DeadLetterSourceTable.OUTBOX,
-      sourceId: (Guid)TrackedGuid.NewMedo(),  // never inserted
+      sourceId: (Guid)TrackedGuid.New(),  // never inserted
       failureReason: MessageFailureReason.MaxAttemptsExceeded,
       errorText: "ghost",
-      instanceId: (Guid)TrackedGuid.NewMedo(),
+      instanceId: (Guid)TrackedGuid.New(),
       generation: "v0.502");
 
     await Assert.That(result).IsNull();
@@ -143,17 +143,17 @@ public class DapperDeadLetterStoreTests : PostgresTestBase {
     var store = _newStore();
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     await _insertOutboxRowAsync(conn, messageId);
 
-    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
     var result = await store.MoveAsync(
       deadLetterId: dlqId,
       sourceTable: DeadLetterSourceTable.OUTBOX,
       sourceId: messageId,
       failureReason: MessageFailureReason.Throttled,
       errorText: null,
-      instanceId: (Guid)TrackedGuid.NewMedo(),
+      instanceId: (Guid)TrackedGuid.New(),
       generation: "v0.502-dapper-nullerr");
 
     await Assert.That(result).IsEqualTo(dlqId);
@@ -170,6 +170,6 @@ public class DapperDeadLetterStoreTests : PostgresTestBase {
         (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts,
          created_at, stream_id, partition_number)
       VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{}', '{}', 1, 11, NOW(), @stream, 0)",
-      new { msg = messageId, stream = (Guid)TrackedGuid.NewMedo() });
+      new { msg = messageId, stream = (Guid)TrackedGuid.New() });
   }
 }

@@ -10,7 +10,7 @@ namespace Whizbang.Generators.Tests;
 /// Coverage-focused test for <see cref="GuidUsageAnalyzer"/>, complementing
 /// <c>tests/Whizbang.Generators.Tests/GuidUsageAnalyzerTests.cs</c>. Every existing test source
 /// only ever calls qualified member-access invocations (<c>Guid.NewGuid()</c>, <c>Guid.Parse(x)</c>,
-/// <c>TrackedGuid.NewMedo()</c>, ...), so <c>_analyzeInvocation</c>'s "not a
+/// <c>TrackedGuid.New()</c>, ...), so <c>_analyzeInvocation</c>'s "not a
 /// <c>MemberAccessExpressionSyntax</c>" guard has never run — every real-world compilation also
 /// contains unqualified invocations (local method calls, delegate invocations, <c>nameof</c>), so
 /// this is not a dead branch.

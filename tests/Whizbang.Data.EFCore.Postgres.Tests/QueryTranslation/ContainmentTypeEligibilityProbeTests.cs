@@ -175,8 +175,8 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
   private string _connectionString = null!;
   private ProbeDbContext? _context;
 
-  private static readonly TrackedGuid _tracked = TrackedGuid.NewMedo();
-  private static readonly Guid _sortable = TrackedGuid.NewMedo().Value;
+  private static readonly TrackedGuid _tracked = TrackedGuid.New();
+  private static readonly Guid _sortable = TrackedGuid.New().Value;
   private static readonly DateTime _when = new(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
   private static readonly DateTimeOffset _whenOffset = new(2026, 3, 4, 5, 6, 7, TimeSpan.Zero);
 
@@ -853,7 +853,7 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     // Generated in order, so the creation order is known independently of how they sort.
     var created = new List<Guid>();
     for (var i = 0; i < 12; i++) {
-      created.Add(TrackedGuid.NewMedo().Value);
+      created.Add(TrackedGuid.New().Value);
     }
 
     await Assert.That(created.Select(g => g.ToString()).Order(StringComparer.Ordinal).ToList())

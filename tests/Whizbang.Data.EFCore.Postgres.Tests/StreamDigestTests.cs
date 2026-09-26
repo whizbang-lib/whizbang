@@ -34,19 +34,19 @@ public class StreamDigestTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var coordinator = _coordinator(ctx);
 
-    var origin = TrackedGuid.NewMedo().Value;
-    var stream = TrackedGuid.NewMedo().Value;
-    var e1 = TrackedGuid.NewMedo().Value;
-    var e2 = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var e1 = TrackedGuid.New().Value;
+    var e2 = TrackedGuid.New().Value;
 
     // The origin's OWN emissions (locally-originated: no origin stamp) — settled.
     await _seedAsync(conn, stream, 1, TENANT_A, "Contracts.TypeX", e1, aged: true);
     await _seedAsync(conn, stream, 2, TENANT_A, "Contracts.TypeX", e2, aged: true);
     // Exclusions on the origin side: ephemeral (flags&8), at-most-once, and a FRESH event.
-    await _seedAsync(conn, stream, 3, TENANT_A, "Contracts.TypeX", TrackedGuid.NewMedo().Value, aged: true, flags: 8);
-    await _seedAsync(conn, stream, 4, TENANT_A, "Contracts.TypeX", TrackedGuid.NewMedo().Value, aged: true,
+    await _seedAsync(conn, stream, 3, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: true, flags: 8);
+    await _seedAsync(conn, stream, 4, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: true,
       metadataJson: "{\"deliveryGuarantee\":1}");
-    await _seedAsync(conn, stream, 5, TENANT_A, "Contracts.TypeX", TrackedGuid.NewMedo().Value, aged: false);
+    await _seedAsync(conn, stream, 5, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: false);
 
     var settle = TimeSpan.FromMinutes(60);
     var own = await coordinator.ComputeStreamDigestsAsync(null, ["Contracts.TypeX"], settle);
@@ -92,12 +92,12 @@ public class StreamDigestTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var coordinator = _coordinator(ctx);
 
-    var streamA = TrackedGuid.NewMedo().Value;
-    var streamB = TrackedGuid.NewMedo().Value;
-    await _seedAsync(conn, streamA, 1, TENANT_A, "Contracts.RollX", TrackedGuid.NewMedo().Value, aged: true);
-    await _seedAsync(conn, streamA, 2, TENANT_A, "Contracts.RollX", TrackedGuid.NewMedo().Value, aged: true);
-    await _seedAsync(conn, streamB, 1, TENANT_A, "Contracts.RollX", TrackedGuid.NewMedo().Value, aged: true);
-    await _seedAsync(conn, streamB, 2, TENANT_A, "Contracts.RollY", TrackedGuid.NewMedo().Value, aged: true);
+    var streamA = TrackedGuid.New().Value;
+    var streamB = TrackedGuid.New().Value;
+    await _seedAsync(conn, streamA, 1, TENANT_A, "Contracts.RollX", TrackedGuid.New().Value, aged: true);
+    await _seedAsync(conn, streamA, 2, TENANT_A, "Contracts.RollX", TrackedGuid.New().Value, aged: true);
+    await _seedAsync(conn, streamB, 1, TENANT_A, "Contracts.RollX", TrackedGuid.New().Value, aged: true);
+    await _seedAsync(conn, streamB, 2, TENANT_A, "Contracts.RollY", TrackedGuid.New().Value, aged: true);
 
     var settle = TimeSpan.FromMinutes(5);
     var types = new List<string> { "Contracts.RollX", "Contracts.RollY" };
@@ -125,12 +125,12 @@ public class StreamDigestTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var coordinator = _coordinator(ctx);
 
-    var covered = TrackedGuid.NewMedo().Value;
-    var uncovered = TrackedGuid.NewMedo().Value;
-    var coveredEvent = TrackedGuid.NewMedo().Value;
+    var covered = TrackedGuid.New().Value;
+    var uncovered = TrackedGuid.New().Value;
+    var coveredEvent = TrackedGuid.New().Value;
     await _seedAsync(conn, covered, 1, TENANT_A, "Contracts.TypeX", coveredEvent, aged: true);
-    await _seedAsync(conn, uncovered, 1, TENANT_A, "Contracts.TypeX", TrackedGuid.NewMedo().Value, aged: true);
-    await _seedAsync(conn, uncovered, 2, TENANT_A, "Contracts.TypeX", TrackedGuid.NewMedo().Value, aged: true);
+    await _seedAsync(conn, uncovered, 1, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: true);
+    await _seedAsync(conn, uncovered, 2, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: true);
 
     // The perspective association + a cursor on ONE of the two streams.
     await using (var assoc = conn.CreateCommand()) {
@@ -174,11 +174,11 @@ public class StreamDigestTests : EFCoreTestBase {
           ('00000000-0000-0000-0000-000000000000', 'tenant-b', 'Contracts.Own.TypeA', @s2, 2, 2, 1),
           ('00000000-0000-0000-0000-000000000000', '',         'Contracts.Own.TypeB', @s3, 3, 3, 1),
           (@origin,                                 'tenant-a', 'Contracts.Foreign.TypeC', @s4, 4, 4, 1)";
-      seed.Parameters.AddWithValue("s1", TrackedGuid.NewMedo().Value);
-      seed.Parameters.AddWithValue("s2", TrackedGuid.NewMedo().Value);
-      seed.Parameters.AddWithValue("s3", TrackedGuid.NewMedo().Value);
-      seed.Parameters.AddWithValue("s4", TrackedGuid.NewMedo().Value);
-      seed.Parameters.AddWithValue("origin", TrackedGuid.NewMedo().Value);
+      seed.Parameters.AddWithValue("s1", TrackedGuid.New().Value);
+      seed.Parameters.AddWithValue("s2", TrackedGuid.New().Value);
+      seed.Parameters.AddWithValue("s3", TrackedGuid.New().Value);
+      seed.Parameters.AddWithValue("s4", TrackedGuid.New().Value);
+      seed.Parameters.AddWithValue("origin", TrackedGuid.New().Value);
       await seed.ExecuteNonQueryAsync();
     }
 

@@ -552,11 +552,11 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor GuidNewGuidUsage = new(
       id: "WHIZ055",
       title: "Guid.NewGuid() Usage",
-      messageFormat: "Use TrackedGuid.NewMedo() or a [WhizbangId] type instead of Guid.NewGuid(). UUIDv4 is not time-ordered.",
+      messageFormat: "Use TrackedGuid.New() or a [WhizbangId] type instead of Guid.NewGuid(). UUIDv4 is not time-ordered.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Guid.NewGuid() creates UUIDv4 which is not time-ordered. Use TrackedGuid.NewMedo() or a [WhizbangId] type for UUIDv7 with sub-millisecond precision."
+      description: "Guid.NewGuid() creates UUIDv4 which is not time-ordered. Use TrackedGuid.New() or a [WhizbangId] type for UUIDv7 with sub-millisecond precision."
   );
 
   /// <summary>
@@ -567,11 +567,11 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor GuidCreateVersion7Usage = new(
       id: "WHIZ056",
       title: "Guid.CreateVersion7() Usage",
-      messageFormat: "Use TrackedGuid.NewMedo() for sub-millisecond precision instead of Guid.CreateVersion7()",
+      messageFormat: "Use TrackedGuid.New() for sub-millisecond precision instead of Guid.CreateVersion7()",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Guid.CreateVersion7() only has millisecond precision. Use TrackedGuid.NewMedo() or a [WhizbangId] type for sub-millisecond precision."
+      description: "Guid.CreateVersion7() only has millisecond precision. Use TrackedGuid.New() or a [WhizbangId] type for sub-millisecond precision."
   );
 
   /// <summary>

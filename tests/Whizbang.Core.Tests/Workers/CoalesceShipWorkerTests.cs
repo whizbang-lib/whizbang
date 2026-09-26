@@ -159,7 +159,7 @@ public class CoalesceShipWorkerTests {
     var (worker, coordinator, _) = _build(configureBinding: c => {
       c.SlideSeconds = 15;
       c.CompositeFactory = batch => new Whizbang.Core.Minting.AuditEventsComposite {
-        StreamId = TrackedGuid.NewMedo(),
+        StreamId = TrackedGuid.New(),
         Atomicity = batch.Atomicity,
         InnerPayloads = [.. batch.Singles.Select(s => s.Envelope.Payload)],
         InnerTypeNames = [.. batch.Singles.Select(s => s.MessageType)],

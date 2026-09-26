@@ -72,7 +72,7 @@ public class OutboxDrainWorkerLifecycleFailureTests {
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -152,8 +152,8 @@ public class OutboxDrainWorkerLifecycleFailureTests {
   public async Task InvokeOutboxLifecycleStage_InlineThrows_EnqueuesFailureWithFullExceptionTextAsync() {
     var failure = new FakeFailureChannel();
     var worker = _buildWorker(failure);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     var work = _outboxWork(messageId, streamId);
     var thrown = new InvalidOperationException("simulated lifecycle fault from production regression test");
     var throwingInvoker = new ThrowingReceptorInvoker(thrown);

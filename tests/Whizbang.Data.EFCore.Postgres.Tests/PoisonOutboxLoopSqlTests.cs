@@ -90,9 +90,9 @@ public class PoisonOutboxLoopSqlTests : EFCoreTestBase {
   [Timeout(60000)]
   public async Task PermanentPublishFailure_TheSqlLoopAloneNeverTerminates_AttemptsJustClimbAsync(CancellationToken cancellationToken) {
     await using var conn = await _openAsync(cancellationToken);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    await _insertPoisonRowAsync(conn, messageId, (Guid)TrackedGuid.NewMedo(), cancellationToken);
+    var messageId = (Guid)TrackedGuid.New();
+    var instanceId = (Guid)TrackedGuid.New();
+    await _insertPoisonRowAsync(conn, messageId, (Guid)TrackedGuid.New(), cancellationToken);
 
     for (var cycle = 1; cycle <= 12; cycle++) {
       await Assert.That(await _oneLoopCycleAsync(conn, instanceId, messageId, cancellationToken)).IsTrue()
@@ -111,10 +111,10 @@ public class PoisonOutboxLoopSqlTests : EFCoreTestBase {
   [Timeout(60000)]
   public async Task PoisonRow_PastTheGateCap_TheMoveTerminatesTheLoopForGoodAsync(CancellationToken cancellationToken) {
     await using var conn = await _openAsync(cancellationToken);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var dlqId = (Guid)TrackedGuid.NewMedo();
-    await _insertPoisonRowAsync(conn, messageId, (Guid)TrackedGuid.NewMedo(), cancellationToken);
+    var messageId = (Guid)TrackedGuid.New();
+    var instanceId = (Guid)TrackedGuid.New();
+    var dlqId = (Guid)TrackedGuid.New();
+    await _insertPoisonRowAsync(conn, messageId, (Guid)TrackedGuid.New(), cancellationToken);
 
     // Wind the loop past the drain worker's default cap (MaxOutboxAttempts = 10, locked by
     // V502DefaultsTests) — 11 cycles, so attempts > cap and the pre-publish gate fires.

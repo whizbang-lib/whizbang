@@ -31,7 +31,7 @@ public class DiscardPendingMessagesSqlTests : EFCoreTestBase {
 
   /// <summary>Seeds one pending row in <paramref name="table"/> (wh_inbox or wh_outbox), leased or not.</summary>
   private static async Task<Guid> _seedAsync(NpgsqlConnection conn, string table, string messageType, bool leased) {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = table == "wh_inbox"
       ? @"WITH m AS (
@@ -53,8 +53,8 @@ public class DiscardPendingMessagesSqlTests : EFCoreTestBase {
                   @stream, 0, @inst, @lease)";
     cmd.Parameters.AddWithValue("id", id);
     cmd.Parameters.AddWithValue("type", messageType);
-    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.NewMedo());
-    cmd.Parameters.AddWithValue("inst", leased ? (Guid)TrackedGuid.NewMedo() : DBNull.Value);
+    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.New());
+    cmd.Parameters.AddWithValue("inst", leased ? (Guid)TrackedGuid.New() : DBNull.Value);
     cmd.Parameters.AddWithValue("lease", leased ? DateTime.UtcNow.AddMinutes(5) : DBNull.Value);
     await cmd.ExecuteNonQueryAsync();
     return id;

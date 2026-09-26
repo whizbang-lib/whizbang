@@ -22,7 +22,7 @@ public class StreamsWithPendingMessagesSqlTests : EFCoreTestBase {
     "Whizbang.Core.Observability.MessageEnvelope`1[[Test.Sagas.WatchdogTick, Test.Sagas, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core";
   private const string OTHER_TYPE = "Contracts.OrderPlaced, Contracts, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
 
-  private static Guid _stream() => (Guid)TrackedGuid.NewMedo();
+  private static Guid _stream() => (Guid)TrackedGuid.New();
 
   private static async Task _outboxAsync(NpgsqlConnection conn, Guid stream, string type, bool published, bool scheduled = false) {
     await using var cmd = conn.CreateCommand();
@@ -31,7 +31,7 @@ public class StreamsWithPendingMessagesSqlTests : EFCoreTestBase {
          created_at, stream_id, partition_number, scheduled_for, processed_at)
       VALUES (@id, 'topic', @type, 'TestEnvelope', '{}', '{}', 1, 0, NOW(), @stream, 0,
               @scheduled::timestamptz, @processed::timestamptz)";
-    cmd.Parameters.AddWithValue("id", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("id", (Guid)TrackedGuid.New());
     cmd.Parameters.AddWithValue(nameof(type), type);
     cmd.Parameters.AddWithValue(nameof(stream), stream);
     cmd.Parameters.AddWithValue(nameof(scheduled), scheduled ? DateTime.UtcNow.AddHours(1) : DBNull.Value);
@@ -52,10 +52,10 @@ public class StreamsWithPendingMessagesSqlTests : EFCoreTestBase {
       SELECT message_id, stream_id, received_at, priority, is_event, 1, 1,
              0, @inst::uuid, @lease::timestamptz, NULL::text, 0, @processed::timestamptz
       FROM m";
-    cmd.Parameters.AddWithValue("id", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("id", (Guid)TrackedGuid.New());
     cmd.Parameters.AddWithValue(nameof(type), type);
     cmd.Parameters.AddWithValue(nameof(stream), stream);
-    cmd.Parameters.AddWithValue("inst", leased ? (Guid)TrackedGuid.NewMedo() : DBNull.Value);
+    cmd.Parameters.AddWithValue("inst", leased ? (Guid)TrackedGuid.New() : DBNull.Value);
     cmd.Parameters.AddWithValue("lease", leased ? DateTime.UtcNow.AddMinutes(5) : DBNull.Value);
     cmd.Parameters.AddWithValue("processed", finished ? DateTime.UtcNow : DBNull.Value);
     await cmd.ExecuteNonQueryAsync();

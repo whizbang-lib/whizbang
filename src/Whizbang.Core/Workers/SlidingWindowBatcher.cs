@@ -105,8 +105,10 @@ public sealed class SlidingWindowBatcher<T> {
 
         // Wait for either a new arrival or the wait window to expire.
         using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var waitTask = _reader.WaitToReadAsync(waitCts.Token).AsTask();
+        // The deadline is armed BEFORE the wait begins: one created after it would be measured from whatever the
+        // clock reads by then, so time that passed in between would not count against the window.
         var timerTask = Task.Delay(waitFor, _timeProvider, waitCts.Token);
+        var waitTask = _reader.WaitToReadAsync(waitCts.Token).AsTask();
         var completed = await Task.WhenAny(waitTask, timerTask).ConfigureAwait(false);
         await waitCts.CancelAsync();
 

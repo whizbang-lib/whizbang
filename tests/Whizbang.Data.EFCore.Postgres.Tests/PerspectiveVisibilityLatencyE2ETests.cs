@@ -275,8 +275,8 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
 
       await _startAndAwaitReadyAsync(pipeline, cancellationToken);
 
-      var streamId = (Guid)TrackedGuid.NewMedo();
-      var eventId = (Guid)TrackedGuid.NewMedo();
+      var streamId = (Guid)TrackedGuid.New();
+      var eventId = (Guid)TrackedGuid.New();
 
       // Completion signal: fires after the wh_per_order upsert committed. Subscribed BEFORE
       // the commit; the TCS carries the elapsed time captured the moment the event fired.
@@ -331,8 +331,8 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
         _ = await blockerCmd.ExecuteNonQueryAsync(cancellationToken);
       }
 
-      var streamId = (Guid)TrackedGuid.NewMedo();
-      var eventId = (Guid)TrackedGuid.NewMedo();
+      var streamId = (Guid)TrackedGuid.New();
+      var eventId = (Guid)TrackedGuid.New();
 
       var sw = new Stopwatch();
       var applied = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);

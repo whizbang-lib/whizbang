@@ -40,14 +40,14 @@ public class RepairDrainWorkerTests {
 
   [Test]
   public async Task DrainTick_DispatchesGroupedPerType_WithTheUnionWindowAsync() {
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin, learnTopic: true);
-    var s1 = TrackedGuid.NewMedo().Value;
-    var s2 = TrackedGuid.NewMedo().Value;
-    var s3 = TrackedGuid.NewMedo().Value;
+    var s1 = TrackedGuid.New().Value;
+    var s2 = TrackedGuid.New().Value;
+    var s3 = TrackedGuid.New().Value;
     coordinator.Eligible.AddRange([
       new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", s1, 100, 500),
       new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", s2, 200, 600),
@@ -74,15 +74,15 @@ public class RepairDrainWorkerTests {
     // Observed live: one throttled broker send threw out of the tick and killed every LATER
     // group's dispatch — their claimed rows had already stamped an attempt, so the failure
     // burned backoff budget across buckets that never even reached the wire.
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin, learnTopic: true);
     transport.FailFirst = 1;
     coordinator.Eligible.AddRange([
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 100, 500),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", TrackedGuid.NewMedo().Value, 300, 700),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", TrackedGuid.New().Value, 300, 700),
     ]);
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
@@ -100,7 +100,7 @@ public class RepairDrainWorkerTests {
     // canceled send is a stopping host: the later groups' claims are already stamped, so their
     // budget is spent either way, and continuing only puts more traffic on a broker the process
     // is disconnecting from.
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
@@ -108,8 +108,8 @@ public class RepairDrainWorkerTests {
     transport.FailFirst = 1;
     transport.FailFirstWith = new OperationCanceledException();
     coordinator.Eligible.AddRange([
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 100, 500),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", TrackedGuid.NewMedo().Value, 300, 700),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", TrackedGuid.New().Value, 300, 700),
     ]);
 
     await Assert.That(async () =>
@@ -126,13 +126,13 @@ public class RepairDrainWorkerTests {
     // is a repair dispatcher. A ReportOnly service whose drain kept claiming and sending
     // redelivery requests would repair anyway (and burn transport quota doing it), turning the
     // opt-down into a dead knob at exactly the moment an operator reaches for it.
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairDrainRatePerSecond = 10,
       RepairMode = IntegrityRepairMode.ReportOnly,
     }, origin, learnTopic: true);
     coordinator.Eligible.Add(
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10));
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10));
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
 
@@ -144,15 +144,15 @@ public class RepairDrainWorkerTests {
 
   [Test]
   public async Task DrainTick_TokensGateTheClaimBudget_AndSpendOnClaimAsync() {
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 2,
     }, origin, learnTopic: true);
     coordinator.Eligible.AddRange([
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10),
     ]);
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
@@ -167,13 +167,13 @@ public class RepairDrainWorkerTests {
 
   [Test]
   public async Task DrainTick_UnlearnedOrigins_AreNeverClaimedAsync() {
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin, learnTopic: false);
     coordinator.Eligible.Add(
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10));
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10));
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
 
@@ -184,14 +184,14 @@ public class RepairDrainWorkerTests {
 
   [Test]
   public async Task DrainTick_PreStampRows_WidenTheAskToWholeHistoryAsync() {
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin, learnTopic: true);
     coordinator.Eligible.AddRange([
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 100, 500),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, null, null),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, null, null),
     ]);
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
@@ -433,7 +433,7 @@ public class RepairDrainWorkerTests {
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
     public int ProcessId => 1;

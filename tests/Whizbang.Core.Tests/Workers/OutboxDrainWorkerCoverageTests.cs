@@ -63,7 +63,7 @@ public partial class OutboxDrainWorkerCoverageTests {
   }
 
   private sealed class ServiceInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "coverage-test-svc";
     public string HostName => "coverage-test-host";
     public int ProcessId => 1;
@@ -395,9 +395,9 @@ public partial class OutboxDrainWorkerCoverageTests {
   /// </summary>
   [Test]
   public async Task DrainStreamInner_ConfirmationFetchReturnsZeroRows_ExitsCleanlyAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const int maxPerStream = 50;
-    var msgs = Enumerable.Range(0, maxPerStream * 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var msgs = Enumerable.Range(0, maxPerStream * 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ConsumingCoordinator();
     coord.RowsByStream[streamId] = [.. msgs.Select(m => _row(m, streamId))];
@@ -452,9 +452,9 @@ public partial class OutboxDrainWorkerCoverageTests {
   /// </summary>
   [Test]
   public async Task DrainStreamInner_RefetchAtExactCapReturnsSameRows_SkipsAlreadySeenAndExitsAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const int maxPerStream = 5;
-    var msgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var msgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new StaticRowsCoordinator();
     coord.Rows.AddRange(msgs.Select(m => _row(m, streamId)));
@@ -513,10 +513,10 @@ public partial class OutboxDrainWorkerCoverageTests {
   /// </summary>
   [Test]
   public async Task DrainStreamInner_CanceledBetweenInnerFetches_StopsAtNextIterationBoundaryAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const int maxPerStream = 2;
-    var firstPassMsgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
-    var secondPassMsgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var firstPassMsgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var secondPassMsgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ScriptedCoordinator();
     using var cts = new CancellationTokenSource();
@@ -601,8 +601,8 @@ public partial class OutboxDrainWorkerCoverageTests {
       deserializer: new PassthroughDeserializer(),
       sp: sp);
 
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var row = _row(messageId, (Guid)TrackedGuid.NewMedo());
+    var messageId = (Guid)TrackedGuid.New();
+    var row = _row(messageId, (Guid)TrackedGuid.New());
 
     await worker.PublishBulkAsync([row], CancellationToken.None);
 
@@ -636,7 +636,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       deserializer: new PassthroughDeserializer(),
       sp: sp);
 
-    var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
+    var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 
     await worker.PublishOneAsync(row, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -666,7 +666,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       publish: strategy,
       options: new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100, PublishTimeoutSeconds = 1 });
 
-    var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
+    var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 
     var bulkTask = worker.PublishBulkAsync([row], CancellationToken.None);
     await bulkTask.WaitAsync(TimeSpan.FromSeconds(5));
@@ -713,7 +713,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       publish: strategy,
       options: new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100, PublishTimeoutSeconds = 1 });
 
-    var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
+    var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 
     var singularTask = worker.PublishOneAsync(row, CancellationToken.None);
     await singularTask.WaitAsync(TimeSpan.FromSeconds(5));
@@ -753,7 +753,7 @@ public partial class OutboxDrainWorkerCoverageTests {
     var failure = new FailureChannel();
     var worker = _buildDirectCallWorker(failure);
     var invoker = new CapturingReceptorInvoker();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var work = _work(messageId, destination: null);
 
     await worker.InvokeOutboxLifecycleStageAsync(

@@ -29,9 +29,9 @@ public class CommittedNotifyEmissionSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var received = await _captureNotificationsAsync(conn, "wh_committed", async () => {
       // Stamper subscribes BEFORE the producer fires; without this LISTEN the NOTIFY
@@ -69,8 +69,8 @@ public class CommittedNotifyEmissionSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     var received = await _captureNotificationsAsync(conn, "wh_committed", async () => {
       // Wrap multiple stores in an explicit tx so dedup is observable.
@@ -80,7 +80,7 @@ public class CommittedNotifyEmissionSqlTests : EFCoreTestBase {
       }
 
       for (var i = 1; i <= 5; i++) {
-        var msgId = (Guid)TrackedGuid.NewMedo();
+        var msgId = (Guid)TrackedGuid.New();
         var messagesJson = $$"""
           [{
             "MessageId": "{{msgId}}",
@@ -118,9 +118,9 @@ public class CommittedNotifyEmissionSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var received = await _captureNotificationsAsync(conn, "wh_committed", async () => {
       var messagesJson = $$"""

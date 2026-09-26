@@ -34,7 +34,7 @@ public class IntegritySweepSchedulingTests {
     public ScheduleDefinition? Created;
     public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken cancellationToken = default) {
       Created = definition;
-      return Task.FromResult(new ScheduleHandle(TrackedGuid.NewMedo().Value, DateTimeOffset.UtcNow, WasCreated: true));
+      return Task.FromResult(new ScheduleHandle(TrackedGuid.New().Value, DateTimeOffset.UtcNow, WasCreated: true));
     }
     public Task<bool> PauseAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<bool> ResumeAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -64,7 +64,7 @@ public class IntegritySweepSchedulingTests {
   }
 
   private sealed class InstanceProvider(string name) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => name;
     public string HostName => "test-host";
     public int ProcessId => 1;

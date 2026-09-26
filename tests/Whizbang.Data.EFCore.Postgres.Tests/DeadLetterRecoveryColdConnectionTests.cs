@@ -45,7 +45,7 @@ public class DeadLetterRecoveryColdConnectionTests : EFCoreTestBase {
   }
 
   private async Task<Guid> _seedDeadLetterAsync(CancellationToken ct) {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync(ct);
     await using var ins = conn.CreateCommand();
@@ -59,7 +59,7 @@ public class DeadLetterRecoveryColdConnectionTests : EFCoreTestBase {
               NOW() - INTERVAL '1 hour', 0, 'cold/1', 'fp-cold', 1)
 """;
     ins.Parameters.AddWithValue("id", id);
-    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.NewMedo());
+    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.New());
     await ins.ExecuteNonQueryAsync(ct);
     return id;
   }

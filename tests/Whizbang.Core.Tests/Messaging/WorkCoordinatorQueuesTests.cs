@@ -70,7 +70,7 @@ public class WorkCoordinatorQueuesTests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope() {
     using var doc = JsonDocument.Parse("{}");
     return new MessageEnvelope<JsonElement> {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = doc.RootElement.Clone(),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
@@ -78,14 +78,14 @@ public class WorkCoordinatorQueuesTests {
   }
 
   private static OutboxMessage _createOutboxMessage() {
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     return new OutboxMessage {
       MessageId = messageId,
       Destination = "orders-topic",
       Envelope = _createJsonEnvelope(),
       EnvelopeType = "EnvType, TestAssembly",
       MessageType = "MsgType, TestAssembly",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       IsEvent = false,
       Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] }
     };

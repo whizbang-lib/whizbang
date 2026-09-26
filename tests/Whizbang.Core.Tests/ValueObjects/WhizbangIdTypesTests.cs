@@ -23,14 +23,14 @@ public class WhizbangIdTypesTests {
 
   [Test]
   public async Task StreamId_FromTracked_RoundTripsAsync() {
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
     var id = StreamId.From(tracked);
     await Assert.That(id.Value).IsEqualTo((Guid)tracked);
   }
 
   [Test]
   public async Task StreamId_FromGuid_RoundTripsAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var id = StreamId.From(g);
     await Assert.That(id.Value).IsEqualTo(g);
     await Assert.That(id.ToGuid()).IsEqualTo(g);
@@ -38,7 +38,7 @@ public class WhizbangIdTypesTests {
 
   [Test]
   public async Task StreamId_Equality_SameValueIsEqualAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var a = StreamId.From(g);
     var b = StreamId.From(g);
     await Assert.That(a == b).IsTrue();
@@ -79,7 +79,7 @@ public class WhizbangIdTypesTests {
 
   [Test]
   public async Task StreamId_ImplicitToGuid_ExposesUnderlyingValueAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var id = StreamId.From(g);
     Guid asGuid = id;  // implicit
     await Assert.That(asGuid).IsEqualTo(g);
@@ -87,14 +87,14 @@ public class WhizbangIdTypesTests {
 
   [Test]
   public async Task StreamId_ExplicitFromGuid_BuildsIdAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var id = (StreamId)g;  // explicit
     await Assert.That(id.Value).IsEqualTo(g);
   }
 
   [Test]
   public async Task StreamId_ToString_FormatsAsGuidAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var id = StreamId.From(g);
     await Assert.That(id.ToString()).IsEqualTo(g.ToString());
   }

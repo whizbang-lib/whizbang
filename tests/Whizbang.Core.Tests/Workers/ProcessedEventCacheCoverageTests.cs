@@ -137,12 +137,12 @@ public class ProcessedEventCacheCoverageTests {
     const int maxEntries = 20;
     var cache = new RecentlyProcessedEventCache(provider, ttl: TimeSpan.FromMinutes(60), maxEntries: maxEntries);
     for (var i = 0; i < maxEntries; i++) {
-      cache.MarkProcessed((Guid)TrackedGuid.NewMedo());
+      cache.MarkProcessed((Guid)TrackedGuid.New());
     }
 
     // Act — many threads insert concurrently, all racing the cap-eviction lock.
     var tasks = Enumerable.Range(0, 100)
-      .Select(_ => Task.Run(() => cache.MarkProcessed((Guid)TrackedGuid.NewMedo())))
+      .Select(_ => Task.Run(() => cache.MarkProcessed((Guid)TrackedGuid.New())))
       .ToArray();
     await Task.WhenAll(tasks);
 

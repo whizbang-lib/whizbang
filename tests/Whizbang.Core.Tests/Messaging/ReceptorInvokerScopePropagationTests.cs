@@ -184,7 +184,7 @@ public class ReceptorInvokerScopePropagationTests {
 
   private static MessageEnvelope<T> _createEnvelopeWithoutScope<T>(T message) where T : notnull {
     return new MessageEnvelope<T> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = message,
       Hops = [new MessageHop {
         Type = HopType.Current,
@@ -203,7 +203,7 @@ public class ReceptorInvokerScopePropagationTests {
     });
 
     return new MessageEnvelope<T> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = message,
       Hops = [new MessageHop {
         Type = HopType.Current,

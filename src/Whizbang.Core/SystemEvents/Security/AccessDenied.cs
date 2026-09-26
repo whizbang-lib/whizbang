@@ -21,7 +21,7 @@ public sealed record AccessDenied : ISystemEvent {
   /// Unique identifier for this event.
   /// </summary>
   [StreamId]
-  public Guid Id { get; init; } = TrackedGuid.NewMedo();
+  public Guid Id { get; init; } = TrackedGuid.New();
 
   /// <summary>
   /// Type of resource access was denied to.

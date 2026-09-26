@@ -43,9 +43,9 @@ public class RedeliveryCompositeWireSerializationTests {
   public async Task RedeliveryComposite_RoundTripsRawInner_ThroughCombinedOptionsAsync() {
     _ensureRegistered();
     var options = JsonContextRegistry.CreateCombinedOptions();
-    var streamId = TrackedGuid.NewMedo().Value;
-    var e1 = TrackedGuid.NewMedo().Value;
-    var e2 = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var e1 = TrackedGuid.New().Value;
+    var e2 = TrackedGuid.New().Value;
     var composite = new Whizbang.Core.Minting.RedeliveryComposite {
       StreamId = streamId,
       InnerPayloads = [JsonDocument.Parse("{\"x\":2}").RootElement.Clone(), JsonDocument.Parse("{\"x\":3}").RootElement.Clone()],
@@ -72,10 +72,10 @@ public class RedeliveryCompositeWireSerializationTests {
     var options = JsonContextRegistry.CreateCombinedOptions();
     var exotic = "{\"tags\":[\"a\",\"b\"],\"nested\":{\"set\":[1,2,3]},\"unregistered\":true}";
     var composite = new Whizbang.Core.Minting.RedeliveryComposite {
-      StreamId = TrackedGuid.NewMedo().Value,
+      StreamId = TrackedGuid.New().Value,
       InnerPayloads = [JsonDocument.Parse(exotic).RootElement.Clone()],
       InnerTypeNames = ["Totally.Unregistered.Type, Nowhere"],
-      InnerEventIds = [TrackedGuid.NewMedo().Value],
+      InnerEventIds = [TrackedGuid.New().Value],
     };
 
     var json = JsonSerializer.Serialize(composite, options.GetTypeInfo(typeof(Whizbang.Core.Minting.RedeliveryComposite)));

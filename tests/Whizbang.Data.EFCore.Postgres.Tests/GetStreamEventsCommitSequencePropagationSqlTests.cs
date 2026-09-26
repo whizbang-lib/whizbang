@@ -29,10 +29,10 @@ public class GetStreamEventsCommitSequencePropagationSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     // Setup: event_store row + perspective_events row leased to this instance.
     await _registerInstanceAsync(conn, instanceId);
@@ -59,10 +59,10 @@ public class GetStreamEventsCommitSequencePropagationSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await _registerInstanceAsync(conn, instanceId);
     await _insertEventStoreRowAsync(conn, eventId, streamId, version: 1);
@@ -83,10 +83,10 @@ public class GetStreamEventsCommitSequencePropagationSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await _registerInstanceAsync(conn, instanceId);
     await _insertEventStoreRowAsync(conn, eventId, streamId, version: 1);
@@ -108,24 +108,24 @@ public class GetStreamEventsCommitSequencePropagationSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var stampedEventId = (Guid)TrackedGuid.NewMedo();
-    var unstampedEventId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var stampedEventId = (Guid)TrackedGuid.New();
+    var unstampedEventId = (Guid)TrackedGuid.New();
 
     await _registerInstanceAsync(conn, instanceId);
 
     // Insert the first event and stamp it.
     await _insertEventStoreRowAsync(conn, stampedEventId, streamId, version: 1);
     await _insertPerspectiveEventLeasedAsync(
-      conn, (Guid)TrackedGuid.NewMedo(), streamId, "Projection.Test", stampedEventId, instanceId);
+      conn, (Guid)TrackedGuid.New(), streamId, "Projection.Test", stampedEventId, instanceId);
     var stampedCount = await _stampPendingAsync(conn);
     await Assert.That(stampedCount).IsGreaterThan(0);
 
     // Insert the second event but DO NOT stamp it.
     await _insertEventStoreRowAsync(conn, unstampedEventId, streamId, version: 2);
     await _insertPerspectiveEventLeasedAsync(
-      conn, (Guid)TrackedGuid.NewMedo(), streamId, "Projection.Test", unstampedEventId, instanceId);
+      conn, (Guid)TrackedGuid.New(), streamId, "Projection.Test", unstampedEventId, instanceId);
 
     var returnedEventIds = await _readEventIdsFromGetStreamEventsAsync(conn, instanceId, streamId);
     await Assert.That(returnedEventIds).Contains(stampedEventId)

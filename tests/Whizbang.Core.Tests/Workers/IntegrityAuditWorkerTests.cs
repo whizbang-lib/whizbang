@@ -35,8 +35,8 @@ public class IntegrityAuditWorkerTests {
   public async Task LocalGaps_ReportAndDispatchCappedRebuildsAsync() {
     var coordinator = new AuditCoordinator {
       Gaps = [
-        new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 },
-        new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "ItemsPerspective", EventCount = 3 },
+        new PerspectiveCoverageGap { StreamId = TrackedGuid.New().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 },
+        new PerspectiveCoverageGap { StreamId = TrackedGuid.New().Value, PerspectiveName = "ItemsPerspective", EventCount = 3 },
       ]
     };
     var dispatcher = new CaptureDispatcher();
@@ -58,7 +58,7 @@ public class IntegrityAuditWorkerTests {
   [Test]
   public async Task ReportOnly_ReportsGapsWithoutRebuildingAsync() {
     var coordinator = new AuditCoordinator {
-      Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
+      Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.New().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
     };
     var dispatcher = new CaptureDispatcher();
     var worker = _buildWorker(coordinator, dispatcher, new CaptureTransport(),
@@ -76,8 +76,8 @@ public class IntegrityAuditWorkerTests {
   public async Task KnownOrigins_GetDirectedManifestRequestsAsync() {
     var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
-    var originA = TrackedGuid.NewMedo().Value;
-    var originB = TrackedGuid.NewMedo().Value;
+    var originA = TrackedGuid.New().Value;
+    var originB = TrackedGuid.New().Value;
     tracker.RecordCheckpoint(originA, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     tracker.RecordCheckpoint(originB, "origin-b", DateTimeOffset.UtcNow);
     var transport = new CaptureTransport();
@@ -111,11 +111,11 @@ public class IntegrityAuditWorkerTests {
   [Test]
   public async Task ClaimDenied_SkipsTheWholeCycleAsync() {
     var coordinator = new AuditCoordinator {
-      Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }],
+      Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.New().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }],
       AuditClaimResult = false,
     };
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var dispatcher = new CaptureDispatcher();
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, dispatcher, transport, new StreamIntegrityOptions(), tracker);
@@ -135,7 +135,7 @@ public class IntegrityAuditWorkerTests {
   public async Task ClaimGranted_RunsAndPassesHalfTheIntervalAsWindowAsync() {
     var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { AuditIntervalMinutes = 60 }, tracker);
@@ -157,7 +157,7 @@ public class IntegrityAuditWorkerTests {
   public async Task DefaultCycle_RequestsTypeLevelTableManifests_NoVerifyAsync() {
     var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
 
@@ -176,7 +176,7 @@ public class IntegrityAuditWorkerTests {
   public async Task SweepCycle_ForcesRecomputeAndVerifiesDigestTableAsync() {
     var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
@@ -196,7 +196,7 @@ public class IntegrityAuditWorkerTests {
   public async Task SweepDisabled_NeverVerifiesAsync() {
     var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker);
@@ -219,7 +219,7 @@ public class IntegrityAuditWorkerTests {
     // digest table would leave every epoch-served answer trusting rows nothing ever re-checks.
     var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
 
@@ -233,7 +233,7 @@ public class IntegrityAuditWorkerTests {
   public async Task SteadyCycle_NeverVerifiesEpochsAsync() {
     var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker);
 
@@ -251,7 +251,7 @@ public class IntegrityAuditWorkerTests {
     // remains only as the fallback for hosts without the temporal engine.
     var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var sweepState = new IntegritySweepScheduleState { CronActive = true };
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
@@ -271,7 +271,7 @@ public class IntegrityAuditWorkerTests {
     // The entry point the scheduled occurrence's receptor calls at the configured idle hour.
     var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker,
@@ -295,7 +295,7 @@ public class IntegrityAuditWorkerTests {
     // what stops every audit from re-shipping and re-verifying history that already proved clean.
     var coordinator = new AuditCoordinator { SealedThrough = 123 };
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
 
@@ -314,7 +314,7 @@ public class IntegrityAuditWorkerTests {
     // fine. A windowed sweep would only re-verify what the seals already cover — circular trust.
     var coordinator = new AuditCoordinator { SealedThrough = 123 };
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
@@ -356,10 +356,10 @@ public class IntegrityAuditWorkerTests {
     listener.Start();
 
     var coordinator = new AuditCoordinator {
-      Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
+      Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.New().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
     };
     var tracker = new IntegrityGapTracker();
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, FullSweepEveryNthAudit = 1 }, tracker, metrics);
 
@@ -385,7 +385,7 @@ public class IntegrityAuditWorkerTests {
     // total; the remainder re-audits next cycle after repairs shrink it.
     var coordinator = new AuditCoordinator {
       Gaps = [.. Enumerable.Range(0, 500).Select(_ => new PerspectiveCoverageGap {
-        StreamId = TrackedGuid.NewMedo().Value,
+        StreamId = TrackedGuid.New().Value,
         PerspectiveName = "FloodedPerspective",
         EventCount = 2,
       })]
@@ -634,7 +634,7 @@ public class IntegrityAuditWorkerTests {
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
     public int ProcessId => 1;

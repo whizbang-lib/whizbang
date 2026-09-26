@@ -180,7 +180,7 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     await using var db = CreateDbContext();
     var payload = JsonDocument.Parse("{}").RootElement;
     for (var i = 0; i < rows; i++) {
-      var id = (Guid)TrackedGuid.NewMedo();
+      var id = (Guid)TrackedGuid.New();
       db.Outbox.Add(new OutboxRecord {
         MessageId = id,
         MessageType = "TestMessage, TestAssembly",

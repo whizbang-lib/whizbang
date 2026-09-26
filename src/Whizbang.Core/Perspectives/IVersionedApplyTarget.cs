@@ -23,7 +23,7 @@ namespace Whizbang.Core.Perspectives;
 /// <para>
 /// Models that implement this marker get a stricter UPSERT <c>WHERE</c> clause: the row is
 /// updated only when the incoming <c>metadata.EventId</c> sorts strictly after the stored
-/// <c>EventId</c>. UUIDv7 from <see cref="ValueObjects.TrackedGuid.NewMedo"/> orders
+/// <c>EventId</c>. UUIDv7 from <see cref="ValueObjects.TrackedGuid.New"/> orders
 /// lexicographically by emission time, so "newer event wins" holds with no extra column.
 /// Same-EventId re-applies are idempotent skips; older-EventId stale writes are dropped.
 /// </para>

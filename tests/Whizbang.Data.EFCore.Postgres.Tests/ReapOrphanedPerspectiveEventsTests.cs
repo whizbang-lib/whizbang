@@ -32,7 +32,7 @@ public class ReapOrphanedPerspectiveEventsTests : EFCoreTestBase {
 
   private static async Task<Guid> _seedPerspectiveRowAsync(
       NpgsqlConnection c, Guid eventId, Guid streamId, string ageInterval, int attempts = 200) {
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     await using var cmd = c.CreateCommand();
     cmd.CommandText = @"INSERT INTO wh_perspective_events
       (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at)
@@ -69,19 +69,19 @@ public class ReapOrphanedPerspectiveEventsTests : EFCoreTestBase {
   public async Task Reap_OldOrphan_IsDeleted_HealthyAndYoungAreKeptAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var stream = (Guid)TrackedGuid.New();
 
     // Orphan, older than the 1-hour grace window: its event was never/no-longer stored.
-    var orphan = await _seedPerspectiveRowAsync(conn, (Guid)TrackedGuid.NewMedo(), stream, "-2 hours");
+    var orphan = await _seedPerspectiveRowAsync(conn, (Guid)TrackedGuid.New(), stream, "-2 hours");
 
     // Control 1 — healthy row: its source event exists, so it must never be reaped.
-    var goodEvent = (Guid)TrackedGuid.NewMedo();
-    var goodStream = (Guid)TrackedGuid.NewMedo();
+    var goodEvent = (Guid)TrackedGuid.New();
+    var goodStream = (Guid)TrackedGuid.New();
     await _seedEventAsync(conn, goodEvent, goodStream);
     var healthy = await _seedPerspectiveRowAsync(conn, goodEvent, goodStream, "-2 hours");
 
     // Control 2 — young orphan inside the grace window: could be an in-flight write, keep it.
-    var young = await _seedPerspectiveRowAsync(conn, (Guid)TrackedGuid.NewMedo(), stream, "-1 minute");
+    var young = await _seedPerspectiveRowAsync(conn, (Guid)TrackedGuid.New(), stream, "-1 minute");
 
     var reaped = await _reapAsync(conn);
 
@@ -112,7 +112,7 @@ public class ReapOrphanedPerspectiveEventsTests : EFCoreTestBase {
     cmd.CommandText = @"INSERT INTO wh_event_store
       (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
       VALUES (@eid, @s, @s, 'Test', 'TestEvent', 1, NOW())";
-    cmd.Parameters.AddWithValue("eid", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("eid", (Guid)TrackedGuid.New());
     cmd.Parameters.AddWithValue("s", streamId);
     await cmd.ExecuteNonQueryAsync();
   }
@@ -120,7 +120,7 @@ public class ReapOrphanedPerspectiveEventsTests : EFCoreTestBase {
   private static async Task<Guid> _seedPerspectiveDeadLetterAsync(
       NpgsqlConnection c, Guid streamId, string deadLetteredOffset, int recoveryStatus = 2,
       int operatorDisposition = 0) {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     await using var cmd = c.CreateCommand();
     cmd.CommandText = @"INSERT INTO wh_dead_letters
       (dead_letter_id, source_table, source_id, stream_id, message_type, envelope, failure_reason,
@@ -128,7 +128,7 @@ public class ReapOrphanedPerspectiveEventsTests : EFCoreTestBase {
       VALUES (@id, 'wh_perspective_events', @src, @stream, 'T.A', '{}'::jsonb, 5, 11,
               NOW() + @off::interval, @st, @od, 'seed/1')";
     cmd.Parameters.AddWithValue("id", id);
-    cmd.Parameters.AddWithValue("src", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("src", (Guid)TrackedGuid.New());
     cmd.Parameters.AddWithValue("stream", streamId);
     cmd.Parameters.AddWithValue("off", deadLetteredOffset);
     cmd.Parameters.AddWithValue("st", recoveryStatus);
@@ -157,20 +157,20 @@ public class ReapOrphanedPerspectiveEventsTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
 
     // Orphaned dead letter: its whole stream is absent from the event store, aged past grace.
-    var goneStream = (Guid)TrackedGuid.NewMedo();
+    var goneStream = (Guid)TrackedGuid.New();
     var orphanDl = await _seedPerspectiveDeadLetterAsync(conn, goneStream, "-2 hours");
 
     // Control 1 — stream still has events: a genuine apply failure, not an orphan. Keep it.
-    var liveStream = (Guid)TrackedGuid.NewMedo();
+    var liveStream = (Guid)TrackedGuid.New();
     await _seedStreamEventAsync(conn, liveStream);
     var realFailure = await _seedPerspectiveDeadLetterAsync(conn, liveStream, "-2 hours");
 
     // Control 2 — orphan inside the grace window: stream may still be being written. Keep it.
-    var youngGone = (Guid)TrackedGuid.NewMedo();
+    var youngGone = (Guid)TrackedGuid.New();
     var youngOrphan = await _seedPerspectiveDeadLetterAsync(conn, youngGone, "-1 minute");
 
     // Control 3 — operator explicitly held it (disposition 2). Never auto-settle. Keep held.
-    var heldStream = (Guid)TrackedGuid.NewMedo();
+    var heldStream = (Guid)TrackedGuid.New();
     var operatorHeld = await _seedPerspectiveDeadLetterAsync(conn, heldStream, "-2 hours", operatorDisposition: 2);
 
     await _runFullMaintenanceAsync(conn);

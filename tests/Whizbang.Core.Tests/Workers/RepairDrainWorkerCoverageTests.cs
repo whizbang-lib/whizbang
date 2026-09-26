@@ -44,13 +44,13 @@ public class RepairDrainWorkerCoverageTests {
     // try/catch around the infinite delay), a repair drain explicitly turned off would either
     // busy-loop burning CPU with nothing to wait on, or fall through into ticking anyway --
     // silently undoing the operator's opt-out and burning attempt budget it was told not to.
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, coordinator, _) = _buildLoop(
       new StreamIntegrityOptions { RepairDrainEnabled = false },
       clock, SchemaReadyGate.AlreadyReady(), origin);
     coordinator.Eligible.Add(
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10));
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10));
 
     await worker.StartAsync(CancellationToken.None);
 
@@ -82,14 +82,14 @@ public class RepairDrainWorkerCoverageTests {
     // quietly. If this catch/break were ever removed, the exception would escape ExecuteAsync
     // and, under the host's default StopHost behavior, take the whole process down over what
     // should have been a routine, contained condition.
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, coordinator, _) = _buildLoop(
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 10 },
       clock, SchemaReadyGate.AlreadyReady(), origin);
     coordinator.ThrowOnClaim.Enqueue(new OperationCanceledException("simulated"));
     coordinator.Eligible.Add(
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10));
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10));
 
     await worker.StartAsync(CancellationToken.None);
     for (var attempt = 0; attempt < 50 && coordinator.ClaimCalls.Count == 0; attempt++) {
@@ -115,14 +115,14 @@ public class RepairDrainWorkerCoverageTests {
     // until the process restarted, silently reverting to whatever discovery-side repair path
     // remains (or none). "Did not throw" is the weak version of this invariant -- the strong
     // one is that the SAME eligible row still gets dispatched once a later tick's claim works.
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, coordinator, transport) = _buildLoop(
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 10 },
       clock, SchemaReadyGate.AlreadyReady(), origin);
     coordinator.ThrowOnClaim.Enqueue(new InvalidOperationException("simulated transient failure"));
     coordinator.Eligible.Add(
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10));
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10));
 
     await worker.StartAsync(CancellationToken.None);
     // First tick: the claim throws and must be swallowed. Second tick: the same eligible row is
@@ -148,7 +148,7 @@ public class RepairDrainWorkerCoverageTests {
     // fully wired up (a misconfigured DI container, or a transport not yet registered during
     // startup) would claim rows it can never send -- burning their backoff budget for an attempt
     // that could not leave the process, while the ledger keeps the backlog durable either way.
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var (worker, coordinator, _, tracker) = _buildTick(
       // RepairMode defaults to ReportOnly, and DrainTickAsync returns on its first line unless the
       // mode is AutoRepairCapped. Without this the assertion below passes without ever reaching
@@ -159,7 +159,7 @@ public class RepairDrainWorkerCoverageTests {
       }, includeTransport: false);
     tracker.RecordCheckpoint(origin, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     coordinator.Eligible.Add(
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10));
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10));
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
 
@@ -177,8 +177,8 @@ public class RepairDrainWorkerCoverageTests {
     // origin stopped checkpointing, or the tracker evicted it), dispatching it would reach for a
     // request topic that's no longer known. If this per-group skip regressed to a hard failure,
     // one stale row would also take down every OTHER group's dispatch in the same tick.
-    var learnedOrigin = TrackedGuid.NewMedo().Value;
-    var staleOrigin = TrackedGuid.NewMedo().Value;
+    var learnedOrigin = TrackedGuid.New().Value;
+    var staleOrigin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, tracker) = _buildTick(
       // RepairMode is explicit: safe-by-default no longer leaves auto-repair on, and
       // DrainTickAsync returns immediately unless the mode is AutoRepairCapped.
@@ -187,8 +187,8 @@ public class RepairDrainWorkerCoverageTests {
     // staleOrigin is deliberately never recorded on the tracker -- it models an origin the
     // in-memory snapshot no longer recognizes by the time the claim comes back.
     coordinator.ForcedClaim = [
-      new IntegrityRepairDrainItem(learnedOrigin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10),
-      new IntegrityRepairDrainItem(staleOrigin, "tenant-a", "Contracts.TypeB", TrackedGuid.NewMedo().Value, 1, 10),
+      new IntegrityRepairDrainItem(learnedOrigin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 1, 10),
+      new IntegrityRepairDrainItem(staleOrigin, "tenant-a", "Contracts.TypeB", TrackedGuid.New().Value, 1, 10),
     ];
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
@@ -306,7 +306,7 @@ public class RepairDrainWorkerCoverageTests {
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
     public int ProcessId => 1;

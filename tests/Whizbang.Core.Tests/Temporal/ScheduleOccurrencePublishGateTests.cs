@@ -79,7 +79,7 @@ public class ScheduleOccurrencePublishGateTests {
   }
 
   private static OutboxWork _work(string? metadataJson, Guid? messageId = null) {
-    var id = messageId ?? TrackedGuid.NewMedo().Value;   // MessageId enforces UUIDv7
+    var id = messageId ?? TrackedGuid.New().Value;   // MessageId enforces UUIDv7
     return new OutboxWork {
       MessageId = id,
       Envelope = new MessageEnvelope<JsonElement> {
@@ -153,7 +153,7 @@ public class ScheduleOccurrencePublishGateTests {
   public async Task Occurrence_HookReceivesScheduleAndAuthorityAsync() {
     var hook = new FakeHook(FireDecision.Proceed());
     var (gate, _, _) = _create(hook);
-    var msg = TrackedGuid.NewMedo().Value;
+    var msg = TrackedGuid.New().Value;
 
     _ = await gate.EvaluateAsync(_work(_occurrenceMetadata("""{"roles":["billing"]}"""), msg));
 
@@ -195,7 +195,7 @@ public class ScheduleOccurrencePublishGateTests {
   public async Task Defer_ReschedulesSameOccurrenceAsync() {
     var until = new DateTimeOffset(2026, 08, 01, 12, 00, 00, TimeSpan.Zero);
     var (gate, store, _) = _create(new FakeHook(FireDecision.Defer(until)));
-    var msg = TrackedGuid.NewMedo().Value;
+    var msg = TrackedGuid.New().Value;
 
     var decision = await gate.EvaluateAsync(_work(_occurrenceMetadata(), msg));
 

@@ -124,7 +124,7 @@ public class IdentityValueObjectTests {
     var eventId = EventId.New();
 
     // Assert - All freshly created IDs should return true for sub-millisecond precision
-    // Note: IDs created via New() use TrackedGuid.NewMedo() which has sub-ms precision.
+    // Note: IDs created via New() use TrackedGuid.New() which has sub-ms precision.
     // After serialization/deserialization, this will return false (metadata lost).
     await Assert.That(messageId.GetSubMillisecondPrecision()).IsTrue();
     await Assert.That(correlationId.GetSubMillisecondPrecision()).IsTrue();

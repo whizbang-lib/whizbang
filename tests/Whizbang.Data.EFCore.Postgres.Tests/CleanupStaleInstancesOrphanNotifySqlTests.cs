@@ -43,7 +43,7 @@ public class CleanupStaleInstancesOrphanNotifySqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var live = (Guid)TrackedGuid.NewMedo();
+    var live = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, live, lastHeartbeatOffset: TimeSpan.Zero);
 
     var received = await _captureNotificationsAsync(conn, [live], async () =>
@@ -58,8 +58,8 @@ public class CleanupStaleInstancesOrphanNotifySqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var live = (Guid)TrackedGuid.NewMedo();
-    var dead = (Guid)TrackedGuid.NewMedo();
+    var live = (Guid)TrackedGuid.New();
+    var dead = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, live, lastHeartbeatOffset: TimeSpan.Zero);
     await _registerInstanceAsync(conn, dead, lastHeartbeatOffset: TimeSpan.FromHours(-1));
 
@@ -79,10 +79,10 @@ public class CleanupStaleInstancesOrphanNotifySqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var live1 = (Guid)TrackedGuid.NewMedo();
-    var live2 = (Guid)TrackedGuid.NewMedo();
-    var live3 = (Guid)TrackedGuid.NewMedo();
-    var dead = (Guid)TrackedGuid.NewMedo();
+    var live1 = (Guid)TrackedGuid.New();
+    var live2 = (Guid)TrackedGuid.New();
+    var live3 = (Guid)TrackedGuid.New();
+    var dead = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, live1, lastHeartbeatOffset: TimeSpan.Zero);
     await _registerInstanceAsync(conn, live2, lastHeartbeatOffset: TimeSpan.Zero);
     await _registerInstanceAsync(conn, live3, lastHeartbeatOffset: TimeSpan.Zero);
@@ -108,8 +108,8 @@ public class CleanupStaleInstancesOrphanNotifySqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var live = (Guid)TrackedGuid.NewMedo();
-    var dead = (Guid)TrackedGuid.NewMedo();
+    var live = (Guid)TrackedGuid.New();
+    var dead = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, live, lastHeartbeatOffset: TimeSpan.Zero);
     await _registerInstanceAsync(conn, dead, lastHeartbeatOffset: TimeSpan.FromHours(-1));
 

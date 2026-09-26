@@ -90,9 +90,9 @@ public class DeadLetterSummarySqlTests : EFCoreTestBase {
         @explicit_version
       )
       """;
-    cmd.Parameters.AddWithValue("dlq", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("dlq", (Guid)TrackedGuid.New());
     cmd.Parameters.AddWithValue("src", sourceTable);
-    cmd.Parameters.AddWithValue("src_id", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("src_id", (Guid)TrackedGuid.New());
     cmd.Parameters.AddWithValue("msg_type", messageType);
     cmd.Parameters.AddWithValue("err", errorText);
     cmd.Parameters.Add(new NpgsqlParameter("at", NpgsqlDbType.TimestampTz) { Value = deadLetteredAt });

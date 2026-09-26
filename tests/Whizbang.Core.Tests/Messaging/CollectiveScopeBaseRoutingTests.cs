@@ -23,7 +23,7 @@ public class CollectiveScopeBaseRoutingTests {
 
   [Test]
   public async Task CollectiveEventBase_IsAnEvent_CarriesGeneratedStreamAndScopeAsync() {
-    var streamId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
     var evt = new ArchiveEvent { StreamId = streamId, Scope = new TenantCollectiveScope("t-1"), Note = "n" };
 
     await Assert.That(evt is IEvent).IsTrue();

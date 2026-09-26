@@ -107,7 +107,7 @@ public class IntegrityCheckpointWorkerPriorityTests {
 
   private sealed class CheckpointCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public IntegrityCheckpointWindow? Window { get; init; }
-    public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
     public List<string> OwnAuditedEventTypes { get; init; } = [];
     public Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult<IReadOnlyList<string>>([.. OwnAuditedEventTypes]);
@@ -127,7 +127,7 @@ public class IntegrityCheckpointWorkerPriorityTests {
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
     public int ProcessId => 1;

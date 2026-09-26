@@ -40,12 +40,12 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var event1 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var event1 = (Guid)TrackedGuid.New();
     await Task.Delay(2);
-    var event2 = (Guid)TrackedGuid.NewMedo();
+    var event2 = (Guid)TrackedGuid.New();
     await Task.Delay(2);
-    var event3 = (Guid)TrackedGuid.NewMedo();
+    var event3 = (Guid)TrackedGuid.New();
 
     // Insert event_store rows in reverse to prove ordering by event_id, not insert order.
     await _insertEventStoreRowAsync(connection, event3, streamId, "TypeC", "{\"v\":3}", version: 3);
@@ -69,7 +69,7 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var rows = await _fetchAsync(connection, [(Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo()]);
+    var rows = await _fetchAsync(connection, [(Guid)TrackedGuid.New(), (Guid)TrackedGuid.New()]);
 
     await Assert.That(rows.Count).IsEqualTo(0);
   }
@@ -82,9 +82,9 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var existing = (Guid)TrackedGuid.NewMedo();
-    var missing = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var existing = (Guid)TrackedGuid.New();
+    var missing = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(connection, existing, streamId, "Type", "{\"v\":1}");
 
     var rows = await _fetchAsync(connection, [existing, missing]);
@@ -101,8 +101,8 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(connection, eventId, streamId, "TestType",
       eventData: "{\"payload\":42}",
       metadata: "{\"hop\":1}",

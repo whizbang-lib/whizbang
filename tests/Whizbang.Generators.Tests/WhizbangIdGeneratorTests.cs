@@ -48,10 +48,11 @@ public partial class WhizbangIdGeneratorTests {
     // Assert - Should contain IEquatable implementation
     await Assert.That(generatedSource).Contains("IEquatable<ProductId>");
 
-    // Assert - Should generate JSON converter with UUIDv7
+    // Assert - Should generate a JSON converter that reads and writes the Guid directly
     var converterSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductIdJsonConverter.g.cs");
     await Assert.That(converterSource).IsNotNull();
-    await Assert.That(converterSource).Contains("Uuid7");
+    await Assert.That(converterSource).Contains("public sealed class ProductIdJsonConverter : JsonConverter<ProductId>");
+    await Assert.That(converterSource).DoesNotContain("Medo");
   }
 
   /// <summary>

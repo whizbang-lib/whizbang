@@ -418,11 +418,11 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
 
     // 200 events on the large stream, then one on the small stream, all held by us. Event ids are
     // time-ordered (v7) as they are in production, so the large stream's events are the older ones.
-    // NewMedo, not Guid.CreateVersion7: the re-offer orders by each stream's minimum event_id, and
+    // New, not Guid.CreateVersion7: the re-offer orders by each stream's minimum event_id, and
     // CreateVersion7 is only millisecond-ordered — within one millisecond its bits are random, so the
     // small stream's id sorted below all 200 large ids about once in 201 runs.
-    var largeEventIds = Enumerable.Range(0, 200).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
-    var smallEventId = (Guid)TrackedGuid.NewMedo();
+    var largeEventIds = Enumerable.Range(0, 200).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var smallEventId = (Guid)TrackedGuid.New();
     await using (var bulk = connection.CreateCommand()) {
       bulk.CommandText = @"
         INSERT INTO wh_perspective_events

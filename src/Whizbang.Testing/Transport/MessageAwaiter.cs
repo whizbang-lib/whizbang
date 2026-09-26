@@ -44,7 +44,7 @@ public sealed class MessageAwaiter<TResult>(
   private readonly TaskCompletionSource<TResult> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+  public Guid AwaiterId { get; } = TrackedGuid.New();
 
   private readonly Func<IMessageEnvelope, TResult?> _resultExtractor = resultExtractor ?? throw new ArgumentNullException(nameof(resultExtractor));
   private readonly Predicate<IMessageEnvelope>? _filter = filter;
@@ -113,7 +113,7 @@ public sealed class MessageIdAwaiter(string? expectedMessageId = null) : IAwaite
     new(TaskCreationOptions.RunContinuationsAsynchronously);
   private readonly string? _expectedMessageId = expectedMessageId;
 
-  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+  public Guid AwaiterId { get; } = TrackedGuid.New();
 
   /// <summary>
   /// Gets whether a message has been received.
@@ -155,7 +155,7 @@ public sealed class CountingMessageAwaiter : IAwaiterIdentity {
   private readonly TaskCompletionSource<bool> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+  public Guid AwaiterId { get; } = TrackedGuid.New();
 
   private int _receivedCount;
 
@@ -235,7 +235,7 @@ public sealed class DistinctMessageIdAwaiter : IAwaiterIdentity {
     }
   }
 
-  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+  public Guid AwaiterId { get; } = TrackedGuid.New();
 
   /// <summary>
   /// Gets the number of DISTINCT expected messages received so far (duplicates and unexpected

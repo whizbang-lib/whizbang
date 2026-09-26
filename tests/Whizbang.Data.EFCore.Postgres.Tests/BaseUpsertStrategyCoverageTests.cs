@@ -387,7 +387,7 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
     await using var context = _createWidgetDbContext();
     var strategy = new PostgresUpsertStrategy();
     var testId = Guid.CreateVersion7();
-    var refId = TrackedGuid.NewMedo();
+    var refId = TrackedGuid.New();
 
     await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
       context, WIDGET_TABLE, testId,

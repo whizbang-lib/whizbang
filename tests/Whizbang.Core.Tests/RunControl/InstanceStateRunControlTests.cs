@@ -24,7 +24,7 @@ namespace Whizbang.Core.Tests.RunControl;
 public class InstanceStateRunControlTests {
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "svc";
     public string HostName => "host";
     public int ProcessId => 1;

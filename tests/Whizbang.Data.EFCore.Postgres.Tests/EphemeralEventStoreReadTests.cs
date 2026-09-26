@@ -71,7 +71,7 @@ public class EphemeralEventStoreReadTests : EFCoreTestBase {
     var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
 
     var streamId = Guid.NewGuid();
-    var eventId = (Guid)TrackedGuid.NewMedo();   // MessageId requires UUIDv7
+    var eventId = (Guid)TrackedGuid.New();   // MessageId requires UUIDv7
     var orderId = Guid.NewGuid();
     await _commitEphemeralOrderAsync(connection, eventId, streamId, orderId, "PresenceUser");
 
@@ -95,7 +95,7 @@ public class EphemeralEventStoreReadTests : EFCoreTestBase {
 
     var streamId = Guid.NewGuid();
     var orderId = Guid.NewGuid();
-    await _commitEphemeralOrderAsync(connection, (Guid)TrackedGuid.NewMedo(), streamId, orderId, "TypedReader");
+    await _commitEphemeralOrderAsync(connection, (Guid)TrackedGuid.New(), streamId, orderId, "TypedReader");
 
     var envelopes = new List<MessageEnvelope<OrderCreatedEvent>>();
     await foreach (var env in eventStore.ReadAsync<OrderCreatedEvent>(streamId, (Guid?)null)) {
@@ -115,7 +115,7 @@ public class EphemeralEventStoreReadTests : EFCoreTestBase {
     var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
 
     var streamId = Guid.NewGuid();
-    var eventId = (Guid)TrackedGuid.NewMedo();   // MessageId requires UUIDv7
+    var eventId = (Guid)TrackedGuid.New();   // MessageId requires UUIDv7
     var orderId = Guid.NewGuid();
     await _commitEphemeralOrderAsync(connection, eventId, streamId, orderId, "LifecycleReader");
 
@@ -136,8 +136,8 @@ public class EphemeralEventStoreReadTests : EFCoreTestBase {
     var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
 
     var streamId = Guid.NewGuid();
-    var reapedId = (Guid)TrackedGuid.NewMedo();
-    var aliveId = (Guid)TrackedGuid.NewMedo();
+    var reapedId = (Guid)TrackedGuid.New();
+    var aliveId = (Guid)TrackedGuid.New();
     var aliveOrderId = Guid.NewGuid();
     await _commitEphemeralOrderAsync(connection, reapedId, streamId, Guid.NewGuid(), "Reaped");
     await _commitEphemeralOrderAsync(connection, aliveId, streamId, aliveOrderId, "Alive");

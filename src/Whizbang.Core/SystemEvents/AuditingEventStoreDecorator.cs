@@ -170,7 +170,7 @@ public sealed class AuditingEventStoreDecorator(
     var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions, _logger);
 
     return new EventAudited {
-      Id = TrackedGuid.NewMedo(),
+      Id = TrackedGuid.New(),
       OriginalEventType = typeof(TMessage).Name,
       OriginalStreamId = streamId.ToString(),
       OriginalStreamPosition = streamPosition,

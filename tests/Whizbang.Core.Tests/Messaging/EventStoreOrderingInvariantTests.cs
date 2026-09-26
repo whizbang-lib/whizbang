@@ -40,7 +40,7 @@ public class EventStoreOrderingInvariantTests {
     var appendedIds = new List<Guid>();
 
     for (var i = 0; i < 1_000; i++) {
-      var id = (Guid)TrackedGuid.NewMedo();
+      var id = (Guid)TrackedGuid.New();
       appendedIds.Add(id);
       await store.AppendAsync(streamId, _envelope(id, new TestEvent(i)));
     }
@@ -82,7 +82,7 @@ public class EventStoreOrderingInvariantTests {
       var taskIdx = t;
       allTasks[taskIdx] = Task.Run(async () => {
         for (var i = 0; i < perTask; i++) {
-          var id = (Guid)TrackedGuid.NewMedo();
+          var id = (Guid)TrackedGuid.New();
           await store.AppendAsync(streamId, _envelope(id, new TestEvent((taskIdx * perTask) + i)));
         }
       });
@@ -120,7 +120,7 @@ public class EventStoreOrderingInvariantTests {
     var streamId = Guid.NewGuid();
 
     // Build 5 IDs but append them in reverse order
-    var ids = Enumerable.Range(0, 5).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var ids = Enumerable.Range(0, 5).Select(_ => (Guid)TrackedGuid.New()).ToArray();
     for (var i = ids.Length - 1; i >= 0; i--) {
       await store.AppendAsync(streamId, _envelope(ids[i], new TestEvent(i)));
     }

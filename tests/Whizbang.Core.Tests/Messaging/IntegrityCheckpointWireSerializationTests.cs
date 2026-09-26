@@ -21,7 +21,7 @@ public class IntegrityCheckpointWireSerializationTests {
   [Test]
   public async Task IntegrityCheckpoint_RoundTripsThroughCombinedOptionsAsync() {
     var options = JsonContextRegistry.CreateCombinedOptions();
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var checkpoint = new IntegrityCheckpoint {
       CheckpointStreamId = origin,
       OriginServiceId = origin,

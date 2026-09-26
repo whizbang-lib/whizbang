@@ -35,7 +35,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard3")]
 public class DutyElectionByoDataSourceE2ETests : EFCoreTestBase {
   private sealed class Pod : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "byo-duty-svc";
     public string HostName => "byo-duty-host";
     public int ProcessId => 1;

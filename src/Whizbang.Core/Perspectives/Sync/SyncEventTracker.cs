@@ -99,7 +99,7 @@ public sealed class SyncEventTracker : ISyncEventTracker {
       return Task.FromResult(true);
     }
 
-    var resolvedAwaiterId = awaiterId ?? TrackedGuid.NewMedo();
+    var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
     var pendingKeys = eventIds
         .Where(id => _trackedEvents.Keys.Any(k => k.EventId == id))
         .ToList();
@@ -150,7 +150,7 @@ public sealed class SyncEventTracker : ISyncEventTracker {
       return Task.FromResult(true);
     }
 
-    var resolvedAwaiterId = awaiterId ?? TrackedGuid.NewMedo();
+    var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
     var pendingKeys = eventIds
         .Where(id => _trackedEvents.ContainsKey((id, perspectiveName)))
         .Select(id => (id, perspectiveName))
@@ -175,7 +175,7 @@ public sealed class SyncEventTracker : ISyncEventTracker {
       return Task.FromResult(true);
     }
 
-    var resolvedAwaiterId = awaiterId ?? TrackedGuid.NewMedo();
+    var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
     var pendingKeys = eventIds
         .Where(id => _trackedEvents.Keys.Any(k => k.EventId == id))
         .ToList();

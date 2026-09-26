@@ -122,8 +122,8 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     // Wait for leadership before inserting (otherwise the row might land between iterations).
     await leaderTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(streamId, eventId, version: 1);
 
     await stampTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -279,8 +279,8 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     }
 
     try {
-      var streamId = (Guid)TrackedGuid.NewMedo();
-      var eventId = (Guid)TrackedGuid.NewMedo();
+      var streamId = (Guid)TrackedGuid.New();
+      var eventId = (Guid)TrackedGuid.New();
       await _insertEventStoreRowAsync(streamId, eventId, version: 1);
 
       // Each iteration is gated on a stamp-completion signal (the 100 ms poll keeps them
@@ -326,8 +326,8 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       _ = await blockerCmd.ExecuteNonQueryAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(streamId, eventId, version: 1);
 
     // 60 s floor silences the self-poll; the worker's initial wake permit produces exactly one

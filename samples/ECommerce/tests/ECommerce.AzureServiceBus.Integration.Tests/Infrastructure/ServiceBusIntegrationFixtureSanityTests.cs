@@ -2,7 +2,6 @@ using System.Diagnostics.CodeAnalysis;
 using Azure.Messaging.ServiceBus;
 using ECommerce.Contracts.Commands;
 using ECommerce.Integration.Tests.Fixtures;
-using Medo;
 using Npgsql;
 
 namespace ECommerce.Integration.Tests.Infrastructure;
@@ -91,7 +90,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
   public async Task ServiceBus_PublishMessage_SucceedsAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    var testProductId = ProductId.From(Uuid7.NewUuid7().ToGuid());
+    var testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
 
     var command = new CreateProductCommand {
       ProductId = testProductId,
@@ -123,7 +122,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
   public async Task InventoryWorker_Perspectives_MaterializeAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    var testProductId = ProductId.From(Uuid7.NewUuid7().ToGuid());
+    var testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
 
     var command = new CreateProductCommand {
       ProductId = testProductId,
@@ -170,7 +169,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
   public async Task BFF_Perspectives_MaterializeFromServiceBusAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    var testProductId = ProductId.From(Uuid7.NewUuid7().ToGuid());
+    var testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
 
     var command = new CreateProductCommand {
       ProductId = testProductId,
@@ -216,7 +215,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
   public async Task EventStore_ContainsCorrectEventDataAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    var testProductId = ProductId.From(Uuid7.NewUuid7().ToGuid());
+    var testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
     var expectedStock = 42;  // Use distinctive value to find in logs
 
     var command = new CreateProductCommand {
@@ -289,7 +288,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
   public async Task Perspective_ContainsCorrectDataAfterMaterializationAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    var testProductId = ProductId.From(Uuid7.NewUuid7().ToGuid());
+    var testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
     var expectedStock = 88;  // Distinctive value
     var expectedPrice = 123.45m;
 

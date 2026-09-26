@@ -37,7 +37,7 @@ public class ApplyStackEndToEndTests : EFCoreTestBase {
       cmd.CommandText =
         "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at) " +
         "VALUES (@event_id, @stream_id, @stream_id, 'TestAggregate', @event_type, @version, NOW())";
-      cmd.Parameters.AddWithValue("event_id", (Guid)TrackedGuid.NewMedo());
+      cmd.Parameters.AddWithValue("event_id", (Guid)TrackedGuid.New());
       cmd.Parameters.AddWithValue("stream_id", streamId);
       cmd.Parameters.AddWithValue("event_type", eventTypes[version - 1]);
       cmd.Parameters.AddWithValue("version", version);

@@ -122,7 +122,7 @@ public class RecentlyProcessedEventCacheSweepWorkerTests {
     // the worker exists to prevent -- and nothing would report it beyond a single warning.
     var clock = new SteppableClock();
     var cache = new RecentlyProcessedEventCache(clock, ttl: TimeSpan.FromMinutes(5));
-    cache.MarkProcessed((Guid)TrackedGuid.NewMedo());
+    cache.MarkProcessed((Guid)TrackedGuid.New());
     await Assert.That(cache.Count).IsEqualTo(1);
 
     clock.AdvanceBy(TimeSpan.FromMinutes(10));  // the entry is now well past its TTL

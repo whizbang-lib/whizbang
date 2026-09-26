@@ -38,7 +38,7 @@ public class IntegritySweepSchedulerCoverageTests {
   }
 
   private sealed class InstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => "coverage-svc";
     public string HostName => "test-host";
     public int ProcessId => 1;

@@ -48,7 +48,6 @@ internal static class WhizbangVersionInfo
     </ItemGroup>
   </Target>
   <ItemGroup>
-    <PackageReference Include="Medo.Uuid7" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />

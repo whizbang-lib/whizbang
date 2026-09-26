@@ -314,17 +314,23 @@ public class PerspectiveWorkerDeepPathMiscTests {
       drainChannelOverride: drainChannel,
       timeProvider: clock);
 
+    // Close the window from inside the worker's second window wait: entry two proves B was drained and the
+    // window re-armed, and advancing at that exact moment is the earliest the test may. It is also the
+    // interleaving a loaded runner produces by itself, so the window's deadline must already be armed when the
+    // worker starts waiting; a deadline armed after the wait began would be measured from the advanced clock
+    // and never fire. Past the sliding bound, short of MaxWait.
+    drainChannel.ReaderImpl.OnWindowEntered = entry => {
+      if (entry == 2) {
+        clock.Advance(TimeSpan.FromMilliseconds(200));
+      }
+    };
+
     // Act — write A, wait until the worker is inside the accumulation window, then write B
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await drainChannel.WriteAsync(streamA, cts.Token);
     await drainChannel.ReaderImpl.WindowWaitEntered.WaitAsync(TimeSpan.FromSeconds(10));
     await drainChannel.WriteAsync(streamB, cts.Token);
-    // Entry two proves B was drained and the window re-armed. Advancing before that is proven would
-    // race the reader and could close the window on a signal written but not yet read.
-    await drainChannel.ReaderImpl.WindowWaitEnteredAtLeast(2).WaitAsync(TimeSpan.FromSeconds(10));
-    // Now close the window deliberately, past the sliding bound and short of MaxWait.
-    clock.Advance(TimeSpan.FromMilliseconds(200));
     await coordinator.WaitForCompletionsAsync(2, TimeSpan.FromSeconds(10));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -791,9 +797,17 @@ public class PerspectiveWorkerDeepPathMiscTests {
         return read;
       }
 
+      /// <summary>
+      /// Runs on the worker's own thread at the moment it enters its window wait, with the entry count. Lets a
+      /// test act at exactly that point rather than some time after it, which is the interleaving a loaded
+      /// runner produces on its own.
+      /// </summary>
+      public Action<int>? OnWindowEntered { get; set; }
+
       public override ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken = default) {
         if (Volatile.Read(ref _readCount) > 0) {
           var entered = Interlocked.Increment(ref _windowWaits);
+          OnWindowEntered?.Invoke(entered);
           foreach (var gate in _gates) {
             if (gate.Key <= entered) {
               gate.Value.TrySetResult();

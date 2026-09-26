@@ -59,7 +59,7 @@ public static class SystemEventCoalesceDefaults {
   public static CompositeEventBase BuildAuditComposite(CoalesceFoldBatch batch) {
     ArgumentNullException.ThrowIfNull(batch);
     return new AuditEventsComposite {
-      StreamId = TrackedGuid.NewMedo(),
+      StreamId = TrackedGuid.New(),
       Atomicity = batch.Atomicity,
       InnerPayloads = [.. batch.Singles.Select(m => m.Envelope.Payload)],
       InnerTypeNames = [.. batch.Singles.Select(m => m.MessageType)],

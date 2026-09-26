@@ -152,7 +152,7 @@ public class MultiServiceHarnessTests {
     $"Whizbang.Core.Messaging.MessageEnvelope`1[[{TypeNameFormatter.AssemblyQualifiedName(typeof(WireProbeEvent))}]], Whizbang.Core";
 
   private static MessageEnvelope<WireProbeEvent> _probeEnvelope(int x) => new() {
-    MessageId = new MessageId(TrackedGuid.NewMedo()),
+    MessageId = new MessageId(TrackedGuid.New()),
     Payload = new WireProbeEvent { X = x },
     Hops = [
       new MessageHop {

@@ -141,7 +141,7 @@ public sealed partial class RepairDrainWorker(
       }
       var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
         Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
-        MessageId = new MessageId(TrackedGuid.NewMedo()),
+        MessageId = new MessageId(TrackedGuid.New()),
         Payload = new RequestRedeliveryCommand {
           TenantScope = string.IsNullOrEmpty(group.Key.TenantScope) ? null : group.Key.TenantScope,
           EventTypes = [group.Key.EventType],

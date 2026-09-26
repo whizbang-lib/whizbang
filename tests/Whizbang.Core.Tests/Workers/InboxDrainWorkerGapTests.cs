@@ -392,7 +392,7 @@ public class InboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_BatchFetchThrows_MarksStreamsDrained_FiresIdle_WorkerSurvivesAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var coord = new ScriptedCoordinator { ThrowOnFetch = new InvalidOperationException("fetch-boom") };
     var drain = new RecordingDrainChannel();
     var writer = new TestInboxWriter();
@@ -438,12 +438,12 @@ public class InboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_WriteFailsForOneStream_LogsDrainError_OtherStreamStillDrainsAsync() {
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
-    var msgB = (Guid)TrackedGuid.NewMedo();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
+    var msgB = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedCoordinator();
-    coord.RowsByStream[streamA] = [_row((Guid)TrackedGuid.NewMedo(), streamA)];
+    coord.RowsByStream[streamA] = [_row((Guid)TrackedGuid.New(), streamA)];
     coord.RowsByStream[streamB] = [_row(msgB, streamB)];
 
     var drain = new RecordingDrainChannel();
@@ -485,9 +485,9 @@ public class InboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_DuplicateStreamIdsAndEmptyStream_DedupesFetch_SkipsEmptyStreamAsync() {
-    var streamA = (Guid)TrackedGuid.NewMedo();   // no rows — the empty-skip branch
-    var streamB = (Guid)TrackedGuid.NewMedo();
-    var msgB = (Guid)TrackedGuid.NewMedo();
+    var streamA = (Guid)TrackedGuid.New();   // no rows — the empty-skip branch
+    var streamB = (Guid)TrackedGuid.New();
+    var msgB = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedCoordinator();
     coord.RowsByStream[streamB] = [_row(msgB, streamB)];
@@ -532,7 +532,7 @@ public class InboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_NullStreamIdRow_GroupsByMessageIdFallbackKeyAsync() {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedCoordinator();
     // The drain channel carries the message_id for unscoped rows — mirror that here.
@@ -566,8 +566,8 @@ public class InboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_DuplicateMessageIdsInFetch_SeenSetSkipsSecondOccurrenceAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId), _row(msgId, streamId)];
@@ -604,9 +604,9 @@ public class InboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_RepeatedRowsAtCap_InnerLoopStopsWhenNoNewRowsAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msg1 = (Guid)TrackedGuid.NewMedo();
-    var msg2 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msg1 = (Guid)TrackedGuid.New();
+    var msg2 = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedCoordinator { ConsumeRows = false };
     coord.RowsByStream[streamId] = [_row(msg1, streamId), _row(msg2, streamId)];
@@ -645,8 +645,8 @@ public class InboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_CapFilledStream_InnerLoopEmptyFetchSignalsAndReturnsAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgs = Enumerable.Range(0, 4).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgs = Enumerable.Range(0, 4).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ScriptedCoordinator();   // consuming — fetched rows disappear
     coord.RowsByStream[streamId] = [.. msgs.Select(m => _row(m, streamId))];
@@ -683,8 +683,8 @@ public class InboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_DebugLoggerAndLargeInnerDrain_EmitsPerfLogLineAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgs = Enumerable.Range(0, 9).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgs = Enumerable.Range(0, 9).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ScriptedCoordinator();
     coord.RowsByStream[streamId] = [.. msgs.Select(m => _row(m, streamId))];
@@ -721,11 +721,11 @@ public class InboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_MalformedRowInInnerLoop_LogsAndSkips_ContinuesDrainAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var good1 = (Guid)TrackedGuid.NewMedo();
-    var good2 = (Guid)TrackedGuid.NewMedo();
-    var bad = (Guid)TrackedGuid.NewMedo();
-    var good3 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var good1 = (Guid)TrackedGuid.New();
+    var good2 = (Guid)TrackedGuid.New();
+    var bad = (Guid)TrackedGuid.New();
+    var good3 = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedCoordinator();
     coord.RowsByStream[streamId] = [
@@ -771,11 +771,11 @@ public class InboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_CanceledDuringBatchFetch_BreaksBeforeDispatch_StopsCleanlyAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     using var cts = new CancellationTokenSource();
 
     var coord = new ScriptedCoordinator { OnFetch = () => cts.Cancel() };
-    coord.RowsByStream[streamId] = [_row((Guid)TrackedGuid.NewMedo(), streamId)];
+    coord.RowsByStream[streamId] = [_row((Guid)TrackedGuid.New(), streamId)];
 
     var drain = new RecordingDrainChannel();
     var writer = new TestInboxWriter();
@@ -815,11 +815,11 @@ public class InboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_WriterThrowsOceWhileCanceled_RethrowsAndStopsCleanlyAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     using var cts = new CancellationTokenSource();
 
     var coord = new ScriptedCoordinator();
-    coord.RowsByStream[streamId] = [_row((Guid)TrackedGuid.NewMedo(), streamId)];
+    coord.RowsByStream[streamId] = [_row((Guid)TrackedGuid.New(), streamId)];
 
     var drain = new RecordingDrainChannel();
     var writer = new TestInboxWriter {

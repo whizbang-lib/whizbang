@@ -33,7 +33,7 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
     await conn.OpenAsync(ct);
 
     for (var i = 0; i < 500; i++) {
-      var id = (Guid)TrackedGuid.NewMedo();
+      var id = (Guid)TrackedGuid.New();
       ids.Add(id);
       await using var cmd = new NpgsqlCommand(
         "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, created_at, version) " +
@@ -58,7 +58,7 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
     await Assert.That(read.SequenceEqual(expectedSorted)).IsTrue()
       .Because("Reading back wh_event_store ORDER BY event_id ASC must produce the lex-sorted UUIDv7 sequence.");
     await Assert.That(read.SequenceEqual(ids)).IsTrue()
-      .Because("Sequential single-thread NewMedo() generation produces monotonic IDs, so insertion order MUST equal event_id-sorted order.");
+      .Because("Sequential single-thread New() generation produces monotonic IDs, so insertion order MUST equal event_id-sorted order.");
   }
 
   /// <summary>
@@ -93,7 +93,7 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
         await localConn.OpenAsync(ct);
         await startGate.WaitAsync(ct);
         for (var i = 0; i < perTask; i++) {
-          var id = (Guid)TrackedGuid.NewMedo();
+          var id = (Guid)TrackedGuid.New();
           perThreadIds[localIdx].Add(id);
           var version = Interlocked.Increment(ref versionCounter);
           await using var cmd = new NpgsqlCommand(
@@ -115,14 +115,14 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
         var prev = perThreadIds[t][i - 1].ToString("D");
         var curr = perThreadIds[t][i].ToString("D");
         await Assert.That(string.CompareOrdinal(curr, prev) > 0).IsTrue()
-          .Because($"Thread {t}: id at index {i} ({curr}) must be > id at index {i - 1} ({prev}). The TrackedGuid.NewMedo() lock guarantees this even under cross-thread contention.");
+          .Because($"Thread {t}: id at index {i} ({curr}) must be > id at index {i - 1} ({prev}). The TrackedGuid.New() lock guarantees this even under cross-thread contention.");
       }
     }
 
     // Invariant 2: no duplicates across all threads.
     var allIds = perThreadIds.SelectMany(s => s).ToArray();
     await Assert.That(allIds.Distinct().Count()).IsEqualTo(taskCount * perTask)
-      .Because("Concurrent NewMedo() must not produce duplicate IDs.");
+      .Because("Concurrent New() must not produce duplicate IDs.");
 
     // Invariant 3: SQL ORDER BY event_id returns all rows in lex-sorted order matching
     // the unique set of IDs we generated.
@@ -152,7 +152,7 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
   [Test, Timeout(60000)]
   public async Task ReadByEventIdAsc_OrderingIsLexicallyDeterministicAsync(CancellationToken ct) {
     var streamId = Guid.NewGuid();
-    var ids = Enumerable.Range(0, 50).Select(_ => (Guid)TrackedGuid.NewMedo()).ToList();
+    var ids = Enumerable.Range(0, 50).Select(_ => (Guid)TrackedGuid.New()).ToList();
     // Shuffle so insertion order differs from sorted order
     var shuffled = ids.OrderBy(_ => Random.Shared.Next()).ToArray();
 

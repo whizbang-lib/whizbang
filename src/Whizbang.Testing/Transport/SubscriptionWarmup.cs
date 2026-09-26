@@ -163,7 +163,7 @@ public sealed class SignalAwaiter : IAwaiterIdentity {
   private readonly TaskCompletionSource<bool> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+  public Guid AwaiterId { get; } = TrackedGuid.New();
 
   /// <summary>
   /// Gets whether the signal has been received.

@@ -830,7 +830,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
       try {
         await deadLetterStore.MoveAsync(
-          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
           sourceTable: DeadLetterSourceTable.INBOX,
           sourceId: observation.MessageId,
           failureReason: MessageFailureReason.PoisonRedeliveryLoop,

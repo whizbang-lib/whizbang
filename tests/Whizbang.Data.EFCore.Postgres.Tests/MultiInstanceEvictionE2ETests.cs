@@ -44,8 +44,8 @@ public class MultiInstanceEvictionE2ETests : EFCoreTestBase {
     var live = _coordinatorFor(liveCtx);
     var zombie = _coordinatorFor(zombieCtx);
 
-    var liveId = (Guid)TrackedGuid.NewMedo();
-    var zombieId = (Guid)TrackedGuid.NewMedo();
+    var liveId = (Guid)TrackedGuid.New();
+    var zombieId = (Guid)TrackedGuid.New();
 
     // Both join the fleet through the real path.
     await Assert.That(await live.RecordHeartbeatAsync(_requestFor(liveId, "host-live"), cancellationToken)).IsTrue();
@@ -55,8 +55,8 @@ public class MultiInstanceEvictionE2ETests : EFCoreTestBase {
     await conn.OpenAsync(cancellationToken);
 
     // The zombie holds a claimed outbox lease — work the fleet must recover when it dies.
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await using (var cmd = conn.CreateCommand()) {
       cmd.CommandText = @"INSERT INTO wh_outbox
         (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, instance_id, lease_expiry, stream_id, partition_number)
@@ -118,7 +118,7 @@ public class MultiInstanceEvictionE2ETests : EFCoreTestBase {
       for (var i = 0; i < FLEET_SIZE; i++) {
         var ctx = CreateDbContext();
         contexts.Add(ctx);
-        ids[i] = (Guid)TrackedGuid.NewMedo();
+        ids[i] = (Guid)TrackedGuid.New();
         tasks[i] = _coordinatorFor(ctx).RecordHeartbeatAsync(_requestFor(ids[i], $"host-{i}"), cancellationToken);
       }
 

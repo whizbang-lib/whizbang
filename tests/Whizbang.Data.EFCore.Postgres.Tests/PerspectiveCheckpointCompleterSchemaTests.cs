@@ -46,8 +46,8 @@ public class PerspectiveCheckpointCompleterSchemaTests : EFCoreTestBase {
 
   [Test]
   public async Task CompleteAsync_WithTablesInAServiceSchema_WritesTheCursorThereAndNotToPublicAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var lastEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var lastEventId = (Guid)TrackedGuid.New();
     const string perspectiveName = "Rebuild.SchemaScoped";
 
     await using (var setup = CreateDbContext()) {

@@ -277,7 +277,7 @@ public class DispatcherStageFireTests {
     using var scope = sp.CreateScope();
     var invoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
     var envelope = new MessageEnvelope<StageTestEvent> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = evt,
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
@@ -325,7 +325,7 @@ public class DispatcherStageFireTests {
     using var scope = sp.CreateScope();
     var invoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
     var envelope = new MessageEnvelope<StageTestEvent> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = evt,
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

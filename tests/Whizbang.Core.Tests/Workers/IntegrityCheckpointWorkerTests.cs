@@ -196,7 +196,7 @@ public class IntegrityCheckpointWorkerTests {
     // Shared-inbox subscriptions filter on the message Subject (sys.Label) by namespace — a
     // publish with no routing key gets Subject "message" and is silently dropped by the broker
     // rule (no logs, no DLQ). The destination must carry the "{namespace}.{typename}" Subject.
-    var streamId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
 
     var destination = Whizbang.Core.Transports.ControlPlaneDestination.For(
       "inbox", streamId, typeof(IntegrityCheckpoint));
@@ -394,7 +394,7 @@ public class IntegrityCheckpointWorkerTests {
 
   private sealed class CheckpointCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public IntegrityCheckpointWindow? Window { get; init; }
-    public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
     public List<string> OwnAuditedEventTypes { get; init; } = [];
 
     public Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
@@ -417,7 +417,7 @@ public class IntegrityCheckpointWorkerTests {
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -603,7 +603,7 @@ public class IntegrityCheckpointWorkerTests {
     public TaskCompletionSource SecondCall { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
-      Task.FromResult(TrackedGuid.NewMedo().Value);
+      Task.FromResult(TrackedGuid.New().Value);
 
     public Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult<IReadOnlyList<string>>([]);

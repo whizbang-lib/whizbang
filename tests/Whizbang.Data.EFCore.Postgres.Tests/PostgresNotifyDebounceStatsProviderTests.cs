@@ -67,7 +67,7 @@ public class PostgresNotifyDebounceStatsProviderTests : EFCoreTestBase {
         (instance_id, payload_kind, last_work_at, last_attempt_at, rapid_run, effective_window_ms, fired_count, suppressed_count)
       VALUES (@id, @kind, NULL, NOW(), @rr, @ew, @fc, @sc)
       """, conn);
-    cmd.Parameters.AddWithValue("id", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("id", (Guid)TrackedGuid.New());
     cmd.Parameters.AddWithValue(nameof(kind), kind);
     cmd.Parameters.AddWithValue("rr", rapidRun);
     cmd.Parameters.AddWithValue("ew", effectiveWindowMs);

@@ -64,7 +64,7 @@ public class VersionedApplyTargetTests : EFCoreTestBase {
   [Test]
   public async Task StaleEventWrite_OnVersionedTarget_DoesNotRegressTerminalRowAsync() {
     EnableAtomicPath();
-    var id = TrackedGuid.NewMedo().Value;
+    var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
 
@@ -104,7 +104,7 @@ public class VersionedApplyTargetTests : EFCoreTestBase {
   [Test]
   public async Task NewerEventWrite_OnVersionedTarget_AdvancesRowAsync() {
     EnableAtomicPath();
-    var id = TrackedGuid.NewMedo().Value;
+    var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
 
@@ -140,11 +140,11 @@ public class VersionedApplyTargetTests : EFCoreTestBase {
   [Test]
   public async Task IdempotentReapply_OnVersionedTarget_DoesNotBumpVersionAsync() {
     EnableAtomicPath();
-    var id = TrackedGuid.NewMedo().Value;
+    var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
 
-    var eventId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.New().Value;
     var meta = Meta("SagaItemCompletedEvent", eventId);
 
     await using (var ctxA = CreateDbContext()) {

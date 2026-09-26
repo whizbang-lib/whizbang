@@ -45,9 +45,9 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
     // Use TrackedGuid (UUIDv7) so message_ids are monotonic — fetch_inbox_batch falls
     // back to message_id ordering when commit_sequence is unset (non-event rows).
     var ids = new[] {
-      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
-      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
-      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo()
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New()
     };
     var times = new[] {
       DateTimeOffset.UtcNow.AddSeconds(-30),
@@ -149,7 +149,7 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
     }
 
     var instanceId = Guid.NewGuid();
-    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     await _registerInstanceAsync(connection, instanceId);
     await _insertInboxRowAsync(connection, messageId, streamId: Guid.Empty, instanceId);
 
@@ -173,7 +173,7 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
     }
 
     var instanceId = Guid.NewGuid();
-    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     await _registerInstanceAsync(connection, instanceId);
     await _insertInboxRowWithNullStreamAsync(connection, messageId, instanceId);
 

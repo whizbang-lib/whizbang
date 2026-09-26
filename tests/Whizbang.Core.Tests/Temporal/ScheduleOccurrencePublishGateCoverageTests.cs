@@ -32,7 +32,7 @@ public class ScheduleOccurrencePublishGateCoverageTests {
   }
 
   private static OutboxWork _work(string? metadataJson) {
-    var id = TrackedGuid.NewMedo().Value;
+    var id = TrackedGuid.New().Value;
     return new OutboxWork {
       MessageId = id,
       Envelope = new MessageEnvelope<JsonElement> {

@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 public class ClaimWorkerBusWakeTests {
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test";
     public string HostName => "test-host";
     public int ProcessId => 1;

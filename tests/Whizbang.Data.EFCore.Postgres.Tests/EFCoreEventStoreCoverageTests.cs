@@ -57,7 +57,7 @@ public class EFCoreEventStoreCoverageTests : EFCoreTestBase {
   [Test]
   public async Task AppendAsync_DuplicateEventId_WrapsDbUpdateExceptionAsInvalidOperationAsync() {
     var streamId = Guid.NewGuid();
-    var duplicateId = (Guid)TrackedGuid.NewMedo();   // MessageId.From requires UUIDv7
+    var duplicateId = (Guid)TrackedGuid.New();   // MessageId.From requires UUIDv7
 
     // Seed a pointer row that already occupies this event_id (the primary key) on a SEPARATE
     // context/connection -- a deterministic stand-in for two processes racing to append the same

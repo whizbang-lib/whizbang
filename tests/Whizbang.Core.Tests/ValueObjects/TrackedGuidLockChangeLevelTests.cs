@@ -6,7 +6,7 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.ValueObjects;
 
 /// <summary>
-/// Change-level tests for the lock added inside <see cref="TrackedGuid.NewMedo"/>
+/// Change-level tests for the lock added inside <see cref="TrackedGuid.New"/>
 /// to fix a production cursor-inversion root cause. These test the
 /// specific behavior introduced by the lock — they are tighter and more
 /// minimal than the broader monotonicity tests in
@@ -15,13 +15,13 @@ namespace Whizbang.Core.Tests.ValueObjects;
 public class TrackedGuidLockChangeLevelTests {
 
   /// <summary>
-  /// The lock must serialize NewMedo() calls such that two concurrent calls cannot
+  /// The lock must serialize New() calls such that two concurrent calls cannot
   /// observe each other's intermediate state. We prove this by counting the number
   /// of unique IDs returned across thousands of concurrent calls — a race in the
   /// underlying generator would produce duplicates (proven empirically in production).
   /// </summary>
   [Test]
-  public async Task NewMedo_HighConcurrency_ProducesNoDuplicateIdsAsync() {
+  public async Task New_HighConcurrency_ProducesNoDuplicateIdsAsync() {
     const int taskCount = 32;
     const int idsPerTask = 500;
     var allIds = new System.Collections.Concurrent.ConcurrentBag<Guid>();
@@ -32,7 +32,7 @@ public class TrackedGuidLockChangeLevelTests {
       tasks[t] = Task.Run(async () => {
         await startGate.WaitAsync();
         for (var i = 0; i < idsPerTask; i++) {
-          allIds.Add((Guid)TrackedGuid.NewMedo());
+          allIds.Add((Guid)TrackedGuid.New());
         }
       });
     }
@@ -52,7 +52,7 @@ public class TrackedGuidLockChangeLevelTests {
   /// from one thread's perspective the local sequence is monotonic.)
   /// </summary>
   [Test]
-  public async Task NewMedo_PerThreadSequence_IsAlwaysStrictlyMonotonicAsync() {
+  public async Task New_PerThreadSequence_IsAlwaysStrictlyMonotonicAsync() {
     const int taskCount = 16;
     const int idsPerTask = 200;
     var perThread = new List<Guid>[taskCount];
@@ -65,7 +65,7 @@ public class TrackedGuidLockChangeLevelTests {
       tasks[localIdx] = Task.Run(async () => {
         await startGate.WaitAsync();
         for (var i = 0; i < idsPerTask; i++) {
-          perThread[localIdx].Add((Guid)TrackedGuid.NewMedo());
+          perThread[localIdx].Add((Guid)TrackedGuid.New());
         }
       });
     }
@@ -90,27 +90,27 @@ public class TrackedGuidLockChangeLevelTests {
   /// but locking the call itself must not break this invariant.)
   /// </summary>
   [Test]
-  public async Task NewMedo_SingleThreadAfterLock_RemainsMonotonicAsync() {
+  public async Task New_SingleThreadAfterLock_RemainsMonotonicAsync() {
     var ids = new Guid[1_000];
     for (var i = 0; i < ids.Length; i++) {
-      ids[i] = (Guid)TrackedGuid.NewMedo();
+      ids[i] = (Guid)TrackedGuid.New();
     }
 
     for (var i = 1; i < ids.Length; i++) {
       var cmp = string.CompareOrdinal(ids[i].ToString("D"), ids[i - 1].ToString("D"));
       await Assert.That(cmp).IsGreaterThan(0)
-        .Because("Sequential single-thread NewMedo() must remain strictly monotonic after the lock fix.");
+        .Because("Sequential single-thread New() must remain strictly monotonic after the lock fix.");
     }
   }
 
   /// <summary>
   /// The lock must not cause re-entrancy issues. <c>lock</c> in C# is reentrant per-thread,
-  /// so calling NewMedo() again from inside a handler that already holds the same lock would
+  /// so calling New() again from inside a handler that already holds the same lock would
   /// be fine. But an alternative implementation using a non-reentrant primitive (e.g.,
   /// SemaphoreSlim) could deadlock. This test exercises the recursive-call path.
   /// </summary>
   [Test]
-  public async Task NewMedo_NestedCallsFromSameThread_DoNotDeadlockAsync() {
+  public async Task New_NestedCallsFromSameThread_DoNotDeadlockAsync() {
     Guid? outer = null;
     Guid? inner = null;
 
@@ -118,8 +118,8 @@ public class TrackedGuidLockChangeLevelTests {
     // if the lock were non-reentrant in a way that mattered. Even though we're not
     // explicitly recursing, this verifies the lock allows sequential same-thread reuse.
     await Task.Run(() => {
-      outer = (Guid)TrackedGuid.NewMedo();
-      inner = (Guid)TrackedGuid.NewMedo();
+      outer = (Guid)TrackedGuid.New();
+      inner = (Guid)TrackedGuid.New();
     });
 
     await Assert.That(outer).IsNotNull();

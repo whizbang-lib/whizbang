@@ -87,7 +87,7 @@ public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
       )
       """;
     cmd.Parameters.AddWithValue("id", messageId);
-    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.New());
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -122,20 +122,20 @@ public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
       )
       """;
     cmd.Parameters.AddWithValue("id", eventWorkId);
-    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.NewMedo());
-    cmd.Parameters.AddWithValue("event_id", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.New());
+    cmd.Parameters.AddWithValue("event_id", (Guid)TrackedGuid.New());
     await cmd.ExecuteNonQueryAsync();
   }
 
   private static async Task<Guid> _moveAsync(NpgsqlConnection conn, string sourceTable, Guid sourceId, string errorText) {
-    var deadLetterId = (Guid)TrackedGuid.NewMedo();
+    var deadLetterId = (Guid)TrackedGuid.New();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT move_to_dead_letters(@dlq, @src, @id, 99, @err, @inst, 'test-gen')";
     cmd.Parameters.AddWithValue("dlq", deadLetterId);
     cmd.Parameters.AddWithValue("src", sourceTable);
     cmd.Parameters.AddWithValue("id", sourceId);
     cmd.Parameters.AddWithValue("err", errorText);
-    cmd.Parameters.AddWithValue("inst", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("inst", (Guid)TrackedGuid.New());
     await cmd.ExecuteScalarAsync();
     return deadLetterId;
   }
@@ -145,9 +145,9 @@ public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
   [Test]
   public async Task MoveToDeadLetters_PreservesFullStackTextAcrossAllSourceTablesAsync() {
     await using var conn = await _openAsync();
-    var outboxMsg = (Guid)TrackedGuid.NewMedo();
-    var inboxMsg = (Guid)TrackedGuid.NewMedo();
-    var perspectiveWork = (Guid)TrackedGuid.NewMedo();
+    var outboxMsg = (Guid)TrackedGuid.New();
+    var inboxMsg = (Guid)TrackedGuid.New();
+    var perspectiveWork = (Guid)TrackedGuid.New();
     await _seedOutboxAsync(conn, outboxMsg);
     await _seedInboxAsync(conn, inboxMsg);
     await _seedPerspectiveAsync(conn, perspectiveWork);
@@ -179,9 +179,9 @@ public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
   [Test]
   public async Task MoveToDeadLetters_RoundTripFingerprintIntegrity_AcrossAllSourceTablesAsync() {
     await using var conn = await _openAsync();
-    var outboxMsg = (Guid)TrackedGuid.NewMedo();
-    var inboxMsg = (Guid)TrackedGuid.NewMedo();
-    var perspectiveWork = (Guid)TrackedGuid.NewMedo();
+    var outboxMsg = (Guid)TrackedGuid.New();
+    var inboxMsg = (Guid)TrackedGuid.New();
+    var perspectiveWork = (Guid)TrackedGuid.New();
     await _seedOutboxAsync(conn, outboxMsg);
     await _seedInboxAsync(conn, inboxMsg);
     await _seedPerspectiveAsync(conn, perspectiveWork);
@@ -208,9 +208,9 @@ public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
   [Test]
   public async Task MoveToDeadLetters_AllSourcesProduceDistinctFingerprintsAsync() {
     await using var conn = await _openAsync();
-    var outboxMsg = (Guid)TrackedGuid.NewMedo();
-    var inboxMsg = (Guid)TrackedGuid.NewMedo();
-    var perspectiveWork = (Guid)TrackedGuid.NewMedo();
+    var outboxMsg = (Guid)TrackedGuid.New();
+    var inboxMsg = (Guid)TrackedGuid.New();
+    var perspectiveWork = (Guid)TrackedGuid.New();
     await _seedOutboxAsync(conn, outboxMsg);
     await _seedInboxAsync(conn, inboxMsg);
     await _seedPerspectiveAsync(conn, perspectiveWork);

@@ -34,7 +34,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class InboxDispatchWorkerCompositeCommitTests {
 
   private sealed class FakeInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 42;
@@ -148,7 +148,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
   }
 
   private static InboxWork _compositeWork() {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     return new InboxWork {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {
@@ -158,7 +158,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,

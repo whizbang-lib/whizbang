@@ -29,12 +29,12 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
 
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     var requestJson = _commitHandlerRequest(
       instanceId: owner,
       newOutboxMessages: $$"""
@@ -75,14 +75,14 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var nonOwner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var nonOwner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, owner);
     await _registerInstanceAsync(conn, nonOwner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
 
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     var requestJson = _commitHandlerRequest(
       instanceId: owner,
       newOutboxMessages: $$"""
@@ -116,14 +116,14 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var nonOwner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var nonOwner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, owner);
     await _registerInstanceAsync(conn, nonOwner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
 
-    var cursorEventId = (Guid)TrackedGuid.NewMedo();
+    var cursorEventId = (Guid)TrackedGuid.New();
     var cursorsJson = $$"""
       [{
         "StreamId": "{{streamId}}",
@@ -167,11 +167,11 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var observer = (Guid)TrackedGuid.NewMedo();
-    var unknownStream = (Guid)TrackedGuid.NewMedo();
+    var observer = (Guid)TrackedGuid.New();
+    var unknownStream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, observer);
 
-    var cursorEventId = (Guid)TrackedGuid.NewMedo();
+    var cursorEventId = (Guid)TrackedGuid.New();
     var cursorsJson = $$"""
       [{
         "StreamId": "{{unknownStream}}",

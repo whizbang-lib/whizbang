@@ -28,14 +28,14 @@ public class CorrelationIdTests {
 
   [Test]
   public async Task From_TrackedGuid_RoundTripsAsync() {
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
     var id = CorrelationId.From(tracked);
     await Assert.That(id.Value).IsEqualTo((Guid)tracked);
   }
 
   [Test]
   public async Task Equality_SameValueIsEqualAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var a = CorrelationId.From(g);
     var b = CorrelationId.From(g);
     await Assert.That(a == b).IsTrue();
@@ -78,7 +78,7 @@ public class CorrelationIdTests {
 
   [Test]
   public async Task ImplicitToGuid_ExposesUnderlyingAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var id = CorrelationId.From(g);
     Guid asGuid = id;
     await Assert.That(asGuid).IsEqualTo(g);
@@ -86,7 +86,7 @@ public class CorrelationIdTests {
 
   [Test]
   public async Task ExplicitFromGuid_BuildsIdAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var id = (CorrelationId)g;
     await Assert.That(id.Value).IsEqualTo(g);
   }
@@ -99,14 +99,14 @@ public class CorrelationIdTests {
 
   [Test]
   public async Task ToString_FormatsAsGuidAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var id = CorrelationId.From(g);
     await Assert.That(id.ToString()).IsEqualTo(g.ToString());
   }
 
   [Test]
   public async Task Parse_ValidUuidV7_RoundTripsAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var id = CorrelationId.Parse(g.ToString());
     await Assert.That(id.Value).IsEqualTo(g);
   }

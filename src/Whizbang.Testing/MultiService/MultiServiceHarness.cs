@@ -80,7 +80,7 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
       string? target = null)
       where TMessage : notnull {
     var envelope = new MessageEnvelope<TMessage> {
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = payload,
       Hops = [
         new MessageHop {

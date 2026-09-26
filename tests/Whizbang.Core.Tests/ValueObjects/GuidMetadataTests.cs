@@ -49,6 +49,12 @@ public class GuidMetadataTests {
   }
 
   [Test]
+  public async Task GuidMetadata_SourceWhizbang_IsBit14Async() {
+    var value = (ushort)GuidMetadatas.SourceWhizbang;
+    await Assert.That(value).IsEqualTo((ushort)(1 << 14));
+  }
+
+  [Test]
   public async Task GuidMetadata_SourceMicrosoft_IsBit3Async() {
     var value = (ushort)GuidMetadatas.SourceMicrosoft;
     await Assert.That(value).IsEqualTo((ushort)(1 << 3));
@@ -130,7 +136,8 @@ public class GuidMetadataTests {
       GuidMetadatas.SourceUnknown, GuidMetadatas.Reserved,
       GuidMetadatas.SourceMarten, GuidMetadatas.SourceUuidNext,
       GuidMetadatas.SourceDaanV2, GuidMetadatas.SourceUuids,
-      GuidMetadatas.SourceGuidOne, GuidMetadatas.SourceTaiizor
+      GuidMetadatas.SourceGuidOne, GuidMetadatas.SourceTaiizor,
+      GuidMetadatas.SourceWhizbang
     };
 
     // Assert - each flag should have exactly one bit set (power of 2)
@@ -151,7 +158,8 @@ public class GuidMetadataTests {
       GuidMetadatas.SourceUnknown, GuidMetadatas.Reserved,
       GuidMetadatas.SourceMarten, GuidMetadatas.SourceUuidNext,
       GuidMetadatas.SourceDaanV2, GuidMetadatas.SourceUuids,
-      GuidMetadatas.SourceGuidOne, GuidMetadatas.SourceTaiizor
+      GuidMetadatas.SourceGuidOne, GuidMetadatas.SourceTaiizor,
+      GuidMetadatas.SourceWhizbang
     };
 
     // Assert - no two flags share the same bit

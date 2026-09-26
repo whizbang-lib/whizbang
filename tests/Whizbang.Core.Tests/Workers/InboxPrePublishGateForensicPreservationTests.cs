@@ -56,7 +56,7 @@ public class InboxPrePublishGateForensicPreservationTests {
   // --- fakes ---
 
   private sealed class FakeInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -110,7 +110,7 @@ public class InboxPrePublishGateForensicPreservationTests {
   }
 
   private static InboxWork _work(int attempts, string? rowError, string? messageType = null) {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     return new InboxWork {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {
@@ -120,7 +120,7 @@ public class InboxPrePublishGateForensicPreservationTests {
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox },
       },
       MessageType = messageType ?? "System.Text.Json.JsonElement, System.Text.Json",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PartitionNumber = 1,
       Attempts = attempts,
       Status = MessageProcessingStatus.Stored,

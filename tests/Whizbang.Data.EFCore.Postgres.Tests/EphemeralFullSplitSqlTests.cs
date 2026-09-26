@@ -69,7 +69,7 @@ public class EphemeralFullSplitSqlTests : EFCoreTestBase {
     var connection = await _openAsync(context);
 
     var streamId = Guid.NewGuid();
-    var eventId = (Guid)TrackedGuid.NewMedo();   // MessageId requires UUIDv7
+    var eventId = (Guid)TrackedGuid.New();   // MessageId requires UUIDv7
     var orderId = Guid.NewGuid();
     await _commitSourcedOrderAsync(connection, eventId, streamId, orderId);
 

@@ -116,10 +116,11 @@ public class WhizbangIdJsonSerializationTests {
     var converterSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductIdJsonConverter.g.cs");
     await Assert.That(converterSource).IsNotNull();
 
-    // Assert - Write method should convert to Uuid7
+    // Assert - Write method writes the standard lowercase hyphenated form, with no third-party UUID type
     await Assert.That(converterSource).Contains("public override void Write(Utf8JsonWriter writer, ProductId value, JsonSerializerOptions options)");
-    await Assert.That(converterSource).Contains("var uuid7 = new Uuid7(value.Value)");
-    await Assert.That(converterSource).Contains("writer.WriteStringValue(uuid7.ToString())");
+    await Assert.That(converterSource).Contains("writer.WriteStringValue(value.Value)");
+    await Assert.That(converterSource).DoesNotContain("Medo");
+    await Assert.That(converterSource).DoesNotContain("Uuid7");
   }
 
   /// <summary>
@@ -145,11 +146,10 @@ public class WhizbangIdJsonSerializationTests {
     var converterSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductIdJsonConverter.g.cs");
     await Assert.That(converterSource).IsNotNull();
 
-    // Assert - Read method should parse Uuid7
+    // Assert - Read method parses any standard Guid notation, as the previous third-party parser did
     await Assert.That(converterSource).Contains("public override ProductId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)");
-    await Assert.That(converterSource).Contains("var uuid7String = reader.GetString()");
-    await Assert.That(converterSource).Contains("var uuid7 = Uuid7.Parse(uuid7String)");
-    await Assert.That(converterSource).Contains("return ProductId.From(uuid7.ToGuid())");
+    await Assert.That(converterSource).Contains("return ProductId.From(Guid.Parse(reader.GetString()!, CultureInfo.InvariantCulture))");
+    await Assert.That(converterSource).DoesNotContain("Medo");
   }
 
   /// <summary>

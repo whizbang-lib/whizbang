@@ -165,10 +165,10 @@ public partial class InboxDrainWorkerCoverageTests {
     // every remaining quantized-cap group's fetch against a coordinator/DB connection the host is
     // already tearing down -- extra queries that show up as spurious errors on every clean stop,
     // multiplying by however many groups the plan happened to produce that cycle.
-    var deep = (Guid)TrackedGuid.NewMedo();
-    var shallow = (Guid)TrackedGuid.NewMedo();
-    var deepMsg = (Guid)TrackedGuid.NewMedo();
-    var shallowMsg = (Guid)TrackedGuid.NewMedo();
+    var deep = (Guid)TrackedGuid.New();
+    var shallow = (Guid)TrackedGuid.New();
+    var deepMsg = (Guid)TrackedGuid.New();
+    var shallowMsg = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedWorkCoordinator();
     using var cts = new CancellationTokenSource();
@@ -222,9 +222,9 @@ public partial class InboxDrainWorkerCoverageTests {
     // here does not retire it: it stays leased and unprocessed, lapses, is re-claimed with one more
     // attempt, and is deferred again -- a row re-leased for ever and never dead-lettered. It goes on,
     // in stream order, ahead of its sibling.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var poisonMsg = (Guid)TrackedGuid.NewMedo();
-    var goodMsg = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var poisonMsg = (Guid)TrackedGuid.New();
+    var goodMsg = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedWorkCoordinator();
     coord.Enqueue(_ => [_row(poisonMsg, streamId, attempts: 11, error: "boom"), _row(goodMsg, streamId, attempts: 0)]);
@@ -265,10 +265,10 @@ public partial class InboxDrainWorkerCoverageTests {
     // checked (the loop-until-empty inner path is the other). If this check were ever skipped
     // here, retried rows with recorded failures would monopolise the working set through the one
     // path that forgot to gate them. Two of three rows are retried: a share past the 0.5 default.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var retriedA = (Guid)TrackedGuid.NewMedo();
-    var retriedB = (Guid)TrackedGuid.NewMedo();
-    var goodMsg = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var retriedA = (Guid)TrackedGuid.New();
+    var retriedB = (Guid)TrackedGuid.New();
+    var goodMsg = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedWorkCoordinator();
     coord.Enqueue(_ => [
@@ -313,10 +313,10 @@ public partial class InboxDrainWorkerCoverageTests {
     // stream is drained; if the early exit regressed, every drain would pay for one extra
     // confirmation fetch that (per the slice-32 measurement this guards) almost always returns
     // nothing -- doubling round-trips for no gain.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var firstPassMsgs = Enumerable.Range(0, 3).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
-    var poisonMsg = (Guid)TrackedGuid.NewMedo();
-    var secondPassGoodMsg = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var firstPassMsgs = Enumerable.Range(0, 3).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var poisonMsg = (Guid)TrackedGuid.New();
+    var secondPassGoodMsg = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedWorkCoordinator();
     // First pass (the batched, multi-stream fetch): exactly saturates the floor cap, so the
@@ -374,9 +374,9 @@ public partial class InboxDrainWorkerCoverageTests {
     // between fetches -- it does not abandon a page mid-write. If that check were ever removed,
     // a canceled drain would keep fetching and writing indefinitely instead of stopping at the
     // next natural boundary, ignoring host shutdown entirely.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var firstPassMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
-    var secondPassMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var firstPassMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var secondPassMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ScriptedWorkCoordinator();
     using var cts = new CancellationTokenSource();
@@ -450,9 +450,9 @@ public partial class InboxDrainWorkerCoverageTests {
     // another query against a connection the host is tearing down. A regression in either
     // direction is silent — dropping the tail of the page loses work that the SQL fetch already
     // consumed, and missing the condition keeps pulling pages through shutdown.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var firstPageMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
-    var secondPageMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var firstPageMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var secondPageMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ScriptedWorkCoordinator();
     // Both pages exactly saturate the cap, so neither can take the partial-page early exit.

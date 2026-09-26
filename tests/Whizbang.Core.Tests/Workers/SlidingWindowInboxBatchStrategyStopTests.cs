@@ -54,7 +54,7 @@ public class SlidingWindowInboxBatchStrategyStopTests {
   }
 
   private static InboxMessage _makeMessage() {
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonDocument.Parse("{}").RootElement, []);
     return new InboxMessage {
       MessageId = messageId,

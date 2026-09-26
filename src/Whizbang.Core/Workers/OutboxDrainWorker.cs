@@ -570,7 +570,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
               ? row.Error
               : $"OutboxDrainWorker dead-lettered: attempts={row.Attempts} > max={maxAttempts}";
             await _deadLetterStore.MoveAsync(
-              deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+              deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
               sourceTable: DeadLetterSourceTable.OUTBOX,
               sourceId: row.MessageId,
               failureReason: Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded,

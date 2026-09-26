@@ -34,8 +34,8 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
 
@@ -52,9 +52,9 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var stream1 = (Guid)TrackedGuid.NewMedo();
-    var stream2 = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var stream1 = (Guid)TrackedGuid.New();
+    var stream2 = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, stream1, partitionNumber: 0, owner);
     await _upsertActiveStreamAsync(conn, stream2, partitionNumber: 0, owner);
@@ -72,11 +72,11 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var ownerA = (Guid)TrackedGuid.NewMedo();
-    var ownerB = (Guid)TrackedGuid.NewMedo();
-    var streamA1 = (Guid)TrackedGuid.NewMedo();
-    var streamA2 = (Guid)TrackedGuid.NewMedo();
-    var streamB1 = (Guid)TrackedGuid.NewMedo();
+    var ownerA = (Guid)TrackedGuid.New();
+    var ownerB = (Guid)TrackedGuid.New();
+    var streamA1 = (Guid)TrackedGuid.New();
+    var streamA2 = (Guid)TrackedGuid.New();
+    var streamB1 = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, ownerA);
     await _registerInstanceAsync(conn, ownerB);
     await _upsertActiveStreamAsync(conn, streamA1, partitionNumber: 0, ownerA);
@@ -109,8 +109,8 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var unknownStream = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var unknownStream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, owner);
     // unknownStream is NOT in wh_active_streams.
 
@@ -140,8 +140,8 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var orphanStream = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var orphanStream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, owner);
     // orphanStream exists in wh_active_streams but assigned_instance_id is NULL
     // (post-cleanup_stale_instances state — pre-slice-6-fix production baseline).
@@ -166,8 +166,8 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
 
