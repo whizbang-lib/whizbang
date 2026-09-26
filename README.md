@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://whizba.ng/">Documentation</a> &middot;
-  <a href="https://www.nuget.org/packages/Whizbang.Core/">NuGet</a> &middot;
+  <a href="https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/">NuGet</a> &middot;
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -12,7 +12,7 @@
   <a href="https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml"><img src="https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://codecov.io/gh/whizbang-lib/whizbang"><img src="https://codecov.io/gh/whizbang-lib/whizbang/branch/main/graph/badge.svg" alt="codecov"></a>
   <a href="https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang"><img src="https://sonarcloud.io/api/project_badges/measure?project=whizbang-lib_whizbang&metric=alert_status" alt="Quality Gate Status"></a>
-  <a href="https://www.nuget.org/packages/Whizbang.Core/"><img src="https://img.shields.io/nuget/v/Whizbang.Core.svg" alt="NuGet"></a>
+  <a href="https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/"><img src="https://img.shields.io/nuget/v/SoftwareExtravaganza.Whizbang.Core.svg" alt="NuGet"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
 </p>
 
