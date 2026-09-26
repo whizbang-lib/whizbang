@@ -50,9 +50,17 @@ function ConvertTo-GlobRegex([string]$glob) {
   return [regex]::new($sb.ToString())
 }
 
-$listPath = Join-Path -Path $PSScriptRoot -ChildPath '..' -AdditionalChildPath 'inert-paths.txt'
-$patterns = @(Get-Content $listPath | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') } |
-  ForEach-Object { ConvertTo-GlobRegex $_ })
+# The patterns of .github/inert-paths.txt, compiled. Shared with the tests, which check the list itself.
+function Get-InertPattern {
+  $listPath = Join-Path -Path $PSScriptRoot -ChildPath '..' -AdditionalChildPath 'inert-paths.txt'
+  return @(Get-Content $listPath | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') } |
+    ForEach-Object { ConvertTo-GlobRegex $_ })
+}
+
+# Dot-sourcing for tests loads the functions without calling the compare API.
+if ($MyInvocation.InvocationName -eq '.') { return }
+
+$patterns = Get-InertPattern
 
 $json = gh api "repos/$env:REPO/compare/$Base...$Head" 2>$null
 if ($LASTEXITCODE -ne 0 -or -not $json) {
