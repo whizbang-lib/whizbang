@@ -101,8 +101,9 @@ jobs:
       # where it was ~11 minutes of every single one (70-75% of the job, against 5-23% for
       # the tests themselves).
       #
-      # It runs in the BACKGROUND while the clean build uploads, on copies in a staging
-      # folder outside the workspace, never on the files being uploaded.
+      # It runs in the BACKGROUND while the clean build uploads, on copies in work folders
+      # outside the workspace, never on the files being uploaded; the results are collected
+      # in a staging folder that becomes the overlay.
       # Three things that must not break:
       #
       #   1. NuGet. The pack job consumes build-<run> and runs `dotnet pack --no-build`, so
@@ -132,52 +133,64 @@ jobs:
             ! -name "*.resources.dll" ! -path "*/ref/*" ! -name "*.g.dll" | sort)
           echo "found ${#DLLS[@]} paths"
 
-          # One representative per content hash, COPIED into the staging folder here, before
-          # the upload starts. instrument touches its input's files while it works (even with
-          # -o: the upload once failed on a pdb that vanished mid-listing), so it only ever
-          # runs on these copies. Both the .dll AND its .pdb are copied and rewritten
-          # (instrument refuses with "no_symbols" when the pdb is absent): an instrumented dll
-          # beside a clean pdb would not map coverage back to source.
+          # One representative per content hash, prepared here, before the upload starts,
+          # in a private work folder of its own: a copy of the .dll and .pdb (both are
+          # rewritten; instrument refuses with "no_symbols" when the pdb is absent) plus
+          # symlinks to every other assembly beside the original, which instrument needs to
+          # resolve references. Two things this layout rules out, both seen on a real run:
+          #   - instrument -o cannot resolve references at all (it fails on every assembly
+          #     that references another Whizbang assembly), so it must rewrite in place;
+          #   - instrument removes its input's pdb while it works, so the input must never be
+          #     a file the upload is reading.
+          # A folder per blob means parallel runs never read a neighbor that another run is
+          # rewriting; the symlinks point at workspace files nothing rewrites.
           declare -A REP
+          WORK="$RUNNER_TEMP/coverage-work"
           : > "$RUNNER_TEMP/instrument-reps.txt"
           : > "$RUNNER_TEMP/instrument-twins.txt"
-          SKIPPED=0
+          SKIPPED=0; N=0
           for dll in "${DLLS[@]}"; do
             [ -f "${dll%.dll}.pdb" ] || { SKIPPED=$((SKIPPED+1)); continue; }   # no symbols => cannot instrument
             HASH=$(sha256sum "$dll" | cut -d' ' -f1)
             if [ -n "${REP[$HASH]:-}" ]; then
               printf '%s\t%s\n' "${REP[$HASH]}" "$dll" >> "$RUNNER_TEMP/instrument-twins.txt"
-            else
-              REP[$HASH]="$dll"
-              printf '%s\n' "$dll" >> "$RUNNER_TEMP/instrument-reps.txt"
-              mkdir -p "$STAGE/$(dirname "$dll")"
-              cp "$dll" "${dll%.dll}.pdb" "$STAGE/$(dirname "$dll")/"
+              continue
             fi
+            REP[$HASH]="$dll"
+            N=$((N+1))
+            mkdir -p "$WORK/$N"
+            cp "$dll" "${dll%.dll}.pdb" "$WORK/$N/"
+            for dep in "$(dirname "$dll")"/*.dll "$(dirname "$dll")"/*.pdb; do
+              [ -e "$WORK/$N/$(basename "$dep")" ] || ln -s "$GITHUB_WORKSPACE/$dep" "$WORK/$N/"
+            done
+            printf '%s|%s\n' "$N" "$dll" >> "$RUNNER_TEMP/instrument-reps.txt"
           done
-          echo "staged $(wc -l < "$RUNNER_TEMP/instrument-reps.txt") distinct blobs, skipped $SKIPPED without symbols"
+          echo "prepared $N distinct blobs, skipped $SKIPPED without symbols"
 
           cat > "$RUNNER_TEMP/instrument.sh" <<'SCRIPT'
           set -euo pipefail
-          cd "$STAGE"
           : > "$RUNNER_TEMP/instrument-failed.txt"
           xargs -a "$RUNNER_TEMP/instrument-reps.txt" -d '\n' -P "$(nproc)" -I{} bash -c '
-            dotnet-coverage instrument "$1" --session-id "$SESSION_ID" --nologo -dco \
-              || printf "%s\n" "$1" >> "$RUNNER_TEMP/instrument-failed.txt"' _ {}
+            n=${1%%|*}; path=${1#*|}
+            name=$(basename "$path")
+            if dotnet-coverage instrument "$WORK/$n/$name" --session-id "$SESSION_ID" --nologo -dco; then
+              mkdir -p "$STAGE/$(dirname "$path")"
+              mv "$WORK/$n/$name" "$STAGE/$path"
+              mv "$WORK/$n/${name%.dll}.pdb" "$STAGE/${path%.dll}.pdb"
+            else
+              printf "%s\n" "$path" >> "$RUNNER_TEMP/instrument-failed.txt"
+            fi' _ {}
 
-          # A blob that failed is dropped from the overlay, so the test job keeps its clean
-          # copy; so are its twins, below. instrument's .orig backups are dropped too.
-          while read -r dll; do
-            echo "::warning::could not instrument $dll"
-            rm -f "$dll" "${dll%.dll}.pdb"
-          done < "$RUNNER_TEMP/instrument-failed.txt"
-          find . \( -name "*.dll.orig" -o -name "*.pdb.orig" \) -delete
+          # A blob that failed never reaches the overlay, so the test job keeps its clean
+          # copy; so do its twins, below.
+          while read -r dll; do echo "::warning::could not instrument $dll"; done < "$RUNNER_TEMP/instrument-failed.txt"
 
           COPIED=0
           while IFS=$'\t' read -r rep twin; do
-            [ -f "$rep" ] || continue   # its representative failed: the twin stays clean
-            mkdir -p "$(dirname "$twin")"
-            cp -f "$rep" "$twin"
-            cp -f "${rep%.dll}.pdb" "${twin%.dll}.pdb"
+            [ -f "$STAGE/$rep" ] || continue   # its representative failed: the twin stays clean
+            mkdir -p "$STAGE/$(dirname "$twin")"
+            cp -f "$STAGE/$rep" "$STAGE/$twin"
+            cp -f "$STAGE/${rep%.dll}.pdb" "$STAGE/${twin%.dll}.pdb"
             COPIED=$((COPIED+1))
           done < "$RUNNER_TEMP/instrument-twins.txt"
 
@@ -188,7 +201,7 @@ jobs:
             exit 1
           fi
           SCRIPT
-          export STAGE SESSION_ID
+          export STAGE SESSION_ID WORK
           # The exit code is written only when the script ends, so the wait step can tell
           # "finished" from "still running" and never mistakes a crash for success.
           # shellcheck disable=SC2016  # expanded by the inner bash, not here
@@ -213,7 +226,9 @@ jobs:
           # A release branch's build is repacked for its beta and rc prereleases
           # (release-prerelease.yml), so it lives as long as the release PR might stay open.
           retention-days: ${{ startsWith(github.ref, 'refs/heads/release/v') && 7 || 1 }}
-          compression-level: 0
+          # Level 1, measured: level 6 spent ~190s compressing 1.9 GB; level 0 uploaded 5.5 GB
+          # in 60s but up to 2 minutes slower downloads in the 11 test jobs that fetch it.
+          compression-level: 1
 
       - name: Wait for coverage instrumentation
         run: |
@@ -250,4 +265,4 @@ jobs:
           path: ${{ runner.temp }}/coverage-overlay/
           if-no-files-found: error
           retention-days: 1
-          compression-level: 0
+          compression-level: 1
