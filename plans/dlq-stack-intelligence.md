@@ -1,3 +1,5 @@
+> **Shipped.** Kept at this path rather than archived because migrations 051, 053, 127, 128 and 129 cite it, and editing a migration's text changes its ledger hash on every database. Status lines below may be stale; the Release 1.0 Planning board has the Shipped date.
+
 # DLQ Stack Intelligence & Cohort Canary Recovery
 
 Status: DESIGN AGREED (2026-09-03) — Phase 0 not started

@@ -1,3 +1,5 @@
+> **Archived 2026-09-26.** The work this plan describes has shipped, or its open remainder is carried by a card on the Release 1.0 or 2.0 Planning board; the Done cards carry the Shipped dates. Status lines below are as last written and may be stale.
+
 # Canonical temporal storage: one unit, one writer rule, one reader rule
 
 > **Status: proposal, awaiting a decision. No code has been written against it.**

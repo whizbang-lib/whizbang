@@ -1,3 +1,5 @@
+> **Archived 2026-09-26.** The work this plan describes has shipped, or its open remainder is carried by a card on the Release 1.0 or 2.0 Planning board; the Done cards carry the Shipped dates. Status lines below are as last written and may be stale.
+
 # Inbox acquisition: bounded, deterministic, cost-aware
 
 Status: **138 merged (PR #694)** · **safe-by-default coordinator PR in flight** (cycle 1: defaults + poison casualties; cycle 2: coordinator-owned command timeout) · 139 designed + prototyped · 140 designed

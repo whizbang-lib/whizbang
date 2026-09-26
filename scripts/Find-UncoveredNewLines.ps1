@@ -16,7 +16,7 @@
     src/Whizbang.Testing is excluded from the diff side as well, because the coverage settings exclude
     that assembly from instrumentation: its lines are unmeasurable here, and counting them would let
     this script report "every added library line is covered" over lines it cannot see. See L12 in
-    plans/db-load-under-bulk-import.md.
+    plans/archive/db-load-under-bulk-import.md.
 
     Standard practice: every new line is covered before a PR opens. Run this against the CI artifacts
     (`gh run download <run> -n coverage-unit -D coverage/unit`, and the same for every coverage-*
@@ -110,7 +110,7 @@ foreach ($report in $reports) {
 # report ever carries a line from src/Whizbang.Testing/. Counting those lines here would have this
 # script claim coverage over lines it cannot measure: they would read as covered whether or not a
 # test executed them, and the gate would be green either way. Excluding them keeps the claim honest
-# and narrow, which is the decision recorded as L12 in plans/db-load-under-bulk-import.md. The two
+# and narrow, which is the decision recorded as L12 in plans/archive/db-load-under-bulk-import.md. The two
 # lists are one project each today and must stay in step: a new project excluded there belongs here.
 $excludedFromDiff = @(':(exclude)src/Whizbang.Testing/**')
 $diff = git diff -U0 "$BaseRef...HEAD" -- src $excludedFromDiff

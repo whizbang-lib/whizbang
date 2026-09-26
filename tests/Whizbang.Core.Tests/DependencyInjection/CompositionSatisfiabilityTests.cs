@@ -31,7 +31,7 @@ public class CompositionSatisfiabilityTests {
   /// </summary>
   /// <remarks>
   /// A ratchet, not a target. Existing occurrences are tracked in
-  /// <c>plans/di-registration-findings.md</c> and converted to required parameters with TryAdd
+  /// <c>plans/archive/di-registration-findings.md</c> and converted to required parameters with TryAdd
   /// defaults over time; this number must only ever move down. Asserting equality would fail the
   /// build on every improvement, and asserting nothing would let the surface grow silently, which
   /// is how it reached this size.

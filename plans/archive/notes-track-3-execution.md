@@ -1,3 +1,5 @@
+> **Archived 2026-09-26.** The work this plan describes has shipped, or its open remainder is carried by a card on the Release 1.0 or 2.0 Planning board; the Done cards carry the Shipped dates. Status lines below are as last written and may be stale.
+
 # Track 3 — Execution notes
 
 Append-only file capturing on-the-fly decisions, open questions, and surprises during the track-3 execution. Not committed unless the user wants it preserved.

@@ -6,7 +6,7 @@
 > - **v1 board — [Release 1.0 Planning](https://github.com/orgs/whizbang-lib/projects/1)**
 > - **v2 board — [Release 2.0 Planning](https://github.com/orgs/whizbang-lib/projects/2)**
 >
-> _Assembled 2026-07-19 from a full sweep of the `plans/` + `ai-docs/` backlog, the docs-repo
+> _Refreshed 2026-09-26 (board reconcile). Assembled 2026-07-19 from a full sweep of the `plans/` + `ai-docs/` backlog, the docs-repo
 > proposals, every branch/worktree, and all 274 merged PRs. Status was verified against `src/` and
 > the PR history — not the (stale) CHANGELOG._
 
@@ -60,43 +60,51 @@ Reconstructed from the 274 merged PRs and verified in `src/`. Each is a Done car
 
 ---
 
-## Remaining road to 1.0 (the v1 board — reconciled)
+## Remaining road to 1.0 (the v1 board)
 
-> **Reconciled 2026-07-19:** every card that looked "remaining" was re-verified against the current
-> code + PRs. Most were already fixed and merged; the ephemeral program is **built-but-unmerged**, not
-> unstarted. What's genuinely left is small. Board now reads **36 Done / 9 In progress / 8 Todo**.
+> **Reconciled 2026-09-26** against develop, every merged PR since 2026-07-19 and every issue. The
+> retention train (F1, F2, E2, A1, snapshots, fingerprint lineage) merged on 2026-07-21 (#355); 21
+> capabilities that shipped as PRs without an issue now have Done cards with Shipped dates (stream
+> integrity, transport topology, message priority, perspective indexing, the release pipeline, and more).
+> Board: **195 Done / 2 In progress / 13 Todo.** The board is kept current as work happens (the
+> `whizbang-board` skill); this section is its narrative.
 
-### 🔄 In progress — implemented on `feature/ephemeral-core`, unmerged (the merge train)
-The whole retention program is built *with tests* on the 117-commit `feature/ephemeral-core` stack, in
-dependency order **F1 → F2 → E1 / fingerprint / snapshots → E2 → A1 → E3**. None is on `develop` yet
-(no open PRs), so it ships as one train — F1 first.
-- **F1 signal bus** — transport-agnostic `ISignalBus` + in-memory/Postgres transports + durable `wh_signals` log. Most merge-ready; the stack sits on top of it.
-- **E1 ephemeral events · E2 destruction/TTL · F2 temporal engine · reap-driven snapshots · A1 archival/compaction · E3 carry-forward · fingerprint lineage/reclassification.**
-- **XML-doc completion** — `Whizbang.Core` + `Generators` now enforce CS1591 (the bulk, regression-locked via build failure); other packages still suppressed.
+### In progress
+- **E1 ephemeral events**: `TransientStorage.InMemory` is documented but not yet enforced at runtime.
+- **E3 carry-forward tier 2**: `StreamCompactor` shipped; the reaper trigger (`Disposition.Compact`) and the
+  compacted-record upgrade runner remain.
 
-### ⛔ Genuinely open (the true remaining v1 work)
-- **Collective/perspective failure plumbing** — a failed apply still can't report Failed/backoff (`EventWorkId`/`FailureReason` triple-mismatch → 0-row UPDATE).
-- **Transport receive parity** — RabbitMQ silently drops on registry-miss; no `IMessageReceiveResolver` yet.
-- **GDPR crypto-shredding (G1)** — the one true greenfield item; only `Disposition.CryptoShred`/`Erasure` enum placeholders exist.
-- **`OnPerspectiveCompleted` hook** — a first-class perspective-completion API gap the sample exposes.
-- **Reconcile the GA-gate checklist** (still 0/11 though the infra exists) and **reconstruct the CHANGELOG** (omits ~13 shipped epics).
-- **Restore lease-renewal regression tests** — the bug is fixed, but its RED tests were dropped in a refactor; re-lock the invariant.
-
-### ✅ Verified already shipped (reconciliation moved these off the backlog to Done, each with a Shipped date)
-Perspective stream affinity · rewind completion gap · saga-completion race (closed by the affinity gate;
-the rank-aware perf *guard* re-land is a v2 item) · schema-qualified `process_work_batch` · nested
-type-name registration · guarded lease renewal · two-flow DLQ recovery · strongly-typed id providers ·
-composite-events docs · collective-events docs + open-set serialization · sagas cross-pod completion.
-All merged to `develop`.
+### Open
+- **P0: Transport receive parity.** RabbitMQ drops on a registry miss; no `IMessageReceiveResolver` yet.
+- **P1: Canonical temporal rewrite on a store's first 1.0 boot.** One unbounded transaction across every
+  table: a restart loses all progress, and a table past its 600-second timeout never converts. Needs
+  per-table, batched, resumable conversion with visible progress.
+- **P1: A failed collective apply records nothing against its rows.** The standard and drain paths were fixed
+  (#770, #771); the collective sink still reports an event id where the failure function matches work ids.
+- **P1: First-class `OnPerspectiveCompleted` hook.**
+- **P1: Idle-band settings have no effect.** `IdleBandOptions` is never registered, so its limits and
+  per-type opt-ins change nothing.
+- **P1: Reconcile the GA gate checklist** (`plans/archive/v0.1.0-release-plan.md`, 0 of 434 boxes) into the
+  real 1.0 exit criteria.
+- **P1: An abandoned release cut can leave develop publishing below NuGet** (#872).
+- **P2: GDPR crypto-shredding (G1)**, the one greenfield item.
+- **P2: XML docs for every package**, with `<docs>` and `<tests>` links so code, the docs site and the
+  tests point at each other (Core and Generators already enforce CS1591).
+- **P2:** stream-lease write-volume regression tests, the heartbeat watchdog's alive-lock source, and the
+  Dapper nested-class schema-hash collision.
 
 ### Non-blocking
-- **Reference-app (ECommerce)** — its Phase-12 E2E tests are green in CI; it's a dogfood sample, not the shipped library. Stays on the board marked non-blocking (Phase 13 docs + one parked InMemory test remain).
+- **Reference app (ECommerce)**: a dogfood sample, not the shipped library (Phase 13 docs remain).
 
 ---
 
 ## Post-1.0 (the v2 board — reconciled)
 
 > **Reconciled 2026-07-19:** 4 cards were already shipped (moved to Done), 3 were part-shipped (rescoped to their remaining half). Board now: **4 Done / 10 Todo.**
+>
+> **Reconciled 2026-09-26:** 6 cards added (MC/DC coverage, read/write connection separation, system-table
+> index candidates, a generated DI manifest, priority steps 5-7, database-load follow-ups); the rank-aware claim
+> guard archived as superseded; the throughput card narrowed to slices 2 and 5. Board now: **4 Done / 15 Todo.**
 
 - **Open — performance:** throughput slices 2/5/6 (slice 4 is telemetry-blocked by design); rank-aware claim-work guard (re-attempt after the saga fix); perspective priority tiers; collective↔standard shared advisory lock (§5b, intentional deferral).
 - **Open — infra / tooling:** `RoundRobinPartitionRouter`; `Whizbang.Debugging` LSP keepalive host (only a pause-state scaffold exists); message-registry typed-model refactor; worker-level receptor chaos scenarios (primitives exist, worker wiring doesn't).
