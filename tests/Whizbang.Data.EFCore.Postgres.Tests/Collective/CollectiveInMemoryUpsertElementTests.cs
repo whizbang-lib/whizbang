@@ -113,4 +113,20 @@ public class CollectiveInMemoryUpsertElementTests {
       .Throws<NotSupportedException>();
     await Assert.That(model.Fixed[0].Value).IsEqualTo("v1");
   }
+
+  [Test]
+  [Arguments("k1", "k2", "k1=a,k2=b")]
+  [Arguments("k1", "k3", "k1=a,k2=v2,k3=b")]
+  [Arguments("k3", "k4", "k1=v1,k2=v2,k3=a,k4=b")]
+  [Arguments("k1", "k1", "k1=b,k2=v2")]
+  public async Task Upsert_TwoOnOneList_BothApply_InCallOrderAsync(string first, string second, string expected) {
+    var model = _twoCells();
+    var a = new Cell { Key = first, Value = "a" };
+    var b = new Cell { Key = second, Value = "b" };
+
+    CollectiveInMemoryEvaluator<Model>.Apply(new Spec(s => s.UpsertElement(m => m.Cells, c => c.Key, a).UpsertElement(m => m.Cells, c => c.Key, b)), model);
+
+    await Assert.That(_render(model.Cells)).IsEquivalentTo(expected.Split(','), TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("replay must agree with the SQL path, where the second upsert sees the first's result");
+  }
 }

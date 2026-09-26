@@ -21,12 +21,25 @@ public class CollectiveElementUpsertSqlTests {
   public async Task ValueSql_ReplacesByKeyInOrder_AppendsOtherwise_AndTreatsANonArrayAsEmptyAsync() {
     var sql = CollectiveElementUpsertSql.ValueSql("Cells", "FieldId", "@p0::jsonb");
 
-    await Assert.That(sql).Contains("jsonb_typeof(data->'Cells') = 'array'");
+    await Assert.That(sql).Contains("jsonb_typeof(wh_s.a) = 'array'");
     await Assert.That(sql).Contains("wh_e.v->'FieldId' = (@p0::jsonb)->'FieldId'");
     await Assert.That(sql).Contains("WITH ORDINALITY AS wh_e(v, i)");
     await Assert.That(sql).Contains("ORDER BY wh_e.i");
-    await Assert.That(sql).Contains("data->'Cells' || jsonb_build_array(@p0::jsonb)");
-    await Assert.That(sql).EndsWith("ELSE jsonb_build_array(@p0::jsonb) END");
+    await Assert.That(sql).Contains("wh_s.a || jsonb_build_array(@p0::jsonb)");
+    await Assert.That(sql).Contains("ELSE jsonb_build_array(@p0::jsonb) END");
+    await Assert.That(sql).EndsWith("FROM (SELECT (data->'Cells') AS a) AS wh_s)")
+      .Because("with no earlier setter on the property, the upsert reads the row's stored array, once");
+  }
+
+  [Test]
+  public async Task ValueSql_FromAnEarlierValue_ReadsItOnce_InsteadOfTheStoredArrayAsync() {
+    var first = CollectiveElementUpsertSql.ValueSql("Cells", "FieldId", "@p0::jsonb");
+
+    var second = CollectiveElementUpsertSql.ValueSql("Cells", "FieldId", "@p1::jsonb", source: first);
+
+    await Assert.That(second).EndsWith($"FROM (SELECT ({first}) AS a) AS wh_s)");
+    await Assert.That(second.Split(first).Length - 1).IsEqualTo(1)
+      .Because("the earlier value is read once, so a chain of upserts grows linearly, not by repeating it");
   }
 
   [Test]

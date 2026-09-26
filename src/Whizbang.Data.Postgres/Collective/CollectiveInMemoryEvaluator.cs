@@ -104,7 +104,7 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
     }
 
     // Replace the element with the same key where it stands, or append it — the SQL path's semantics. The new
-    // list is built now from the pre-apply state and written at Flush, like every other setter here. A null
+    // list is built now and written at Flush, like every other setter here. A null
     // list is created; a list that is not writable in place is replaced with a writable copy.
     public ICollectiveSetters<TModel> UpsertElement<TElement, TKey>(
         Expression<Func<TModel, IEnumerable<TElement>?>> collection,
@@ -117,7 +117,12 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
       }
       var keyOf = key.Compile();
       var target = keyOf(element);
-      var list = new List<TElement>(collection.Compile().Invoke(original) ?? []);
+      // Start from this spec's own earlier write to the property, if any, so upserts on one list compose in
+      // call order as they do in SQL; otherwise from the pre-apply state.
+      var pending = _writes.FindLastIndex(w => w.Property == property);
+      var list = new List<TElement>(pending >= 0
+        ? (IEnumerable<TElement>?)_writes[pending].Value ?? []
+        : collection.Compile().Invoke(original) ?? []);
       var index = list.FindIndex(e => EqualityComparer<TKey>.Default.Equals(keyOf(e), target));
       if (index >= 0) {
         list[index] = element;

@@ -25,20 +25,30 @@ public static class CollectiveElementUpsertSql {
   /// <param name="arrayProperty">The model's array property, as stored in <c>data</c>.</param>
   /// <param name="keyProperty">The element property that identifies an element.</param>
   /// <param name="element">SQL for the new element as jsonb, e.g. <c>@p0::jsonb</c>.</param>
+  /// <param name="source">
+  /// The array to upsert into: the value an earlier setter in the same spec assigned to the property, so
+  /// setters on one property compose in call order. Null (the default) reads the row's stored array.
+  /// </param>
   /// <returns>A jsonb expression over the row's <c>data</c>.</returns>
-  public static string ValueSql(string arrayProperty, string keyProperty, string element) {
+  /// <remarks>
+  /// The source is read once, through a one-row derived table, so an expression built on another one
+  /// grows linearly rather than repeating it at every use.
+  /// </remarks>
+  public static string ValueSql(string arrayProperty, string keyProperty, string element, string? source = null) {
     _ensureIdentifier(arrayProperty, nameof(arrayProperty));
     _ensureIdentifier(keyProperty, nameof(keyProperty));
     ArgumentException.ThrowIfNullOrWhiteSpace(element);
 
-    var array = $"data->'{arrayProperty}'";
+    var from = source ?? $"data->'{arrayProperty}'";
+    const string ARRAY = "wh_s.a";
     var matches = $"wh_e.v->'{keyProperty}' = ({element})->'{keyProperty}'";
-    return $"CASE WHEN jsonb_typeof({array}) = 'array' THEN "
-      + $"CASE WHEN EXISTS (SELECT 1 FROM jsonb_array_elements({array}) AS wh_e(v) WHERE {matches}) "
+    return $"(SELECT CASE WHEN jsonb_typeof({ARRAY}) = 'array' THEN "
+      + $"CASE WHEN EXISTS (SELECT 1 FROM jsonb_array_elements({ARRAY}) AS wh_e(v) WHERE {matches}) "
       + $"THEN (SELECT jsonb_agg(CASE WHEN {matches} THEN {element} ELSE wh_e.v END ORDER BY wh_e.i) "
-      + $"FROM jsonb_array_elements({array}) WITH ORDINALITY AS wh_e(v, i)) "
-      + $"ELSE {array} || jsonb_build_array({element}) END "
-      + $"ELSE jsonb_build_array({element}) END";
+      + $"FROM jsonb_array_elements({ARRAY}) WITH ORDINALITY AS wh_e(v, i)) "
+      + $"ELSE {ARRAY} || jsonb_build_array({element}) END "
+      + $"ELSE jsonb_build_array({element}) END "
+      + $"FROM (SELECT ({from}) AS a) AS wh_s)";
   }
 
   // The names come from the model's own C# members, never from input, but they are embedded in SQL,

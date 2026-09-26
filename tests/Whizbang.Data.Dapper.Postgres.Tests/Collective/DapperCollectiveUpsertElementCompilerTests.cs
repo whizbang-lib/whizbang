@@ -36,7 +36,8 @@ public class DapperCollectiveUpsertElementCompilerTests {
     var compiled = DapperCollectiveSpecCompiler<Model>.Compile(
       new Spec(s => s.UpsertElement(m => m.Cells, c => c.Key, cell)), _jsonOptions);
 
-    await Assert.That(compiled.SqlFragment).StartsWith("data = jsonb_set(data, '{Cells}', CASE WHEN jsonb_typeof(data->'Cells') = 'array'");
+    await Assert.That(compiled.SqlFragment).StartsWith("data = jsonb_set(data, '{Cells}', (SELECT CASE WHEN jsonb_typeof(wh_s.a) = 'array'");
+    await Assert.That(compiled.SqlFragment).Contains("FROM (SELECT (data->'Cells') AS a) AS wh_s)");
     var param = compiled.Parameters.Single();
     await Assert.That(compiled.SqlFragment).Contains($"@{param.Key}::jsonb");
     await Assert.That(param.Value).IsEqualTo("""{"Key":"k1","Value":"v1"}""");
