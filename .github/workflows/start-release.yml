@@ -181,7 +181,7 @@ jobs:
           # Gitflow keeps a single release branch open: its prereleases, fixes and final merge all
           # happen there. A second cut would race the first for the same main.
           OPEN_PR=$(gh pr list --repo "$REPO" --base main --state open --json number,headRefName \
-            --jq '[.[] | select(.headRefName | startswith("release/v"))][0] | "#\(.number) \(.headRefName)" // ""')
+            --jq '[.[] | select(.headRefName | startswith("release/v"))][0] // empty | "#\(.number) \(.headRefName)"')
           if [ -n "$OPEN_PR" ]; then
             echo "::error::Release PR $OPEN_PR is still open. Merge it (ship) or close it (abandon) before cutting another."
             exit 1
