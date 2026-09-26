@@ -303,7 +303,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
 
   private sealed class CheckpointCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public IntegrityCheckpointWindow? Window { get; init; }
-    public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
     public List<string> OwnAuditedEventTypes { get; init; } = [];
 
     public Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
@@ -324,7 +324,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
     public TaskCompletionSource FirstCall { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
-      Task.FromResult(TrackedGuid.NewMedo().Value);
+      Task.FromResult(TrackedGuid.New().Value);
 
     public Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult<IReadOnlyList<string>>([]);
@@ -351,7 +351,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
     public int ProcessId => 1;

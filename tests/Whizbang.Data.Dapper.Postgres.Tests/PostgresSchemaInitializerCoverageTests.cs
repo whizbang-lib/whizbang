@@ -200,6 +200,46 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// A physical column added to a perspective that already has rows is filled from each row's document, so a
+  /// query or index that reads the column sees the value rather than NULL. The backfill statements are the
+  /// ones the schema generator emits after the table; the column-copy swap runs them against the new table.
+  /// </summary>
+  [Test]
+  public async Task InitializeSchemaAsync_ColumnCopyAddingPhysicalColumns_BackfillsExistingRowsAsync() {
+    await new PostgresSchemaInitializer(_testConnectionString, [
+      new KeyValuePair<string, string>("CovBackfillPerspective",
+        "CREATE TABLE IF NOT EXISTS wh_per_covbackfill (id UUID PRIMARY KEY, data JSONB NOT NULL);")
+    ]).InitializeSchemaAsync();
+    await using (var seed = new NpgsqlConnection(_testConnectionString)) {
+      await seed.ExecuteAsync("""
+        INSERT INTO wh_per_covbackfill (id, data) VALUES
+          ('00000000-0000-0000-0000-000000000001', '{"Sku":"a-1","Amount":12.5,"PlacedAt":1772600767000000}'),
+          ('00000000-0000-0000-0000-000000000002', '{"Sku":null,"Amount":3}')
+        """);
+    }
+
+    await new PostgresSchemaInitializer(_testConnectionString, [
+      new KeyValuePair<string, string>("CovBackfillPerspective", """
+        CREATE TABLE IF NOT EXISTS wh_per_covbackfill (id UUID PRIMARY KEY, data JSONB NOT NULL, sku TEXT, amount DECIMAL, placed_at TIMESTAMPTZ);
+        UPDATE wh_per_covbackfill SET sku = (data ->> 'Sku') WHERE sku IS NULL AND jsonb_typeof(data -> 'Sku') <> 'null';
+        UPDATE wh_per_covbackfill SET amount = (data ->> 'Amount')::numeric WHERE amount IS NULL AND jsonb_typeof(data -> 'Amount') <> 'null';
+        UPDATE wh_per_covbackfill SET placed_at = (TIMESTAMPTZ 'epoch' + (data ->> 'PlacedAt')::bigint * INTERVAL '1 microsecond') WHERE placed_at IS NULL AND jsonb_typeof(data -> 'PlacedAt') <> 'null';
+        """)
+    ]).InitializeSchemaAsync();
+
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    var rows = (await connection.QueryAsync<(Guid Id, string? Sku, decimal? Amount, DateTimeOffset? PlacedAt)>(
+      "SELECT id, sku, amount, placed_at FROM wh_per_covbackfill ORDER BY id")).ToList();
+    await Assert.That(rows[0].Sku).IsEqualTo("a-1");
+    await Assert.That(rows[0].Amount).IsEqualTo(12.5m);
+    await Assert.That(rows[0].PlacedAt).IsEqualTo(new DateTimeOffset(2026, 3, 4, 5, 6, 7, TimeSpan.Zero))
+      .Because("the document holds microseconds since the epoch, rebuilt exactly into the instant");
+    await Assert.That(rows[1].Sku).IsNull().Because("a null in the document stays null in the column");
+    await Assert.That(rows[1].Amount).IsEqualTo(3m);
+    await Assert.That(rows[1].PlacedAt).IsNull().Because("an absent property leaves the column null");
+  }
+
+  /// <summary>
   /// A pure additive change with no trailing DDL must still complete the swap without error — the
   /// post-table-DDL branch has to tolerate "nothing to run" exactly as cleanly as "something to run".
   /// </summary>
@@ -268,19 +308,25 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
 
   // --- Lines confirmed unreachable through any live call path (see test-class remarks / report) ---
   //
-  // PostgresSchemaInitializer.cs:136  (RollbackAsync bakIdx<0 "return false")
-  // PostgresSchemaInitializer.cs:315  (CleanupBackupsAsync bakIdx<0 "continue")
-  // PostgresSchemaInitializer.cs:746  (_splitDdl "no CREATE TABLE match" fallback)
+  // PostgresSchemaInitializer.cs  (CleanupBackupsAsync bakIdx<0 "continue")
   //
   // Both backup-table queries filter with `table_name LIKE '%\_bak\_%' ESCAPE '\'`, which guarantees any
   // row returned already contains the literal substring "_bak_" — so the C# LastIndexOf("_bak_") guard
-  // that follows can never see -1. And _splitDdl is reached only from the ColumnCopy branch of
-  // _executeSinglePerspectiveMigrationAsync, which is only selected when _parseColumnsFromDdl(entry.Value)
-  // already matched its "CREATE TABLE ... );" regex on that exact same string — the regex _splitDdl itself
-  // uses (byte-for-byte the same match structure, differing only in which group is captured). A DDL that
-  // fails one necessarily fails the other, so ColumnCopy is never selected for a DDL _splitDdl cannot
-  // parse. All three are defensive dead code under the current call graph; no test in this file forces
-  // them, per the instruction to report rather than fabricate an unreachable path.
+  // that follows can never see -1. RollbackAsync's copy of that guard, and _splitDdl's "no CREATE TABLE
+  // match" fallback, have since been folded into the statement that follows each of them: the protection
+  // is unchanged and neither owns a line the call graph cannot reach. (_splitDdl is reached only from the
+  // ColumnCopy branch of _executeSinglePerspectiveMigrationAsync, which _parseColumnsFromDdl only selects
+  // after matching the same "CREATE TABLE ... );" structure on the same string.) CleanupBackupsAsync's
+  // `continue` is still its own line and still unreachable, and is reported rather than forced.
+  //
+  // Separately: each of the two catch clauses in this file that awaits and then rethrows -- in
+  // _executeMigrationsWithHashDetectionAsync and in _executeSinglePerspectiveMigrationAsync -- has its
+  // CLOSING BRACE reported as an uncovered line, and no test can reach it. Awaiting inside a catch makes
+  // Roslyn hoist the handler body out of the IL catch region and turn the bare rethrow into a capture-
+  // and-throw through ExceptionDispatchInfo, which never returns; the sequence point for that closing
+  // brace lands on the state-machine field cleanup emitted after it. Both rethrows ARE exercised (the
+  // status -1 tests here and in PostgresSchemaInitializerBranchTests). The line attributed to them is
+  // compiler-emitted, not source anyone can run.
 
   // --- Redefinition closure: the ledger says why an unchanged file ran again ---
 

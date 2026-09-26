@@ -28,10 +28,10 @@ namespace Whizbang.Testing.Tests.MultiService;
 public class CapturingWorkCoordinatorTests {
 
   private static InboxMessage _message() {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     return new InboxMessage {
       MessageId = msgId,
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       HandlerName = "TestHandler",
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
@@ -215,7 +215,7 @@ public class CapturingWorkCoordinatorTests {
     // what stops a worker under test from looping on phantom work.
     var coordinator = new CapturingWorkCoordinator();
 
-    var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest((Guid)TrackedGuid.NewMedo(), "svc", "host", ProcessId: 1));
+    var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest((Guid)TrackedGuid.New(), "svc", "host", ProcessId: 1));
 
     await Assert.That(batch.OutboxWork).IsEmpty();
     await Assert.That(batch.InboxWork).IsEmpty();
@@ -231,22 +231,22 @@ public class CapturingWorkCoordinatorTests {
 
     await coordinator.StoreOutboxMessagesAsync([], partitionCount: 2);
     await coordinator.ReportPerspectiveCompletionAsync(new PerspectiveCursorCompletion {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PerspectiveName = "AnyPerspective",
-      LastEventId = (Guid)TrackedGuid.NewMedo(),
+      LastEventId = (Guid)TrackedGuid.New(),
       Status = PerspectiveProcessingStatus.Completed,
     });
     await coordinator.ReportPerspectiveFailureAsync(new PerspectiveCursorFailure {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PerspectiveName = "AnyPerspective",
-      LastEventId = (Guid)TrackedGuid.NewMedo(),
+      LastEventId = (Guid)TrackedGuid.New(),
       Status = PerspectiveProcessingStatus.Failed,
       Error = "inert",
     });
-    await coordinator.DeregisterInstanceAsync((Guid)TrackedGuid.NewMedo());
+    await coordinator.DeregisterInstanceAsync((Guid)TrackedGuid.New());
     var stats = await coordinator.GatherStatisticsAsync();
     var cursor = await coordinator.GetPerspectiveCursorAsync(
-      (Guid)TrackedGuid.NewMedo(), "AnyPerspective");
+      (Guid)TrackedGuid.New(), "AnyPerspective");
 
     await Assert.That(stats).IsNotNull();
     await Assert.That(cursor).IsNull();

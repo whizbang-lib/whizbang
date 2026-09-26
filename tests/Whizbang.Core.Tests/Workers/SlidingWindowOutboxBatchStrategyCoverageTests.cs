@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
@@ -12,12 +13,9 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// Round-23 coverage for <see cref="SlidingWindowOutboxBatchStrategy"/>'s flush-observes-shutdown
-/// path. See the class remarks on <c>_drainBufferAsync</c> for the five line shapes already
-/// declined for this family (empty-batch continue, the outer shutdown catch, the disposed-guard
-/// timing gap, the two-sweeps TryRemove race, and the catch-all around the evicted worker) —
-/// this file does not re-attempt those; it covers the one remaining target line that IS
-/// deterministically drivable.
+/// Coverage for <see cref="SlidingWindowOutboxBatchStrategy"/>'s shutdown and eviction paths:
+/// the flush that observes the forced stop, the idle sweep that lands after shutdown, the drain
+/// loop's outer catch, and the sweep's tolerance of a worker that died.
 /// </summary>
 public class SlidingWindowOutboxBatchStrategyCoverageTests {
   private readonly Uuid7IdProvider _idProvider = new();
@@ -125,5 +123,89 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
         Hops = [],
       },
     };
+  }
+
+  // ============================================================
+  // The drain loop's outer catch, and the sweep's tolerance of a dead worker
+  // ============================================================
+
+  // Both tests below work by making the LOGGING SINK throw. The error path a drain worker takes
+  // when a flush fails is not itself infallible: a sink bound to the host's shutdown token throws
+  // OperationCanceledException as the host stops, and a sink whose provider has already been torn
+  // down throws something else. Those are the only exceptions that escape the flush-failure
+  // handler, and so the only way anything reaches the loop's outer catch at all.
+
+  // A cancellation that escapes the flush-failure handler must end the drain quietly. If it
+  // escaped the loop as well, the worker task would fault, and FlushAndStopAsync folds a faulted
+  // worker into the same catch it uses for a caller-canceled shutdown — so the fault would be
+  // swallowed there too and surface only as an unobserved exception, long after the shutdown that
+  // caused it and with nothing tying it back.
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainWorker_CancellationEscapingTheFlushFailureHandler_EndsTheLoopQuietlyAsync(
+      CancellationToken cancellationToken) {
+    var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => Task.FromException(new InvalidOperationException("store unavailable")),
+      logger: new ThrowingSink(() => new OperationCanceledException("log sink shutting down")),
+      options: _oneMessagePerBatch(),
+      timeProvider: new FakeTimeProvider());
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+
+    await Assert.That(async () => await sut.WhenWorkersStoppedForTests()).ThrowsNothing()
+      .Because("the drain loop absorbs a cancellation rather than faulting; a faulted worker here "
+             + "is an unobserved exception that nothing in this type ever reports");
+  }
+
+  // The idle sweep is the only thing that bounds this type's memory. It awaits each evicted
+  // stream's worker to let in-flight work finish, and a worker that died is exactly what it will
+  // meet after a storm of flush failures — if that killed the sweep, every stream after the dead
+  // one would stay mapped forever and the leak the sweep exists to prevent comes back.
+  [Test]
+  [Timeout(30000)]
+  public async Task IdleSweep_WorkersDied_StillEvictsEveryIdleStreamAsync(
+      CancellationToken cancellationToken) {
+    var clock = new FakeTimeProvider();
+    var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => Task.FromException(new InvalidOperationException("store unavailable")),
+      logger: new ThrowingSink(() => new InvalidOperationException("log provider disposed")),
+      options: _oneMessagePerBatch(),
+      timeProvider: clock);
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+
+    // Deterministic wait: both workers have run to their end by the time this completes.
+    await Assert.That(async () => await sut.WhenWorkersStoppedForTests())
+      .Throws<InvalidOperationException>()
+      .Because("this arranges the precondition the sweep has to survive — a worker whose own error "
+             + "path threw, so its task is faulted rather than finished");
+
+    clock.Advance(TimeSpan.FromMinutes(10));
+    await sut.RunIdleSweepNowForTestAsync();
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0)
+      .Because("the sweep has to keep going past a dead worker; stopping at the first one would "
+             + "leave every later stream mapped for the life of the process");
+  }
+
+  private static SlidingWindowOutboxOptions _oneMessagePerBatch() => new() {
+    // One message per batch: the batcher yields on the size bound without ever consulting the
+    // clock, so the flush below runs with no wall-clock wait and no fake-timer choreography.
+    MaxSize = 1,
+    SlidingWindow = TimeSpan.FromMilliseconds(50),
+    MaxWait = TimeSpan.FromSeconds(1),
+    IdleSweepInterval = TimeSpan.FromMinutes(5),
+    IdleEvictionWindow = TimeSpan.FromSeconds(30),
+  };
+
+  /// <summary>A logging sink that throws whatever it is told to throw.</summary>
+  private sealed class ThrowingSink(Func<Exception> failure) : ILogger<SlidingWindowOutboxBatchStrategy> {
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter)
+      => throw failure();
   }
 }

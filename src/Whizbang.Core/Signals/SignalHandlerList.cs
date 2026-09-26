@@ -20,7 +20,13 @@ internal sealed class SignalHandlerList<TSignal> where TSignal : ISignal {
     return new Subscription(this, handler);
   }
 
-  private void _remove(Func<TSignal, ValueTask> handler) {
+  /// <summary>
+  /// Removes a handler if it is present. Internal rather than private so the not-present answer
+  /// can be asserted: a subscription hands back exactly the handler it registered and disposes at
+  /// most once, so no production caller can ask for a handler this list does not hold — and the
+  /// guard is what keeps such a call from building a shorter array around an index of -1.
+  /// </summary>
+  internal void Remove(Func<TSignal, ValueTask> handler) {
     lock (_gate) {
       var index = Array.IndexOf(_handlers, handler);
       if (index < 0) {
@@ -49,7 +55,7 @@ internal sealed class SignalHandlerList<TSignal> where TSignal : ISignal {
     public void Dispose() {
       var h = Interlocked.Exchange(ref _handler, null);
       if (h is not null) {
-        _owner._remove(h);
+        _owner.Remove(h);
       }
     }
   }

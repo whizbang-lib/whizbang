@@ -131,7 +131,7 @@ public partial class InboxDrainWorkerCoverageTests {
 
   private static readonly JsonSerializerOptions _jsonOpts = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
-  private static InboxBatchRow _row(Guid messageId, Guid streamId, int attempts = 0) {
+  private static InboxBatchRow _row(Guid messageId, Guid streamId, int attempts = 0, string? error = null) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -153,6 +153,7 @@ public partial class InboxDrainWorkerCoverageTests {
       Attempts = attempts,
       PartitionNumber = 0,
       IsEvent = false,
+      Error = error,
     };
   }
 
@@ -164,10 +165,10 @@ public partial class InboxDrainWorkerCoverageTests {
     // every remaining quantized-cap group's fetch against a coordinator/DB connection the host is
     // already tearing down -- extra queries that show up as spurious errors on every clean stop,
     // multiplying by however many groups the plan happened to produce that cycle.
-    var deep = (Guid)TrackedGuid.NewMedo();
-    var shallow = (Guid)TrackedGuid.NewMedo();
-    var deepMsg = (Guid)TrackedGuid.NewMedo();
-    var shallowMsg = (Guid)TrackedGuid.NewMedo();
+    var deep = (Guid)TrackedGuid.New();
+    var shallow = (Guid)TrackedGuid.New();
+    var deepMsg = (Guid)TrackedGuid.New();
+    var shallowMsg = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedWorkCoordinator();
     using var cts = new CancellationTokenSource();
@@ -216,17 +217,64 @@ public partial class InboxDrainWorkerCoverageTests {
   }
 
   [Test]
-  public async Task DrainStreamBatch_OnePoisonRowInTheFirstPassFetch_IsDeferredButItsSiblingStillDispatchesAsync() {
-    // The first-pass batched dispatch is a second place the poison-admission gate must be
-    // checked (the loop-until-empty inner path is the other). If this check were ever skipped
-    // here, a row already past its attempt ceiling would re-enter the working set through the
-    // one path that forgot to gate it, undoing the retirement the ceiling exists to enforce.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var poisonMsg = (Guid)TrackedGuid.NewMedo();
-    var goodMsg = (Guid)TrackedGuid.NewMedo();
+  public async Task DrainStreamBatch_ARowPastItsAttemptCeiling_IsHandedToTheDispatcherToRetireAsync() {
+    // The dispatcher is the only place a row past its attempt ceiling is dead-lettered. Deferring it
+    // here does not retire it: it stays leased and unprocessed, lapses, is re-claimed with one more
+    // attempt, and is deferred again -- a row re-leased for ever and never dead-lettered. It goes on,
+    // in stream order, ahead of its sibling.
+    var streamId = (Guid)TrackedGuid.New();
+    var poisonMsg = (Guid)TrackedGuid.New();
+    var goodMsg = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedWorkCoordinator();
-    coord.Enqueue(_ => [_row(poisonMsg, streamId, attempts: 11), _row(goodMsg, streamId, attempts: 0)]);
+    coord.Enqueue(_ => [_row(poisonMsg, streamId, attempts: 11, error: "boom"), _row(goodMsg, streamId, attempts: 0)]);
+
+    var drain = new FakeInboxDrainChannel();
+    var inbox = new CapturingInboxChannel { TargetCount = 2 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drain, inbox, gate,
+      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<InboxDrainWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(inbox.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(inbox.Written.ConvertAll(w => w.MessageId)).IsEquivalentTo([poisonMsg, goodMsg])
+      .Because("the row past its ceiling must reach the dispatcher, which dead-letters it; the drain deferring it "
+             + "is what left such rows leased, re-claimed and never retired");
+    await Assert.That(inbox.Written[0].MessageId).IsEqualTo(poisonMsg).Because("stream order is preserved");
+  }
+
+  [Test]
+  public async Task DrainStreamBatch_OneRetriedRowInASaturatedFirstPassFetch_IsDeferredButItsSiblingStillDispatchesAsync() {
+    // The first-pass batched dispatch is a second place the poison-admission gate must be
+    // checked (the loop-until-empty inner path is the other). If this check were ever skipped
+    // here, retried rows with recorded failures would monopolise the working set through the one
+    // path that forgot to gate them. Two of three rows are retried: a share past the 0.5 default.
+    var streamId = (Guid)TrackedGuid.New();
+    var retriedA = (Guid)TrackedGuid.New();
+    var retriedB = (Guid)TrackedGuid.New();
+    var goodMsg = (Guid)TrackedGuid.New();
+
+    var coord = new ScriptedWorkCoordinator();
+    coord.Enqueue(_ => [
+      _row(retriedA, streamId, attempts: 5, error: "boom"),
+      _row(retriedB, streamId, attempts: 5, error: "boom"),
+      _row(goodMsg, streamId, attempts: 0)]);
 
     var drain = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 1 };
@@ -253,7 +301,7 @@ public partial class InboxDrainWorkerCoverageTests {
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(inbox.Written.Count).IsEqualTo(1)
-      .Because("only the fresh row may enter the working set on the first pass; the row past its attempt ceiling must be deferred, not dropped or double-admitted");
+      .Because("only the fresh row may enter the working set on the first pass; the retried rows dominating the fetch must be deferred, not dropped or double-admitted");
     await Assert.That(inbox.Written.Single().MessageId).IsEqualTo(goodMsg);
   }
 
@@ -265,17 +313,21 @@ public partial class InboxDrainWorkerCoverageTests {
     // stream is drained; if the early exit regressed, every drain would pay for one extra
     // confirmation fetch that (per the slice-32 measurement this guards) almost always returns
     // nothing -- doubling round-trips for no gain.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var firstPassMsgs = Enumerable.Range(0, 3).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
-    var poisonMsg = (Guid)TrackedGuid.NewMedo();
-    var secondPassGoodMsg = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var firstPassMsgs = Enumerable.Range(0, 3).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var poisonMsg = (Guid)TrackedGuid.New();
+    var secondPassGoodMsg = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedWorkCoordinator();
     // First pass (the batched, multi-stream fetch): exactly saturates the floor cap, so the
     // batch dispatcher hands this stream to the loop-until-empty inner path.
     coord.Enqueue(_ => [.. firstPassMsgs.Select(m => _row(m, streamId))]);
-    // Second pass (the inner loop's own fetch): fewer rows than the cap, one of them poisoned.
-    coord.Enqueue(_ => [_row(poisonMsg, streamId, attempts: 11), _row(secondPassGoodMsg, streamId)]);
+    // Second pass (the inner loop's own fetch): fewer rows than the cap, both retried with recorded
+    // failures. The gate defers the set and forces through only the least-retried row, so the other
+    // one (the "poisoned" row here) must not appear.
+    coord.Enqueue(_ => [
+      _row(poisonMsg, streamId, attempts: 6, error: "boom"),
+      _row(secondPassGoodMsg, streamId, attempts: 5, error: "boom")]);
 
     var drain = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 4 };
@@ -322,9 +374,9 @@ public partial class InboxDrainWorkerCoverageTests {
     // between fetches -- it does not abandon a page mid-write. If that check were ever removed,
     // a canceled drain would keep fetching and writing indefinitely instead of stopping at the
     // next natural boundary, ignoring host shutdown entirely.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var firstPassMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
-    var secondPassMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var firstPassMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var secondPassMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ScriptedWorkCoordinator();
     using var cts = new CancellationTokenSource();
@@ -398,9 +450,9 @@ public partial class InboxDrainWorkerCoverageTests {
     // another query against a connection the host is tearing down. A regression in either
     // direction is silent — dropping the tail of the page loses work that the SQL fetch already
     // consumed, and missing the condition keeps pulling pages through shutdown.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var firstPageMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
-    var secondPageMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var firstPageMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var secondPageMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ScriptedWorkCoordinator();
     // Both pages exactly saturate the cap, so neither can take the partial-page early exit.

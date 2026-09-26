@@ -68,6 +68,28 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   }
 
+  /// <summary>
+  /// Creates a processor with the diagnostic logger supplied directly.
+  /// </summary>
+  /// <remarks>
+  /// The lazy <c>Logger</c> resolves through the scope factory, so a processor built without one
+  /// logs to a no-op sink. That makes two of the diagnostics unobservable through the public
+  /// constructors — the "no hook resolver or scope factory" line and the "using direct hook
+  /// resolver" line both require <c>scopeFactory</c> to be null. Those two lines are the only
+  /// explanation an operator gets for tag hooks that silently never ran, which is exactly the
+  /// question this logging exists to answer, so the seam is here rather than the lines untested.
+  /// </remarks>
+  internal MessageTagProcessor(
+      TagOptions options,
+      ILogger logger,
+      Func<Type, object?>? hookResolver,
+      IServiceScopeFactory? scopeFactory) {
+    _options = options ?? throw new ArgumentNullException(nameof(options));
+    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _hookResolver = hookResolver;
+    _scopeFactory = scopeFactory;
+  }
+
   /// <inheritdoc />
   public async ValueTask ProcessTagsAsync(
       object message,
@@ -162,7 +184,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       return true;
     }
 
-    var size = payload.GetRawText().Length;
+    var size = PayloadByteLength(payload);
 
     if (errorThreshold is int err && size > err) {
       throw new InvalidOperationException(
@@ -184,6 +206,21 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
 
     return true;
   }
+
+  /// <summary>
+  /// The payload's size in UTF-8 bytes — the unit the thresholds are declared, logged and compared in.
+  /// </summary>
+  /// <remarks>
+  /// Read from the element's own UTF-8 buffer, so measuring allocates nothing. The guard this serves
+  /// exists to catch an oversized payload, and it must not cost in proportion to the thing it guards
+  /// against: materializing the payload as a string to read its length allocated the whole payload
+  /// again on every check, per tag, and counted UTF-16 characters rather than bytes.
+  /// </remarks>
+  /// <docs>fundamentals/messages/message-tags#payload-size-thresholds</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:PayloadByteLength_CountsUtf8Bytes_NotCharactersAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:PayloadByteLength_DoesNotAllocateInProportionToThePayloadAsync</tests>
+  internal static int PayloadByteLength(JsonElement payload) =>
+    System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(payload).Length;
 
   /// <summary>
   /// Processes a single tag registration by creating context and invoking matching hooks.

@@ -1,0 +1,33 @@
+# Every package a full publish ships, one id per line. Single source of truth for the
+# verify-packages action: a publish must contain exactly these, at exactly one version.
+# Add a line when a project becomes packable; remove one when it stops.
+SoftwareExtravaganza.Whizbang.CLI
+SoftwareExtravaganza.Whizbang.Core
+SoftwareExtravaganza.Whizbang.Data.Dapper.Custom
+SoftwareExtravaganza.Whizbang.Data.Dapper.Postgres
+SoftwareExtravaganza.Whizbang.Data.Dapper.Sqlite
+SoftwareExtravaganza.Whizbang.Data.EFCore.Custom
+SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres
+SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators
+SoftwareExtravaganza.Whizbang.Data.Postgres
+SoftwareExtravaganza.Whizbang.Data.Schema
+SoftwareExtravaganza.Whizbang.Generators
+SoftwareExtravaganza.Whizbang.Hosting.AspNet
+SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus
+SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ
+SoftwareExtravaganza.Whizbang.LanguageServer
+SoftwareExtravaganza.Whizbang.Migrate
+SoftwareExtravaganza.Whizbang.Observability
+SoftwareExtravaganza.Whizbang.Offloads.AzureBlob
+SoftwareExtravaganza.Whizbang.Offloads.InMemory
+SoftwareExtravaganza.Whizbang.Sagas
+SoftwareExtravaganza.Whizbang.Sagas.Contracts
+SoftwareExtravaganza.Whizbang.Sagas.Generators
+SoftwareExtravaganza.Whizbang.SignalR
+SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus
+SoftwareExtravaganza.Whizbang.Transports.FastEndpoints
+SoftwareExtravaganza.Whizbang.Transports.FastEndpoints.Generators
+SoftwareExtravaganza.Whizbang.Transports.HotChocolate
+SoftwareExtravaganza.Whizbang.Transports.HotChocolate.Generators
+SoftwareExtravaganza.Whizbang.Transports.Mutations
+SoftwareExtravaganza.Whizbang.Transports.RabbitMQ

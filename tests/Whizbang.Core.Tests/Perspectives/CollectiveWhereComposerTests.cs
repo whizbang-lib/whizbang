@@ -28,7 +28,7 @@ public class CollectiveWhereComposerTests {
   }
 
   private static PerspectiveRow<Job> _row(string status, string? tenant) => new() {
-    Id = TrackedGuid.NewMedo().Value,
+    Id = TrackedGuid.New().Value,
     Data = new Job { Status = status },
     Metadata = new PerspectiveMetadata(),
     Scope = new PerspectiveScope { TenantId = tenant },

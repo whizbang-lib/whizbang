@@ -78,6 +78,13 @@ public sealed record MessageTypeCatalogEntry(
   /// </summary>
   /// <docs>fundamentals/events/carry-forward-tier2</docs>
   public bool IsCompacted { get; init; }
+
+  /// <summary>
+  /// The type's own payload limit from <c>[MaxPayloadSize]</c>, in bytes, or null when it declares none and the
+  /// framework default applies. Zero or less turns the limit off for the type.
+  /// </summary>
+  /// <docs>fundamentals/messages/payload-size-limit</docs>
+  public long? MaxPayloadBytes { get; init; }
 }
 
 /// <summary>

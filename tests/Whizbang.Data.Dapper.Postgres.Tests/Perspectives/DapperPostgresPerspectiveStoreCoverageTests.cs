@@ -79,30 +79,25 @@ public class DapperPostgresPerspectiveStoreCoverageTests : PostgresTestBase {
       .Because("a partition key nothing was ever upserted under must report absent, not fabricate a row");
   }
 
-  // ── UpsertWithPhysicalFieldsAsync: the Dapper store deliberately ignores the physical-field
-  // dictionary (it has no physical columns to materialize into) but must still perform the same
-  // JSONB upsert as the plain overloads. If either overload ever started throwing on, or writing,
-  // the physical fields, a perspective declared with physical fields would stop persisting entirely
-  // on a Dapper-backed store while the EF Core store kept working — a provider-only data loss.
+  // ── UpsertWithPhysicalFieldsAsync writes each physical column (see DapperPerspectiveStorePhysicalFieldTests)
+  // and still performs the same JSONB upsert as the plain overloads. A column the table does not have is a
+  // mismatch between the model and its schema, so the write fails loudly rather than dropping the value.
 
   [Test]
-  public async Task UpsertWithPhysicalFieldsAsync_IgnoresPhysicalFields_StillWritesModelAndScopeAsync() {
+  public async Task UpsertWithPhysicalFieldsAsync_AColumnTheTableLacks_FailsAndWritesNothingAsync() {
     var store = new DapperPostgresPerspectiveStore<DapperPostgresPerspectiveStoreTests.TestModel>(
       ConnectionString, TABLE_NAME, _jsonOptions);
     var id = Guid.CreateVersion7();
-    var physicalFields = new Dictionary<string, object?> { ["not_a_column"] = "ignored" };
+    var physicalFields = new Dictionary<string, object?> { ["not_a_column"] = "value" };
 
-    await store.UpsertWithPhysicalFieldsAsync(
+    await Assert.That(() => store.UpsertWithPhysicalFieldsAsync(
       id,
       new DapperPostgresPerspectiveStoreTests.TestModel { Name = "physical-insert" },
       physicalFields,
-      new PerspectiveScope { TenantId = "tenant-physical" });
+      new PerspectiveScope { TenantId = "tenant-physical" })).Throws<Npgsql.PostgresException>();
 
-    var (name, tenant) = await _readNameAndTenantAsync(id);
-    await Assert.That(name).IsEqualTo("physical-insert")
-      .Because("the physical-field overload must still persist the model JSON; the dictionary is ignored, not the write");
-    await Assert.That(tenant).IsEqualTo("tenant-physical")
-      .Because("scope is written on INSERT even through the physical-field overload");
+    await Assert.That(await store.GetByStreamIdAsync(id)).IsNull()
+      .Because("a physical value with nowhere to go must not be silently dropped while the document is written");
   }
 
   [Test]

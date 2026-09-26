@@ -34,9 +34,12 @@ internal static class TagRouteNamespaceConfigurationBinder {
     }
 
     foreach (var child in section.GetChildren()) {
-      if (!string.IsNullOrWhiteSpace(child.Key) && !string.IsNullOrWhiteSpace(child.Value)) {
-        tagOptions.UseRouteNamespaceBinding(child.Key, child.Value);
+      // A guard clause, not a Where: IsNullOrWhiteSpace carries [NotNullWhen(false)], and that
+      // only narrows child.Value for the compiler when the test is in the enclosing method.
+      if (string.IsNullOrWhiteSpace(child.Key) || string.IsNullOrWhiteSpace(child.Value)) {
+        continue;
       }
+      tagOptions.UseRouteNamespaceBinding(child.Key, child.Value);
     }
   }
 }

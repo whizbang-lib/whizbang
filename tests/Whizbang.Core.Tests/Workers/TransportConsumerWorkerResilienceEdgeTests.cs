@@ -158,7 +158,7 @@ public class TransportConsumerWorkerResilienceEdgeTests {
   }
 
   private sealed class EdgeInstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => serviceName;
     public string HostName => "edge-host";
     public int ProcessId => 1;

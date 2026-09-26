@@ -20,11 +20,11 @@ public class TransportConsumerSourceIdentityTests {
 
   [Test]
   public async Task InboxMessage_HasSourceIdentityFieldsAsync() {
-    var sourceServiceId = (Guid)TrackedGuid.NewMedo();
+    var sourceServiceId = (Guid)TrackedGuid.New();
     var envelope = _newEnvelope(payload: JsonDocument.Parse("{}").RootElement);
 
     var msg = new InboxMessage {
-      MessageId = (Guid)TrackedGuid.NewMedo(),
+      MessageId = (Guid)TrackedGuid.New(),
       HandlerName = "Test",
       MessageType = "TestEvent",
       EnvelopeType = "MessageEnvelope`1[[X]]",
@@ -42,7 +42,7 @@ public class TransportConsumerSourceIdentityTests {
     var envelope = _newEnvelope(payload: JsonDocument.Parse("{}").RootElement);
 
     var msg = new InboxMessage {
-      MessageId = (Guid)TrackedGuid.NewMedo(),
+      MessageId = (Guid)TrackedGuid.New(),
       HandlerName = "Test",
       MessageType = "TestEvent",
       EnvelopeType = "MessageEnvelope`1[[X]]",
@@ -62,10 +62,10 @@ public class TransportConsumerSourceIdentityTests {
     // `elem->>'SourceServiceId'` etc. (see InboxSourceIdentityRoundtripSqlTests). For
     // the C# layer we only need to confirm the JSON payload CONTAINS the new fields
     // with the right values so the SQL function can pick them up.
-    var sourceServiceId = (Guid)TrackedGuid.NewMedo();
+    var sourceServiceId = (Guid)TrackedGuid.New();
     var envelope = _newEnvelope(payload: JsonDocument.Parse("{}").RootElement);
     var original = new InboxMessage {
-      MessageId = (Guid)TrackedGuid.NewMedo(),
+      MessageId = (Guid)TrackedGuid.New(),
       HandlerName = "Test",
       MessageType = "TestEvent",
       EnvelopeType = "MessageEnvelope`1[[X]]",
@@ -88,7 +88,7 @@ public class TransportConsumerSourceIdentityTests {
 
   private static MessageEnvelope<JsonElement> _newEnvelope(JsonElement payload) {
     return new MessageEnvelope<JsonElement> {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = payload,
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {

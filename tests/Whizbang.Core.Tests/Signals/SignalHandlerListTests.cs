@@ -55,4 +55,24 @@ public class SignalHandlerListTests {
     await Assert.That(secondInvoked).IsFalse()
       .Because("the InvokeAsync loop must honor cancellation between handler invocations");
   }
+
+  // A subscription hands back exactly the delegate it registered and disposes at most once, so
+  // no production caller can ask this list to remove something it does not hold. The guard is
+  // what makes that safe anyway: without it the removal would size the replacement array off an
+  // index of -1 and take the whole handler set down with it — losing every live subscriber on
+  // the bus because of one stray removal.
+  [Test]
+  public async Task Remove_HandlerThatWasNeverAdded_LeavesTheRegisteredHandlersIntactAsync() {
+    var list = new SignalHandlerList<HL>();
+    var invocations = 0;
+    using var registered = list.Add(_ => { Interlocked.Increment(ref invocations); return ValueTask.CompletedTask; });
+
+    list.Remove(_ => ValueTask.CompletedTask); // a delegate this list has never seen
+
+    await list.InvokeAsync(new HL(1), CancellationToken.None);
+
+    await Assert.That(invocations).IsEqualTo(1)
+      .Because("removing a handler the list does not hold must leave the ones it does hold alone; "
+        + "anything else drops live subscribers on the strength of a bad removal");
+  }
 }

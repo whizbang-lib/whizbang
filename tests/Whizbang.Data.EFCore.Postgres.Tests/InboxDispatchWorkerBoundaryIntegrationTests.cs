@@ -132,8 +132,8 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
 
     var expectedCorrelation = CorrelationId.New();
     var causation = MessageId.New();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
     var parent = new ParentEvent(streamId);
 
     // The inbound envelope: identity + scope ride ONLY the Current hop. The ServiceName is a FOREIGN service
@@ -246,8 +246,8 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
     var (serviceProvider, jsonOptions) = await _createServicesAsync();
 
     var expectedCorrelation = CorrelationId.New();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
     var parent = new DetachedParentEvent(streamId);
 
     var hop = new MessageHop {
@@ -354,8 +354,8 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
     var (serviceProvider, jsonOptions) = await _createServicesAsync();
 
     var expectedCorrelation = CorrelationId.New();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
     var parent = new CollectiveParentEvent(streamId);
 
     var hop = new MessageHop {

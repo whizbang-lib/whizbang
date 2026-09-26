@@ -482,7 +482,7 @@ public class ImmediateDetachedDrainerTests {
 
   private static MessageEnvelope<T> _createEnvelope<T>(T message) where T : notnull {
     return new MessageEnvelope<T> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = message,
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

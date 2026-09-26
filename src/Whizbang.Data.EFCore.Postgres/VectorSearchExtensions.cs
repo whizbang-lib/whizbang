@@ -702,7 +702,7 @@ public static class VectorSearchExtensions {
   /// </remarks>
   private static MethodCallExpression _buildEfPropertyAccess(Expression instance, string propertyName) {
     // Convert PascalCase property name to snake_case to match EF Core shadow property naming
-    var shadowPropertyName = _toSnakeCase(propertyName);
+    var shadowPropertyName = ToSnakeCase(propertyName);
     // Build: EF.Property<Vector>(instance, shadowPropertyName)
     // Using cached _efPropertyVectorMethod instead of string-based Expression.Call
     return Expression.Call(_efPropertyVectorMethod, instance, Expression.Constant(shadowPropertyName));
@@ -713,7 +713,7 @@ public static class VectorSearchExtensions {
   /// Uses object? type to avoid triggering Pgvector type handlers during null checks.
   /// </summary>
   private static MethodCallExpression _buildEfPropertyAccessForNullCheck(Expression instance, string propertyName) {
-    var shadowPropertyName = _toSnakeCase(propertyName);
+    var shadowPropertyName = ToSnakeCase(propertyName);
     // Build: EF.Property<object?>(instance, shadowPropertyName)
     // Using object? avoids Pgvector type resolution issues when checking IS NOT NULL
     return Expression.Call(_efPropertyObjectMethod, instance, Expression.Constant(shadowPropertyName));
@@ -726,8 +726,11 @@ public static class VectorSearchExtensions {
   /// <remarks>
   /// This matches the naming convention used by EFCorePerspectiveConfigurationGenerator
   /// for shadow properties. Must stay in sync with NamingConventionUtilities.ToSnakeCase().
+  /// Internal rather than private so that agreement can be asserted directly: the callers only
+  /// ever hand it a property name lifted from a selector, so the empty-input guard — and the
+  /// character-by-character rule the generator has to match — have no other way to be pinned.
   /// </remarks>
-  private static string _toSnakeCase(string input) {
+  internal static string ToSnakeCase(string input) {
     if (string.IsNullOrEmpty(input)) {
       return input;
     }

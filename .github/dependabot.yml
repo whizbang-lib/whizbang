@@ -10,6 +10,41 @@ updates:
       time: "17:00"
       timezone: "America/New_York"
     open-pull-requests-limit: 10
+    # Grouped by family rather than one pull request per package. Ungrouped, a single Friday
+    # produced fourteen pull requests, and this repository runs a full matrix per pull request --
+    # six suites, five Postgres shards and the quality gate -- so the cost of reviewing a version
+    # string was paid fourteen times over.
+    #
+    # Families rather than one group for everything, because a blocked member must not block the
+    # rest: the Aspire bumps require the Microsoft.Extensions line to move with them, while Dapper
+    # and the tooling bumps are independent and can land the same day.
+    groups:
+      aspire:
+        patterns:
+          - "Aspire.*"
+      azure-sdk:
+        patterns:
+          - "Azure.*"
+          - "Microsoft.Azure.*"
+      microsoft-platform:
+        patterns:
+          - "Microsoft.Extensions.*"
+          - "Microsoft.EntityFrameworkCore*"
+          - "Microsoft.AspNetCore.*"
+          - "Microsoft.Data.*"
+          - "System.Text.Json"
+      dev-tooling:
+        patterns:
+          - "*Analyzer*"
+          - "*analyzers*"
+          - "TUnit*"
+          - "Rocks*"
+          - "Microsoft.Testing*"
+          - "BenchmarkDotNet*"
+          - "dotnet-*"
+      remaining:
+        patterns:
+          - "*"
     assignees:
       - "philcarbone"
     labels:
@@ -30,6 +65,12 @@ updates:
       time: "17:00"
       timezone: "America/New_York"
     open-pull-requests-limit: 5
+    # One pull request for every action. An action bump changes a pinned sha in a workflow and
+    # cannot break one suite without breaking all of them, so there is nothing to isolate.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     assignees:
       - "philcarbone"
     labels:

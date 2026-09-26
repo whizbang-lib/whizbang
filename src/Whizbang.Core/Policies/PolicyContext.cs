@@ -166,30 +166,15 @@ public class PolicyContext {
   /// <tests>tests/Whizbang.Policies.Tests/PolicyContextTests.cs:HasTag_ReturnsFalse_WhenNoTagsInMetadataAsync</tests>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyContextTests.cs:HasTag_ReturnsTrue_WhenTagsAreIEnumerableAsync</tests>
   public bool HasTag(string tag) {
-    var tags = GetMetadata("tags");
-    if (tags is null) {
+    // GetMetadata hands back whatever IMessageEnvelope.GetMetadata returned, and that is a
+    // JsonElement? — the envelope stores metadata as JSON. No other shape can arrive here.
+    if (GetMetadata("tags") is not JsonElement jsonElement || jsonElement.ValueKind != JsonValueKind.Array) {
       return false;
     }
-
-    // Handle JsonElement (returned from MessageEnvelope.GetMetadata)
-    if (tags is JsonElement jsonElement) {
-      if (jsonElement.ValueKind != JsonValueKind.Array) {
-        return false;
+    foreach (var item in jsonElement.EnumerateArray()) {
+      if (item.ValueKind == JsonValueKind.String && item.GetString() == tag) {
+        return true;
       }
-      foreach (var item in jsonElement.EnumerateArray()) {
-        if (item.ValueKind == JsonValueKind.String && item.GetString() == tag) {
-          return true;
-        }
-      }
-      return false;
-    }
-
-    // Handle direct string arrays (for backwards compatibility)
-    if (tags is string[] tagArray) {
-      return tagArray.Contains(tag);
-    }
-    if (tags is IEnumerable<string> tagEnumerable) {
-      return tagEnumerable.Contains(tag);
     }
     return false;
   }
@@ -204,25 +189,14 @@ public class PolicyContext {
   /// <tests>tests/Whizbang.Policies.Tests/PolicyContextTests.cs:HasFlag_ReturnsFalse_WhenFlagIsNotSetAsync</tests>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyContextTests.cs:HasFlag_ReturnsFalse_WhenNoFlagsInMetadataAsync</tests>
   public bool HasFlag(Enum flag) {
-    var flags = GetMetadata("flags");
-    if (flags is null) {
+    // Same as HasTag: the envelope's metadata is JSON, so a number is the only shape that can
+    // carry flags here.
+    if (GetMetadata("flags") is not JsonElement jsonElement || jsonElement.ValueKind != JsonValueKind.Number) {
       return false;
     }
-
-    // Handle JsonElement (returned from MessageEnvelope.GetMetadata)
-    if (flags is JsonElement jsonElement) {
-      if (jsonElement.ValueKind != JsonValueKind.Number) {
-        return false;
-      }
-      var flagsValue = jsonElement.GetInt64();
-      var targetFlagValue = Convert.ToInt64(flag, CultureInfo.InvariantCulture);
-      return (flagsValue & targetFlagValue) == targetFlagValue;
-    }
-
-    // Handle direct numeric values (for backwards compatibility)
-    var flagsNumeric = Convert.ToInt64(flags, CultureInfo.InvariantCulture);
-    var targetFlag = Convert.ToInt64(flag, CultureInfo.InvariantCulture);
-    return (flagsNumeric & targetFlag) == targetFlag;
+    var flagsValue = jsonElement.GetInt64();
+    var targetFlagValue = Convert.ToInt64(flag, CultureInfo.InvariantCulture);
+    return (flagsValue & targetFlagValue) == targetFlagValue;
   }
 
   /// <summary>

@@ -42,11 +42,11 @@ public class GuidUsageAnalyzerTests {
   }
 
   /// <summary>
-  /// Test that TrackedGuid.NewMedo() does not trigger any diagnostics.
+  /// Test that TrackedGuid.New() does not trigger any diagnostics.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Analyzer_TrackedGuidNewMedo_NoErrorAsync() {
+  public async Task Analyzer_TrackedGuidNew_NoErrorAsync() {
     // Arrange
     const string source = """
             using Whizbang.Core;
@@ -55,7 +55,7 @@ public class GuidUsageAnalyzerTests {
 
             public class MyService {
               public TrackedGuid CreateId() {
-                return TrackedGuid.NewMedo();
+                return TrackedGuid.New();
               }
             }
             """;

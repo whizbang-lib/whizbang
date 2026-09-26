@@ -21,6 +21,13 @@ public sealed class SagaGenerator : IIncrementalGenerator {
   private const string CONTINUES_WITH_ATTRIBUTE = "Whizbang.Sagas.ContinuesWithAttribute";
   private const int RAN_TO_THE_END = 3;   // Completed | CompletedWithFailures
 
+  // Members every generated saga state carries. They are emitted by each of the state
+  // shapes below, so each declaration lives here once and the shapes agree by construction.
+  private const string SAGA_NAME_PROPERTY_PREFIX = "    public string SagaName { get; set; } = \"";
+  private const string ENTITY_ID_PROPERTY = "    [global::Whizbang.Core.StreamId] public global::System.Guid EntityId { get; set; }";
+  private const string ITEM_IDENTIFIER_PROPERTY = "    public string ItemIdentifier { get; set; } = \"\";";
+  private const string DISPLAY_NAME_PROPERTY = "    public string? DisplayName { get; set; }";
+
 
   // SagaAttribute and SagaAttribute<TEventBase> live in
   // Whizbang.Sagas.Contracts as regular runtime types — not emitted via
@@ -162,8 +169,8 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
   private static void _emitInitiated(StringBuilder sb, SagaInfo info) {
     sb.Append("  public sealed partial class InitiatedEvent : ").Append(info.EventBaseFullName).AppendLine(", global::Whizbang.Sagas.ISagaInitiatedEvent {");
-    sb.Append("    public string SagaName { get; set; } = \"").Append(info.SagaName).AppendLine("\";");
-    sb.AppendLine("    [global::Whizbang.Core.StreamId] public global::System.Guid EntityId { get; set; }");
+    sb.Append(SAGA_NAME_PROPERTY_PREFIX).Append(info.SagaName).AppendLine("\";");
+    sb.AppendLine(ENTITY_ID_PROPERTY);
     sb.AppendLine("    public global::System.Collections.Generic.IReadOnlyList<string> ItemIdentifiers { get; set; } = global::System.Array.Empty<string>();");
     sb.AppendLine("    public int TotalItems { get; set; }");
     sb.AppendLine("    public global::System.Collections.Generic.IReadOnlyList<string>? HookNames { get; set; }");
@@ -173,8 +180,8 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
   private static void _emitItemsDispatched(StringBuilder sb, SagaInfo info) {
     sb.Append("  public sealed partial class ItemsDispatchedEvent : ").Append(info.EventBaseFullName).AppendLine(", global::Whizbang.Sagas.ISagaItemsDispatchedEvent {");
-    sb.Append("    public string SagaName { get; set; } = \"").Append(info.SagaName).AppendLine("\";");
-    sb.AppendLine("    [global::Whizbang.Core.StreamId] public global::System.Guid EntityId { get; set; }");
+    sb.Append(SAGA_NAME_PROPERTY_PREFIX).Append(info.SagaName).AppendLine("\";");
+    sb.AppendLine(ENTITY_ID_PROPERTY);
     sb.AppendLine("    public int TotalItems { get; set; }");
     sb.AppendLine("    public int SuccessfullyDispatched { get; set; }");
     sb.AppendLine("    public int FailedToDispatch { get; set; }");
@@ -184,33 +191,33 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
   private static void _emitItemStarted(StringBuilder sb, SagaInfo info) {
     sb.Append("  public sealed partial class ItemStartedEvent : ").Append(info.EventBaseFullName).AppendLine(", global::Whizbang.Sagas.ISagaItemStartedEvent {");
-    sb.Append("    public string SagaName { get; set; } = \"").Append(info.SagaName).AppendLine("\";");
-    sb.AppendLine("    [global::Whizbang.Core.StreamId] public global::System.Guid EntityId { get; set; }");
+    sb.Append(SAGA_NAME_PROPERTY_PREFIX).Append(info.SagaName).AppendLine("\";");
+    sb.AppendLine(ENTITY_ID_PROPERTY);
     sb.AppendLine("    public global::System.Guid SagaId { get; set; }");
-    sb.AppendLine("    public string ItemIdentifier { get; set; } = \"\";");
-    sb.AppendLine("    public string? DisplayName { get; set; }");
+    sb.AppendLine(ITEM_IDENTIFIER_PROPERTY);
+    sb.AppendLine(DISPLAY_NAME_PROPERTY);
     sb.AppendLine("  }");
     sb.AppendLine();
   }
 
   private static void _emitItemCompleted(StringBuilder sb, SagaInfo info) {
     sb.Append("  public sealed partial class ItemCompletedEvent : ").Append(info.EventBaseFullName).AppendLine(", global::Whizbang.Sagas.ISagaItemCompletedEvent {");
-    sb.Append("    public string SagaName { get; set; } = \"").Append(info.SagaName).AppendLine("\";");
-    sb.AppendLine("    [global::Whizbang.Core.StreamId] public global::System.Guid EntityId { get; set; }");
+    sb.Append(SAGA_NAME_PROPERTY_PREFIX).Append(info.SagaName).AppendLine("\";");
+    sb.AppendLine(ENTITY_ID_PROPERTY);
     sb.AppendLine("    public global::System.Guid SagaId { get; set; }");
-    sb.AppendLine("    public string ItemIdentifier { get; set; } = \"\";");
-    sb.AppendLine("    public string? DisplayName { get; set; }");
+    sb.AppendLine(ITEM_IDENTIFIER_PROPERTY);
+    sb.AppendLine(DISPLAY_NAME_PROPERTY);
     sb.AppendLine("  }");
     sb.AppendLine();
   }
 
   private static void _emitItemFailed(StringBuilder sb, SagaInfo info) {
     sb.Append("  public sealed partial class ItemFailedEvent : ").Append(info.EventBaseFullName).AppendLine(", global::Whizbang.Sagas.ISagaItemFailedEvent {");
-    sb.Append("    public string SagaName { get; set; } = \"").Append(info.SagaName).AppendLine("\";");
-    sb.AppendLine("    [global::Whizbang.Core.StreamId] public global::System.Guid EntityId { get; set; }");
+    sb.Append(SAGA_NAME_PROPERTY_PREFIX).Append(info.SagaName).AppendLine("\";");
+    sb.AppendLine(ENTITY_ID_PROPERTY);
     sb.AppendLine("    public global::System.Guid SagaId { get; set; }");
-    sb.AppendLine("    public string ItemIdentifier { get; set; } = \"\";");
-    sb.AppendLine("    public string? DisplayName { get; set; }");
+    sb.AppendLine(ITEM_IDENTIFIER_PROPERTY);
+    sb.AppendLine(DISPLAY_NAME_PROPERTY);
     sb.AppendLine("    public string ErrorMessage { get; set; } = \"\";");
     sb.AppendLine("    public string? ErrorDetails { get; set; }");
     sb.AppendLine("  }");
@@ -219,8 +226,8 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
   private static void _emitCompleted(StringBuilder sb, SagaInfo info) {
     sb.Append("  public sealed partial class CompletedEvent : ").Append(info.EventBaseFullName).AppendLine(", global::Whizbang.Sagas.ISagaCompletedEvent {");
-    sb.Append("    public string SagaName { get; set; } = \"").Append(info.SagaName).AppendLine("\";");
-    sb.AppendLine("    [global::Whizbang.Core.StreamId] public global::System.Guid EntityId { get; set; }");
+    sb.Append(SAGA_NAME_PROPERTY_PREFIX).Append(info.SagaName).AppendLine("\";");
+    sb.AppendLine(ENTITY_ID_PROPERTY);
     sb.AppendLine("    public global::Whizbang.Sagas.SagaStatus FinalStatus { get; set; }");
     sb.AppendLine("    public string? CompletedByItemIdentifier { get; set; }");
     sb.AppendLine("    public int CompletedItems { get; set; }");
@@ -232,9 +239,9 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
   private static void _emitReset(StringBuilder sb, SagaInfo info) {
     sb.Append("  public sealed partial class ResetEvent : ").Append(info.EventBaseFullName).AppendLine(", global::Whizbang.Sagas.ISagaResetEvent {");
-    sb.Append("    public string SagaName { get; set; } = \"").Append(info.SagaName).AppendLine("\";");
-    sb.AppendLine("    [global::Whizbang.Core.StreamId] public global::System.Guid EntityId { get; set; }");
-    sb.AppendLine("    public string ItemIdentifier { get; set; } = \"\";");
+    sb.Append(SAGA_NAME_PROPERTY_PREFIX).Append(info.SagaName).AppendLine("\";");
+    sb.AppendLine(ENTITY_ID_PROPERTY);
+    sb.AppendLine(ITEM_IDENTIFIER_PROPERTY);
     sb.AppendLine("    public global::Whizbang.Sagas.SagaItemState PreviousStatus { get; set; }");
     sb.AppendLine("  }");
     sb.AppendLine();
@@ -242,20 +249,20 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
   private static void _emitHookStarted(StringBuilder sb, SagaInfo info) {
     sb.Append("  public sealed partial class HookStartedEvent : ").Append(info.EventBaseFullName).AppendLine(", global::Whizbang.Sagas.ISagaHookStartedEvent {");
-    sb.Append("    public string SagaName { get; set; } = \"").Append(info.SagaName).AppendLine("\";");
-    sb.AppendLine("    [global::Whizbang.Core.StreamId] public global::System.Guid EntityId { get; set; }");
+    sb.Append(SAGA_NAME_PROPERTY_PREFIX).Append(info.SagaName).AppendLine("\";");
+    sb.AppendLine(ENTITY_ID_PROPERTY);
     sb.AppendLine("    public string HookName { get; set; } = \"\";");
-    sb.AppendLine("    public string? DisplayName { get; set; }");
+    sb.AppendLine(DISPLAY_NAME_PROPERTY);
     sb.AppendLine("  }");
     sb.AppendLine();
   }
 
   private static void _emitHookCompleted(StringBuilder sb, SagaInfo info) {
     sb.Append("  public sealed partial class HookCompletedEvent : ").Append(info.EventBaseFullName).AppendLine(", global::Whizbang.Sagas.ISagaHookCompletedEvent {");
-    sb.Append("    public string SagaName { get; set; } = \"").Append(info.SagaName).AppendLine("\";");
-    sb.AppendLine("    [global::Whizbang.Core.StreamId] public global::System.Guid EntityId { get; set; }");
+    sb.Append(SAGA_NAME_PROPERTY_PREFIX).Append(info.SagaName).AppendLine("\";");
+    sb.AppendLine(ENTITY_ID_PROPERTY);
     sb.AppendLine("    public string HookName { get; set; } = \"\";");
-    sb.AppendLine("    public string? DisplayName { get; set; }");
+    sb.AppendLine(DISPLAY_NAME_PROPERTY);
     sb.AppendLine("    public global::Whizbang.Sagas.SagaItemState Status { get; set; }");
     sb.AppendLine("    public string? ErrorMessage { get; set; }");
     sb.AppendLine("    public string? ErrorDetails { get; set; }");

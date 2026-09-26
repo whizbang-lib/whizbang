@@ -297,6 +297,8 @@ public class JsonIndexDeclarationAnalyzerTests {
     "substring matching and case folding")]
   [Arguments("[Indexed(IndexKinds.Substring)]", "DateTime OccurredAt", "substring matching")]
   [Arguments("[Indexed(caseInsensitive: true)]", "Guid Reference", "case folding")]
+  [Arguments("[Indexed(IndexKinds.Search)]", "int Count", "search")]
+  [Arguments("[Indexed(IndexKinds.Search)]", "DateTime OccurredAt", "search")]
   public async Task ACapabilityThatOnlyAppliesToText_IsReportedAsync(
     string declaration, string property, string expected) {
     var source = _model($$"""
@@ -330,6 +332,7 @@ public class JsonIndexDeclarationAnalyzerTests {
   [Arguments("[Indexed(IndexKinds.Substring)]", "string Label")]
   [Arguments("[Indexed(caseInsensitive: true)]", "string Label")]
   [Arguments("[Indexed(IndexKinds.Substring, caseInsensitive: true)]", "string Label")]
+  [Arguments("[Indexed(IndexKinds.Search)]", "string Label")]
   [Arguments("[Indexed]", "int Count")]
   [Arguments("[Indexed(IndexKinds.Ordered)]", "DateTime OccurredAt")]
   public async Task ACapabilityThatApplies_IsNotReportedAsync(string declaration, string property) {

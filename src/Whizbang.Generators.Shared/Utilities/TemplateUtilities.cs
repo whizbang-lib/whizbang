@@ -120,18 +120,20 @@ public static class TemplateUtilities {
       return;
     }
 
+    // Callers reach this having stopped at a line break or at the end of the template, so a position
+    // holding neither cannot occur today. The check stays as the guard against a future caller that
+    // does not stop there — written as a positive block so it is evaluated on every call rather than
+    // sitting on an early-return line no input reaches. Anything else is left where it is.
     var isCarriageReturn = template[position] == '\r';
     var isLineFeed = template[position] == '\n';
 
-    if (!isCarriageReturn && !isLineFeed) {
-      return;
-    }
-
-    position++;
-
-    // Handle \r\n pair
-    if (isCarriageReturn && position < template.Length && template[position] == '\n') {
+    if (isCarriageReturn || isLineFeed) {
       position++;
+
+      // Handle \r\n pair
+      if (isCarriageReturn && position < template.Length && template[position] == '\n') {
+        position++;
+      }
     }
   }
 

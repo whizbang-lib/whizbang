@@ -20,6 +20,7 @@ internal static class RabbitMQEntityProvisioning {
   /// the transport's argument set, and one binding per routing pattern. Every declare is
   /// broker-idempotent when the arguments match.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Declares the exchange, the dead-letter pair, the queue and one binding per routing pattern in a single broker-idempotent call. The parameters are the topology being declared, and splitting the call is what the single call exists to avoid.")]
   internal static async Task DeclareSubscriptionInfrastructureAsync(
     IChannel channel,
     RabbitMQOptions options,

@@ -167,7 +167,7 @@ public class PhysicalFieldTypeMappingTests {
   public async Task PhysicalField_StringWithMaxLength_BecomesVarcharAsync() {
     var schema = _schemaFor("string", "MaxLength = 64");
 
-    await Assert.That(schema).Contains("VARCHAR(64)");
+    await Assert.That(schema).Contains("CHECK (length(value) <= 64) NOT VALID");
   }
 
   [Test]

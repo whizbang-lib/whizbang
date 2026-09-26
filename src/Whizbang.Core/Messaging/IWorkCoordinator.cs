@@ -1562,6 +1562,7 @@ public interface IWorkCoordinator {
   /// provider cannot store it: reporting proceeds (over-reporting is recoverable) and repair does
   /// not (an unbounded repair request against real data is not).
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Mirrors IIntegrityRepairLedger.TryBeginReportAsync so a provider forwards the call unchanged. The parameter list is that interface's, and the two have to stay identical.")]
   Task<bool> IntegrityTryBeginReportAsync(
       IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
       DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
@@ -1746,6 +1747,7 @@ public interface IWorkCoordinator {
   /// <param name="settleWindow">Only events older than this count.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity</docs>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The parameters are the window being asked for: origin, event types, the sequence range, the paging cursor and its bound, and the settle horizon. A request object would become public API in Core and would have to be versioned alongside the method.")]
   Task<WindowedDigestResult?> ComputeStreamDigestsWindowedAsync(
     Guid? originServiceId, IReadOnlyList<string>? eventTypes,
     long sinceSequence, long? untilSequence, Guid? resumeAfterStreamId, int maxDigests,
@@ -2258,6 +2260,40 @@ public interface IWorkCoordinator {
     IReadOnlyList<string> messageTypeNames,
     CancellationToken cancellationToken = default)
     => Task.FromResult(0L);
+
+  /// <summary>
+  /// Of <paramref name="streamIds"/>, the streams that still have a message of one of
+  /// <paramref name="messageTypeNames"/> waiting: an outbox row not yet published (including one
+  /// scheduled for later) or an inbox row not yet finished (including one being handled now).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Answers "is a wake-up still coming for this stream?" without reading the payloads. The saga
+  /// sweep asks it before re-arming a saga's completion watchdog, so it never wakes a saga early or
+  /// starts a second chain beside a live one.
+  /// </para>
+  /// <para>
+  /// Type names match by containment, like the discard sweeps: a stored <c>message_type</c> may carry
+  /// assembly version metadata or an envelope wrapper around the normalized name. A message on the
+  /// transport between the two tables is in neither, which the caller covers with its own guard.
+  /// </para>
+  /// <para>
+  /// The default returns <see langword="null"/>: this coordinator cannot tell. A caller must then act
+  /// as if every stream had a wake coming, which is the side on which nothing is duplicated.
+  /// </para>
+  /// </remarks>
+  /// <param name="streamIds">The streams to check.</param>
+  /// <param name="messageTypeNames">Normalized type names to look for.</param>
+  /// <param name="cancellationToken">Cancels the query.</param>
+  /// <returns>The subset of <paramref name="streamIds"/> with such a message waiting, or <see langword="null"/> when unknown.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamsWithPendingMessagesSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamsWithPendingMessagesTests.cs</tests>
+  Task<IReadOnlySet<Guid>?> GetStreamsWithPendingMessagesAsync(
+    IReadOnlyList<Guid> streamIds,
+    IReadOnlyList<string> messageTypeNames,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlySet<Guid>?>(null);
 
   /// <summary>
   /// v0.657 slice 5: structural canary for the "row claimed but never drained"

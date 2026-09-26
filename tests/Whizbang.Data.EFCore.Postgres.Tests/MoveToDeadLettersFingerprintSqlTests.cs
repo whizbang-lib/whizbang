@@ -65,7 +65,7 @@ public class MoveToDeadLettersFingerprintSqlTests : EFCoreTestBase {
       )
       """;
     cmd.Parameters.AddWithValue("id", messageId);
-    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.New());
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -85,7 +85,7 @@ public class MoveToDeadLettersFingerprintSqlTests : EFCoreTestBase {
   }
 
   private static async Task<Guid> _moveToDlqAsync(NpgsqlConnection conn, Guid messageId, string? errorText) {
-    var deadLetterId = (Guid)TrackedGuid.NewMedo();
+    var deadLetterId = (Guid)TrackedGuid.New();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """
       SELECT move_to_dead_letters(@dlq_id, 'wh_outbox', @msg, 99, @err, @inst, 'test-gen')
@@ -93,7 +93,7 @@ public class MoveToDeadLettersFingerprintSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("dlq_id", deadLetterId);
     cmd.Parameters.AddWithValue("msg", messageId);
     cmd.Parameters.Add(new NpgsqlParameter("err", NpgsqlDbType.Text) { Value = (object?)errorText ?? DBNull.Value });
-    cmd.Parameters.AddWithValue("inst", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("inst", (Guid)TrackedGuid.New());
     await cmd.ExecuteScalarAsync();
     return deadLetterId;
   }
@@ -103,7 +103,7 @@ public class MoveToDeadLettersFingerprintSqlTests : EFCoreTestBase {
   [Test]
   public async Task MoveToDeadLetters_OutboxSource_PopulatesFingerprintAndVersionAsync() {
     await using var conn = await _openAsync();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     await _seedOutboxRowAsync(conn, messageId);
 
     var deadLetterId = await _moveToDlqAsync(conn, messageId, _stackForFingerprintA);
@@ -122,8 +122,8 @@ public class MoveToDeadLettersFingerprintSqlTests : EFCoreTestBase {
   [Test]
   public async Task MoveToDeadLetters_DistinctErrorTexts_DistinctFingerprintsAsync() {
     await using var conn = await _openAsync();
-    var msgA = (Guid)TrackedGuid.NewMedo();
-    var msgB = (Guid)TrackedGuid.NewMedo();
+    var msgA = (Guid)TrackedGuid.New();
+    var msgB = (Guid)TrackedGuid.New();
     await _seedOutboxRowAsync(conn, msgA);
     await _seedOutboxRowAsync(conn, msgB);
 
@@ -139,7 +139,7 @@ public class MoveToDeadLettersFingerprintSqlTests : EFCoreTestBase {
   [Test]
   public async Task MoveToDeadLetters_NullErrorText_NullFingerprintAsync() {
     await using var conn = await _openAsync();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     await _seedOutboxRowAsync(conn, messageId);
 
     var deadLetterId = await _moveToDlqAsync(conn, messageId, errorText: null);
@@ -154,8 +154,8 @@ public class MoveToDeadLettersFingerprintSqlTests : EFCoreTestBase {
   [Test]
   public async Task MoveToDeadLetters_Idempotent_SameFingerprintForSameErrorTextAsync() {
     await using var conn = await _openAsync();
-    var msgA = (Guid)TrackedGuid.NewMedo();
-    var msgB = (Guid)TrackedGuid.NewMedo();
+    var msgA = (Guid)TrackedGuid.New();
+    var msgB = (Guid)TrackedGuid.New();
     await _seedOutboxRowAsync(conn, msgA);
     await _seedOutboxRowAsync(conn, msgB);
 

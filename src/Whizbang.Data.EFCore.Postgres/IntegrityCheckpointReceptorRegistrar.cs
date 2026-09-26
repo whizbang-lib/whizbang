@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -15,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointReceptorTests.cs</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the logger for the receptor it constructs and hands it straight over, so the category names the type that actually writes the entries.")]
 internal sealed class IntegrityCheckpointReceptorRegistrar(
     IServiceProvider services,
     IServiceScopeFactory scopeFactory,
@@ -22,7 +24,7 @@ internal sealed class IntegrityCheckpointReceptorRegistrar(
 
   public Task StartAsync(CancellationToken cancellationToken) {
     var registry = services.GetService<IReceptorRegistry>();
-    if (registry is null) {
+    if (registry is null or INullDefault) {
       return Task.CompletedTask;
     }
     var receptor = new IntegrityCheckpointReceptor(scopeFactory, receptorLogger);

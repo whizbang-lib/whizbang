@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -193,10 +194,8 @@ public static class ServiceCollectionExtensions {
 
     // Register IConfiguration binding as PostConfigure (IConfiguration is optional)
     // Use TryAdd to avoid duplicate registrations when AddWhizbang() is called multiple times
-    services.TryAddSingleton<IPostConfigureOptions<TracingOptions>>(sp => {
-      var config = sp.GetService<IConfiguration>();
-      return new TracingOptionsPostConfigure(config);
-    });
+    services.TryAddSingleton<IPostConfigureOptions<TracingOptions>>(sp =>
+      new TracingOptionsPostConfigure(sp.GetRequiredService<IConfiguration>()));
 
     // Register hooks with DI (scoped lifetime for access to DbContext, etc.)
     _registerTagHooks(services, coreOptions);
@@ -459,15 +458,14 @@ public static class ServiceCollectionExtensions {
   /// PostConfigure implementation for TracingOptions that binds from IConfiguration.
   /// Extracted to reduce cognitive complexity of AddWhizbang.
   /// </summary>
-  private sealed class TracingOptionsPostConfigure(IConfiguration? config) : IPostConfigureOptions<TracingOptions> {
-    private readonly IConfiguration? _config = config;
+  private sealed class TracingOptionsPostConfigure(IConfiguration config) : IPostConfigureOptions<TracingOptions> {
+    private readonly IConfiguration _config = config;
 
     /// <inheritdoc/>
     public void PostConfigure(string? name, TracingOptions options) {
-      if (_config == null) {
-        return;
-      }
-
+      // No null guard: AddWhizbang registers an empty configuration root before this
+      // (ConfigurationDefaults.TryAddEmptyConfiguration), so a host that supplies none still
+      // resolves one and every Whizbang:* key simply reads as absent.
       var section = _config.GetSection("Whizbang:Tracing");
       if (!section.Exists()) {
         return;
@@ -557,6 +555,7 @@ public static class ServiceCollectionExtensions {
   /// </para>
   /// </remarks>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs</tests>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Re-registers the event store behind three decorators, and a service descriptor can carry an implementation factory, an implementation type or an instance, at either of two lifetimes. The branches enumerate the descriptor shapes the container allows.")]
   public static IServiceCollection DecorateEventStoreWithSyncTracking(
       this IServiceCollection services) {
     // Find existing IEventStore registration

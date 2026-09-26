@@ -242,4 +242,27 @@ public class PollSignalSourceTests {
     }
     protected override void OnTickError(Exception ex) => Errors.Add(ex);
   }
+
+  // The timer is created inside StartAsync, after the sink is assigned, so a tick can never see a
+  // null sink through the production path. The guard is what keeps a tick that somehow arrives
+  // first — a source restarted, a timer implementation that fires on creation — from dereferencing
+  // nothing on the timer thread, where the resulting NullReferenceException has nobody to catch it
+  // and takes the process with it.
+  [Test]
+  public async Task OnTimerTick_BeforeTheSourceIsStarted_DetectsNothingAsync() {
+    var clock = new FakeTimeProvider();
+    var source = new FakePollSource(clock, TimeSpan.FromSeconds(5));
+
+    source.OnTimerTick(null);
+
+    await Assert.That(source.DetectCallCount).IsEqualTo(0)
+      .Because("with no sink there is nowhere to deliver a doorbell, so detection must not run at "
+        + "all rather than run and have its result dropped on a null reference");
+
+    // Control: once started, the same tick does detect — so the zero above is the guard's answer.
+    await source.StartAsync(new CountingSink(), CancellationToken.None);
+    source.OnTimerTick(null);
+    await Assert.That(source.DetectCallCount).IsGreaterThan(0)
+      .Because("a started source really does detect on a tick");
+  }
 }

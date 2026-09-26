@@ -12,33 +12,22 @@ namespace Whizbang.Core.Tests.Diagnostics;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Three of the nine target lines are left uncovered deliberately — they are unreachable given
-/// the current wiring, not merely untested:
+/// Three of these were once recorded here as unreachable. Two of them, the
+/// <c>DebuggerDetectionMode.DebuggerAttached</c> arm of the sampler's switch and that switch's
+/// <c>_ =&gt; false</c> default arm, were unreachable only because the sampler's sole caller was
+/// the private timer the constructor creates just for <c>CpuTimeSampling</c> and <c>Auto</c>.
+/// <see cref="DebuggerAwareClock.SampleCpuTime"/> is now internal, so a tick can be driven for
+/// any configured mode and the answer each arm gives is asserted below rather than reasoned
+/// about.
 /// </para>
-/// <list type="bullet">
-/// <item><description>
-/// Line 132 (the <c>DebuggerDetectionMode.DebuggerAttached</c> arm inside <c>_sampleCpuTime</c>'s
-/// switch) and line 137 (that switch's <c>_ =&gt; false</c> default arm) can only execute while
-/// <c>_sampleCpuTime</c> is running. Its only caller is the private <c>_sampler</c> timer, which
-/// the constructor creates only <c>if (_shouldUseCpuSampling())</c> — and that method returns
-/// <c>true</c> only for <c>Mode == CpuTimeSampling</c> or <c>Mode == Auto</c>. So whenever
-/// <c>_sampleCpuTime</c> actually runs, <c>_options.Mode</c> can only be <c>CpuTimeSampling</c> or
-/// <c>Auto</c> — the two arms <c>_sampleCpuTime</c>'s own switch already handles explicitly. The
-/// <c>DebuggerAttached</c> arm and the default arm can never be reached; <c>Mode</c> is fixed for
-/// the clock's lifetime (no setter), so this isn't a timing race, it's structural.
-/// </description></item>
-/// <item><description>
-/// Line 326 (the closing brace of <c>PauseStateSubscription._readLoopAsync</c>'s
-/// <c>catch (ChannelClosedException)</c>) requires <c>reader.ReadAllAsync(ct)</c> to throw
-/// <see cref="System.Threading.Channels.ChannelClosedException"/>. <c>ReadAllAsync</c> is
-/// implemented over <c>WaitToReadAsync</c>/<c>TryRead</c>, and the only place the clock ever
-/// completes the channel is <c>Dispose()</c>'s parameterless <c>Writer.TryComplete()</c> — a
-/// graceful completion that makes <c>WaitToReadAsync</c> return <c>false</c> and the enumeration
-/// end normally, never throw. A <c>ChannelClosedException</c> would require completing the
-/// channel WITH an exception (<c>TryComplete(Exception)</c>), which nothing in this class does.
-/// This catch clause is defensive code for a completion shape the class never produces.
-/// </description></item>
-/// </list>
+/// <para>
+/// The third, the pause-state read loop's <c>catch (ChannelClosedException)</c>, is still
+/// unreachable through <c>OnPauseStateChanged</c>: the clock only ever completes its channel
+/// gracefully, and a graceful completion ends the enumeration instead of throwing. It is
+/// asserted through <see cref="DebuggerAwareClock.RunPauseStateReadLoopAsync"/> — the narrowest
+/// seam onto the loop — because a subscription that leaves an unobserved faulted task behind is
+/// the failure the clause exists to prevent, and nothing else in the class would notice.
+/// </para>
 /// </remarks>
 /// <docs>extending/features/debugger-aware-clock</docs>
 [Category("Core")]
@@ -194,5 +183,128 @@ public class DebuggerAwareClockCoverageTests {
       .Because("cpuElapsed (-100ms) is less than wallElapsed (>= 0), so the CPU-derived branch "
         + "must be the one reported here — the arithmetic is exact and does not depend on how "
         + "much real wall-clock time this property read took");
+  }
+
+  // ============================================================
+  // SampleCpuTime — the disposed guard and the per-mode switch arms
+  // ============================================================
+
+  // Dispose stops the sampler timer, but a tick already dispatched can still land afterwards.
+  // Without the guard that tick would keep reading CPU time and writing pause state into a
+  // channel whose writer is already completed — work whose only possible effect is to keep a
+  // disposed clock's state churning after the owner has let go of it.
+  [Test]
+  public async Task SampleCpuTime_AfterDispose_DoesNotReadTheCpuTimeSourceAsync() {
+    var reads = 0;
+    var options = new DebuggerAwareClockOptions {
+      Mode = DebuggerDetectionMode.CpuTimeSampling,
+      SamplingInterval = TimeSpan.FromDays(1), // never fires during this test
+      CpuTimeSource = () => {
+        Interlocked.Increment(ref reads);
+        return TimeSpan.Zero;
+      }
+    };
+    var clock = new DebuggerAwareClock(options);
+    var readsAfterConstruction = Volatile.Read(ref reads);
+
+    clock.Dispose();
+    clock.SampleCpuTime(null);
+
+    await Assert.That(readsAfterConstruction).IsEqualTo(1)
+      .Because("the constructor takes the baseline sample, so the count below is measured against "
+        + "a known starting point rather than against zero");
+    await Assert.That(Volatile.Read(ref reads)).IsEqualTo(1)
+      .Because("a tick that lands after Dispose has to return before it touches anything; reading "
+        + "CPU time again is the first thing it would do if the guard were gone");
+  }
+
+  // The mode decides WHAT counts as frozen. A clock asked for debugger-attached detection must
+  // not report paused off CPU accounting alone: on a busy host a process that is merely idle
+  // looks exactly like one stopped at a breakpoint, and a false "paused" makes every
+  // debugger-aware timeout in the system stop counting down while nothing is actually wrong.
+  [Test]
+  public async Task SampleCpuTime_DebuggerAttachedMode_RunsTheSampleAndReportsNotPausedAsync() {
+    var reads = 0;
+    var options = new DebuggerAwareClockOptions {
+      Mode = DebuggerDetectionMode.DebuggerAttached, // no sampler timer is created for this mode
+      CpuTimeSource = () => {
+        Interlocked.Increment(ref reads);
+        return TimeSpan.Zero; // no CPU progress at all between samples
+      }
+    };
+    using var clock = new DebuggerAwareClock(options);
+
+    clock.SampleCpuTime(null);
+
+    await Assert.That(Volatile.Read(ref reads)).IsEqualTo(2)
+      .Because("the constructor's baseline plus this tick's read — proving the tick ran its body "
+        + "rather than returning early");
+    await Assert.That(clock.IsPaused).IsFalse()
+      .Because("no debugger is attached to a test run, and this mode makes attachment the "
+        + "precondition; reporting paused here would freeze every timeout that consults this clock");
+  }
+
+  // A mode value the switch does not know can only arrive from configuration binding or from a
+  // later enum member nobody wired up here. The default arm is what makes that case "not paused"
+  // rather than whatever the previous tick left behind — the conservative answer, since a clock
+  // that reports paused keeps timeouts from ever expiring.
+  [Test]
+  public async Task SampleCpuTime_ModeOutsideTheEnum_RunsTheSampleAndReportsNotPausedAsync() {
+    var reads = 0;
+    var options = new DebuggerAwareClockOptions {
+      Mode = (DebuggerDetectionMode)(-1),
+      CpuTimeSource = () => {
+        Interlocked.Increment(ref reads);
+        return TimeSpan.Zero;
+      }
+    };
+    using var clock = new DebuggerAwareClock(options);
+
+    clock.SampleCpuTime(null);
+
+    await Assert.That(Volatile.Read(ref reads)).IsEqualTo(2)
+      .Because("the tick ran its body for an unrecognized mode instead of throwing on the switch");
+    await Assert.That(clock.IsPaused).IsFalse()
+      .Because("an unrecognized mode must fall through to not-paused; any other answer would let a "
+        + "misconfigured clock suspend every timeout that consults it");
+  }
+
+  // ============================================================
+  // The pause-state read loop's quiet exits
+  // ============================================================
+
+  // The loop runs on a task nobody awaits. If a faulted channel let the exception escape, the
+  // task would sit unobserved until finalization and surface as a TaskScheduler unobserved
+  // exception far from here — while the subscriber quietly stopped receiving pause changes.
+  [Test]
+  public async Task RunPauseStateReadLoop_ChannelFaulted_DeliversWhatArrivedThenEndsQuietlyAsync() {
+    var channel = System.Threading.Channels.Channel.CreateUnbounded<bool>();
+    var received = new List<bool>();
+    var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    channel.Writer.TryWrite(true);
+    // Completing with a ChannelClosedException is what makes the reader raise exactly that type.
+    // Any other completion error is rethrown as itself and would land in a different catch.
+    channel.Writer.TryComplete(
+      new System.Threading.Channels.ChannelClosedException("channel closed by its owner"));
+
+    var loop = DebuggerAwareClock.RunPauseStateReadLoopAsync(
+      channel.Reader,
+      isPaused => {
+        received.Add(isPaused);
+        delivered.TrySetResult();
+      },
+      CancellationToken.None);
+
+    await delivered.Task;
+    await loop;
+
+    await Assert.That(loop.IsCompletedSuccessfully).IsTrue()
+      .Because("nothing awaits this task in production, so a faulted channel has to end the loop "
+        + "quietly rather than leave an unobserved exception behind");
+    bool[] expectedStates = [true];
+    await Assert.That(received).IsEquivalentTo(expectedStates)
+      .Because("the state that arrived before the fault still has to reach the subscriber — the "
+        + "quiet exit is about how the loop ends, not about dropping what it already read");
   }
 }

@@ -113,11 +113,11 @@ public class PerspectiveWorkerDeadLetterFilterTests {
 
   private static StreamEventData _row(int attempts, int failures = 0) {
     return new StreamEventData {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
-      EventId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
+      EventId = (Guid)TrackedGuid.New(),
       EventType = "TestEvent",
       EventData = "{}",
-      EventWorkId = (Guid)TrackedGuid.NewMedo(),
+      EventWorkId = (Guid)TrackedGuid.New(),
       Attempts = attempts,
       Failures = failures,
     };
@@ -134,7 +134,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
   public async Task LeaseCountAboveMax_WithNoFailures_SurvivesAsync() {
     var store = new CapturingDeadLetterStore();
     var worker = _buildWorker(maxAttempts: 10, store: store, gen: new FixedGeneration("g"),
-      metrics: null, instanceId: (Guid)TrackedGuid.NewMedo());
+      metrics: null, instanceId: (Guid)TrackedGuid.New());
     var churned = _row(attempts: 99, failures: 0);
 
     var survivors = await worker.FilterDeadLetteredAsync([churned], CancellationToken.None);
@@ -148,7 +148,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
   public async Task FailuresExceedMax_WithFewLeases_MovesToDeadLetterAsync() {
     var store = new CapturingDeadLetterStore();
     var worker = _buildWorker(maxAttempts: 10, store: store, gen: new FixedGeneration("g"),
-      metrics: null, instanceId: (Guid)TrackedGuid.NewMedo());
+      metrics: null, instanceId: (Guid)TrackedGuid.New());
     var poison = _row(attempts: 1, failures: 11);
 
     var survivors = await worker.FilterDeadLetteredAsync([poison], CancellationToken.None);
@@ -162,7 +162,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
   [Test]
   public async Task NoStore_PassesThroughAllRowsAsync() {
     var worker = _buildWorker(maxAttempts: 5, store: null, gen: null, metrics: null,
-      instanceId: (Guid)TrackedGuid.NewMedo());
+      instanceId: (Guid)TrackedGuid.New());
     var rows = new List<StreamEventData> { _row(attempts: 1), _row(attempts: 99) };
 
     var survivors = await worker.FilterDeadLetteredAsync(rows, CancellationToken.None);
@@ -174,7 +174,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
   public async Task NoMaxAttempts_PassesThroughAllRowsAsync() {
     var store = new CapturingDeadLetterStore();
     var worker = _buildWorker(maxAttempts: null, store: store, gen: new FixedGeneration("g"),
-      metrics: null, instanceId: (Guid)TrackedGuid.NewMedo());
+      metrics: null, instanceId: (Guid)TrackedGuid.New());
     var rows = new List<StreamEventData> { _row(attempts: 99) };
 
     var survivors = await worker.FilterDeadLetteredAsync(rows, CancellationToken.None);
@@ -187,7 +187,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
   public async Task AttemptsAtMax_DoesNotDeadLetterAsync() {
     var store = new CapturingDeadLetterStore();
     var worker = _buildWorker(maxAttempts: 10, store: store, gen: new FixedGeneration("g"),
-      metrics: null, instanceId: (Guid)TrackedGuid.NewMedo());
+      metrics: null, instanceId: (Guid)TrackedGuid.New());
     // attempts=10, max=10 — strict-greater-than means this row survives (10 attempts permitted)
     var rows = new List<StreamEventData> { _row(attempts: 10) };
 
@@ -200,7 +200,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
   [Test]
   public async Task AttemptsExceedsMax_MovesToDeadLetterAndDropsRowAsync() {
     var store = new CapturingDeadLetterStore();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     var worker = _buildWorker(maxAttempts: 10, store: store, gen: new FixedGeneration("whizbang/test-gen"),
       metrics: null, instanceId: instanceId);
     var doomed = _row(attempts: 11, failures: 11);
@@ -222,7 +222,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
   public async Task DeadLetterStoreThrows_KeepsRowInApplySetAsync() {
     var store = new CapturingDeadLetterStore { Throw = true };
     var worker = _buildWorker(maxAttempts: 5, store: store, gen: new FixedGeneration("g"),
-      metrics: null, instanceId: (Guid)TrackedGuid.NewMedo());
+      metrics: null, instanceId: (Guid)TrackedGuid.New());
     var doomed = _row(attempts: 99, failures: 99);
     var rows = new List<StreamEventData> { doomed };
 
@@ -239,7 +239,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
     var store = new CapturingDeadLetterStore();
     var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var worker = _buildWorker(maxAttempts: 5, store: store, gen: new FixedGeneration("g"),
-      metrics: metrics, instanceId: (Guid)TrackedGuid.NewMedo());
+      metrics: metrics, instanceId: (Guid)TrackedGuid.New());
     var rows = new List<StreamEventData> { _row(attempts: 11, failures: 11) };
 
     // Smoke check: counter is wired so Add(1, ...) is reached on the dead-letter path.

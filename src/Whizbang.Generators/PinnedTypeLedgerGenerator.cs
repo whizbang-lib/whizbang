@@ -47,10 +47,8 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
 
   /// <summary>Discovers a single <c>[PinnedId]</c> message/perspective type, or null if the node is neither.</summary>
   private static DiscoveredPinnedType? _tryDiscover(GeneratorSyntaxContext context, CancellationToken ct) {
-    if (context.Node is not TypeDeclarationSyntax typeDeclaration) {
-      return null;
-    }
-    if (context.SemanticModel.GetDeclaredSymbol(typeDeclaration, ct) is not INamedTypeSymbol type ||
+    if (context.Node is not TypeDeclarationSyntax typeDeclaration ||
+        context.SemanticModel.GetDeclaredSymbol(typeDeclaration, ct) is not INamedTypeSymbol type ||
         type.IsAbstract ||
         type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) {
       return null;

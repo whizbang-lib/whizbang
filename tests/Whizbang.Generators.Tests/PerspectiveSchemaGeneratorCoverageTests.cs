@@ -204,6 +204,33 @@ public class PerspectiveSchemaGeneratorCoverageTests {
       .Because("an unrecognized distance metric must fall back to cosine ops rather than emit no operator class at all");
   }
 
+  /// <summary>
+  /// C# lets any int be cast to an enum, so <c>(VectorIndexType)99</c> compiles and reaches the
+  /// generator as an index algorithm it has no pgvector method name for. Unlike an unrecognized
+  /// distance METRIC (which falls back to cosine ops so the statement stays well formed), there is no
+  /// safe default index method: guessing hnsw or ivfflat would build an index the author did not ask
+  /// for, and emitting <c>USING </c> with nothing after it would make the whole schema file fail to
+  /// apply. The only correct answer is to emit no index statement for that column.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_VectorFieldWithIndexTypeOutsideTheEnum_EmitsNoIndexStatementAsync() {
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
+      _vectorPerspective("[VectorField(1536, IndexType = (VectorIndexType)99)]\n        [Indexed]"));
+
+    var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+
+    await Assert.That(sql).IsNotNull();
+    await Assert.That(sql).Contains("vector(1536)")
+      .Because("an unnameable index algorithm is not a reason to drop the vector column itself");
+    await Assert.That(sql).DoesNotContain("_vec")
+      .Because("no pgvector method name maps to (VectorIndexType)99, so the index statement must be skipped rather than emitted with a blank or guessed USING clause");
+    await Assert.That(sql).DoesNotContain("USING hnsw")
+      .Because("falling back to hnsw would silently build an index algorithm the author never asked for");
+    await Assert.That(sql).DoesNotContain("USING ivfflat")
+      .Because("falling back to the ivfflat default would silently build an index algorithm the author never asked for");
+  }
+
   // ==================== PerspectiveSchemaInfo fields no generated output reads back ====================
 
   /// <summary>

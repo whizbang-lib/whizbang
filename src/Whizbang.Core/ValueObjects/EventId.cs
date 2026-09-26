@@ -5,7 +5,7 @@ namespace Whizbang.Core.ValueObjects;
 /// <summary>
 /// Uniquely identifies an event within a stream.
 /// Uses UUIDv7 (time-ordered, database-friendly) for optimal indexing performance.
-/// Uses Medo.Uuid7 for monotonic counter-based generation with guaranteed uniqueness.
+/// Uses the framework's UUIDv7 generator for monotonic counter-based generation with guaranteed uniqueness.
 /// </summary>
 /// <docs>fundamentals/events/events</docs>
 [WhizbangId]

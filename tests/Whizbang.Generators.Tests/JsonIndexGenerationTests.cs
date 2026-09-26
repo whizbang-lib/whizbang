@@ -478,9 +478,12 @@ public class JsonIndexGenerationTests {
     await Assert.That(output).Contains("(tenant_id)", StringComparison.Ordinal)
       .Because("the field was promoted to a column and asked to be indexed, so the index belongs on "
         + "the column rather than over an extraction from a document it is no longer in");
-    await Assert.That(output).DoesNotContain("data ->> 'TenantId'", StringComparison.Ordinal)
-      .Because("a promoted field is not in the document, so an expression index over it would be "
-        + "built on a key that is never there");
+    // Only index statements: the schema also backfills a newly added column from the document, which
+    // reads this key on purpose.
+    var indexStatements = output.Split('\n').Where(l => l.Contains("CREATE INDEX", StringComparison.Ordinal));
+    await Assert.That(indexStatements.Any(l => l.Contains("data ->> 'TenantId'", StringComparison.Ordinal))).IsFalse()
+      .Because("a promoted field is indexed on its column; an expression index over the document would "
+        + "duplicate it, and on a Split model would be built on a key that is never there");
   }
 
   /// <summary>A promoted field that asks for nothing gets no index of its own.</summary>
@@ -625,7 +628,10 @@ public class JsonIndexGenerationTests {
 
     await Assert.That(output).Contains("((data ->> 'Count')::integer)", StringComparison.Ordinal)
       .Because("the index the field can carry is still the one asked for, so it is still built");
-    await Assert.That(output).DoesNotContain("lower(", StringComparison.Ordinal)
+    // Index statements only: the output also carries the framework's migrations, whose search fold
+    // lowercases text on purpose.
+    var indexStatements = output.Split('\n').Where(l => l.Contains("CREATE INDEX", StringComparison.Ordinal));
+    await Assert.That(indexStatements.Any(l => l.Contains("lower(", StringComparison.Ordinal))).IsFalse()
       .Because("there is nothing to fold on a number, and folding the extraction before the cast "
         + "would index a different value than any query produces");
   }

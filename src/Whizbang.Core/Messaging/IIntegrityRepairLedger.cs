@@ -48,6 +48,7 @@ public interface IIntegrityRepairLedger {
   /// (either side's digest moved — progress or fresh damage, which also resets the repair
   /// budget), or the cooldown elapsed since the last report. Records the sighting either way.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A divergence is identified by both sides' commit-sequence bounds, so the four longs are one comparison rather than four settings. The clock and the cooldown are passed in so the ledger holds no ambient time.")]
   ValueTask<bool> TryBeginReportAsync(
     IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
     DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default);

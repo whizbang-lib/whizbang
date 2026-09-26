@@ -113,6 +113,7 @@ public class CanonicalTemporalRewriteTests {
 
     await Assert.That(_rendered(paths)).IsEqualTo(
       "data:EndedAt:OffsetInstant\n"
+      + "data:Scheduled:Day\n"
       + "data:StartedAt:Instant\n"
       + "data:Turns/[]/At:Instant\n"
       + "metadata:Timestamp:Instant")

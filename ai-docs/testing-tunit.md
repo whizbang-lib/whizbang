@@ -218,7 +218,7 @@ checklist item rather than a surprise:
 ```csharp
 .Because("an identifier held in a value object stores byte for byte what a bare one stores, and "
   + "still loses the index, because the converter guard is a blanket one. THIS ASSERTION IS "
-  + "EXPECTED TO FAIL when the value-object phase of plans/lens-full-index-coverage.md lands: at "
+  + "EXPECTED TO FAIL when the value-object phase of plans/archive/lens-full-index-coverage.md lands: at "
   + "that point the destination becomes containment and this line should be inverted rather than "
   + "deleted.");
 ```

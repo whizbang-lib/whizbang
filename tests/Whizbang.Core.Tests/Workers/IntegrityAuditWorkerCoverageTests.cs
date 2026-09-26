@@ -204,7 +204,7 @@ public class IntegrityAuditWorkerCoverageTests {
     // A known origin proves the tracker (the local half's own state) is genuinely wired, and is
     // exactly what a broken guard would iterate to reach the null transport — this is "the local
     // half ran, cross-service just isn't reachable," not "nothing at all is wired."
-    tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var worker = _buildWorker(coordinator, new StreamIntegrityOptions { RepairTopic = "test-topic" },
       tracker: tracker,
       serializer: new EnvelopeSerializer(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()),

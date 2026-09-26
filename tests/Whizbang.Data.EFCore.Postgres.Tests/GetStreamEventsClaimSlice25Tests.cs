@@ -38,10 +38,10 @@ public class GetStreamEventsClaimSlice25Tests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, instanceId);
     await _insertEventAsync(connection, streamId, eventId, perspectiveName);
@@ -67,11 +67,11 @@ public class GetStreamEventsClaimSlice25Tests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var ourInstance = (Guid)TrackedGuid.NewMedo();
-    var otherInstance = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var ourInstance = (Guid)TrackedGuid.New();
+    var otherInstance = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, ourInstance);
     await _registerInstanceAsync(connection, otherInstance);
@@ -98,11 +98,11 @@ public class GetStreamEventsClaimSlice25Tests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var ourInstance = (Guid)TrackedGuid.NewMedo();
-    var otherInstance = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var ourInstance = (Guid)TrackedGuid.New();
+    var otherInstance = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, ourInstance);
     await _registerInstanceAsync(connection, otherInstance);
@@ -127,10 +127,10 @@ public class GetStreamEventsClaimSlice25Tests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var ourInstance = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var ourInstance = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, ourInstance);
     await _insertEventAsync(connection, streamId, eventId, perspectiveName);

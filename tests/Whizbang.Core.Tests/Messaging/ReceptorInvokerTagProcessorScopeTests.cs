@@ -115,7 +115,7 @@ public class ReceptorInvokerTagProcessorScopeTests {
 
   private static MessageEnvelope<T> _createEnvelope<T>(T message) where T : notnull {
     return new MessageEnvelope<T> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = message,
       Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
@@ -129,7 +129,7 @@ public class ReceptorInvokerTagProcessorScopeTests {
     });
 
     return new MessageEnvelope<T> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = message,
       Hops = [new MessageHop {
         Type = HopType.Current,

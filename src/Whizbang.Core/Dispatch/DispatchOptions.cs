@@ -202,4 +202,19 @@ public sealed class DispatchOptions {
     Priority = priority;
     return this;
   }
+
+  /// <summary>
+  /// This dispatch's own payload limit in bytes, overriding the message type's <c>[MaxPayloadSize]</c> and
+  /// <see cref="Configuration.WhizbangCoreOptions.MaxMessagePayloadBytes"/>. Null (the default) leaves those
+  /// in charge; zero or less turns the limit off for this call.
+  /// </summary>
+  /// <docs>fundamentals/messages/payload-size-limit#overriding-the-limit</docs>
+  public long? MaxPayloadBytes { get; set; }
+
+  /// <summary>Sets <see cref="MaxPayloadBytes"/>. Returns this instance for chaining.</summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/DispatcherPayloadLimitTests.cs</tests>
+  public DispatchOptions WithMaxPayloadBytes(long maxPayloadBytes) {
+    MaxPayloadBytes = maxPayloadBytes;
+    return this;
+  }
 }

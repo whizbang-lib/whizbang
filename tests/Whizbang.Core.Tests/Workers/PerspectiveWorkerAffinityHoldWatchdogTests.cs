@@ -155,13 +155,13 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     public PerspectiveWorkerTestHarness Harness { get; } = new();
     public HoldCoordinator Coordinator { get; } = new();
     public PerspectiveWorker Worker { get; private set; } = null!;
-    public Guid StreamId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid StreamId { get; } = (Guid)TrackedGuid.New();
     private readonly CancellationTokenSource _cts = new();
     private bool _stopped;
 
     public static async Task<FakeFixture> StartAsync(TimeSpan longHoldWarning, int gateMaxConcurrent = 0, TimeProvider? timeProvider = null) {
       var f = new FakeFixture();
-      var eventId = (Guid)TrackedGuid.NewMedo();
+      var eventId = (Guid)TrackedGuid.New();
       f.Coordinator.StreamEventsToReturn = [
         new StreamEventData {
           StreamId = f.StreamId,
@@ -170,7 +170,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
           EventData = JsonSerializer.Serialize(new WatchdogTestEvent("hold")),
           Metadata = null,
           Scope = null,
-          EventWorkId = (Guid)TrackedGuid.NewMedo()
+          EventWorkId = (Guid)TrackedGuid.New()
         }
       ];
       var eventStore = new HoldEventStore {
@@ -184,7 +184,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
                 Timestamp = DateTimeOffset.UtcNow,
                 CorrelationId = CorrelationId.New(),
                 CausationId = MessageId.New(),
-                ServiceInstance = new ServiceInstanceInfo { InstanceId = (Guid)TrackedGuid.NewMedo(), ServiceName = "TestService", HostName = "test-host", ProcessId = 1 }
+                ServiceInstance = new ServiceInstanceInfo { InstanceId = (Guid)TrackedGuid.New(), ServiceName = "TestService", HostName = "test-host", ProcessId = 1 }
               }
             ],
             DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
@@ -305,12 +305,12 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       public Type PerspectiveType => typeof(object);
 
       public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = (Guid)TrackedGuid.NewMedo(), Status = PerspectiveProcessingStatus.Completed });
+        Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = (Guid)TrackedGuid.New(), Status = PerspectiveProcessingStatus.Completed });
 
       public async Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
         registry.Entered.TrySetResult();
         await registry.Release.Task;
-        return new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = events.Count > 0 ? events[^1].MessageId.Value : (Guid)TrackedGuid.NewMedo(), Status = PerspectiveProcessingStatus.Completed };
+        return new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = events.Count > 0 ? events[^1].MessageId.Value : (Guid)TrackedGuid.New(), Status = PerspectiveProcessingStatus.Completed };
       }
 
       public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
@@ -367,7 +367,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
   }
 
   private sealed class HoldInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName { get; } = "TestService";
     public string HostName { get; } = "test-host";
     public int ProcessId { get; } = 4321;

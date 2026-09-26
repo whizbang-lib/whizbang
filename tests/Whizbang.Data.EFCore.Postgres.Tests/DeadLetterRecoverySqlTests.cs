@@ -138,7 +138,7 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
   public async Task RecoverDeadLetter_OutboxRowWithRealStreamId_PreservesStreamIdAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    Guid realStreamId = TrackedGuid.NewMedo();
+    Guid realStreamId = TrackedGuid.New();
     var (dlqId, originalMessageId) = await _moveToDlqWithMessageIdAsync(
       conn, sourceTable: "wh_outbox", streamId: realStreamId);
 
@@ -215,9 +215,9 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
 
   private static async Task<(Guid DlqId, Guid OriginalMessageId)> _moveToDlqWithMessageIdAsync(
       NpgsqlConnection conn, string sourceTable, string generation = "v0.502", Guid? streamId = null) {
-    var dlqId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var sid = streamId ?? (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
+    var sid = streamId ?? (Guid)TrackedGuid.New();
 
     if (sourceTable == "wh_outbox") {
       await using var ins = conn.CreateCommand();
@@ -255,7 +255,7 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
     move.Parameters.AddWithValue("src", messageId);
     move.Parameters.AddWithValue("reason", 5);
     move.Parameters.AddWithValue("err", "test");
-    move.Parameters.AddWithValue("inst", (Guid)TrackedGuid.NewMedo());
+    move.Parameters.AddWithValue("inst", (Guid)TrackedGuid.New());
     move.Parameters.AddWithValue("gen", generation);
     await move.ExecuteNonQueryAsync();
     return (dlqId, messageId);
@@ -412,7 +412,7 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
   /// counter cannot see.
   /// </summary>
   private static async Task<Guid> _redeadLetterAsync(NpgsqlConnection conn, Guid messageId) {
-    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
     await using var move = conn.CreateCommand();
     move.CommandText = "SELECT move_to_dead_letters(@dlq, @tbl, @src, @reason, @err, @inst, @gen)";
     move.Parameters.AddWithValue("dlq", dlqId);
@@ -420,7 +420,7 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
     move.Parameters.AddWithValue("src", messageId);
     move.Parameters.AddWithValue("reason", 5);
     move.Parameters.AddWithValue("err", "failed again after recovery");
-    move.Parameters.AddWithValue("inst", (Guid)TrackedGuid.NewMedo());
+    move.Parameters.AddWithValue("inst", (Guid)TrackedGuid.New());
     move.Parameters.AddWithValue("gen", "v0.502");
     await move.ExecuteNonQueryAsync();
     return dlqId;

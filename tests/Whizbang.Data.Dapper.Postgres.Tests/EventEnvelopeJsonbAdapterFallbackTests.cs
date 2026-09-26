@@ -1,12 +1,14 @@
 using System;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -124,5 +126,38 @@ public class EventEnvelopeJsonbAdapterFallbackTests {
 
     await Assert.That(restored.GetCurrentScope()).IsNull()
       .Because("a literal null scope is an absent scope, not a parse failure");
+  }
+
+  /// <summary>
+  /// A resolver that answers every type except <see cref="PerspectiveScope"/> — the shape of a host
+  /// whose JSON context predates the short-key scope format, or was assembled without it.
+  /// </summary>
+  private sealed class ResolverWithoutPerspectiveScope(IJsonTypeInfoResolver inner) : IJsonTypeInfoResolver {
+    public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) =>
+      type == typeof(PerspectiveScope) ? null : inner.GetTypeInfo(type, options);
+  }
+
+  [Test]
+  public async Task ScopeColumnReadByAContextWithoutPerspectiveScope_StillParsesTheLegacyFormatAsync() {
+    // The short-key parser is written as a TRY: when it cannot read the column, the caller falls
+    // through to the legacy snake_case parser. Asking the options for PerspectiveScope's metadata
+    // outright defeated that -- an unregistered type throws rather than answering "no" -- so a host
+    // whose context lacks PerspectiveScope failed the whole read of a legacy row it could otherwise
+    // have understood perfectly. Every event in such a store replays through this path.
+    var baseOptions = JsonOptionsHelper.CreateOptions();
+    var withoutScopeType = new JsonSerializerOptions(baseOptions) {
+      TypeInfoResolver = new ResolverWithoutPerspectiveScope(baseOptions.TypeInfoResolver!)
+    };
+    var row = _withScope(
+      _createAdapter().ToJsonb(_envelope()),
+      """{"tenant_id":"legacy-tenant","user_id":"legacy-user"}""");
+
+    var restored = new EventEnvelopeJsonbAdapter(withoutScopeType).FromJsonb<TestEvent>(row);
+
+    var scope = restored.GetCurrentScope();
+    await Assert.That(scope).IsNotNull()
+      .Because("the legacy parser can read this column, so a missing short-key contract must not lose the scope");
+    await Assert.That(scope!.Scope.TenantId).IsEqualTo("legacy-tenant");
+    await Assert.That(scope.Scope.UserId).IsEqualTo("legacy-user");
   }
 }

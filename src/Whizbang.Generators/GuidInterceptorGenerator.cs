@@ -99,11 +99,11 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       return (null, null);
     }
 
-    // Check if it's a GUID creation method we want to intercept
+    // Check if it's a GUID creation method we want to intercept. A method with no containing type
+    // names no interceptable API: _resolveGuidVersionAndSource takes the name as nullable and matches
+    // null against none of its patterns, so it answers with no version and no source and the call
+    // leaves by the same exit — no separate guard needed here.
     var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : null;
-    if (containingType is null) {
-      return (null, null);
-    }
 
     // Skip internal Whizbang library code - we control that and don't need interception
     var callingTypeSymbol = _getContainingTypeSymbol(context, invocation, ct);
@@ -163,7 +163,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
   /// Resolves the GUID version and source metadata for a given containing type and method name.
   /// Checks System.Guid methods first, then third-party library methods.
   /// </summary>
-  private static (string? Version, string? Source) _resolveGuidVersionAndSource(string containingType, string methodName) {
+  private static (string? Version, string? Source) _resolveGuidVersionAndSource(string? containingType, string methodName) {
     // Check for System.Guid methods
     if (containingType == GUID_TYPE) {
       if (methodName == METHOD_NEW_GUID) {
@@ -276,12 +276,10 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
   /// Checks if a pragma trivia is an active WHIZ055/WHIZ056 disable that hasn't been restored before the given position.
   /// </summary>
   private static bool _isActiveDisablePragma(SyntaxTrivia trivia, SyntaxNode root, int position) {
-    if (trivia.GetStructure() is not PragmaWarningDirectiveTriviaSyntax pragma) {
-      return false;
-    }
-
-    var isDisable = pragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.DisableKeyword);
-    if (!isDisable) {
+    // The caller already filtered to pragma-warning trivia, so the structure test cannot fail today.
+    // It stays as the guard on the cast and shares the exit with a pragma that is not a disable.
+    if (trivia.GetStructure() is not PragmaWarningDirectiveTriviaSyntax pragma
+        || !pragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.DisableKeyword)) {
       return false;
     }
 
@@ -314,12 +312,10 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
   /// Checks if a pragma trivia is a restore directive for WHIZ055/WHIZ056 (or a blanket restore).
   /// </summary>
   private static bool _isMatchingRestore(SyntaxTrivia trivia) {
-    if (trivia.GetStructure() is not PragmaWarningDirectiveTriviaSyntax restorePragma) {
-      return false;
-    }
-
-    var isRestore = restorePragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.RestoreKeyword);
-    if (!isRestore) {
+    // The caller already filtered to pragma-warning trivia, so the structure test cannot fail today.
+    // It stays as the guard on the cast and shares the exit with a pragma that is not a restore.
+    if (trivia.GetStructure() is not PragmaWarningDirectiveTriviaSyntax restorePragma
+        || !restorePragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.RestoreKeyword)) {
       return false;
     }
 
@@ -407,11 +403,11 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       sb.AppendLine($"    internal static global::Whizbang.Core.ValueObjects.TrackedGuid {info.InterceptorMethodName}() {{");
 
       // Generate the actual call based on the original method
+      // Only the two calls that are not a plain no-argument invocation need an arm of their own:
+      // NewDatabaseFriendly takes a database argument and NewUuid7 needs .ToGuid(). Every other
+      // interceptable method — Guid.NewGuid, Guid.CreateVersion7, Marten's NewGuid, UUIDNext's
+      // NewSequential — rendered as "{type}.{method}()" before and renders identically here.
       var originalCall = info.OriginalMethod switch {
-        METHOD_NEW_GUID when info.FullyQualifiedTypeName == "global::System.Guid" => "global::System.Guid.NewGuid()",
-        "CreateVersion7" when info.FullyQualifiedTypeName == "global::System.Guid" => "global::System.Guid.CreateVersion7()",
-        METHOD_NEW_GUID => $"{info.FullyQualifiedTypeName}.NewGuid()",
-        "NewSequential" => $"{info.FullyQualifiedTypeName}.NewSequential()",
         "NewDatabaseFriendly" => $"{info.FullyQualifiedTypeName}.NewDatabaseFriendly(global::UUIDNext.Database.PostgreSql)",
         "NewUuid7" => $"{info.FullyQualifiedTypeName}.NewUuid7().ToGuid()",
         _ => $"{info.FullyQualifiedTypeName}.{info.OriginalMethod}()"

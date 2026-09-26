@@ -1406,12 +1406,168 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     }
   }
 
-  internal sealed class CellsModel {
+  // ── Keyed-array element upsert: a rendered copy of a field inside Cells follows the collective ────────
+
+  [Test]
+  public async Task DispatchAsync_UpsertElement_ReplacesTheMatchingElement_KeepingOrderAsync() {
+    var id = Guid.NewGuid();
+    var otherTenant = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-up", tag: "t");
+    await _seedCellsAsync(otherTenant, tenantId: "t-other", tag: "t");
+
+    var result = await _buildUpsertCellDispatcher().DispatchAsync(
+      evt: new UpsertCellCollectiveEvent { Scope = new TenantCollectiveScope("t-up"), Key = "k1", Value = "new" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    await Assert.That(result.AffectedRowCount).IsEqualTo(1);
+    await Assert.That(await _readCellsAsync(id)).IsEquivalentTo(["k1=new", "k2=v2"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the element keyed k1 is replaced where it stands; the others keep their values and their order");
+    await Assert.That(await _readCellsAsync(otherTenant)).IsEquivalentTo(["k1=v1", "k2=v2"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the scope still binds: another tenant's rows are untouched");
+  }
+
+  [Test]
+  public async Task DispatchAsync_UpsertElement_AppendsWhenNoElementHasTheKeyAsync() {
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-add", tag: "t");
+
+    await _buildUpsertCellDispatcher().DispatchAsync(
+      evt: new UpsertCellCollectiveEvent { Scope = new TenantCollectiveScope("t-add"), Key = "k3", Value = "v3" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    await Assert.That(await _readCellsAsync(id)).IsEquivalentTo(["k1=v1", "k2=v2", "k3=v3"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  [Arguments("""{"Tag":"t"}""")]
+  [Arguments("""{"Tag":"t","Cells":null}""")]
+  public async Task DispatchAsync_UpsertElement_OnAMissingArray_WritesAOneElementArrayAsync(string dataJson) {
+    var id = Guid.NewGuid();
+    await _seedCellsRawAsync(id, tenantId: "t-missing", dataJson);
+
+    await _buildUpsertCellDispatcher().DispatchAsync(
+      evt: new UpsertCellCollectiveEvent { Scope = new TenantCollectiveScope("t-missing"), Key = "k1", Value = "v1" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    await Assert.That(await _readCellsAsync(id)).IsEquivalentTo(["k1=v1"])
+      .Because("a row written before the array existed, or with it null, gets the element rather than an error or a skip");
+  }
+
+  [Test]
+  public async Task DispatchAsync_UpsertElement_ComposesWithSetProperty_InOneUpdateAsync() {
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-both", tag: "before");
+    _capturedSql.Clear();
+
+    await _buildUpsertCellDispatcher().DispatchAsync(
+      evt: new UpsertCellCollectiveEvent { Scope = new TenantCollectiveScope("t-both"), Key = "k2", Value = "new", Tag = "after" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after");
+    await Assert.That(await _readCellsAsync(id)).IsEquivalentTo(["k1=v1", "k2=new"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(_capturedSql.Count(c => c.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase)
+      && c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase))).IsEqualTo(1)
+      .Because("the top-level property and the element are written by the same set-based UPDATE");
+  }
+
+  [Test]
+  [Arguments("k1", "k2", "k1=a,k2=b")]
+  [Arguments("k1", "k3", "k1=a,k2=v2,k3=b")]
+  [Arguments("k3", "k4", "k1=v1,k2=v2,k3=a,k4=b")]
+  [Arguments("k1", "k1", "k1=b,k2=v2")]
+  public async Task DispatchAsync_TwoUpsertsOnOneList_BothApply_InCallOrderAsync(string first, string second, string expected) {
+    // Each upsert rewrites the whole list, so a second one that read the row's original list would
+    // silently undo the first: the later call has to see the earlier one's result.
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-two", tag: "t");
+
+    await _buildUpsertCellDispatcher().DispatchAsync(
+      evt: new UpsertCellCollectiveEvent {
+        Scope = new TenantCollectiveScope("t-two"),
+        Key = first,
+        Value = "a",
+        SecondKey = second,
+        SecondValue = "b",
+      },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    await Assert.That(await _readCellsAsync(id)).IsEquivalentTo(expected.Split(','), TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  private async Task _seedCellsRawAsync(Guid id, string tenantId, string dataJson) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    var scopeJson = JsonSerializer.Serialize(new PerspectiveScope { TenantId = tenantId });
+    await conn.ExecuteAsync("""
+      INSERT INTO wh_per_collective_cells (id, data, metadata, scope, created_at, updated_at, version)
+      VALUES (@id, @data::jsonb, '{}'::jsonb, @scope::jsonb, @createdAt, @updatedAt, 1);
+      """, new { id, data = dataJson, scope = scopeJson, createdAt = DateTime.UtcNow, updatedAt = DateTime.UtcNow });
+  }
+
+  private async Task<List<string>> _readCellsAsync(Guid id) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT COALESCE(data->'Cells', '[]'::jsonb)::text FROM wh_per_collective_cells WHERE id = @id;";
+    cmd.Parameters.AddWithValue(nameof(id), id);
+    var json = (string)(await cmd.ExecuteScalarAsync())!;
+    using var doc = JsonDocument.Parse(json);
+    return doc.RootElement.ValueKind == JsonValueKind.Array
+      ? [.. doc.RootElement.EnumerateArray().Select(e => $"{e.GetProperty("Key").GetString()}={e.GetProperty("Value").GetString()}")]
+      : [];
+  }
+
+  private static CollectiveDispatcher _buildUpsertCellDispatcher() {
+    var services = new ServiceCollection();
+    services.AddSingleton(new UpsertCellPerspective());
+    var entries = new CollectiveApplyEntry[] {
+      new(
+        ModelType: typeof(CellsModel),
+        EventType: typeof(UpsertCellCollectiveEvent),
+        HandlerType: typeof(UpsertCellPerspective),
+        MethodName: nameof(UpsertCellPerspective.UpsertCell),
+        ScopeHandling: CollectiveScopeHandling.Framework,
+        SpecKind: CollectiveSpecKind.Linq,
+        Invoker: static (h, e, _) => ((UpsertCellPerspective)h).UpsertCell((UpsertCellCollectiveEvent)e)
+      ),
+    };
+    return new CollectiveDispatcher(
+      services.BuildServiceProvider(), entries, [new TenantCollectiveScopeResolver()],
+      [new EFCoreCollectiveEventExecutor<CellsModel>()]);
+  }
+
+  internal sealed class UpsertCellPerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<CellsModel> UpsertCell(UpsertCellCollectiveEvent e) {
+      var cell = new Cell { Key = e.Key, Value = e.Value };
+      if (e.SecondKey is not null) {
+        var second = new Cell { Key = e.SecondKey, Value = e.SecondValue! };
+        return new Spec(s => s.UpsertElement(m => m.Cells, c => c.Key, cell).UpsertElement(m => m.Cells, c => c.Key, second));
+      }
+      return e.Tag is null
+        ? new Spec(s => s.UpsertElement(m => m.Cells, c => c.Key, cell))
+        : new Spec(s => s.SetProperty(m => m.Tag, e.Tag).UpsertElement(m => m.Cells, c => c.Key, cell));
+    }
+
+    private sealed record Spec(Expression<Action<ICollectiveSetters<CellsModel>>> Setters)
+      : ICollectiveSpec<CellsModel>;
+  }
+
+  internal sealed record UpsertCellCollectiveEvent : ICollectiveEvent {
+    public required CollectiveScope Scope { get; init; }
+    public required string Key { get; init; }
+    public required string Value { get; init; }
+    public string? Tag { get; init; }
+    public string? SecondKey { get; init; }
+    public string? SecondValue { get; init; }
+  }
+
+  public sealed class CellsModel {
     public string? Tag { get; set; }
     public List<Cell> Cells { get; set; } = [];
   }
 
-  internal sealed class Cell {
+  public sealed class Cell {
     public string Key { get; set; } = string.Empty;
     public string Value { get; set; } = string.Empty;
   }

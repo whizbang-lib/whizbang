@@ -96,7 +96,7 @@ public class ReceptorInvokerOwnedDomainFilterTests {
   }
 
   private static MessageEnvelope<TPayload> _envelope<TPayload>(TPayload payload) => new() {
-    MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+    MessageId = MessageId.From((Guid)TrackedGuid.New()),
     Payload = payload,
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
@@ -365,7 +365,7 @@ public class ReceptorInvokerOwnedDomainFilterTests {
       LifecycleStage.PostInboxInline, stageTracker);
 
     _ = stageTracker.TryClaim(
-      (Guid)TrackedGuid.NewMedo(), LifecycleStage.PostInboxInline);
+      (Guid)TrackedGuid.New(), LifecycleStage.PostInboxInline);
 
     await invoker.InvokeAsync(
       _envelope(new Shop.Orders.OrderPlaced()),

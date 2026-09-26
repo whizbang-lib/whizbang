@@ -9,8 +9,7 @@ using Whizbang.Core.Notifications.AppSignals;
 
 namespace Whizbang.Core.Tests.Notifications;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Covers the no-op fallback implementations used when no direct postgres
@@ -132,8 +131,10 @@ public class NoOpNotificationTests {
   [Test]
   public async Task NoOpWorkNotificationListener_EventsAreInertAsync() {
     var listener = new NoOpWorkNotificationListener();
-    Action<WorkSignalCategory> handler = _ => { };
-    Action<bool> healthHandler = _ => { };
+    // Empty on purpose: the test attaches and detaches them, and an inert listener must never
+    // invoke either — a body with content could not tell inert apart from never-called.
+    void handler(WorkSignalCategory _) { /* never invoked: the listener is inert */ }
+    void healthHandler(bool _) { /* never invoked: the listener is inert */ }
 
     // Add + remove the handlers — the no-op accessors should be inert.
     listener.OnSignal += handler;

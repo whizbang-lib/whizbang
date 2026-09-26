@@ -33,7 +33,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
       ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
   private static IntegrityRepairLedger.DivergenceKey _key(Guid origin, string eventType = "OrderPlaced") =>
-    new(origin, TenantScope: "tenant-a", EventType: eventType, StreamId: (Guid)TrackedGuid.NewMedo());
+    new(origin, TenantScope: "tenant-a", EventType: eventType, StreamId: (Guid)TrackedGuid.New());
 
   private static IntegrityReportObservation _observation(IntegrityRepairLedger.DivergenceKey key) =>
     new(key, OriginLo: 10, OriginHi: 20, LocalLo: 10, LocalHi: 18);
@@ -59,7 +59,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // report — the one that creates the ledger row — never happens.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var observations = new[] { _observation(_key(origin)), _observation(_key(origin)), _observation(_key(origin)) };
 
     var grants = await coordinator.IntegrityTryBeginReportBatchAsync(
@@ -78,7 +78,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // Without it a single bad stream floods the report path for as long as it stays broken.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var observations = new[] { _observation(_key(origin)) };
     var now = DateTimeOffset.UtcNow;
 
@@ -95,7 +95,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   public async Task TryBeginReportBatch_GrantsAgainOnceTheCooldownHasElapsedAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var observations = new[] { _observation(_key(origin)) };
     var now = DateTimeOffset.UtcNow;
 
@@ -111,7 +111,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   public async Task TryBeginReportBatch_CreatesOneLedgerRowPerBucketAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var observations = new[] { _observation(_key(origin)), _observation(_key(origin)) };
 
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
@@ -125,7 +125,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // The caller passes whatever the comparison produced, and a clean pass produces nothing.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
 
     var grants = await coordinator.IntegrityTryBeginReportBatchAsync(
       origin, [], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
@@ -145,7 +145,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // divergence into a self-inflicted load spike.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = Enumerable.Range(0, 5).Select(_ => _key(origin)).ToList();
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
@@ -166,7 +166,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // backoff is what keeps a permanently-unhealable bucket from spinning.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = new List<IntegrityRepairLedger.DivergenceKey> { _key(origin) };
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
@@ -190,7 +190,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // still trying. So past the cap the answer must be "not yet", never "never again".
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = new List<IntegrityRepairLedger.DivergenceKey> { _key(origin) };
     var baseBackoff = TimeSpan.FromSeconds(10);
     var terminalInterval = TimeSpan.FromSeconds(baseBackoff.TotalSeconds * 64);
@@ -230,7 +230,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // fatal but it is expensive: dispatch falls back to a coarser per-origin range.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = new List<IntegrityRepairLedger.DivergenceKey> { _key(origin) };
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
@@ -253,7 +253,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // honestly rather than substituting a zero range that would repair nothing.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = new List<IntegrityRepairLedger.DivergenceKey> { _key(origin) };
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
@@ -271,7 +271,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   public async Task ClaimRepairDrain_HonorsTheLimitAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = Enumerable.Range(0, 6).Select(_ => _key(origin)).ToList();
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
@@ -290,7 +290,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // drainer cannot pick up the same bucket and repair it twice.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = new List<IntegrityRepairLedger.DivergenceKey> { _key(origin) };
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
@@ -314,7 +314,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // pass", and it must not stamp attempts on rows it never intends to hand out.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
 
     var claimed = await coordinator.IntegrityClaimRepairDrainAsync(
       [origin], DateTimeOffset.UtcNow, TimeSpan.FromSeconds(1), maxAttempts: 5, limit: limit);
@@ -343,7 +343,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // keeps the unhealed gauge above zero, which reads as an integrity problem that is over.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = Enumerable.Range(0, 3).Select(_ => _key(origin)).ToList();
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
       origin, [.. keys.Select(_observation)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
@@ -360,7 +360,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // long the divergence lived, and it feeds the repair-latency metric.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = Enumerable.Range(0, 2).Select(_ => _key(origin)).ToList();
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
       origin, [.. keys.Select(_observation)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
@@ -379,7 +379,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // stream clean that another instance already healed.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
 
     var ages = await coordinator.IntegrityMarkHealedBatchWithAgesAsync(origin, [_key(origin)]);
 
@@ -391,7 +391,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   public async Task MarkHealedBatch_HealsOnlyTheKeysItWasGivenAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = Enumerable.Range(0, 3).Select(_ => _key(origin)).ToList();
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
       origin, [.. keys.Select(_observation)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
@@ -410,7 +410,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   public async Task LedgerSummary_CountsUnhealedBucketsAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = Enumerable.Range(0, 4).Select(_ => _key(origin)).ToList();
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
       origin, [.. keys.Select(_observation)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
@@ -439,7 +439,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // trying to fix. Rolling them into the unhealed count would hide them.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var keys = new List<IntegrityRepairLedger.DivergenceKey> { _key(origin) };
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
@@ -481,7 +481,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     var coordinator = _coordinator(ctx);
 
     var completed = await coordinator.CompletePerspectiveEventsAsync(
-      [(Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo()], debugMode);
+      [(Guid)TrackedGuid.New(), (Guid)TrackedGuid.New()], debugMode);
 
     await Assert.That(completed).IsEqualTo(0);
   }
@@ -499,7 +499,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   public async Task TryBeginReport_GrantsAFirstSightingAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var key = _key(origin);
 
     var granted = await coordinator.IntegrityTryBeginReportAsync(
@@ -514,7 +514,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   public async Task TryBeginReport_RefusesInsideTheCooldownAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var key = _key(origin);
     var now = DateTimeOffset.UtcNow;
 
@@ -530,7 +530,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   public async Task TryBeginRepair_GrantsThenHoldsOffAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var key = _key(origin);
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportAsync(key, 10, 20, 10, 18, now, TimeSpan.FromMinutes(5));
@@ -547,7 +547,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   public async Task MarkHealed_ForgetsTheBucketAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var key = _key(origin);
     _ = await coordinator.IntegrityTryBeginReportAsync(
       key, 10, 20, 10, 18, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
@@ -562,7 +562,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // Healing something never reported is ordinary: another instance may have healed it first.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
 
     await coordinator.IntegrityMarkHealedAsync(_key(origin));
 
@@ -576,9 +576,9 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // bucket that can never be cleared.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var nullScoped = new IntegrityRepairLedger.DivergenceKey(
-      origin, TenantScope: null, EventType: "OrderPlaced", StreamId: (Guid)TrackedGuid.NewMedo());
+      origin, TenantScope: null, EventType: "OrderPlaced", StreamId: (Guid)TrackedGuid.New());
 
     _ = await coordinator.IntegrityTryBeginReportAsync(
       nullScoped, 10, 20, 10, 18, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
@@ -597,7 +597,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     // otherwise a chunk that degraded mid-flight would double-report the same divergence.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var key = _key(origin);
     var now = DateTimeOffset.UtcNow;
 
@@ -614,7 +614,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   public async Task BatchHealing_ClearsWhatTheSingleKeyPathReportedAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var origin = (Guid)TrackedGuid.NewMedo();
+    var origin = (Guid)TrackedGuid.New();
     var key = _key(origin);
     _ = await coordinator.IntegrityTryBeginReportAsync(
       key, 10, 20, 10, 18, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));

@@ -85,10 +85,6 @@ All dependencies use permissive open-source licenses compatible with MIT:
 **Source**: https://github.com/rabbitmq/rabbitmq-dotnet-client
 
 ### Utilities
-**Medo.Uuid7**
-**License**: MIT
-**Source**: https://github.com/medo64/Medo.Uuid7
-
 **ILRepack**
 **License**: Apache License 2.0
 **Source**: https://github.com/gluck/il-repack

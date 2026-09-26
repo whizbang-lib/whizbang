@@ -98,8 +98,8 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       dbContext, JsonContextRegistry.CreateCombinedOptions(), logger, metrics);
 
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var message = CreateTestOutboxMessage(messageId, "out-topic", (Guid)TrackedGuid.NewMedo());
+    var messageId = (Guid)TrackedGuid.New();
+    var message = CreateTestOutboxMessage(messageId, "out-topic", (Guid)TrackedGuid.New());
 
     // First emission: stored, nothing skipped.
     await coordinator.StoreOutboxMessagesAsync([message], partitionCount: 10000);
@@ -136,9 +136,9 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       dbContext, JsonContextRegistry.CreateCombinedOptions(), quiet, metrics);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var existing = CreateTestOutboxMessage((Guid)TrackedGuid.NewMedo(), "out-topic", streamId);
-    var fresh = CreateTestOutboxMessage((Guid)TrackedGuid.NewMedo(), "out-topic", streamId);
+    var streamId = (Guid)TrackedGuid.New();
+    var existing = CreateTestOutboxMessage((Guid)TrackedGuid.New(), "out-topic", streamId);
+    var fresh = CreateTestOutboxMessage((Guid)TrackedGuid.New(), "out-topic", streamId);
 
     await coordinator.StoreOutboxMessagesAsync([existing], partitionCount: 10000);
     await coordinator.StoreOutboxMessagesAsync([existing, fresh], partitionCount: 10000);
@@ -157,7 +157,7 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       dbContext, JsonContextRegistry.CreateCombinedOptions());
 
-    var message = CreateTestOutboxMessage((Guid)TrackedGuid.NewMedo(), "out-topic", (Guid)TrackedGuid.NewMedo());
+    var message = CreateTestOutboxMessage((Guid)TrackedGuid.New(), "out-topic", (Guid)TrackedGuid.New());
 
     await coordinator.StoreOutboxMessagesAsync([message], partitionCount: 10000);
     await coordinator.StoreOutboxMessagesAsync([message], partitionCount: 10000);
@@ -175,7 +175,7 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       dbContext, JsonContextRegistry.CreateCombinedOptions(), logger: null, metrics);
 
-    var message = CreateTestOutboxMessage((Guid)TrackedGuid.NewMedo(), "out-topic", (Guid)TrackedGuid.NewMedo());
+    var message = CreateTestOutboxMessage((Guid)TrackedGuid.New(), "out-topic", (Guid)TrackedGuid.New());
     await coordinator.StoreOutboxMessagesAsync([message], partitionCount: 10000);
 
     // Wrapped in the context's execution strategy so a retrying strategy accepts the user transaction.

@@ -107,11 +107,19 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     // comparison setter substitutes to_jsonb((data->'X')::jsonb <op> @p::jsonb) for the plain @p::jsonb value —
     // the compared property is compile-time model metadata (a C# identifier), so it's embedded, not injected.
     var setExpr = new StringBuilder("data");
+    // The value each property holds so far in this spec: an element upsert starts from it, so two upserts
+    // on one list compose instead of the second rewriting the stored list over the first.
+    var assigned = new Dictionary<string, string>(StringComparer.Ordinal);
     for (var i = 0; i < assignments.Count; i++) {
       var idx = i.ToString(CultureInfo.InvariantCulture);
-      var valueSql = assignments[i].Comparison is { } cmp
-        ? "to_jsonb((data->'" + cmp.ComparedProperty + "')::jsonb " + cmp.SqlOperator + " @p" + idx + "::jsonb)"
-        : "@p" + idx + "::jsonb";
+      var valueSql = assignments[i] switch {
+        { ElementKey: { } key } => Whizbang.Data.Postgres.Collective.CollectiveElementUpsertSql.ValueSql(
+          assignments[i].PathName, key, "@p" + idx + "::jsonb", assigned.GetValueOrDefault(assignments[i].PathName)),
+        { Comparison: { } cmp } =>
+          "to_jsonb((data->'" + cmp.ComparedProperty + "')::jsonb " + cmp.SqlOperator + " @p" + idx + "::jsonb)",
+        _ => "@p" + idx + "::jsonb",
+      };
+      assigned[assignments[i].PathName] = valueSql;
       setExpr.Insert(0, "jsonb_set(")
         .Append(", @path").Append(idx).Append(", ").Append(valueSql).Append(')');
     }
@@ -215,6 +223,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
   /// exactly those ids. On failure the <c>await using</c> transaction rolls back before the retry re-attempts
   /// the same batch (idempotent for the same cursor).
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Runs one bounded batch in its own transaction: the two statements, the compiled setters and predicate, the apply options, the advisory lock key, the store columns and the cursor it resumes from. The Dapper applier's equivalent takes the same shape, and the two are read side by side.")]
   private static async Task<(int Count, Guid? MaxId)> _executeOneBatchAsync(
       DbContext dbContext, string selectSql, string updateSql,
       List<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments,

@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Medo;
 
 namespace Whizbang.Core.Messaging;
 
@@ -51,7 +50,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
       // Create new accumulating unit if none exists
       if (_currentUnit == null) {
         _currentUnit = new DispatchUnitOfWork {
-          UnitId = Uuid7.NewUuid7().ToGuid(),
+          UnitId = ValueObjects.TrackedGuid.New(),
           Messages = [],
           CreatedAt = DateTimeOffset.UtcNow,
           LifecycleStages = []
@@ -181,12 +180,10 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
     // Stop flush loop
     await _disposeCts.CancelAsync();
 
-    // Wait for flush task to complete
-    try {
-      await _flushTask;
-    } catch (OperationCanceledException) {
-      // Expected
-    }
+    // Wait for flush task to complete. No catch: _runFlushLoopAsync catches its own cancellation
+    // and returns, so the task completes rather than faulting, and a second handler for the same
+    // exception here would be a net around a net.
+    await _flushTask;
 
     // Flush remaining unit (if any)
     await _unitLock.WaitAsync(CancellationToken.None);

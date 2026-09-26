@@ -372,7 +372,7 @@ public class OutboxDrainWorkerGapTests {
 
   private static async Task<MessageEnvelope<JsonElement>> _publishOneAsync(OutboxBatchRow row) {
     var streamId = row.StreamId!.Value;
-    var coord = new GapWorkCoordinator { LocalServiceId = (Guid)TrackedGuid.NewMedo() };
+    var coord = new GapWorkCoordinator { LocalServiceId = (Guid)TrackedGuid.New() };
     coord.RowsByStream[streamId] = [row];
     var drainChannel = new GapDrainChannel();
     var publish = new GapPublishStrategy { TargetCount = 1 };
@@ -396,7 +396,7 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_PublishesTheRowsPriorityOnTheWireAsync() {
-    var envelope = await _publishOneAsync(_row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo(), priority: 250));
+    var envelope = await _publishOneAsync(_row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New(), priority: 250));
 
     await Assert.That(envelope.Priority).IsEqualTo(250)
       .Because("the row's number is the producer's classification; the wire envelope is how the consumer learns it");
@@ -404,7 +404,7 @@ public class OutboxDrainWorkerGapTests {
 
   [Test]
   public async Task OutboxDrainWorker_WithoutARowNumber_KeepsTheStoredEnvelopesPriorityAsync() {
-    var envelope = await _publishOneAsync(_row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo(), storedEnvelopePriority: 50));
+    var envelope = await _publishOneAsync(_row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New(), storedEnvelopePriority: 50));
 
     await Assert.That(envelope.Priority).IsEqualTo(50)
       .Because("a fetch that predates the column leaves the row at 0; the number serialized into the stored envelope still counts");
@@ -496,7 +496,7 @@ public class OutboxDrainWorkerGapTests {
     var worker = _worker(sp, drainChannel, completion, failure,
       new OutboxDrainWorkerOptions { Enabled = false }, publish, logger: logger);
 
-    await drainChannel.WriteAsync((Guid)TrackedGuid.NewMedo());
+    await drainChannel.WriteAsync((Guid)TrackedGuid.New());
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     // Wait for the killswitch branch to actually be reached. Since .NET 10 StartAsync only
@@ -599,9 +599,9 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_LocalRow_InjectsLocalServiceIdAndCommitSequenceAsync() {
-    var localServiceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var localServiceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator { LocalServiceId = localServiceId };
     coord.RowsByStream[streamId] = [_row(msgId, streamId, commitSequence: 42L)];
@@ -639,10 +639,10 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_ForwardedRow_PreservesOriginIdentityAsync() {
-    var localServiceId = (Guid)TrackedGuid.NewMedo();
-    var originServiceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var localServiceId = (Guid)TrackedGuid.New();
+    var originServiceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator { LocalServiceId = localServiceId };
     coord.RowsByStream[streamId] =
@@ -679,8 +679,8 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_LocalServiceIdLookupThrows_FallsBackToGuidEmpty_StillPublishesAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator { ThrowOnLocalServiceIdLookup = true };
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -721,8 +721,8 @@ public class OutboxDrainWorkerGapTests {
     // cycle FOREVER (attempts climbing past 470) — the drop logged and skipped but never
     // terminated the wh_outbox row, so the drop was a per-cycle log line, not a disposal.
     // A dropped row must complete like a published one so the completion flush removes it.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [
@@ -759,8 +759,8 @@ public class OutboxDrainWorkerGapTests {
 
   [Test]
   public async Task OutboxDrainWorker_PublishTimeoutZero_SingularPath_PublishesAndCompletesAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -791,8 +791,8 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_PublishTimeoutZero_BulkPath_PublishesAndCompletesAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -825,9 +825,9 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_UndeserializableRows_SingularPath_RouteToFailureChannelAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var nullEnvelopeId = (Guid)TrackedGuid.NewMedo();
-    var malformedId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var nullEnvelopeId = (Guid)TrackedGuid.New();
+    var malformedId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [
@@ -868,9 +868,9 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_BulkPath_BadRowExcluded_GoodRowStillPublishesAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var badId = (Guid)TrackedGuid.NewMedo();
-    var goodId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var badId = (Guid)TrackedGuid.New();
+    var goodId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [
@@ -908,9 +908,9 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_BulkPath_AllRowsBad_SkipsPublishBatchEntirelyAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var badA = (Guid)TrackedGuid.NewMedo();
-    var badB = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var badA = (Guid)TrackedGuid.New();
+    var badB = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [
@@ -950,8 +950,8 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_DlqGateFires_WithMetricsWired_SkipsPublishAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId, attempts: 11)];
@@ -993,8 +993,8 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_DlqMoveThrows_FallsThroughToPublishAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId, attempts: 11)];
@@ -1033,9 +1033,9 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_FetchThrowsForOneStream_OtherStreamStillDrainsAsync() {
-    var brokenStream = (Guid)TrackedGuid.NewMedo();
-    var healthyStream = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var brokenStream = (Guid)TrackedGuid.New();
+    var healthyStream = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.ThrowOnFetchStreams.Add(brokenStream);
@@ -1074,8 +1074,8 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_DebugLoggerAndBigDrain_EmitsPerfSummaryLineAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgIds = Enumerable.Range(0, 6).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgIds = Enumerable.Range(0, 6).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [.. msgIds.Select(id => _row(id, streamId))];
@@ -1112,8 +1112,8 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_QueryRegistrySaysNo_RuntimeRegistryFallback_FiresLifecycleAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -1164,7 +1164,7 @@ public class OutboxDrainWorkerGapTests {
     var worker = _worker(sp, drainChannel, completion, failure,
       new OutboxDrainWorkerOptions { Enabled = true }, new GapPublishStrategy());
 
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -1218,7 +1218,7 @@ public class OutboxDrainWorkerGapTests {
     var worker = _worker(sp, drainChannel, completion, failure,
       new OutboxDrainWorkerOptions { Enabled = true }, new GapPublishStrategy());
 
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -1257,8 +1257,8 @@ public class OutboxDrainWorkerGapTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_CanceledDuringPublish_NoFailureRecord_StopsCleanlyAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -1301,8 +1301,8 @@ public class OutboxDrainWorkerGapTests {
     // and the abandoned publish is observed. Shutdown is not — recording these rows as failed
     // would burn an attempt on messages that were never actually rejected, and the rows are
     // already leased for the next claim cycle to pick up.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];

@@ -39,9 +39,9 @@ public class RedeliveryRequestReceptorTests {
     var coordinator = new SelectingCoordinator();
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
-    var streamId = TrackedGuid.NewMedo().Value;
-    var e1 = TrackedGuid.NewMedo().Value;
-    var e2 = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var e1 = TrackedGuid.New().Value;
+    var e2 = TrackedGuid.New().Value;
     coordinator.Selection = [_evt(streamId, e1, 1), _evt(streamId, e2, 2)];
     await using var sp = _buildProvider(coordinator, transport, serializer);
     var receptor = new RedeliveryRequestReceptor(
@@ -122,8 +122,8 @@ public class RedeliveryRequestReceptorTests {
     var s1 = Guid.Parse("11111111-1111-1111-1111-111111111111");
     var s2 = Guid.Parse("22222222-2222-2222-2222-222222222222");
     var ids = new[] {
-      TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value,
-      TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value
+      TrackedGuid.New().Value, TrackedGuid.New().Value, TrackedGuid.New().Value,
+      TrackedGuid.New().Value, TrackedGuid.New().Value
     };
     coordinator.Selection = [
       _evt(s1, ids[0], 1), _evt(s1, ids[1], 2), _evt(s1, ids[2], 3),
@@ -289,8 +289,8 @@ public class RedeliveryRequestReceptorTests {
   public async Task Receptor_UnderReportOnly_DeclinesTheRequestWithoutSelectingOrShippingAsync() {
     var coordinator = new SelectingCoordinator();
     var transport = new CaptureTransport();
-    var streamId = TrackedGuid.NewMedo().Value;
-    coordinator.Selection = [_evt(streamId, TrackedGuid.NewMedo().Value, 1)];
+    var streamId = TrackedGuid.New().Value;
+    coordinator.Selection = [_evt(streamId, TrackedGuid.New().Value, 1)];
     await using var sp = _buildProvider(coordinator, transport, repairMode: IntegrityRepairMode.ReportOnly);
     var receptor = new RedeliveryRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
@@ -307,8 +307,8 @@ public class RedeliveryRequestReceptorTests {
   public async Task Receptor_WithNoIntegrityOptionsRegistered_DeclinesAsTheReportOnlyDefaultAsync() {
     var coordinator = new SelectingCoordinator();
     var transport = new CaptureTransport();
-    var streamId = TrackedGuid.NewMedo().Value;
-    coordinator.Selection = [_evt(streamId, TrackedGuid.NewMedo().Value, 1)];
+    var streamId = TrackedGuid.New().Value;
+    coordinator.Selection = [_evt(streamId, TrackedGuid.New().Value, 1)];
     await using var sp = _buildProvider(coordinator, transport, repairMode: null);
     var receptor = new RedeliveryRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
@@ -363,7 +363,7 @@ public class RedeliveryRequestReceptorTests {
     public List<string> SelectLog { get; } = [];
     public TaskCompletionSource? BlockFirstSelect { get; set; }
     public IReadOnlyList<RedeliveryEvent> Selection { get; set; } = [];
-    public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
     private int _selectCalls;
 
     public async Task<IReadOnlyList<RedeliveryEvent>> SelectRedeliveryEventsAsync(RedeliveryRequest request, CancellationToken cancellationToken = default) {

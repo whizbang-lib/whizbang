@@ -35,7 +35,7 @@ public abstract class IReceptorDedupStoreContractTests {
   private sealed record TestMessage(string Value) : IMessage;
 
   private static MessageEnvelope<TestMessage> _newEnvelope() => new() {
-    MessageId = MessageId.From(TrackedGuid.NewMedo()),
+    MessageId = MessageId.From(TrackedGuid.New()),
     Payload = new TestMessage("test"),
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

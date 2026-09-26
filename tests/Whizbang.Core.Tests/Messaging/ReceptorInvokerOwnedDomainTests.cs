@@ -96,7 +96,7 @@ public class ReceptorInvokerOwnedDomainTests {
 
   private static MessageEnvelope<T> _wrap<T>(T message, DispatchModes mode = DispatchModes.Local, MessageSource source = MessageSource.Local, List<MessageHop>? hops = null) where T : notnull {
     return new MessageEnvelope<T> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = message,
       Hops = hops ?? [],
       DispatchContext = new MessageDispatchContext { Mode = mode, Source = source }

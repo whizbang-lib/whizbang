@@ -46,6 +46,12 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
     public Guid TenantId { get; init; }
     public int Rank { get; init; }
 
+    /// <summary>
+    /// A member the bulk-seeded documents do not carry at all, which is the shape a row written
+    /// before a property existed has and the one a containment test cannot match.
+    /// </summary>
+    public string? Note { get; init; }
+
     /// <summary>A date, which reaches the index through a rendering rather than through the value.</summary>
     public DateTime OccurredAt { get; init; }
   }
@@ -144,6 +150,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
           Title = i == 0 ? "needle" : $"hay-{i.ToString(CultureInfo.InvariantCulture)}",
           TenantId = i == 0 ? _needleTenant : Guid.NewGuid(),
           Rank = i,
+          Note = i == 0 ? "noted" : null,
           OccurredAt = i == 0 ? _needleInstant : _needleInstant.AddDays(i),
         },
         // Seeded so a filter on scope or metadata is as selective as the one on data. The generator
@@ -203,46 +210,113 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
   }
 
   /// <summary>
-  /// The containment filter returns exactly the rows the equality filter returns. Without this the
-  /// rewrite would be faster and wrong.
+  /// The containment filter returns exactly the rows the extraction it replaced returns. Without
+  /// this the rewrite would be faster and wrong.
   /// </summary>
+  /// <remarks>
+  /// The extraction side is read as SQL rather than as a second LINQ query. Both spellings of the
+  /// filter are the same expression tree, so the rewrite claims both and a comparison between them
+  /// would be a comparison of one form with itself: the assertion would hold however wrong the
+  /// rewrite was. Naming the extraction in SQL is what makes the two sides actually differ.
+  /// </remarks>
   [Test]
   [Timeout(120000)]
   public async Task ContainmentFilter_ReturnsTheSameRowsAsEqualityAsync(CancellationToken cancellationToken) {
     var needle = "needle";
 
-    var byEquality = await _context!.Set<PerspectiveRow<CatalogModel>>()
+    var byContainment = await _context!.Set<PerspectiveRow<CatalogModel>>()
       .Where(r => r.Data.Title == needle)
       .Select(r => r.Id)
       .ToListAsync(cancellationToken);
 
-    var byContainment = await _context.Set<PerspectiveRow<CatalogModel>>()
-      .Where(r => r.Data.Title == needle)
-      .Select(r => r.Id)
-      .ToListAsync(cancellationToken);
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    var byExtraction = await _idsWhereAsync(db, "data ->> 'Title' = @p", needle, cancellationToken);
 
-    await Assert.That(byEquality).Count().IsEqualTo(1);
-    await Assert.That(byContainment).IsEquivalentTo(byEquality);
+    await Assert.That(byContainment).Count().IsEqualTo(1);
+    await Assert.That(byContainment).IsEquivalentTo(byExtraction);
+  }
+
+  /// <summary>
+  /// A filter whose value turns out to be null returns the row whose key is absent from the
+  /// document, which is what the comparison it replaced would have returned and what a containment
+  /// test on its own cannot match.
+  /// </summary>
+  /// <remarks>
+  /// The bulk-seeded documents name three keys and no more, so every one of them is a row written
+  /// before the member existed — the case the rewrite has to keep answering correctly. A value that
+  /// is not null is asked for in the same test, because a guard that fixed the null case by making
+  /// every filter match the absent rows would be a worse bug than the one it replaced.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AFilterOnANullValue_StillMatchesTheRowsWhoseKeyIsAbsentAsync(CancellationToken cancellationToken) {
+    string? unset = null;
+    var noted = "noted";
+
+    var absent = await _context!.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Data.Title == "bulk-7" && r.Data.Note == unset)
+      .CountAsync(cancellationToken);
+
+    var present = await _context.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Data.Note == noted)
+      .CountAsync(cancellationToken);
+
+    await Assert.That(absent).IsEqualTo(1)
+      .Because("a document without the key reads as null, so a null value has to match it");
+    await Assert.That(present).IsEqualTo(1)
+      .Because("a value that is not null must still match only the rows that carry it");
+  }
+
+  /// <summary>
+  /// A membership filter whose candidates include a null returns the rows whose key is absent, which
+  /// a containment test against a document per candidate cannot match.
+  /// </summary>
+  /// <remarks>
+  /// The same absent-key rows as the case above, reached through the other rewrite. A candidate that
+  /// is null cannot be recognized while the filter is compiled, so this shape stands down for the
+  /// element type that can hold one and Entity Framework builds the membership test itself.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AMembershipFilterIncludingANullCandidate_StillMatchesTheRowsWhoseKeyIsAbsentAsync(
+      CancellationToken cancellationToken) {
+    var withNull = new[] { "noted", null };
+    var withoutNull = new[] { "noted" };
+
+    var both = await _context!.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Data.Title == "bulk-7" && withNull.Contains(r.Data.Note))
+      .CountAsync(cancellationToken);
+
+    var onlyNoted = await _context.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => withoutNull.Contains(r.Data.Note))
+      .CountAsync(cancellationToken);
+
+    await Assert.That(both).IsEqualTo(1)
+      .Because("a null candidate has to match a document that does not carry the key");
+    await Assert.That(onlyNoted).IsEqualTo(1)
+      .Because("candidates that are all values must still match only the rows that carry one");
   }
 
   /// <summary>A Guid survives the round trip through jsonb_build_object, casing included.</summary>
+  /// <remarks>The extraction side is read as SQL, for the reason given on the case above.</remarks>
   [Test]
   [Timeout(120000)]
   public async Task ContainmentFilter_MatchesAGuidValueAsync(CancellationToken cancellationToken) {
     var tenant = _needleTenant;
 
-    var byEquality = await _context!.Set<PerspectiveRow<CatalogModel>>()
+    var byContainment = await _context!.Set<PerspectiveRow<CatalogModel>>()
       .Where(r => r.Data.TenantId == tenant)
       .Select(r => r.Id)
       .ToListAsync(cancellationToken);
 
-    var byContainment = await _context.Set<PerspectiveRow<CatalogModel>>()
-      .Where(r => r.Data.TenantId == tenant)
-      .Select(r => r.Id)
-      .ToListAsync(cancellationToken);
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    var byExtraction = await _idsWhereAsync(
+      db, "data ->> 'TenantId' = @p", tenant.ToString(), cancellationToken);
 
-    await Assert.That(byEquality).Count().IsEqualTo(1);
-    await Assert.That(byContainment).IsEquivalentTo(byEquality);
+    await Assert.That(byContainment).Count().IsEqualTo(1);
+    await Assert.That(byContainment).IsEquivalentTo(byExtraction);
   }
 
   /// <summary>
@@ -766,6 +840,25 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       .Because($"built from the stored key, not the property name. SQL was:\n{scopeSql}");
     await Assert.That(metadataSql).Contains("@>", StringComparison.Ordinal)
       .Because($"same routing for metadata. SQL was:\n{metadataSql}");
+  }
+
+  /// <summary>The ids a raw predicate selects, which is how the extraction form is named.</summary>
+  /// <param name="db">An open connection.</param>
+  /// <param name="whereSql">The predicate, using <c>@p</c> for its bound value.</param>
+  /// <param name="parameter">The bound value.</param>
+  /// <param name="cancellationToken">The token.</param>
+  private static async Task<List<Guid>> _idsWhereAsync(
+      NpgsqlConnection db, string whereSql, string parameter, CancellationToken cancellationToken) {
+    await using var command = new NpgsqlCommand($"SELECT id FROM {TABLE} WHERE {whereSql}", db);
+    command.Parameters.AddWithValue("p", parameter);
+
+    var ids = new List<Guid>();
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      ids.Add(reader.GetGuid(0));
+    }
+
+    return ids;
   }
 
   private static async Task<string> _explainAsync(NpgsqlConnection db, string sql, string parameter) {

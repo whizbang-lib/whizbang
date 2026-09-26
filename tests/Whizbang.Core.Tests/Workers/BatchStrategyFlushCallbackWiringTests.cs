@@ -43,7 +43,7 @@ public class BatchStrategyFlushCallbackWiringTests {
     sp.GetRequiredService<ISchemaReadyGate>().MarkReady();
     var strategy = sp.GetRequiredService<IInboxBatchStrategy>();
 
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     var message = new InboxMessage {
       MessageId = msgId,
       HandlerName = "TestHandler",
@@ -82,7 +82,7 @@ public class BatchStrategyFlushCallbackWiringTests {
     sp.GetRequiredService<ISchemaReadyGate>().MarkReady();
     var strategy = sp.GetRequiredService<IOutboxBatchStrategy>();
 
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement>(MessageId.From(msgId), JsonDocument.Parse("{}").RootElement, []);
     var message = new OutboxMessage {
       MessageId = msgId,

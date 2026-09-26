@@ -77,10 +77,10 @@ public class PrincipalFilterExtensionsCoverageTests {
 
   private static PerspectiveRow<Order> _row(string? userId, List<string> allowedPrincipals, Guid? id = null) =>
     new() {
-      // TrackedGuid.NewMedo(), not Guid.NewGuid(): every generated Whizbang id type rejects
+      // TrackedGuid.New(), not Guid.NewGuid(): every generated Whizbang id type rejects
       // anything but a UUIDv7, because ordering by id is ordering by time.
-      Id = id ?? (Guid)TrackedGuid.NewMedo(),
-      Data = new Order { OrderId = TestOrderId.From((Guid)TrackedGuid.NewMedo()), Amount = 1m, Status = "Created" },
+      Id = id ?? (Guid)TrackedGuid.New(),
+      Data = new Order { OrderId = TestOrderId.From((Guid)TrackedGuid.New()), Amount = 1m, Status = "Created" },
       Metadata = new PerspectiveMetadata {
         EventType = "OrderCreated",
         EventId = Guid.NewGuid().ToString(),

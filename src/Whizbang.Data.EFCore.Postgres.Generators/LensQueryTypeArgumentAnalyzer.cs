@@ -59,15 +59,13 @@ public sealed class LensQueryTypeArgumentAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    // Get the type argument passed to Query<T>() or GetByIdAsync<T>()
+    // Get the type argument passed to Query<T>() or GetByIdAsync<T>(), and check that it is one of
+    // the interface's type parameters. A call with no type argument has nothing to be wrong about, so
+    // it shares the "nothing to report" exit rather than standing on a line of its own — the receiver
+    // check above already required a generic lens query, so it cannot happen today.
     var methodTypeArg = method.TypeArguments.FirstOrDefault();
-    if (methodTypeArg == null) {
-      return;
-    }
-
-    // Check if the type argument is one of the interface's type parameters
     var validTypes = lensQueryInterface.TypeArguments;
-    if (_isValidTypeArgument(methodTypeArg, validTypes)) {
+    if (methodTypeArg == null || _isValidTypeArgument(methodTypeArg, validTypes)) {
       return;
     }
 

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 
@@ -61,6 +62,7 @@ public sealed class SlidingWindowBatcher<T> {
   /// Yields batches of items as they accumulate. Completes when the underlying channel
   /// is closed and drained. Throws <see cref="OperationCanceledException"/> on cancellation.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A sliding window is two bounds racing: the window since the last arrival and the maximum wait since the first, either of which can flush, while the size bound can flush before either. The wait, the drain and the two timers have to be read together to see that every path yields the batch exactly once.")]
   public async IAsyncEnumerable<IReadOnlyList<T>> ReadBatchesAsync(
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
     while (!cancellationToken.IsCancellationRequested) {
@@ -103,8 +105,10 @@ public sealed class SlidingWindowBatcher<T> {
 
         // Wait for either a new arrival or the wait window to expire.
         using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var waitTask = _reader.WaitToReadAsync(waitCts.Token).AsTask();
+        // The deadline is armed BEFORE the wait begins: one created after it would be measured from whatever the
+        // clock reads by then, so time that passed in between would not count against the window.
         var timerTask = Task.Delay(waitFor, _timeProvider, waitCts.Token);
+        var waitTask = _reader.WaitToReadAsync(waitCts.Token).AsTask();
         var completed = await Task.WhenAny(waitTask, timerTask).ConfigureAwait(false);
         await waitCts.CancelAsync();
 
@@ -139,9 +143,9 @@ public sealed class SlidingWindowBatcher<T> {
         }
       }
 
-      if (batch.Count > 0) {
-        yield return batch;
-      }
+      // The batch is never empty here: the drain above continues the outer loop when it reads
+      // nothing, and only the loop's own exits reach this point, none of which remove items.
+      yield return batch;
     }
   }
 }

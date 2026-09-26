@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -52,6 +53,7 @@ namespace Whizbang.Core.Workers;
 /// destination metadata for the transport to map to a client. Entity naming is untouched — the
 /// routing strategies stay TransportNamespace-unaware (plan resolution 5). Null, or a resolver
 /// with no bindings, is byte-identical to today (the single-namespace no-op guarantee).</param>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
 public partial class TransportPublishStrategy(
   ITransport transport,
   ITransportReadinessCheck readinessCheck,
@@ -166,6 +168,7 @@ public partial class TransportPublishStrategy(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#event-store-only</docs>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Publishing one message resolves the destination (an empty one is an event-store-only message and succeeds without a transport call), pre-serializes when a hook needs it, and then retries on throttling up to the configured attempts. The retry loop and the preflight failure are the branches.")]
   public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
     // Skip transport publishing for event-store-only messages (destination is null)
     // These messages are stored in event store via process_work_batch but should not be transported
@@ -293,6 +296,7 @@ public partial class TransportPublishStrategy(
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EmptyList_ReturnsEmptyResultsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PartialItemResults_MapsCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_AllEventStoreOnly_NoTransportCallsAsync</tests>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A batch is grouped by resolved destination, each group is pre-serialized and preflighted per item, published with the same throttle retry the singular path uses, and then one group outcome is mapped back onto every item in it. The per-item passes on both sides of the single call are what make a partial failure attributable.")]
   public async Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(
     IReadOnlyList<OutboxWork> workItems,
     CancellationToken cancellationToken) {
@@ -464,7 +468,7 @@ public partial class TransportPublishStrategy(
   /// <param name="work">The outbox work item</param>
   /// <returns>The resolved transport destination</returns>
   private TransportDestination _resolveDestination(OutboxWork work) {
-    var destination = _resolveEntityDestination(work);
+    var destination = ResolveEntityDestination(work);
 
     if (_transportNamespaces is not { HasBindings: true }) {
       return destination;
@@ -483,7 +487,11 @@ public partial class TransportPublishStrategy(
   /// </summary>
   /// <param name="work">The outbox work item</param>
   /// <returns>The resolved transport destination, before TransportNamespace stamping</returns>
-  private TransportDestination _resolveEntityDestination(OutboxWork work) {
+  /// <summary>
+  /// Resolves the entity a work item publishes to. Internal so the event-destination invariant
+  /// below can be asserted directly; both callers filter empty destinations out before this runs.
+  /// </summary>
+  internal TransportDestination ResolveEntityDestination(OutboxWork work) {
     // ALWAYS detect message kind - commands MUST go to inbox, not individual command topics
     // This is critical: without this, commands would be published to non-existent topics
     // and silently dropped by the message broker

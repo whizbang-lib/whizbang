@@ -1549,4 +1549,121 @@ public class DispatcherComprehensiveCoverageTests {
     await Assert.That(registry.RegisterCount).IsGreaterThanOrEqualTo(1);
     await Assert.That(registry.UnregisterCount).IsGreaterThanOrEqualTo(1);
   }
+
+  // ========================================
+  // Guards on paths whose callers already filtered
+  // ========================================
+
+  // Cascade-excluding-response walks a receptor's full result and dispatches everything except the
+  // value the RPC caller got back. Given nothing to walk it must dispatch nothing: a null result
+  // means the receptor produced no messages, and treating that as anything else would publish
+  // whatever the extractor's default happened to be.
+  [Test]
+  public async Task CascadeEventsExcludingResponse_NullResult_DispatchesNothingAsync() {
+    var services = new ServiceCollection();
+    var cascaded = new List<object>();
+    var dispatcher = new TestDispatcher(
+      services.BuildServiceProvider(),
+      untypedPublisher: (msg, _, _) => {
+        lock (cascaded) { cascaded.Add(msg); }
+        return Task.CompletedTask;
+      });
+
+    await dispatcher.CascadeEventsExcludingResponseAsync<TestResult>(
+      result: null,
+      extractedResponse: null,
+      originalMessageType: typeof(TestCommand));
+
+    await Assert.That(cascaded).IsEmpty()
+      .Because("a receptor that returned nothing has nothing to cascade; anything published here "
+        + "would be a message the receptor never produced");
+  }
+
+  // The same call with a real result is the control: the early return above is about the null, not
+  // about this dispatcher being unable to cascade at all.
+  [Test]
+  public async Task CascadeEventsExcludingResponse_ResultCarryingAnEvent_CascadesItAsync() {
+    var services = new ServiceCollection();
+    var cascaded = new List<object>();
+    var dispatcher = new TestDispatcher(
+      services.BuildServiceProvider(),
+      untypedPublisher: (msg, _, _) => {
+        lock (cascaded) { cascaded.Add(msg); }
+        return Task.CompletedTask;
+      });
+
+    var emitted = new TestEvent(Guid.CreateVersion7());
+
+    await dispatcher.CascadeEventsExcludingResponseAsync<TestResult>(
+      result: emitted,
+      extractedResponse: null,
+      originalMessageType: typeof(TestCommand));
+
+    await Assert.That(cascaded).Contains(emitted)
+      .Because("an event the receptor returned alongside its response must still be dispatched, or "
+        + "the RPC caller's reply silently swallows the receptor's side effects");
+  }
+
+  // Publish-time fan-out expands a composite into its inner events. Handed something that is not a
+  // composite it must do nothing at all: there are no inner events to read, and the alternative to
+  // returning is reading a member the object does not have.
+  [Test]
+  public async Task FanOutCompositeLocallyAtPublish_NotAComposite_PublishesNothingAsync() {
+    var services = new ServiceCollection();
+    var published = new List<object>();
+    var dispatcher = new TestDispatcher(
+      services.BuildServiceProvider(),
+      untypedPublisher: (msg, _, _) => {
+        lock (published) { published.Add(msg); }
+        return Task.CompletedTask;
+      });
+
+    await dispatcher.FanOutCompositeLocallyAtPublishAsync(
+      new TestEvent(Guid.CreateVersion7()),
+      typeof(TestEvent),
+      MessageId.New());
+
+    await Assert.That(published).IsEmpty()
+      .Because("a plain event has no inner events, so a fan-out of it must publish nothing rather "
+        + "than treat the event itself as its own child");
+  }
+
+  // The stream id decides which stream an event is appended to and which perspective gate serializes
+  // it, so guessing one is worse than having none: the caller falls back to the message id, which at
+  // least keeps the event on a stream of its own. A hop whose metadata carries no parsable aggregate
+  // id must therefore yield nothing rather than something.
+  [Test]
+  public async Task ExtractStreamIdFromMetadata_NoParsableAggregateId_YieldsNothingAsync() {
+    var withoutTheKey = new Dictionary<string, JsonElement> {
+      ["SomethingElse"] = JsonDocument.Parse("\"" + Guid.CreateVersion7() + "\"").RootElement.Clone()
+    };
+    var withANonStringValue = new Dictionary<string, JsonElement> {
+      ["AggregateId"] = JsonDocument.Parse("42").RootElement.Clone()
+    };
+    var withAnUnparsableString = new Dictionary<string, JsonElement> {
+      ["AggregateId"] = JsonDocument.Parse("\"not-a-guid\"").RootElement.Clone()
+    };
+
+    await Assert.That(Core.Dispatcher.ExtractStreamIdFromMetadata(withoutTheKey)).IsNull()
+      .Because("metadata that never named an aggregate id has none to give");
+    await Assert.That(Core.Dispatcher.ExtractStreamIdFromMetadata(withANonStringValue)).IsNull()
+      .Because("a number is not an aggregate id, and reading one as a stream key would put the "
+        + "event on a stream nothing else writes to");
+    await Assert.That(Core.Dispatcher.ExtractStreamIdFromMetadata(withAnUnparsableString)).IsNull()
+      .Because("a string that is not a GUID must fall through to the caller's message-id fallback "
+        + "rather than become a stream id of its own");
+  }
+
+  // The control for the three above: a well-formed aggregate id IS read, so the nulls are about the
+  // metadata rather than about the reader never working.
+  [Test]
+  public async Task ExtractStreamIdFromMetadata_WellFormedAggregateId_IsReadAsync() {
+    var streamId = Guid.CreateVersion7();
+    var metadata = new Dictionary<string, JsonElement> {
+      ["AggregateId"] = JsonDocument.Parse("\"" + streamId + "\"").RootElement.Clone()
+    };
+
+    await Assert.That(Core.Dispatcher.ExtractStreamIdFromMetadata(metadata)).IsEqualTo(streamId)
+      .Because("the hop's aggregate id is the stream the event belongs to");
+  }
 }

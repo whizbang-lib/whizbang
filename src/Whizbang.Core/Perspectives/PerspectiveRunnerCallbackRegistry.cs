@@ -33,6 +33,36 @@ public static class PerspectiveRunnerCallbackRegistry {
   }
 
   /// <summary>
+  /// Test seam: removes every registration callback and hands them back so the caller can
+  /// restore them.
+  /// </summary>
+  /// <remarks>
+  /// The callback list is process-global and append-only, and a generated module initializer in
+  /// every assembly that declares a perspective fills it before any other code runs. That makes
+  /// the "nothing registered" answer in <see cref="InvokeRegistration"/> — what a host with no
+  /// perspectives gets, and the reason it does no per-collection bookkeeping for a collection
+  /// nothing will be registered into — unreachable in any process that has one. Callers must
+  /// restore with <see cref="RestoreCallbacksForTests"/> in a finally, and must serialize against
+  /// anything else that touches this registry.
+  /// </remarks>
+  internal static Action<IServiceCollection>[] TakeCallbacksForTests() {
+    lock (_lock) {
+      var taken = _callbacks.ToArray();
+      _callbacks.Clear();
+      return taken;
+    }
+  }
+
+  /// <summary>Puts back the callbacks taken by <see cref="TakeCallbacksForTests"/>.</summary>
+  internal static void RestoreCallbacksForTests(Action<IServiceCollection>[] callbacks) {
+    ArgumentNullException.ThrowIfNull(callbacks);
+    lock (_lock) {
+      _callbacks.Clear();
+      _callbacks.AddRange(callbacks);
+    }
+  }
+
+  /// <summary>
   /// Invokes all registered perspective runner registration callbacks for the given ServiceCollection.
   /// Called by driver extensions (Postgres) to register perspective runners automatically.
   /// If no callbacks have been set (module initializers haven't run or no perspectives found), does nothing gracefully.

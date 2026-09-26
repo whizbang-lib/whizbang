@@ -19,6 +19,11 @@ public static class CompileTimeMessageClassification {
   private const string IEVENT_INTERFACE = "global::Whizbang.Core.IEvent";
   private const string IQUERY_INTERFACE = "global::Whizbang.Core.IQuery";
 
+  // The classification values this type returns; they are also the suffixes it matches on.
+  private const string COMMAND_KIND = "Command";
+  private const string EVENT_KIND = "Event";
+  private const string QUERY_KIND = "Query";
+
   /// <summary>The framework system namespace subtree whose types classify as MessageKind.System.
   /// Mirror of <c>Whizbang.Core.Routing.MessageKindDetector</c>'s framework-system tier.</summary>
   private const string FRAMEWORK_SYSTEM_NAMESPACE = "Whizbang.Core.Commands.System";
@@ -66,42 +71,42 @@ public static class CompileTimeMessageClassification {
     foreach (var iface in messageType.AllInterfaces) {
       var display = TypeNameUtilities.FullyQualified(iface);
       if (display == ICOMMAND_INTERFACE) {
-        return "Command";
+        return COMMAND_KIND;
       }
       if (display == IEVENT_INTERFACE) {
-        return "Event";
+        return EVENT_KIND;
       }
       if (display == IQUERY_INTERFACE) {
-        return "Query";
+        return QUERY_KIND;
       }
     }
 
     // Priority 4: namespace convention segments
     foreach (var segment in ns.Split('.')) {
       if (string.Equals(segment, "Commands", System.StringComparison.OrdinalIgnoreCase)) {
-        return "Command";
+        return COMMAND_KIND;
       }
       if (string.Equals(segment, "Events", System.StringComparison.OrdinalIgnoreCase)) {
-        return "Event";
+        return EVENT_KIND;
       }
       if (string.Equals(segment, "Queries", System.StringComparison.OrdinalIgnoreCase)) {
-        return "Query";
+        return QUERY_KIND;
       }
     }
 
     // Priority 5: type-name suffix
     var name = messageType.Name;
-    if (name.EndsWith("Command", System.StringComparison.Ordinal)) {
-      return "Command";
+    if (name.EndsWith(COMMAND_KIND, System.StringComparison.Ordinal)) {
+      return COMMAND_KIND;
     }
-    if (name.EndsWith("Query", System.StringComparison.Ordinal)) {
-      return "Query";
+    if (name.EndsWith(QUERY_KIND, System.StringComparison.Ordinal)) {
+      return QUERY_KIND;
     }
-    if (name.EndsWith("Event", System.StringComparison.Ordinal)
+    if (name.EndsWith(EVENT_KIND, System.StringComparison.Ordinal)
         || name.EndsWith("Created", System.StringComparison.Ordinal)
         || name.EndsWith("Updated", System.StringComparison.Ordinal)
         || name.EndsWith("Deleted", System.StringComparison.Ordinal)) {
-      return "Event";
+      return EVENT_KIND;
     }
 
     return "Unknown";

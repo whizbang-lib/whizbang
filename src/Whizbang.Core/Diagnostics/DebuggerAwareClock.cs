@@ -47,7 +47,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     // Start sampling timer if using CPU time sampling mode
     if (_shouldUseCpuSampling()) {
       var interval = (int)_options.SamplingInterval.TotalMilliseconds;
-      _sampler = new Timer(_sampleCpuTime, null, interval, interval);
+      _sampler = new Timer(SampleCpuTime, null, interval, interval);
     }
   }
 
@@ -99,6 +99,18 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     _pauseStateChannel.Writer.TryComplete();
   }
 
+  /// <summary>
+  /// Runs the pause-state read loop against a caller-supplied reader. Internal rather than
+  /// private so the loop's faulted-channel exit can be asserted: this class only ever completes
+  /// its own channel gracefully (<c>Dispose</c> calls the parameterless <c>TryComplete</c>), so a
+  /// reader that throws <see cref="ChannelClosedException"/> is not reachable through
+  /// <see cref="OnPauseStateChanged"/> — and the loop must still end quietly rather than leave an
+  /// unobserved faulted task behind if a future caller ever completes it with an error.
+  /// </summary>
+  internal static Task RunPauseStateReadLoopAsync(
+      ChannelReader<bool> reader, Action<bool> handler, CancellationToken ct)
+    => PauseStateSubscription.ReadLoopAsync(reader, handler, ct);
+
   private bool _shouldUseCpuSampling() {
     return _options.Mode switch {
       DebuggerDetectionMode.CpuTimeSampling => true,
@@ -107,7 +119,11 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     };
   }
 
-  private void _sampleCpuTime(object? state) {
+  /// <summary>
+  /// One sampling tick. Internal rather than private so the disposed guard and each detection
+  /// mode can be driven deterministically; the timer supplies the real cadence.
+  /// </summary>
+  internal void SampleCpuTime(object? state) {
     if (_disposed) {
       return;
     }
@@ -298,7 +314,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     /// <param name="handler">The callback invoked when pause state changes.</param>
     public PauseStateSubscription(ChannelReader<bool> reader, Action<bool> handler) {
       _cts = new CancellationTokenSource();
-      _readTask = _readLoopAsync(reader, handler, _cts.Token);
+      _readTask = ReadLoopAsync(reader, handler, _cts.Token);
     }
 
     public void Dispose() {
@@ -314,7 +330,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       // Don't wait for task - it will complete when canceled
     }
 
-    private static async Task _readLoopAsync(ChannelReader<bool> reader, Action<bool> handler, CancellationToken ct) {
+    internal static async Task ReadLoopAsync(ChannelReader<bool> reader, Action<bool> handler, CancellationToken ct) {
       try {
         await foreach (var isPaused in reader.ReadAllAsync(ct)) {
           handler(isPaused);

@@ -23,7 +23,7 @@ namespace Whizbang.Core.Workers;
 /// would grow without bound — a worse outcome than the problem being diagnosed.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/work-coordinator/maintenance</docs>
+/// <docs>fundamentals/workers/maintenance-steps</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/DebugRetentionBridgeTests.cs</tests>
 public static class DebugRetentionBridge {
 

@@ -1137,14 +1137,14 @@ public class SecurityIntegrationTests {
     // to verify that ScopeDelta deserialization works correctly.
     //
     // The database contains:
-    // {"Hops": [{"md": {...}, "sc": {"v": {"Scope": {"t": "c0ffee00-cafe-f00d-face-feed12345678", "u": "925321d2-9635-49e5-abd8-87b43dcf7e19"}}}, ...}], ...}
+    // {"Hops": [{"md": {...}, "sc": {"v": {"Scope": {"t": "7a3f9c10-4b2e-4d8a-9f61-0c5e2d8b1a47", "u": "925321d2-9635-49e5-abd8-87b43dcf7e19"}}}, ...}], ...}
 
     // Arrange: The exact JSON from the database
     const string metadataJson = """
       {
         "Hops": [{
           "md": {"AggregateId": "019cd3a4-19dc-7548-aed6-e24ab97f8dc8"},
-          "sc": {"v": {"Scope": {"t": "c0ffee00-cafe-f00d-face-feed12345678", "u": "925321d2-9635-49e5-abd8-87b43dcf7e19"}}},
+          "sc": {"v": {"Scope": {"t": "7a3f9c10-4b2e-4d8a-9f61-0c5e2d8b1a47", "u": "925321d2-9635-49e5-abd8-87b43dcf7e19"}}},
           "si": {"hn": "test-host", "ii": "019cd3a0-3997-776c-b616-20bbc224dcd9", "pi": 56083, "sn": "Consumer.JobService"},
           "to": "consumer.contracts.job",
           "tp": "00-8fe2f60995fa4b5b2a2792f08b1ad39f-a8e13f9311145b78-01",
@@ -1190,7 +1190,7 @@ public class SecurityIntegrationTests {
     var hasU = scopeElement.TryGetProperty("u", out var uElement);
     await Assert.That(hasT).IsTrue().Because("Scope should have 't' (TenantId)");
     await Assert.That(hasU).IsTrue().Because("Scope should have 'u' (UserId)");
-    await Assert.That(tElement.GetString()).IsEqualTo("c0ffee00-cafe-f00d-face-feed12345678");
+    await Assert.That(tElement.GetString()).IsEqualTo("7a3f9c10-4b2e-4d8a-9f61-0c5e2d8b1a47");
     await Assert.That(uElement.GetString()).IsEqualTo("925321d2-9635-49e5-abd8-87b43dcf7e19");
   }
 
@@ -1201,7 +1201,7 @@ public class SecurityIntegrationTests {
     // with scope in hops, and GetCurrentScope() should return the scope.
 
     // Arrange: Create envelope with ScopeDelta in hops (matching database structure)
-    const string tenantId = "c0ffee00-cafe-f00d-face-feed12345678";
+    const string tenantId = "7a3f9c10-4b2e-4d8a-9f61-0c5e2d8b1a47";
     const string userId = "925321d2-9635-49e5-abd8-87b43dcf7e19";
 
     // Create a ScopeDelta that matches the database structure

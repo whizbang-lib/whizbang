@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -16,7 +17,7 @@ namespace Whizbang.Core.Workers;
 /// (returns an empty list). Engines with active housekeeping (stale-instance purge,
 /// dead-letter cleanup, dedup pruning) light up automatically.
 /// </remarks>
-/// <docs>fundamentals/work-coordinator/maintenance</docs>
+/// <docs>fundamentals/workers/maintenance-steps</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
 public sealed partial class MaintenanceWorker(
   IServiceScopeFactory scopeFactory,
@@ -309,6 +310,26 @@ public sealed partial class MaintenanceWorker(
     if (_options.StuckRowSentinelEnabled) {
       await _runStuckRowSentinelAsync(coordinator, ct);
     }
+
+    // Steps other packages add. Last, so everything they read has been through this cycle's own
+    // housekeeping first.
+    await _runMaintenanceStepsAsync(sp, ct).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Runs the steps other packages registered, in registration order. Best-effort per step: a step
+  /// that throws is logged by name and the next one runs; cancellation is shutdown and propagates.
+  /// </summary>
+  private async Task _runMaintenanceStepsAsync(IServiceProvider sp, CancellationToken ct) {
+    foreach (var step in sp.GetServices<IMaintenanceStep>()) {
+      try {
+        await step.RunAsync(sp, ct).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogMaintenanceStepFailed(_logger, step.Name, ex);
+      }
+    }
   }
 
   // Snapshots each (stream, perspective) the reaper is about to strand, using the runner's bootstrap hook.
@@ -336,6 +357,7 @@ public sealed partial class MaintenanceWorker(
   /// keeps its row and is retried next sweep. A claim whose provider has no registered store keeps
   /// its row as the operator's signal rather than being silently dropped.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The sweep's invariant is that a ledger row outlives its blob, so every branch is about whether a row may be removed: no expiry configured, no claim, no registered store for the provider, a delete that threw, or a short page that ends the sweep. The branches are the invariant.")]
   private async Task _sweepExpiredOffloadClaimsAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     var opts = sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<Whizbang.Core.Offloads.MessageBodyOffloadOptions>>()?.CurrentValue;
@@ -479,6 +501,7 @@ public sealed partial class MaintenanceWorker(
   // offer each guard its batch, and make the decisions durable — Proceed releases any prior hold,
   // Defer/Cancel hold (absent decision = Defer: the guard exists to prevent orphaned external
   // resources, so silence fails safe). A throwing guard gets the destruction retry ladder.
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Offering rows to the destruction guards is a three-level walk (guard, guarded model, target row) whose inner switch has one arm per guard decision, and the deferred rows are grouped by release time so the journal records one row per time. The structure follows the decision type.")]
   private async Task<List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard Guard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget> Released)>>
       _offerRowsToGuardsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     var releasedByGuard = new List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>)>();
@@ -559,6 +582,7 @@ public sealed partial class MaintenanceWorker(
   // GUARDED perspectives to their guards (holds honored), then execute the hold-aware cascade
   // deletes. Deferred cascades re-queue their seeds so the next cycle re-offers — convergence, not
   // loss. Best-effort: any failure is logged and the journal retries next cycle.
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A cascade resolves model names to types, computes the closure, groups it by model, maps each model to its table and its guard, and then applies the same per-decision switch the direct offer uses. Each stage narrows what the next one needs, and every stage can legitimately produce nothing and end the cascade.")]
   private async Task<List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard Guard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget> Released)>>
       _cascadeStreamGroupEvictionsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     var released = new List<(Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard, List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>)>();
@@ -933,15 +957,15 @@ public sealed partial class MaintenanceWorker(
   static partial void LogRewriteScanFailed(ILogger logger, Exception ex);
 
 
-  [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
+  [LoggerMessage(EventId = 56, Level = LogLevel.Debug,
     Message = "PreDestruction hook ran for a batch of {TargetCount} ephemeral events (cancel={Cancel}, defer={Defer}) — decision not yet enforced (E2-2)")]
   static partial void LogPreDestruction(ILogger logger, int targetCount, bool cancel, bool defer);
 
-  [LoggerMessage(EventId = 25, Level = LogLevel.Warning,
+  [LoggerMessage(EventId = 57, Level = LogLevel.Warning,
     Message = "PreDestruction hook threw for a batch of {TargetCount} ephemeral events — attempt {Attempt}/{MaxRetries}; {Outcome}")]
   static partial void LogPreDestructionFailed(ILogger logger, Exception ex, int targetCount, int attempt, int maxRetries, string outcome);
 
-  [LoggerMessage(EventId = 26, Level = LogLevel.Warning,
+  [LoggerMessage(EventId = 58, Level = LogLevel.Warning,
     Message = "PostDestruction hook threw for a batch of {TargetCount} ephemeral events (non-fatal)")]
   static partial void LogPostDestructionFailed(ILogger logger, Exception ex, int targetCount);
 
@@ -1003,6 +1027,10 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 46, Level = LogLevel.Information,
     Message = "Settled apply-path fold: {FoldedCount} idle stream(s) folded into the signature counts")]
   private static partial void LogSettledFold(ILogger logger, int foldedCount);
+
+  [LoggerMessage(EventId = 59, Level = LogLevel.Warning,
+    Message = "Maintenance step {StepName} failed; the remaining steps still ran and it retries next cycle")]
+  private static partial void LogMaintenanceStepFailed(ILogger logger, string stepName, Exception exception);
 
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "Stuck inbox row sentinel: message_id={MessageId} type={MessageType} stream={StreamId} attempts={Attempts} since={ClaimedSince:o} — row claimed past MaxInboxAttempts but never drained. Investigate; see operations/observability/stuck-row-sentinel.")]

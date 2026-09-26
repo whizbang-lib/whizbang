@@ -329,6 +329,9 @@ public abstract partial class Dispatcher(
 #pragma warning restore S4487, S1144
   // Core options for tag processing configuration
   private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
+  // The message payload limit, checked where each message is serialized for the outbox. Built from the host's
+  // options when the host did not register it, so the limit holds either way.
+  private readonly MessagePayloadLimits _payloadLimits = MessagePayloadLimits.Resolve(serviceProvider);
   // Message tag processor - invoked after successful receptor completion
   private readonly IMessageTagProcessor? _messageTagProcessor = serviceProvider.GetService<IMessageTagProcessor>();
   // Lifecycle coordinator - centralized stage transitions
@@ -804,7 +807,7 @@ public abstract partial class Dispatcher(
       var invoker = _lookupReceptorInvoker<object>(message, messageType);
 
       if (invoker == null) {
-        return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options.Priority);
+        return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options);
       }
 
       var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
@@ -1001,7 +1004,7 @@ public abstract partial class Dispatcher(
       var invoker = _lookupReceptorInvoker<object>(message, messageType);
 
       if (invoker == null) {
-        return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options.Priority);
+        return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options);
       }
 
       var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
@@ -1459,7 +1462,7 @@ public abstract partial class Dispatcher(
     }
 
     // 3. Cascade remaining messages (excluding the extracted response)
-    await _cascadeEventsExcludingResponseAsync(fullResult, response, messageType);
+    await CascadeEventsExcludingResponseAsync(fullResult, response, messageType);
 
     // 4. Return the extracted response
     return response!;
@@ -1476,7 +1479,13 @@ public abstract partial class Dispatcher(
   /// <param name="originalMessageType">The type of the original message for routing lookup.</param>
   /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
-  private async Task _cascadeEventsExcludingResponseAsync<TResult>(
+  /// <remarks>
+  /// Internal rather than private so the null-result answer can be asserted. The only caller
+  /// reaches this after response extraction succeeded, and extraction refuses a null result, so
+  /// the guard cannot fire through the RPC path — it is what keeps a future caller from walking a
+  /// null result and cascading nothing by accident rather than by decision.
+  /// </remarks>
+  internal async Task CascadeEventsExcludingResponseAsync<TResult>(
     object? result,
     TResult? extractedResponse,
     Type? originalMessageType = null
@@ -2761,7 +2770,7 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherEmissionIdentityTests.cs</tests>
   private Guid _mintEmissionId(IMessageEnvelope? sourceEnvelope, Type emittedType) {
     if (sourceEnvelope is null) {
-      return ValueObjects.TrackedGuid.NewMedo();
+      return ValueObjects.TrackedGuid.New();
     }
     // A nested local cascade hands receptors a wrapper that reports the inbound message's id and handler.
     // Their emissions anchor on the cascaded message that caused them (carried by the wrapper) so they
@@ -2770,7 +2779,7 @@ public abstract partial class Dispatcher(
       ? nestedAnchor
       : sourceEnvelope.MessageId.Value;
     if (anchor == Guid.Empty) {
-      return ValueObjects.TrackedGuid.NewMedo();
+      return ValueObjects.TrackedGuid.New();
     }
     var ordinal = EmissionSequence.Next(sourceEnvelope);
     var eventId = EmissionIdentity.Derive(
@@ -2797,7 +2806,7 @@ public abstract partial class Dispatcher(
     if (_streamIdExtractor is not null && msg is IHasStreamId hasStreamId) {
       var (shouldGenerate, onlyIfEmpty) = _streamIdExtractor.GetGenerationPolicy(msg);
       if (shouldGenerate && (!onlyIfEmpty || streamId == Guid.Empty)) {
-        streamId = ValueObjects.TrackedGuid.NewMedo();
+        streamId = ValueObjects.TrackedGuid.New();
         hasStreamId.StreamId = streamId;
         if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
           CascadeLogger.LogDebug("[STREAM_ID] Auto-generated StreamId={StreamId} for EventType={EventType} (OnlyIfEmpty={OnlyIfEmpty})",
@@ -2827,7 +2836,7 @@ public abstract partial class Dispatcher(
 
     var streamId = _streamIdExtractor.ExtractStreamId(message, messageType) ?? Guid.Empty;
     if (!onlyIfEmpty || streamId == Guid.Empty) {
-      var newStreamId = ValueObjects.TrackedGuid.NewMedo();
+      var newStreamId = ValueObjects.TrackedGuid.New();
 
       // Try IHasStreamId first (direct interface), then fall back to generated setter
       if (message is IHasStreamId hasStreamId) {
@@ -2846,7 +2855,7 @@ public abstract partial class Dispatcher(
   /// </summary>
   private Guid _cascadeStreamIdFromSourceIfNeeded(object msg, Type messageType, Guid streamId, IMessageEnvelope? sourceEnvelope) {
     if (streamId == Guid.Empty && sourceEnvelope is not null && _streamIdExtractor is not null) {
-      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
       if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
         streamId = sourceStreamId.Value;
         if (msg is IHasStreamId hasStreamIdForCascade) {
@@ -2854,7 +2863,7 @@ public abstract partial class Dispatcher(
         } else {
           _streamIdExtractor.SetStreamId(msg, streamId);
         }
-        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload!.GetType().Name, messageType.Name);
+        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload.GetType().Name, messageType.Name);
       }
     }
     return streamId;
@@ -3225,7 +3234,7 @@ public abstract partial class Dispatcher(
     try {
 
       // Auto-generate StreamId for events with [GenerateStreamId] attribute
-      _autoGenerateStreamIdIfNeeded(eventData!, eventType);
+      _autoGenerateStreamIdIfNeeded(eventData, eventType);
 
       // Create MessageId once - used for outbox and will be used by process_work_batch for event storage
       var messageId = MessageId.New();
@@ -3250,7 +3259,7 @@ public abstract partial class Dispatcher(
       // service's own transported copy loops back and is echo-discarded (it already fanned out here), so
       // there is no double fan-out. The composite itself is IMessage-not-IEvent and is never event-stored.
       if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
-        await _fanOutCompositeLocallyAtPublishAsync(eventData!, eventType, messageId).ConfigureAwait(false);
+        await FanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
       }
 
       // Start outbox publishing concurrently with the local receptor.
@@ -3269,7 +3278,7 @@ public abstract partial class Dispatcher(
         await publisher(eventData);
         // CancellationToken.None: this PublishAsync overload takes no token, and the local
         // receptor invocation above is likewise uncancellable — explicit opt-out, not an oversight.
-        await _publishToForeignLookupsAsync(eventData!, eventType, null, CancellationToken.None).ConfigureAwait(false);
+        await _publishToForeignLookupsAsync(eventData, eventType, null, CancellationToken.None).ConfigureAwait(false);
       } catch {
         // Ensure outbox task is observed before re-throwing to avoid UnobservedTaskException
         try { await outboxTask; } catch { /* outbox exception is secondary */ }
@@ -3341,7 +3350,7 @@ public abstract partial class Dispatcher(
     try {
 
       // Auto-generate StreamId for events with [GenerateStreamId] attribute
-      _autoGenerateStreamIdIfNeeded(eventData!, eventType);
+      _autoGenerateStreamIdIfNeeded(eventData, eventType);
 
       var messageId = MessageId.New();
 
@@ -3349,7 +3358,7 @@ public abstract partial class Dispatcher(
 
       // Owned composite — fan out LOCALLY at publish (step 1.1); see the other PublishAsync overload.
       if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
-        await _fanOutCompositeLocallyAtPublishAsync(eventData!, eventType, messageId).ConfigureAwait(false);
+        await FanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
       }
 
       // Start outbox concurrently with receptor (see other overload for rationale).
@@ -3359,7 +3368,7 @@ public abstract partial class Dispatcher(
       // Capture the establishing context synchronously (see the other overload) so a detached/worker emit's
       // child inherits identity+scope from the hop rather than fabricating a fresh root across the boundary.
       var establishingEnvelope = _captureAmbientSourceEnvelope();
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, scheduledFor: options.ScheduledFor, priority: options.Priority);
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, options: options);
 
       // ScheduledFor must gate the in-process local-receptor invocation the same way it gates
       // the outbox-pickup query. Without this branch the local receptor fires inline despite the
@@ -3372,7 +3381,7 @@ public abstract partial class Dispatcher(
         var publisher = GetReceptorPublisher(eventData, eventType);
         try {
           await publisher(eventData);
-          await _publishToForeignLookupsAsync(eventData!, eventType, null, options.CancellationToken).ConfigureAwait(false);
+          await _publishToForeignLookupsAsync(eventData, eventType, null, options.CancellationToken).ConfigureAwait(false);
         } catch {
           try { await outboxTask; } catch { /* outbox exception is secondary */ }
           throw;
@@ -3442,7 +3451,7 @@ public abstract partial class Dispatcher(
 
     var eventTypeName = eventData.GetType().Name;
 
-    var claimed = await claimStore.TryClaimAsync(claimKey, TrackedGuid.NewMedo(), cancellationToken).ConfigureAwait(false);
+    var claimed = await claimStore.TryClaimAsync(claimKey, TrackedGuid.New(), cancellationToken).ConfigureAwait(false);
     if (!claimed) {
       _dispatcherMetrics?.PublishOnceClaimsLost.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName));
@@ -3568,7 +3577,7 @@ public abstract partial class Dispatcher(
 
     // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
     if (streamId == Guid.Empty && sourceEnvelope is not null && _streamIdExtractor is not null) {
-      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
       if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
         streamId = sourceStreamId.Value;
         if (message is IHasStreamId hasStreamIdForCascade) {
@@ -3576,7 +3585,7 @@ public abstract partial class Dispatcher(
         } else {
           _streamIdExtractor.SetStreamId(message, streamId);
         }
-        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload!.GetType().Name, messageType.Name);
+        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload.GetType().Name, messageType.Name);
       }
     }
 
@@ -3584,7 +3593,7 @@ public abstract partial class Dispatcher(
     if (streamId == Guid.Empty && _streamIdExtractor is not null && message is IHasStreamId hasStreamId) {
       var (shouldGenerate, onlyIfEmpty) = _streamIdExtractor.GetGenerationPolicy(message);
       if (shouldGenerate && (!onlyIfEmpty || streamId == Guid.Empty)) {
-        streamId = ValueObjects.TrackedGuid.NewMedo();
+        streamId = ValueObjects.TrackedGuid.New();
         hasStreamId.StreamId = streamId;
         Log.StreamIdAutoGenerated(CascadeLogger, streamId, messageType.Name, onlyIfEmpty);
       }
@@ -3659,7 +3668,10 @@ public abstract partial class Dispatcher(
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
   /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
-  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false, DateTimeOffset? scheduledFor = null, int priority = Whizbang.Core.Priority.WorkPriority.UNDECLARED) {
+  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false, DispatchOptions? options = null) {
+    // The caller's schedule, declared priority and payload limit, when it dispatched with options.
+    var scheduledFor = options?.ScheduledFor;
+    var priority = options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED;
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var eventTypeName = eventType.Name;
@@ -3724,6 +3736,7 @@ public abstract partial class Dispatcher(
       // Create envelope with hop and serialize to outbox message
       var envelope = _createOutboxEnvelopeWithHop(eventData, eventType, messageId, sourceEnvelope, destination);
       _stampExplicitPriority(envelope, priority);   // an explicit number on the options is the caller's declaration
+      envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
 
       // Serialize, queue, and flush
       await _serializeQueueAndFlushAsync(envelope, eventData!, eventType, destination, messageId, strategy, scheduledFor);
@@ -3779,14 +3792,14 @@ public abstract partial class Dispatcher(
     if (sourceEnvelope is not null && _streamIdExtractor is not null) {
       var eventStreamId = _streamIdExtractor.ExtractStreamId(eventData!, eventType);
       if (!eventStreamId.HasValue || eventStreamId.Value == Guid.Empty) {
-        var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+        var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
         if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
           if (eventData is IHasStreamId hasStreamId) {
             hasStreamId.StreamId = sourceStreamId.Value;
           } else {
             _streamIdExtractor.SetStreamId(eventData!, sourceStreamId.Value);
           }
-          Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload!.GetType().Name, eventType.Name);
+          Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload.GetType().Name, eventType.Name);
         }
       }
     }
@@ -3807,9 +3820,14 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_AtomicAtomicity_PropagatesChildFailureAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:OwnedComposite_FansOutAtPublish_ViaDispatchOptionsOverloadAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCompositePublishFanoutTests.cs:NonOwnedComposite_DoesNotFanOutAtPublishAsync</tests>
+  /// <remarks>
+  /// Internal rather than private so the not-a-composite answer can be asserted. Both call sites
+  /// test the message first, so the guard cannot fire through a publish — it is what keeps a
+  /// future caller from reading inner events off something that has none.
+  /// </remarks>
   // S3776: linear loop with one atomicity branch — already minimal.
 #pragma warning disable S3776
-  private async Task _fanOutCompositeLocallyAtPublishAsync(object composite, Type compositeType, MessageId messageId) {
+  internal async Task FanOutCompositeLocallyAtPublishAsync(object composite, Type compositeType, MessageId messageId) {
     if (composite is not ICompositeEvent comp) {
       return;
     }
@@ -4051,8 +4069,9 @@ public abstract partial class Dispatcher(
 
       // Build and queue the outbox message
       var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType)
-        ?? _extractStreamIdFromMetadata(hopMetadata)
+        ?? ExtractStreamIdFromMetadata(hopMetadata)
         ?? messageId.Value;
+      _payloadLimits.Enforce(jsonEnvelope.Payload, eventType, messageId.Value, streamId);
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId, _ephemeralModeResolver);
       // Composite pre-fanout hook (Phase B): divert into the ambient collector when one is open.
@@ -4084,7 +4103,7 @@ public abstract partial class Dispatcher(
       return;
     }
 
-    var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+    var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
     if (!sourceStreamId.HasValue || sourceStreamId.Value == Guid.Empty) {
       return;
     }
@@ -4094,7 +4113,7 @@ public abstract partial class Dispatcher(
     } else {
       _streamIdExtractor.SetStreamId(eventData, sourceStreamId.Value);
     }
-    Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload!.GetType().Name, eventType.Name);
+    Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload.GetType().Name, eventType.Name);
   }
 
   /// <summary>
@@ -4214,7 +4233,13 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Extracts stream ID from hop metadata (aggregate ID stored as JsonElement).
   /// </summary>
-  private static Guid? _extractStreamIdFromMetadata(Dictionary<string, JsonElement>? metadata) {
+  /// <remarks>
+  /// Internal rather than private so the "no usable aggregate id" answer can be asserted. The only
+  /// caller passes metadata this class built, which is either null or carries a parsable id, so the
+  /// final fallback cannot fire today — it is what keeps a hop carrying someone else's metadata
+  /// shape from producing a stream id out of an unparsable string.
+  /// </remarks>
+  internal static Guid? ExtractStreamIdFromMetadata(Dictionary<string, JsonElement>? metadata) {
     if (metadata == null) {
       return null;
     }
@@ -4270,7 +4295,7 @@ public abstract partial class Dispatcher(
     // 3. Apply routing strategy (pool suffix, tenant prefix, etc.)
     // _topicRoutingStrategy is never null (defaults to PassthroughRoutingStrategy if not provided)
     // baseTopic is never null here: either from registry or convention fallback always assigns a value
-    var resolvedTopic = _topicRoutingStrategy!.ResolveTopic(eventType, baseTopic, context);
+    var resolvedTopic = _topicRoutingStrategy.ResolveTopic(eventType, baseTopic, context);
     return resolvedTopic;
   }
 
@@ -4329,7 +4354,7 @@ public abstract partial class Dispatcher(
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber,
-    int priority = Whizbang.Core.Priority.WorkPriority.UNDECLARED
+    DispatchOptions? options = null
   ) where TMessage : notnull {
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
@@ -4355,7 +4380,8 @@ public abstract partial class Dispatcher(
 
       // Create envelope with hop for observability - generic version preserves type!
       var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
-      _stampExplicitPriority(envelope, priority);
+      _stampExplicitPriority(envelope, options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED);
+      envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
 
       // Start dispatch activity to serve as parent for handler traces (on receiving end)
       // The activity context will be propagated through the outbox message
@@ -4371,16 +4397,18 @@ public abstract partial class Dispatcher(
       }
 
       // Serialize envelope to OutboxMessage
-      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message!, messageType, destination);
+      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
-      // Queue message for batched processing — async path routes through the per-stream batcher.
-      await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
+      // Queue message for batched processing — async path routes through the per-stream batcher. The
+      // caller's cancellation, when it dispatched with options, reaches the queue and the flush.
+      var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
+      await strategy.QueueOutboxMessageAsync(newOutboxMessage, cancellationToken).ConfigureAwait(false);
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, cancellationToken);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
-      var streamId = _streamIdExtractor?.ExtractStreamId(message!, messageType);
+      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
       // Return delivery receipt with Accepted status (message queued)
       return DeliveryReceipt.Accepted(
@@ -4414,7 +4442,7 @@ public abstract partial class Dispatcher(
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber,
-    int priority = Whizbang.Core.Priority.WorkPriority.UNDECLARED
+    DispatchOptions? options = null
   ) {
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
@@ -4442,7 +4470,8 @@ public abstract partial class Dispatcher(
       // WARN: This creates MessageEnvelope<object> - type information is lost
       // For AOT compatibility, use the generic overload SendToOutboxViaScopeAsync<TMessage>
       var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
-      _stampExplicitPriority(envelope, priority);
+      _stampExplicitPriority(envelope, options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED);
+      envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
 
       // Start dispatch activity to serve as parent for handler traces (on receiving end)
       // The activity context will be propagated through the outbox message
@@ -4460,11 +4489,13 @@ public abstract partial class Dispatcher(
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
-      // Queue message for batched processing — async path routes through the per-stream batcher.
-      await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
+      // Queue message for batched processing — async path routes through the per-stream batcher. The
+      // caller's cancellation, when it dispatched with options, reaches the queue and the flush.
+      var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
+      await strategy.QueueOutboxMessageAsync(newOutboxMessage, cancellationToken).ConfigureAwait(false);
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, cancellationToken);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -5043,7 +5074,7 @@ public abstract partial class Dispatcher(
 
         if (isLocal) {
           // Auto-generate StreamId for events with [GenerateStreamId] attribute
-          _autoGenerateStreamIdIfNeeded(eventData!, eventType);
+          _autoGenerateStreamIdIfNeeded(eventData, eventType);
 
           // Has local receptor - process locally via publish semantics
           var cascade = _cascadeContextFactory.NewRoot();
@@ -5309,6 +5340,10 @@ public abstract partial class Dispatcher(
 
     var serialized = _envelopeSerializer.SerializeEnvelope(envelope);
     serialized.JsonEnvelope.Priority = declaredPriority;   // the storage form carries the declaration too
+
+    // Measured on the serialized form, which is what is stored and sent; an oversized message stops here.
+    _payloadLimits.Enforce(serialized.JsonEnvelope.Payload, payloadType, envelope.MessageId.Value, streamId,
+      (envelope as MessageEnvelope<TMessage>)?.PayloadLimitOverride);
 
     // DIAGNOSTIC: Log if MessageType is JsonElement (should never happen after serializer checks)
     if (serialized.MessageType.Contains("JsonElement", StringComparison.OrdinalIgnoreCase)) {

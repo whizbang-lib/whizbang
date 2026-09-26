@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Dapper;
-using Medo;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
@@ -55,7 +54,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task RecordHeartbeatAsync_NewInstance_InsertsRowAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-a", "host-a", 42));
 
     await using var conn = new NpgsqlConnection(ConnectionString);
@@ -79,7 +78,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task DeregisterInstanceAsync_RemovesRowAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-b", "host-b", 1));
     await c.DeregisterInstanceAsync(instanceId);
 
@@ -94,7 +93,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task ClaimWorkAsync_NoWork_ReturnsEmptyBatchAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-c", "host-c", 1));
 
     var batch = await c.ClaimWorkAsync(new ClaimWorkRequest(
@@ -110,27 +109,27 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task FetchOutboxBatchAsync_NoRows_ReturnsEmptyAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     var rows = await c.FetchOutboxBatchAsync(
-      [(Guid)TrackedGuid.NewMedo()], instanceId, maxPerStream: 10);
+      [(Guid)TrackedGuid.New()], instanceId, maxPerStream: 10);
     await Assert.That(rows.Count).IsEqualTo(0);
   }
 
   [Test]
   public async Task FetchInboxBatchAsync_NoRows_ReturnsEmptyAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     var rows = await c.FetchInboxBatchAsync(
-      [(Guid)TrackedGuid.NewMedo()], instanceId, maxPerStream: 10);
+      [(Guid)TrackedGuid.New()], instanceId, maxPerStream: 10);
     await Assert.That(rows.Count).IsEqualTo(0);
   }
 
   [Test]
   public async Task FetchPendingPerspectiveEventsAsync_NoRows_ReturnsEmptyAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     var rows = await c.FetchPendingPerspectiveEventsAsync(
-      (Guid)TrackedGuid.NewMedo(), "TestPerspective", instanceId);
+      (Guid)TrackedGuid.New(), "TestPerspective", instanceId);
     await Assert.That(rows.Count).IsEqualTo(0);
   }
 
@@ -142,11 +141,11 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task FetchPendingPerspectiveEventsAsync_StampedRow_SurfacesCommitSequenceAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     const long stampedCommitSequence = 234500L;
 
     await using var conn = new NpgsqlConnection(ConnectionString);
@@ -206,8 +205,8 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   public async Task FetchEventsByIdsAsync_UnknownIds_ReturnsEmptyAsync() {
     var c = _build();
     var rows = await c.FetchEventsByIdsAsync([
-      (Guid)TrackedGuid.NewMedo(),
-      (Guid)TrackedGuid.NewMedo(),
+      (Guid)TrackedGuid.New(),
+      (Guid)TrackedGuid.New(),
     ]);
     await Assert.That(rows.Count).IsEqualTo(0);
   }
@@ -226,8 +225,8 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task StoreOutboxMessagesAsync_SingleMessage_PersistsRowAsync() {
     var c = _build();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId)], partitionCount: 100);
 
@@ -248,8 +247,8 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task CompleteOutboxPublishedAsync_ProductionMode_DeletesRowAsync() {
     var c = _build();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.NewMedo())], 100);
+    var msgId = (Guid)TrackedGuid.New();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.New())], 100);
 
     var affected = await c.CompleteOutboxPublishedAsync([msgId], debugMode: false);
     await Assert.That(affected).IsGreaterThanOrEqualTo(1);
@@ -264,8 +263,8 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task CompleteOutboxPublishedAsync_DebugMode_RetainsRowAsync() {
     var c = _build();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.NewMedo())], 100);
+    var msgId = (Guid)TrackedGuid.New();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.New())], 100);
 
     await c.CompleteOutboxPublishedAsync([msgId], debugMode: true);
 
@@ -328,8 +327,8 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task GetStreamEventsAsync_NoEvents_ReturnsEmptyAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var events = await c.GetStreamEventsAsync(instanceId, [(Guid)TrackedGuid.NewMedo()]);
+    var instanceId = (Guid)TrackedGuid.New();
+    var events = await c.GetStreamEventsAsync(instanceId, [(Guid)TrackedGuid.New()]);
     await Assert.That(events.Count).IsEqualTo(0);
   }
 
@@ -337,7 +336,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   public async Task GetPerspectiveCursorAsync_NoRow_ReturnsNullAsync() {
     var c = _build();
     var info = await c.GetPerspectiveCursorAsync(
-      (Guid)TrackedGuid.NewMedo(), "TestPerspective");
+      (Guid)TrackedGuid.New(), "TestPerspective");
     await Assert.That(info).IsNull();
   }
 
@@ -361,8 +360,8 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     // staged work alone. A guard that read "empty" as "all" would complete — in production mode,
     // DELETE — outbox rows that were never published.
     var c = _build();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.NewMedo())], partitionCount: 100);
+    var msgId = (Guid)TrackedGuid.New();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.New())], partitionCount: 100);
 
     await c.FlushCompletionsAsync(new FlushCompletionsRequest());
 
@@ -387,9 +386,9 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task FetchOutboxBatchAsync_WithStoredRows_ReturnsRowsAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId)], partitionCount: 100);
 
     await using var conn = new NpgsqlConnection(ConnectionString);
@@ -409,8 +408,8 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     // is staged first. Without a row the call reports success while writing nothing, which is why
     // this test used to pass no matter what the parameter binding did.
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var lastEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var lastEventId = (Guid)TrackedGuid.New();
     await _stageCursorAsync(streamId, "TestPerspective", error: "failure from the previous run");
 
     await c.ReportPerspectiveCompletionAsync(new PerspectiveCursorCompletion {
@@ -435,8 +434,8 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     // actually lands on it. The error text on the cursor row is the only place an operator sees
     // why a perspective stopped advancing.
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var lastEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var lastEventId = (Guid)TrackedGuid.New();
     await _stageCursorAsync(streamId, "FailPerspective", error: null);
 
     await c.ReportPerspectiveFailureAsync(new PerspectiveCursorFailure {
@@ -457,7 +456,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task CleanupCompletedStreamsAsync_WithStream_RunsWithoutErrorAsync() {
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var n = await c.CleanupCompletedStreamsAsync([streamId]);
     await Assert.That(n).IsGreaterThanOrEqualTo(0);
   }
@@ -465,9 +464,9 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task RenewLeasesAsync_WithStoredRows_BumpsLeaseAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.NewMedo())], 100);
+    var instanceId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.New())], 100);
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -486,8 +485,8 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     // stream is drained and the cursor's status becomes Completed — which only happens if those
     // JSON property names survive serialization.
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var lastEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var lastEventId = (Guid)TrackedGuid.New();
     await _stageCursorAsync(streamId, "PerspectiveDone", error: null);
 
     await c.CompletePerspectiveAsync(
@@ -516,7 +515,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
       INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, error)
       VALUES (@stream, @perspective, @last, 0, @error)
       """,
-      new { stream = streamId, perspective = perspectiveName, last = (Guid)TrackedGuid.NewMedo(), error });
+      new { stream = streamId, perspective = perspectiveName, last = (Guid)TrackedGuid.New(), error });
   }
 
   private async Task<CursorRow> _readCursorAsync(Guid streamId, string perspectiveName) {
@@ -542,7 +541,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   public async Task ResolveSyncInquiriesAsync_WithBasicInquiry_ReturnsResultsAsync() {
     var c = _build();
     var inquiry = new SyncInquiry {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PerspectiveName = "AnyPerspective",
     };
     var results = await c.ResolveSyncInquiriesAsync([inquiry]);
@@ -552,8 +551,8 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task GatherStatisticsAsync_WithStoredRow_StillReturnsStatsAsync() {
     var c = _build();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.NewMedo())], 100);
+    var msgId = (Guid)TrackedGuid.New();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.New())], 100);
 
     var stats = await c.GatherStatisticsAsync();
     await Assert.That(stats).IsNotNull();

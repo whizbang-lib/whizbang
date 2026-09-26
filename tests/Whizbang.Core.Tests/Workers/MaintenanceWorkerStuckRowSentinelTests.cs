@@ -66,7 +66,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
   private static StuckRow _stuck(Guid msgId, string msgType, int attempts) => new() {
     MessageId = msgId,
     MessageType = msgType,
-    StreamId = (Guid)TrackedGuid.NewMedo(),
+    StreamId = (Guid)TrackedGuid.New(),
     Attempts = attempts,
     ClaimedSince = DateTime.UtcNow.AddMinutes(-30),
   };
@@ -79,7 +79,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
   /// </summary>
   [Test]
   public async Task MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync() {
-    Guid stuckId = TrackedGuid.NewMedo();
+    Guid stuckId = TrackedGuid.New();
     var coord = new FakeCoordinator {
       StuckOutbox = [_stuck(stuckId, "Consumer.RemoveUserCommand", attempts: 992)]
     };
@@ -126,12 +126,12 @@ public class MaintenanceWorkerStuckRowSentinelTests {
   public async Task MaintenanceTick_MultipleStuckRows_OneWarningEachAsync() {
     var coord = new FakeCoordinator {
       StuckOutbox = [
-        _stuck(TrackedGuid.NewMedo(), "TypeA", 15),
-        _stuck(TrackedGuid.NewMedo(), "TypeB", 25),
-        _stuck(TrackedGuid.NewMedo(), "TypeC", 50),
+        _stuck(TrackedGuid.New(), "TypeA", 15),
+        _stuck(TrackedGuid.New(), "TypeB", 25),
+        _stuck(TrackedGuid.New(), "TypeC", 50),
       ],
       StuckInbox = [
-        _stuck(TrackedGuid.NewMedo(), "TypeD", 12),
+        _stuck(TrackedGuid.New(), "TypeD", 12),
       ]
     };
     var (worker, logger) = _buildWorker(coord);
@@ -153,7 +153,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
   [Test]
   public async Task MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync() {
     var coord = new FakeCoordinator {
-      StuckOutbox = [_stuck(TrackedGuid.NewMedo(), "TypeA", 50)]
+      StuckOutbox = [_stuck(TrackedGuid.New(), "TypeA", 50)]
     };
     var (worker, _) = _buildWorker(coord, sentinelEnabled: false);
 

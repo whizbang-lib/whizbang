@@ -60,10 +60,9 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
   }
 
   private static void _analyzeType(SymbolAnalysisContext context) {
-    if (context.Symbol is not INamedTypeSymbol symbol) {
-      return;
-    }
-    if (symbol.TypeKind != TypeKind.Class) {
+    // Registered for SymbolKind.NamedType, so the cast test can only fail if that registration ever
+    // widens; it shares the "not a class" exit rather than standing on a line no input reaches.
+    if (context.Symbol is not INamedTypeSymbol { TypeKind: TypeKind.Class } symbol) {
       return;
     }
 

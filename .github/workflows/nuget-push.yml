@@ -101,7 +101,7 @@ jobs:
       # The Sigstore bundle also travels as a run artifact so release-shaped callers
       # (nuget-publish.yml) can attach it to the GitHub Release for offline verification.
       - name: Upload attestation bundle
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: attestation-bundle-${{ github.run_id }}
           path: ${{ steps.attest.outputs.bundle-path }}
@@ -160,7 +160,7 @@ jobs:
   # ============================================================================
 
   notify-deployed:
-    name: Notify Deployed
+    name: Notify deployed
     needs: [push]
     if: success() && vars.PUSHOVER_ENABLED == 'true'
     continue-on-error: true
@@ -194,7 +194,7 @@ jobs:
           url-title: "View on NuGet"
 
   notify-deploy-failed:
-    name: Notify Deploy Failed
+    name: Notify deploy failed
     needs: [push]
     if: failure() && vars.PUSHOVER_ENABLED == 'true'
     continue-on-error: true

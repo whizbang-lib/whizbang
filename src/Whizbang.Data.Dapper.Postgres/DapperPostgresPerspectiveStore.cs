@@ -70,23 +70,25 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       PerspectiveMetadata metadata, CancellationToken cancellationToken = default) =>
     _upsertCoreAsync(streamId, model, scope, forceUpdateScope, metadata, cancellationToken);
 
-#pragma warning disable RCS1163, IDE0060 // Interface (IPerspectiveStore) signature; Dapper store accepts parameter for API parity with EF Core split-mode store
   /// <inheritdoc/>
   public Task UpsertWithPhysicalFieldsAsync(
       Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
       PerspectiveScope? scope = null, CancellationToken cancellationToken = default) =>
-    // Dapper store does not materialize physical fields; physicalFieldValues is accepted for
-    // API parity with stores that do (split-mode EF Core, etc.) but is intentionally ignored.
-    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), false, metadata: null, cancellationToken);
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), false, metadata: null, cancellationToken, physicalFieldValues);
 
   /// <inheritdoc/>
   public Task UpsertWithPhysicalFieldsAsync(
       Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
       PerspectiveScope? scope, bool forceUpdateScope, CancellationToken cancellationToken = default) =>
-    // Dapper store does not materialize physical fields; physicalFieldValues is accepted for
-    // API parity with stores that do (split-mode EF Core, etc.) but is intentionally ignored.
-    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, metadata: null, cancellationToken);
-#pragma warning restore RCS1163, IDE0060
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, metadata: null, cancellationToken, physicalFieldValues);
+
+  /// <inheritdoc/>
+  /// <remarks>Implemented explicitly for the same reason as the metadata overload without physical fields:
+  /// the interface default drops <paramref name="metadata"/>.</remarks>
+  public Task UpsertWithPhysicalFieldsAsync(
+      Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope, bool forceUpdateScope, PerspectiveMetadata metadata, CancellationToken cancellationToken = default) =>
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, metadata, cancellationToken, physicalFieldValues);
 
   /// <inheritdoc/>
   public async Task<TModel?> GetByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, CancellationToken cancellationToken = default)
@@ -131,7 +133,10 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   private async Task _upsertCoreAsync(
       Guid id, TModel model, PerspectiveScope scope, bool forceUpdateScope,
       PerspectiveMetadata? metadata,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken,
+      IDictionary<string, object?>? physicalFieldValues = null) {
+    // Validated before anything is opened: a column name goes into the statement text.
+    var physical = _physicalColumns(physicalFieldValues);
     await using var conn = new NpgsqlConnection(connectionString);
     await conn.OpenAsync(cancellationToken);
 
@@ -184,11 +189,16 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
             version = {tableName}.version + @p_versionbump
           """;
 
+    // Physical columns are written on insert and rewritten on update, like the document they copy.
+    var physicalColumns = string.Concat(physical.Select(p => $", {p.Column}"));
+    var physicalValues = string.Concat(physical.Select(p => $", @{p.Parameter.ParameterName}"));
+    var physicalSet = string.Concat(physical.Select(p => $",\n        {p.Column} = EXCLUDED.{p.Column}"));
+
     var sql = $"""
-      INSERT INTO {tableName} (id, data, metadata, scope, created_at, updated_at, version)
-      VALUES (@p_id, @p_data::jsonb, @p_metadata::jsonb, @p_scope::jsonb, @p_created, @p_updated, 1)
+      INSERT INTO {tableName} (id, data, metadata, scope, created_at, updated_at, version{physicalColumns})
+      VALUES (@p_id, @p_data::jsonb, @p_metadata::jsonb, @p_scope::jsonb, @p_created, @p_updated, 1{physicalValues})
       ON CONFLICT (id) DO UPDATE SET
-        {setClause}
+        {setClause}{physicalSet}
       """;
 
     await using var cmd = new NpgsqlCommand(sql, conn);
@@ -199,9 +209,43 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     cmd.Parameters.AddWithValue("p_created", now);
     cmd.Parameters.AddWithValue("p_updated", updatedAt);
     cmd.Parameters.AddWithValue("p_versionbump", versionBump);
+    foreach (var (_, parameter) in physical) {
+      cmd.Parameters.Add(parameter);
+    }
 
     await cmd.ExecuteNonQueryAsync(cancellationToken);
   }
+
+  /// <summary>
+  /// One parameter per physical column. A column name must be a plain identifier, since it is written into the
+  /// statement unquoted, exactly as the table's DDL declares it.
+  /// </summary>
+  private static List<(string Column, NpgsqlParameter Parameter)> _physicalColumns(IDictionary<string, object?>? values) {
+    var columns = new List<(string, NpgsqlParameter)>();
+    foreach (var (column, value) in values ?? new Dictionary<string, object?>()) {
+      if (!_isPlainIdentifier(column)) {
+        throw new ArgumentException($"'{column}' is not a plain column name.", nameof(values));
+      }
+      columns.Add((column, _physicalParameter($"p_pf{columns.Count}", value)));
+    }
+    return columns;
+  }
+
+  private static bool _isPlainIdentifier(string name) =>
+    name.Length > 0 && !char.IsAsciiDigit(name[0]) && name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
+
+  /// <summary>
+  /// The driver sends the common types natively. An instant is sent in UTC, which is the same instant. Anything
+  /// else (a vector, an enum) is sent as its text form with no declared type, so the column's own type parses
+  /// it, exactly as it would parse a literal.
+  /// </summary>
+  private static NpgsqlParameter _physicalParameter(string name, object? value) => value switch {
+    null => new NpgsqlParameter(name, DBNull.Value),
+    DateTimeOffset instant => new NpgsqlParameter(name, instant.ToUniversalTime()),
+    string or Guid or bool or short or int or long or float or double or decimal
+      or DateTime or DateOnly or TimeOnly or TimeSpan or Array => new NpgsqlParameter(name, value),
+    _ => new NpgsqlParameter(name, NpgsqlDbType.Unknown) { Value = value.ToString() },
+  };
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 used for deterministic GUID generation, not for cryptographic security")]
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S4790:Using weak hashing algorithms is security-sensitive",

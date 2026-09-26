@@ -28,7 +28,7 @@ public class StoreInboxMessagesSqlTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
     var rowsReturned = await _callStoreInboxAsync(conn, instanceId, "[]");
@@ -46,9 +46,9 @@ public class StoreInboxMessagesSqlTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
     var json = $"[{_messageJson(msgId, streamId)}]";
@@ -72,9 +72,9 @@ public class StoreInboxMessagesSqlTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
     var json = $"[{_messageJson(msgId, streamId)}]";
@@ -99,14 +99,14 @@ public class StoreInboxMessagesSqlTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
     var ids = new Guid[50];
     var sb = new System.Text.StringBuilder("[");
     for (var i = 0; i < 50; i++) {
-      ids[i] = (Guid)TrackedGuid.NewMedo();
+      ids[i] = (Guid)TrackedGuid.New();
       if (i > 0) {
         sb.Append(',');
       }
@@ -131,11 +131,11 @@ public class StoreInboxMessagesSqlTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
-    var firstOwner = (Guid)TrackedGuid.NewMedo();
-    var secondOwner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var m1 = (Guid)TrackedGuid.NewMedo();
-    var m2 = (Guid)TrackedGuid.NewMedo();
+    var firstOwner = (Guid)TrackedGuid.New();
+    var secondOwner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var m1 = (Guid)TrackedGuid.New();
+    var m2 = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, firstOwner);
     await _registerInstanceAsync(conn, secondOwner);
 

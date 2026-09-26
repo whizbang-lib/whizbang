@@ -1031,7 +1031,7 @@ function Invoke-Monitor {
         $PrNum = $prData.number
     }
 
-    # Get PR details (single call gets everything — see plans/pr-monitoring-api-reference.md)
+    # Get PR details (single call gets everything — see plans/archive/pr-monitoring-api-reference.md)
     $prInfo = gh pr view $PrNum --json number,url,headRefName,baseRefName,title,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup 2>$null | ConvertFrom-Json
     if (-not $prInfo) {
         Write-Host "  ❌ Could not fetch PR #$PrNum" -ForegroundColor Red

@@ -147,7 +147,7 @@ public class EFCoreDeadLetterRecoveryServiceCoverageTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
-    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
     await using var ins = conn.CreateCommand();
     ins.CommandText = """
 
@@ -159,7 +159,7 @@ public class EFCoreDeadLetterRecoveryServiceCoverageTests : EFCoreTestBase {
               NOW() - INTERVAL '1 hour', 0, 'v0.coverage', 'fp-coverage', 1)
 """;
     ins.Parameters.AddWithValue("id", dlqId);
-    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.NewMedo());
+    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.New());
     await ins.ExecuteNonQueryAsync();
     return dlqId;
   }

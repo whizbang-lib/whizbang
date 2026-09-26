@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -62,6 +63,7 @@ public sealed partial class StandbyHandshake {
   /// <c>StandingBy</c>. Peers whose heartbeat lapses stop counting — the wait is bounded by
   /// lease expiry. Returns the ids of the peers that acknowledged.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Each poll filters the fleet down to the peers that still block the handshake: not me, not evicted, heartbeat still inside the liveness window, an older version, and not yet standing by. Each filter is one line, and each has its own reason for not counting.")]
   public async Task<IReadOnlyList<Guid>> AwaitPeersStandingByAsync(string version, CancellationToken cancellationToken) {
     if (!SemanticVersion.TryParse(version, out var mine)) {
       throw new ArgumentException($"'{version}' is not a readable version — refusing to run a handshake on a guess.", nameof(version));

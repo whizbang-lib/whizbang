@@ -1,4 +1,6 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -68,5 +70,83 @@ public class PerStreamSerializerCoverageTests {
     await Assert.That(seen).IsEquivalentTo([item1.MessageId, item2.MessageId])
       .Because("both items belong to the same stream and arrived inside one open drain window, "
              + "so they must be coalesced into a single batch rather than flushed separately");
+  }
+
+  // ============================================================
+  // The drain loop's outer catch, and the batch window's stop answer
+  // ============================================================
+
+  // The per-item error path is not itself infallible: a logging sink bound to the host's shutdown
+  // token throws OperationCanceledException as the host stops, and that escapes the per-item
+  // handler. The loop's outer catch is what turns it into a quiet end. Without it the stream's
+  // worker faults, and nothing in this type ever observes a worker task — FlushAndStopAsync folds
+  // it into the same catch it uses for a caller-canceled shutdown — so it would surface only as
+  // an unobserved exception long after the shutdown that caused it.
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainWorker_CancellationEscapingTheProcessorErrorHandler_EndsTheLoopQuietlyAsync(
+      CancellationToken cancellationToken) {
+    var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: item => item.StreamId,
+      processor: (_, _) => Task.FromException(new InvalidOperationException("handler blew up")),
+      logger: new ThrowingSink(() => new OperationCanceledException("log sink shutting down")),
+      options: new PerStreamSerializerOptions {
+        // No batch window: the processor runs on the first item with no clock involved at all.
+        DrainBatchWindow = TimeSpan.Zero,
+        IdleSweepInterval = TimeSpan.FromMinutes(5),
+        IdleEvictionWindow = TimeSpan.FromSeconds(30),
+      },
+      timeProvider: new FakeTimeProvider());
+
+    await sut.EnqueueAsync(new StreamItem(_idProvider.NewGuid(), _idProvider.NewGuid()), cancellationToken);
+
+    await Assert.That(async () => await sut.WhenWorkersStoppedForTests()).ThrowsNothing()
+      .Because("the drain loop absorbs a cancellation rather than faulting; a faulted worker here "
+             + "is an unobserved exception that nothing in this type ever reports");
+  }
+
+  // The batch window races the next arrival against its own deadline on one linked token, so a
+  // shutdown cancels both at once and which one wins is not something a test can pin. What the
+  // canceled answer decides is whether the window closes or the exception escapes the stream's
+  // worker — so it is asserted here directly rather than through a race.
+  [Test]
+  public async Task ContinueBatching_ArrivalCanceled_ClosesTheWindowAsync() {
+    using var canceled = new CancellationTokenSource();
+    await canceled.CancelAsync();
+
+    var keepBatching = await StreamBatchWindow.ContinueBatchingAsync(
+      Task.FromCanceled<bool>(canceled.Token));
+
+    await Assert.That(keepBatching).IsFalse()
+      .Because("a shutdown observed while waiting for the next arrival closes the window; letting "
+             + "it escape would fault the stream's worker instead of ending it");
+  }
+
+  [Test]
+  public async Task ContinueBatching_ChannelCompleted_ClosesTheWindowAsync() {
+    var keepBatching = await StreamBatchWindow.ContinueBatchingAsync(Task.FromResult(false));
+
+    await Assert.That(keepBatching).IsFalse()
+      .Because("a completed channel has no further arrivals, so the window has nothing left to "
+             + "wait for");
+  }
+
+  [Test]
+  public async Task ContinueBatching_ArrivalAvailable_KeepsTheWindowOpenAsync() {
+    var keepBatching = await StreamBatchWindow.ContinueBatchingAsync(Task.FromResult(true));
+
+    await Assert.That(keepBatching).IsTrue()
+      .Because("a real arrival is the whole point of the window — near-simultaneous same-stream "
+             + "items have to be coalesced into one batch so the sort comparer can order them");
+  }
+
+  /// <summary>A logging sink that throws whatever it is told to throw.</summary>
+  private sealed class ThrowingSink(Func<Exception> failure) : ILogger {
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter)
+      => throw failure();
   }
 }

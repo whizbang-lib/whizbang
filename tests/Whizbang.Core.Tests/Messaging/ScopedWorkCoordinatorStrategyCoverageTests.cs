@@ -12,31 +12,26 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
-/// Pins the invariant that keeps <see cref="ScopedWorkCoordinatorStrategy"/>'s private
-/// <c>_routeClaimedInboxWorkToChannel</c> dedup-by-<c>IsInFlight</c> loop unreachable through its
-/// only call site, <see cref="ScopedWorkCoordinatorStrategy.FlushAndGetBatchAsync"/>.
+/// Two things about <see cref="ScopedWorkCoordinatorStrategy"/>'s claimed-inbox routing: the
+/// invariant that keeps its only production call site handing it an empty batch, and the dedup
+/// rule itself.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Per <c>ai-docs/coverage-exclusions.md</c> case 3 ("one branch inside a covered member"): the
-/// loop body cannot be reached without reflection on a private method, and the project's own
-/// policy forbids exactly that ("Never assert an unreachable branch via reflection to force the
-/// line green ... that tests the reflection, not the behaviour"). So this suite does not attempt
-/// to cover the loop directly. Instead it pins the fact that makes it unreachable, so a future
-/// change that makes the loop reachable again fails this test loudly instead of leaving new,
-/// silently-untested dedup logic behind.
+/// Since the work-pump decomposition, <see cref="WorkCoordinatorFlushHelper.ExecuteFlushAsync"/>
+/// returns an empty <see cref="WorkBatch"/> — claiming moved to the claim worker, and a flush now
+/// only stores rows and signals <c>IInboxChannelWriter.SignalNewInboxWorkAvailable</c>. The first
+/// test pins that, so a change that starts returning claimed inbox rows again without anyone
+/// re-examining the routing loop fails loudly rather than leaving newly-live dedup logic behind.
 /// </para>
 /// <para>
-/// Since the Phase H work-pump decomposition, <see cref="WorkCoordinatorFlushHelper.ExecuteFlushAsync"/>
-/// unconditionally returns an empty <see cref="WorkBatch"/> — claiming moved to <c>ClaimWorker</c>,
-/// and a flush now only stores rows and signals <c>IInboxChannelWriter.SignalNewInboxWorkAvailable</c>.
-/// That means the guard <c>_inboxChannelWriter is null || workBatch.InboxWork.Count == 0</c> is
-/// always true in the current architecture, so the loop after it — and the IsInFlight dedup it
-/// implements — can never execute in production either. If that ever regresses silently (flush
-/// starts returning claimed inbox rows again without anyone re-examining the routing loop), a bug
-/// in the dedup would let one scope's claimed inbox work be written to the channel twice, or under
-/// another consumer's in-flight tracking, which is exactly the "scoped work claimed under another
-/// scope" failure this coordinator exists to prevent.
+/// The second test drives the dedup directly through the internal
+/// <see cref="ScopedWorkCoordinatorStrategy.RouteClaimedInboxWorkToChannel"/> seam, which is what
+/// the earlier note here called impossible without reflection. Asserting the rule is worth more
+/// than recording that nothing reaches it: a bug in the dedup would let one scope's claimed inbox
+/// work be written to the channel twice, or under another consumer's in-flight tracking, which is
+/// exactly the "scoped work claimed under another scope" failure this coordinator exists to
+/// prevent — and the day claiming moves back, the rule is already covered.
 /// </para>
 /// </remarks>
 public class ScopedWorkCoordinatorStrategyCoverageTests {
@@ -120,5 +115,83 @@ public class ScopedWorkCoordinatorStrategyCoverageTests {
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
       HandlerName = "coverage-test-handler",
     };
+  }
+
+  // The dedup itself, driven directly. Its only production caller hands it an empty batch today
+  // (the test above pins why), so without this the rule that decides whether a claimed inbox row
+  // reaches the publisher would be untested until the day claiming moves back into the flush —
+  // and getting it wrong means the same message dispatched twice, concurrently, which is exactly
+  // the failure the in-flight set exists to prevent.
+  [Test]
+  public async Task RouteClaimedInboxWorkToChannel_SkipsWorkAlreadyInFlightAndWritesTheRestAsync() {
+    var inFlight = (Guid)MessageId.New();
+    var fresh = (Guid)MessageId.New();
+    var writer = new SelectiveInFlightInboxChannelWriter(inFlight);
+    var sut = new ScopedWorkCoordinatorStrategy(
+      coordinator: new NoOpWorkCoordinator(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      workChannelWriter: null,
+      options: new WorkCoordinatorOptions { PartitionCount = 10_000 },
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: writer);
+
+    try {
+      sut.RouteClaimedInboxWorkToChannel(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [_claimedInboxWork(inFlight), _claimedInboxWork(fresh)],
+        PerspectiveWork = []
+      });
+
+      await Assert.That(writer.Written).IsEquivalentTo([fresh])
+        .Because("only the row that is not already being handled may be written; writing the "
+          + "in-flight one would dispatch the same message to a second handler concurrently");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  private static InboxWork _claimedInboxWork(Guid messageId) => new() {
+    MessageId = messageId,
+    Envelope = new MessageEnvelope<JsonElement>(
+      MessageId.From(messageId),
+      JsonDocument.Parse("{}").RootElement,
+      []),
+    MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+    StreamId = Guid.NewGuid(),
+    PartitionNumber = 1,
+    Attempts = 0,
+    Status = MessageProcessingStatus.Stored,
+    Flags = WorkBatchOptions.None,
+  };
+
+  /// <summary>
+  /// An inbox channel writer that reports a fixed set of message ids as already in flight and
+  /// records everything actually written, so the dedup's two answers are told apart.
+  /// </summary>
+  private sealed class SelectiveInFlightInboxChannelWriter(params Guid[] inFlight) : IInboxChannelWriter {
+    private readonly HashSet<Guid> _inFlight = [.. inFlight];
+    private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
+    private readonly List<Guid> _written = [];
+
+    public IReadOnlyList<Guid> Written { get { lock (_written) { return [.. _written]; } } }
+
+    public ChannelReader<InboxWork> Reader => _channel.Reader;
+
+    public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) {
+      lock (_written) { _written.Add(work.MessageId); }
+      return _channel.Writer.WriteAsync(work, ct);
+    }
+
+    public bool TryWrite(InboxWork work) {
+      lock (_written) { _written.Add(work.MessageId); }
+      return _channel.Writer.TryWrite(work);
+    }
+
+    public bool IsInFlight(Guid messageId) => _inFlight.Contains(messageId);
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
+    public void Complete() => _channel.Writer.Complete();
+    public event Action? OnNewInboxWorkAvailable;
+    public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
   }
 }

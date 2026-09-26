@@ -1,0 +1,46 @@
+name: Require the PR gate
+description: >-
+  Fails unless the pull-request gate passed on EXACTLY the given commit: the pull_request CI run for
+  it completed with its Quality job green (100% of new lines covered, zero Sonar findings on new code,
+  enforced only on pull-request events), and SonarCloud's own check green. Every path that publishes
+  a commit which did not itself merge through a gated PR calls this first.
+
+inputs:
+  sha:
+    description: The commit whose pull-request gate must have passed
+    required: true
+  token:
+    description: A token that can read actions and checks
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Require a green pull-request gate on this commit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        SHA: ${{ inputs.sha }}
+        # The one place these names live outside the workflows that produce them.
+        QUALITY_JOB: 'Analyze · Quality / Sonar and coverage'
+        SONAR_CHECK: 'SonarCloud Code Analysis'
+      run: |
+        set -euo pipefail
+        # Addressed by workflow PATH, not by name: ci.yml sets a run-name.
+        PR_RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=pull_request&status=completed&per_page=30" \
+          --jq '[.workflow_runs[]] | sort_by(.run_started_at) | last | .id // ""')
+        if [ -z "$PR_RUN" ]; then
+          echo "::error::No completed pull-request CI run for $SHA, so its coverage and Sonar gate never ran. Changes reach a published build only through a PR."
+          exit 1
+        fi
+        QUALITY=$(gh api "repos/$REPO/actions/runs/$PR_RUN/jobs?per_page=100" \
+          | jq -r --arg n "$QUALITY_JOB" '[.jobs[] | select(.name == $n)][0].conclusion // "missing"')
+        SONAR=$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=$(jq -rn --arg s "$SONAR_CHECK" '$s|@uri')&per_page=10" \
+          --jq '[.check_runs[] | .conclusion // "pending"] | if length == 0 then "missing" elif any(. == "success") then "success" else .[0] end')
+        echo "PR run $PR_RUN for $SHA: '$QUALITY_JOB' = $QUALITY; '$SONAR_CHECK' = $SONAR"
+        if [ "$QUALITY" != success ] || [ "$SONAR" != success ]; then
+          echo "::error::The pull-request gate did not pass on $SHA (quality: $QUALITY, SonarCloud: $SONAR). Every published commit needs 100% coverage of new lines and zero Sonar findings. Fix it in the PR and let its CI go green, then retry."
+          exit 1
+        fi
+        echo "Pull-request gate passed on $SHA."

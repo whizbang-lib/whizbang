@@ -35,7 +35,7 @@ namespace Whizbang.Core.Minting;
 public abstract class CompositeEventBase : ICompositeEvent {
   /// <summary>
   /// The stream every inner event inherits at the receiver. Pre-mint this (e.g.
-  /// <c>TrackedGuid.NewMedo()</c>) so all inner events land on the intended stream.
+  /// <c>TrackedGuid.New()</c>) so all inner events land on the intended stream.
   /// </summary>
   [StreamId]
   public Guid StreamId { get; init; }

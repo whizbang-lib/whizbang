@@ -182,4 +182,31 @@ public class SubscriptionWarmupTests {
     await Assert.That(SubscriptionWarmup.DefaultRetryInterval).IsEqualTo(TimeSpan.FromSeconds(2));
     await Assert.That(SubscriptionWarmup.DefaultInitialDelay).IsEqualTo(TimeSpan.FromSeconds(5));
   }
+
+  [Test]
+  public async Task WarmupAsync_WhenTheBudgetExpiresMidWait_ReportsATimeoutAsync(
+      CancellationToken cancellationToken) {
+    // Nothing ever echoes the warmup message back, and the retry interval is far longer than the
+    // overall budget, so the budget is what ends the wait. The caller asked for a timeout and
+    // never canceled anything, so it must get the documented TimeoutException -- surfacing the
+    // internal deadline as an OperationCanceledException would tell the caller its own token was
+    // canceled and send whoever reads the failure looking for a cancellation that never happened.
+    var warmupAwaiter = new SignalAwaiter();
+    var transport = new FakeTransport();
+
+    var ex = await Assert.ThrowsAsync<TimeoutException>(async () =>
+      await SubscriptionWarmup.WarmupAsync(
+        transport,
+        _destination,
+        () => EnvelopeFactory.Create(SubscriptionWarmup.GenerateWarmupId()),
+        warmupAwaiter,
+        timeout: TimeSpan.FromMilliseconds(50),
+        retryInterval: TimeSpan.FromMinutes(5),
+        initialDelay: TimeSpan.Zero,
+        cancellationToken: cancellationToken));
+
+    await Assert.That(ex!.Message).Contains("Subscription warmup timed out");
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    await Assert.That(warmupAwaiter.IsSignaled).IsFalse();
+  }
 }

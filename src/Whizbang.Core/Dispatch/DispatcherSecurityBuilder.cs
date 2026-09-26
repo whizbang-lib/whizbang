@@ -222,6 +222,36 @@ public sealed partial class DispatcherSecurityBuilder {
   }
 
   /// <summary>
+  /// Publishes an event at most once per claim key, with explicit security context.
+  /// </summary>
+  /// <remarks>
+  /// The exactly-once primitive of <see cref="IDispatcher.PublishOnceAsync{TEvent}"/> under an explicit
+  /// identity. Background work that has no caller of its own (a maintenance sweep acting for a
+  /// tenant's record) needs both at once: the claim, so every instance and every restart arrive at one
+  /// emission, and the tenant, so the event is handled in the scope it belongs to.
+  /// </remarks>
+  /// <typeparam name="TEvent">The event type.</typeparam>
+  /// <param name="claimKey">The key every would-be publisher of this emission shares.</param>
+  /// <param name="eventData">The event to publish.</param>
+  /// <param name="cancellationToken">Cancels the claim and the publish.</param>
+  /// <returns><see langword="true"/> when this caller won the claim and published.</returns>
+  /// <docs>fundamentals/security/scope-propagation#system-operations</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSecurityBuilderPublishOnceTests.cs</tests>
+  public async Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) {
+    var previousContext = ScopeContextAccessor.CurrentContext;
+    var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
+    try {
+      ScopeContextAccessor.CurrentContext = _createExplicitContext();
+      // Cleared for the same reason as PublishAsync: the getter reads the initiating context first.
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+      return await _dispatcher.PublishOnceAsync(claimKey, eventData, cancellationToken);
+    } finally {
+      ScopeContextAccessor.CurrentContext = previousContext;
+      ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
+    }
+  }
+
+  /// <summary>
   /// Invokes a receptor in-process with explicit security context and returns the typed business result.
   /// </summary>
   /// <typeparam name="TMessage">The message type.</typeparam>
@@ -258,6 +288,47 @@ public sealed partial class DispatcherSecurityBuilder {
       // CRITICAL: Clear InitiatingContext to ensure explicit context takes precedence
       ScopeContextAccessor.CurrentInitiatingContext = null;
       await _dispatcher.LocalInvokeAsync(message);
+    } finally {
+      ScopeContextAccessor.CurrentContext = previousContext;
+      ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
+    }
+  }
+
+  /// <summary>
+  /// Invokes a void receptor in-process with explicit security context, and waits for the chosen
+  /// completion before returning.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The syncing counterpart of <see cref="LocalInvokeAsync{TMessage}(TMessage)"/>, and the verb a
+  /// caller needs when it writes under an explicit context and reads what it wrote immediately
+  /// afterwards. Without it such a caller had to give up one or the other: drop the context to keep
+  /// the sync, or drop the sync to keep the context. Seeding at startup is exactly that caller,
+  /// writing under a cross-tenant context and reading the result back on the next line.
+  /// </para>
+  /// <para>
+  /// The context is in force for the wait as well as the invocation, so anything the sync triggers
+  /// sees the same context the receptor did, and it is restored afterwards either way.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <param name="message">The message to process.</param>
+  /// <param name="mode">What completion to wait for. Required, as it is on the dispatcher.</param>
+  /// <param name="cancellationToken">A cancellation token.</param>
+  /// <returns>A task that completes when the chosen sync mode is satisfied.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeContractTests.cs:ExplicitSecurityContext_CanTerminateWithTheSyncingLocalInvokeAsync</tests>
+  public async ValueTask LocalInvokeAndSyncAsync<TMessage>(
+      TMessage message,
+      Perspectives.Sync.SyncMode mode,
+      CancellationToken cancellationToken = default) where TMessage : notnull {
+    var previousContext = ScopeContextAccessor.CurrentContext;
+    var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
+    try {
+      var explicitContext = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = explicitContext;
+      // CRITICAL: Clear InitiatingContext to ensure explicit context takes precedence
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+      await _dispatcher.LocalInvokeAndSyncAsync(message, mode, cancellationToken);
     } finally {
       ScopeContextAccessor.CurrentContext = previousContext;
       ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;

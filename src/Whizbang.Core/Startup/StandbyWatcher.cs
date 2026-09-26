@@ -71,6 +71,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
   private DateTimeOffset _lastObsolescenceCheck = DateTimeOffset.MinValue;
 
   /// <summary>Creates the watcher. Inert without an instance identity or a coordinator.</summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
   public StandbyWatcher(
       IServiceScopeFactory scopeFactory,
       IWhizbangLifecycleState lifecycle,

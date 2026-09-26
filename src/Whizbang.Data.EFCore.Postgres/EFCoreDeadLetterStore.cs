@@ -62,10 +62,9 @@ public sealed class EFCoreDeadLetterStore<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("inst", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = instanceId });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
     var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
-    return result switch {
-      null => null,
-      DBNull => null,
-      _ => (Guid)result,
-    };
+    // "Nothing came back" is one answer, not two: the function returns NULL when the source row was
+    // already gone, and a scalar with no row at all would say the same thing. One arm for both, so
+    // the no-row case — which a single-row SELECT cannot produce — is not its own unreachable line.
+    return result is null or DBNull ? null : (Guid)result;
   }
 }

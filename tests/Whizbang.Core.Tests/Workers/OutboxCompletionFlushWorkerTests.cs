@@ -62,7 +62,7 @@ public class OutboxCompletionFlushWorkerTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    var id = TrackedGuid.NewMedo();
+    var id = TrackedGuid.New();
     await worker.EnqueueAsync(id);
 
     // 30s tolerates heavy parallel load on a contended test machine running 12k+ tests
@@ -102,7 +102,7 @@ public class OutboxCompletionFlushWorkerTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    await worker.EnqueueAsync(TrackedGuid.NewMedo());
+    await worker.EnqueueAsync(TrackedGuid.New());
 
     // Confirm the flush callback is held back by the gate — coord receives nothing.
     _ = await Task.WhenAny(coord.FirstBatch.Task, Task.Delay(300, CancellationToken.None));
@@ -145,7 +145,7 @@ public class OutboxCompletionFlushWorkerTests {
     await worker.StartAsync(cts.Token);
 
     // Enqueue lands on the channel but the flush loop never runs.
-    await worker.EnqueueAsync(TrackedGuid.NewMedo());
+    await worker.EnqueueAsync(TrackedGuid.New());
 
     _ = await Task.WhenAny(coord.FirstBatch.Task, Task.Delay(500, CancellationToken.None));
     await Assert.That(coord.FirstBatch.Task.IsCompleted).IsFalse();

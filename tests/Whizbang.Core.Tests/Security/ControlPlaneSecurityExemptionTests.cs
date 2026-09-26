@@ -43,8 +43,8 @@ public class ControlPlaneSecurityExemptionTests {
   public async Task StrictPolicy_ControlPlaneMessage_NoScope_EstablishesNoContextWithoutThrowingAsync() {
     var provider = _strictProvider();
     var envelope = _unscopedEnvelope(new IntegrityCheckpoint {
-      CheckpointStreamId = TrackedGuid.NewMedo().Value,
-      OriginServiceId = TrackedGuid.NewMedo().Value,
+      CheckpointStreamId = TrackedGuid.New().Value,
+      OriginServiceId = TrackedGuid.New().Value,
       OriginServiceName = "origin-svc",
       FromCommitSequence = 0,
       ToCommitSequence = 5,
@@ -59,7 +59,7 @@ public class ControlPlaneSecurityExemptionTests {
   [Test]
   public async Task StrictPolicy_DomainMessage_NoScope_StillThrowsAsync() {
     var provider = _strictProvider();
-    var envelope = _unscopedEnvelope(new PlainDomainEvent { Sid = TrackedGuid.NewMedo().Value });
+    var envelope = _unscopedEnvelope(new PlainDomainEvent { Sid = TrackedGuid.New().Value });
 
     Exception? caught = null;
     try {
@@ -104,8 +104,8 @@ public class ControlPlaneSecurityExemptionTests {
   public async Task StrictPolicy_RedeliveryComposite_NoScope_EstablishesNoContextWithoutThrowingAsync() {
     var provider = _strictProvider();
     var envelope = _unscopedEnvelope(new RedeliveryComposite {
-      StreamId = TrackedGuid.NewMedo().Value,
-      OriginServiceId = TrackedGuid.NewMedo().Value,
+      StreamId = TrackedGuid.New().Value,
+      OriginServiceId = TrackedGuid.New().Value,
     });
 
     var result = await provider.EstablishContextAsync(envelope, new EmptyServiceProvider());
@@ -320,8 +320,8 @@ public class ControlPlaneSecurityExemptionTests {
   public async Task StrictPolicy_NestedEnvelopeCarryingControlPlaneMessage_EstablishesNoContextWithoutThrowingAsync() {
     var provider = _strictProvider();
     var inner = _unscopedEnvelope(new RedeliveryComposite {
-      StreamId = TrackedGuid.NewMedo().Value,
-      OriginServiceId = TrackedGuid.NewMedo().Value,
+      StreamId = TrackedGuid.New().Value,
+      OriginServiceId = TrackedGuid.New().Value,
     });
     var outer = _unscopedEnvelope((object)inner);
 
@@ -341,7 +341,7 @@ public class ControlPlaneSecurityExemptionTests {
   [Test]
   public async Task StrictPolicy_NestedEnvelopeCarryingDomainMessage_StillThrowsAsync() {
     var provider = _strictProvider();
-    var inner = _unscopedEnvelope(new PlainDomainEvent { Sid = TrackedGuid.NewMedo().Value });
+    var inner = _unscopedEnvelope(new PlainDomainEvent { Sid = TrackedGuid.New().Value });
     var outer = _unscopedEnvelope((object)inner);
 
     Exception? caught = null;
@@ -365,8 +365,8 @@ public class ControlPlaneSecurityExemptionTests {
   public async Task StrictPolicy_DeeplyNestedEnvelopeCarryingControlPlaneMessage_EstablishesNoContextWithoutThrowingAsync() {
     var provider = _strictProvider();
     var innermost = _unscopedEnvelope(new IntegrityCheckpoint {
-      CheckpointStreamId = TrackedGuid.NewMedo().Value,
-      OriginServiceId = TrackedGuid.NewMedo().Value,
+      CheckpointStreamId = TrackedGuid.New().Value,
+      OriginServiceId = TrackedGuid.New().Value,
       OriginServiceName = "origin-svc",
       FromCommitSequence = 0,
       ToCommitSequence = 5,

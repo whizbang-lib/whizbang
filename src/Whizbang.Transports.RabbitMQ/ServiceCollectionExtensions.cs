@@ -105,6 +105,7 @@ public static class ServiceCollectionExtensions {
   private static readonly Dictionary<string, string> _noNonDefaultNamespaces = new(StringComparer.Ordinal);
 
   [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Registration is conditional in three places at once: whether a connection is already registered, whether any transport namespaces are configured, and whether the logger's level is on. Each registration reads the same resource map, so splitting them would pass that map around instead of closing over it.")]
   private static IServiceCollection _addTransport(
     IServiceCollection services,
     string connectionString,

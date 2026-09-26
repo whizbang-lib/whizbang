@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Whizbang.Core.Observability;
 using Whizbang.Sagas.Observability;
 using Whizbang.Sagas.Services;
@@ -38,6 +40,49 @@ public static class SagaServiceCollectionExtensions {
     services.AddSingleton<SagaMetrics>(sp => new SagaMetrics(sp.GetRequiredService<WhizbangMetrics>()));
     services.AddScoped<ISagaEventEmitter, DispatcherSagaEventEmitter>();
 
+    // Every saga started through BaseSagaService arms a completion watchdog tick. A saga declared
+    // with [Saga] gets a generated receiver for it; a hand-written one relies on this router, which
+    // routes each tick by saga name to the services registered with AddSagaService.
+    services.AddHostedService<SagaWatchdogTickRouterRegistrar>();
+
+    // A lost tick ends a saga's watchdog chain for good. The maintenance cycle re-arms sagas whose
+    // chain has ended; TryAddEnumerable so calling this twice does not sweep twice.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<Whizbang.Core.Workers.IMaintenanceStep, StrandedSagaSweepStep>());
+
+    return services;
+  }
+
+  /// <summary>
+  /// Registers a hand-written saga service so its completion watchdog ticks reach it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Registers <typeparamref name="TService"/> scoped, and exposes the same scoped instance as an
+  /// <see cref="ISagaWatchdogParticipant"/> for the framework's tick router. Without the second
+  /// registration a hand-written saga still arms its watchdog, but the tick is delivered to nothing
+  /// and discarded — a saga stranded on a lost item then has no safety net at all.
+  /// </para>
+  /// <para>
+  /// Use this for a saga service that subclasses <c>BaseSagaService</c> directly. A saga declared
+  /// with <c>[Saga]</c> already has a generated receiver and must not also be registered here, or
+  /// every tick would be handled — and re-armed — twice.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TService">The saga service.</typeparam>
+  /// <param name="services">The service collection.</param>
+  /// <returns>The same service collection.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#hand-written-sagas</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs:AddSagaService_RegistersTheServiceAndItsWatchdogParticipationAsOneInstanceAsync</tests>
+  // DynamicallyAccessedMembers keeps TService's public constructors through trimming so the container
+  // can build it under native AOT — the same annotation AddScoped<TService> itself declares.
+  public static IServiceCollection AddSagaService<
+      [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
+        System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicConstructors)] TService>(
+      this IServiceCollection services)
+      where TService : class, ISagaWatchdogParticipant {
+    ArgumentNullException.ThrowIfNull(services);
+    services.AddScoped<TService>();
+    services.AddScoped<ISagaWatchdogParticipant>(sp => sp.GetRequiredService<TService>());
     return services;
   }
 }

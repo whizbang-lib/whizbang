@@ -1,3 +1,5 @@
+> **Shipped.** Kept at this path rather than archived because migration 162 cite it, and editing a migration's text changes its ledger hash on every database. Status lines below may be stale; the Release 1.0 Planning board has the Shipped date.
+
 # Moving the inbox lease into a table of its own
 
 Status: designed, prototyped and measured. No SQL written. Every number here is from a controlled

@@ -394,6 +394,63 @@ public class JsonbContainmentSqlMatrixTests {
     Base("nullable/int/null", rows => rows.Where(x => x.Data.MaybeNum == null), Destination.Extraction);
     Base("nullable/string/not-null", rows => rows.Where(x => x.Data.MaybeStr != null), Destination.Extraction);
 
+    // --- A null that arrives as a parameter is the same comparison as a literal one.
+    //
+    // Containment of an explicit JSON null does not match a key that is absent, which is why the
+    // literal cases above keep the extraction form. A captured variable holding null is the same
+    // question, and by the time the tree is seen the value is already a query parameter with no
+    // value attached: the stand-down cannot be read off the tree and has to survive into the
+    // compiled SQL, where the value is finally known. These are the shapes a repository writes far
+    // more often than a literal null, because the value comes from ambient state that may be unset.
+    string? nullStr = null;
+    Guid? nullGid = null;
+    int? nullNum = null;
+
+    Base("nullable/string/null/param", rows => rows.Where(x => x.Data.MaybeStr == nullStr), Destination.Extraction);
+    Base("nullable/guid/null/param", rows => rows.Where(x => x.Data.MaybeGid == nullGid), Destination.Extraction);
+    Base("nullable/int/null/param", rows => rows.Where(x => x.Data.MaybeNum == nullNum), Destination.Extraction);
+
+    // --- Set membership, which had no coverage at all.
+    //
+    // "this field is any of these values" is rewritten too, against a set of single-key documents.
+    // Pinned per element type and collection shape, because the rewrite had no coverage here at all
+    // and the reshape does not claim the shape, so the two mechanisms have to be held to the same
+    // rows by something.
+    var strSet = new[] { "v", "w" };
+    var gidSet = new[] { _probeGuid };
+    var intSet = new[] { 1, 2 };
+    var longSet = new[] { 1L, 2L };
+    var gidList = new List<Guid> { _probeGuid };
+    var intList = new List<int> { 1, 2 };
+
+    Base("set/guid/param", rows => rows.Where(x => gidSet.Contains(x.Data.Gid)), Destination.Containment);
+    Base("set/int/param", rows => rows.Where(x => intSet.Contains(x.Data.Num)), Destination.Containment);
+    Base("set/long/param", rows => rows.Where(x => longSet.Contains(x.Data.Big)), Destination.Containment);
+    Base("set/guid/list/param", rows => rows.Where(x => gidList.Contains(x.Data.Gid)), Destination.Containment);
+    Base("set/int/list/param", rows => rows.Where(x => intList.Contains(x.Data.Num)), Destination.Containment);
+    Base("set/string/param", rows => rows.Where(x => strSet.Contains(x.Data.Str)), Destination.Containment);
+
+    // A candidate that is null builds a document holding an explicit JSON null, which does not match
+    // a key that is absent, while the membership test it replaced does. Which candidates are null is
+    // only known once the command is built for a set of values, so that is where a null test is
+    // added. The containment test stays and still carries the candidates that are values, so the
+    // destination is unchanged and only the rows the null would have lost come back.
+    var strSetWithNull = new[] { "v", null };
+    Base("set/string/with-null/param",
+      rows => rows.Where(x => strSetWithNull.Contains(x.Data.MaybeStr)), Destination.Containment);
+
+    // --- The scope document, which every tenant-isolating read filters on.
+    //
+    // Its keys are the framework's own and an absent one is ordinary rather than exceptional, so a
+    // filter comparing one of them against state that may be unset is the case most likely to be
+    // written and the most costly to answer wrongly.
+    Base("scope/tenant/value/param",
+      rows => rows.Where(x => x.Scope.TenantId == maybeStr), Destination.Containment);
+    Base("scope/tenant/null/param",
+      rows => rows.Where(x => x.Scope.TenantId == nullStr), Destination.Extraction);
+    Base("scope/tenant/null",
+      rows => rows.Where(x => x.Scope.TenantId == null), Destination.Extraction);
+
     // --- Promoted fields keep reading their column.
     Base("physical/guid/equal", rows => rows.Where(x => x.Data.PhysGuid == g), Destination.PhysicalColumn);
     Base("physical/int/equal", rows => rows.Where(x => x.Data.PhysInt == i), Destination.PhysicalColumn);
@@ -544,7 +601,7 @@ public class JsonbContainmentSqlMatrixTests {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Three deliberate differences, and the direction matters: one is the reshape doing less, and two
+  /// Four deliberate differences, and the direction matters: two are the reshape doing less, and two
   /// are the reshape doing better. None of them is a disagreement about which rows come back, which
   /// is the thing the two mechanisms are not allowed to differ on.
   /// </para>
@@ -563,6 +620,14 @@ public class JsonbContainmentSqlMatrixTests {
   /// still excludes the row.
   /// </para>
   /// <para>
+  /// <strong>Set membership does less.</strong> The tree rewrite compiles "this field is any of
+  /// these values" into a containment test against a document per candidate; the reshape sees the
+  /// membership after Entity Framework has already translated it and does not claim that shape at
+  /// all, so it keeps the IN form. Correct rows, no index. The rows agree because both mechanisms
+  /// now stand down for the element type that can hold a null, which is the only value the two forms
+  /// disagree on.
+  /// </para>
+  /// <para>
   /// <strong>An emptiness test does better.</strong> On the tree there is no equality to see, because
   /// the shape is still a method call. After translation it is a null test or an equality against the
   /// empty string, and the second half of that indexes. The rows are the same: an absent key and an
@@ -574,7 +639,8 @@ public class JsonbContainmentSqlMatrixTests {
       return shared;
     }
 
-    if (caseKey.StartsWith("eligible-now/datetime/", StringComparison.Ordinal)) {
+    if (caseKey.StartsWith("eligible-now/datetime/", StringComparison.Ordinal)
+        || caseKey.StartsWith("set/", StringComparison.Ordinal)) {
       return Destination.Extraction;
     }
 
@@ -608,15 +674,16 @@ public class JsonbContainmentSqlMatrixTests {
     var sql = shape(db.Set<PerspectiveRow<MatrixModel>>()).ToQueryString();
 
     var containment = sql.Contains("@>", StringComparison.Ordinal);
-    var extraction = sql.Contains("data ->>", StringComparison.Ordinal)
-                     || sql.Contains("data ->", StringComparison.Ordinal)
-                     || sql.Contains("data #>>", StringComparison.Ordinal)
-                     || sql.Contains("data #>", StringComparison.Ordinal);
+    // Either document the rewrite covers can be the one extracted from, so both are asked about.
+    var extraction = _readsJson(sql, "data") || _readsJson(sql, "scope");
 
     switch (expected) {
       case Destination.Containment:
         await Assert.That(containment).IsTrue();
-        await Assert.That(sql).Contains("jsonb_build_object", StringComparison.Ordinal);
+        // Equality builds its one document inline; set membership builds a document per candidate
+        // inside the helper, so the marker differs while the destination is the same.
+        await Assert.That(sql.Contains("jsonb_build_object", StringComparison.Ordinal)
+                          || sql.Contains("jsonb_containment_set", StringComparison.Ordinal)).IsTrue();
         break;
 
       case Destination.Extraction:
@@ -639,6 +706,15 @@ public class JsonbContainmentSqlMatrixTests {
         throw new InvalidOperationException($"Unhandled destination {expected}.");
     }
   }
+
+  /// <summary>Whether the compiled SQL reads a value out of <paramref name="column"/>.</summary>
+  /// <param name="sql">The compiled SQL.</param>
+  /// <param name="column">The JSON column.</param>
+  private static bool _readsJson(string sql, string column) =>
+    sql.Contains($"{column} ->>", StringComparison.Ordinal)
+    || sql.Contains($"{column} ->", StringComparison.Ordinal)
+    || sql.Contains($"{column} #>>", StringComparison.Ordinal)
+    || sql.Contains($"{column} #>", StringComparison.Ordinal);
 
   /// <summary>The matrix is worth having only if it is broad, so its size is asserted too.</summary>
   [Test]

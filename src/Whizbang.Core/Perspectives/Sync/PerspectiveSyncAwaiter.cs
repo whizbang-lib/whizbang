@@ -51,7 +51,7 @@ public sealed partial class PerspectiveSyncAwaiter(
   private const string TAG_SYNC_EVENT_COUNT = "whizbang.sync.event_count";
 
   /// <inheritdoc />
-  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+  public Guid AwaiterId { get; } = TrackedGuid.New();
 
   private readonly IScopedEventTracker _tracker = tracker;
   private readonly ISyncEventTracker _syncEventTracker = syncEventTracker ?? throw new ArgumentNullException(nameof(syncEventTracker));

@@ -115,7 +115,7 @@ public class DispatcherCompositePublishFanoutTests {
   public async Task OwnedComposite_LocalPublishesEachInnerEventAtPublishAsync() {
     var dispatcher = _build(ownTestNamespace: true);
     var composite = new OwnedComposite {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       Inner = [new InnerEvt("a"), new InnerEvt("b"), new InnerEvt("c")],
     };
 
@@ -132,7 +132,7 @@ public class DispatcherCompositePublishFanoutTests {
   public async Task OwnedComposite_FansOutAtPublish_ViaDispatchOptionsOverloadAsync() {
     var dispatcher = _build(ownTestNamespace: true);
     var composite = new OwnedComposite {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       Inner = [new InnerEvt("a"), new InnerEvt("b")],
     };
 
@@ -147,7 +147,7 @@ public class DispatcherCompositePublishFanoutTests {
   public async Task OwnedComposite_InnerEventsSourcedFromCompositeForLineageAsync() {
     var dispatcher = _build(ownTestNamespace: true);
     var composite = new OwnedComposite {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       Inner = [new InnerEvt("a"), new InnerEvt("b")],
     };
 
@@ -165,7 +165,7 @@ public class DispatcherCompositePublishFanoutTests {
   public async Task OwnedComposite_OverCap_ThrowsAtPublishAsync() {
     var dispatcher = _build(ownTestNamespace: true);
     var composite = new OwnedComposite {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       MaxInnerEventsAllowed = 1,
       Inner = [new InnerEvt("a"), new InnerEvt("b")],
     };
@@ -182,7 +182,7 @@ public class DispatcherCompositePublishFanoutTests {
     var dispatcher = _build(ownTestNamespace: true);
     dispatcher.ThrowOnInnerId = "b";  // default Atomicity is Independent
     var composite = new OwnedComposite {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       Inner = [new InnerEvt("a"), new InnerEvt("b"), new InnerEvt("c")],
     };
 
@@ -198,7 +198,7 @@ public class DispatcherCompositePublishFanoutTests {
     var dispatcher = _build(ownTestNamespace: true);
     dispatcher.ThrowOnInnerId = "b";
     var composite = new AtomicComposite {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       Inner = [new InnerEvt("a"), new InnerEvt("b"), new InnerEvt("c")],
     };
 
@@ -211,7 +211,7 @@ public class DispatcherCompositePublishFanoutTests {
   public async Task OwnedComposite_SkipsNullInnerAsync() {
     var dispatcher = _build(ownTestNamespace: true);
     var composite = new OwnedComposite {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       Inner = [new InnerEvt("a"), null!, new InnerEvt("c")],
     };
 
@@ -226,7 +226,7 @@ public class DispatcherCompositePublishFanoutTests {
   public async Task NonOwnedComposite_DoesNotFanOutAtPublishAsync() {
     var dispatcher = _build(ownTestNamespace: false);
     var composite = new OwnedComposite {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       Inner = [new InnerEvt("a"), new InnerEvt("b")],
     };
 

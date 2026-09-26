@@ -100,9 +100,9 @@ public class PerspectiveCompletionFlushWorkerTests {
   }
 
   private static PerspectiveCursorCompletion _cursor(Guid? streamId = null) => new() {
-    StreamId = streamId ?? (Guid)TrackedGuid.NewMedo(),
+    StreamId = streamId ?? (Guid)TrackedGuid.New(),
     PerspectiveName = "TestPerspective",
-    LastEventId = (Guid)TrackedGuid.NewMedo(),
+    LastEventId = (Guid)TrackedGuid.New(),
     Status = PerspectiveProcessingStatus.Completed,
   };
 
@@ -113,7 +113,7 @@ public class PerspectiveCompletionFlushWorkerTests {
     var worker = _worker(coordinator);
     await worker.StartAsync(testToken);
 
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     await worker.EnqueueEventWorkIdAsync(workId, testToken);
     await coordinator.Flushed.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     await worker.StopAsync(CancellationToken.None);
@@ -148,7 +148,7 @@ public class PerspectiveCompletionFlushWorkerTests {
     var worker = _worker(coordinator);
     await worker.StartAsync(testToken);
 
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     var cursor = _cursor();
     await worker.EnqueueEventWorkIdAsync(workId, testToken);
     await worker.EnqueueCursorAsync(cursor, testToken);
@@ -190,7 +190,7 @@ public class PerspectiveCompletionFlushWorkerTests {
     var worker = _worker(coordinator);
     await worker.StartAsync(testToken);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await worker.EnqueueCursorAsync(_cursor(streamId), testToken);
     await worker.EnqueueCursorAsync(_cursor(streamId), testToken);
     await coordinator.Flushed.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
@@ -211,7 +211,7 @@ public class PerspectiveCompletionFlushWorkerTests {
     var worker = _worker(coordinator);
     await worker.StartAsync(testToken);
 
-    await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.NewMedo(), testToken);
+    await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.New(), testToken);
     await coordinator.Flushed.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     await worker.StopAsync(CancellationToken.None);
 
@@ -245,7 +245,7 @@ public class PerspectiveCompletionFlushWorkerTests {
     var worker = _worker(coordinator, debugMode: true);
     await worker.StartAsync(testToken);
 
-    await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.NewMedo(), testToken);
+    await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.New(), testToken);
     await coordinator.Flushed.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     await worker.StopAsync(CancellationToken.None);
 
@@ -261,7 +261,7 @@ public class PerspectiveCompletionFlushWorkerTests {
     var worker = _worker(coordinator, enabled: false);
     await worker.StartAsync(testToken);
 
-    await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.NewMedo(), testToken);
+    await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.New(), testToken);
     await worker.EnqueueCursorAsync(_cursor(), testToken);
     await worker.StopAsync(CancellationToken.None);
 
@@ -277,7 +277,7 @@ public class PerspectiveCompletionFlushWorkerTests {
     var worker = _worker(coordinator);
     await worker.StartAsync(testToken);
 
-    var ids = Enumerable.Range(0, 20).Select(_ => (Guid)TrackedGuid.NewMedo()).ToList();
+    var ids = Enumerable.Range(0, 20).Select(_ => (Guid)TrackedGuid.New()).ToList();
     foreach (var id in ids) {
       await worker.EnqueueEventWorkIdAsync(id, testToken);
     }
@@ -308,7 +308,7 @@ public class PerspectiveCompletionFlushWorkerTests {
     await worker.StartAsync(testToken);
     await logger.Seen.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
-    await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.NewMedo(), testToken);
+    await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.New(), testToken);
     await worker.StopAsync(CancellationToken.None);
 
     // Whether that one item landed is a genuine race and either outcome is correct. What must
@@ -403,7 +403,7 @@ public class PerspectiveCompletionFlushWorkerTests {
       .Because("a disabled worker must stay a live hosted service until shutdown — returning here "
              + "would tell the host this service had finished while its channel is still open");
 
-    await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.NewMedo(), testToken);
+    await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.New(), testToken);
     await worker.StopAsync(CancellationToken.None);
     await worker.ExecuteTask.WaitAsync(TimeSpan.FromSeconds(10), testToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);

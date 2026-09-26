@@ -788,7 +788,7 @@ public class ScopeDeltaIntegrationTests {
 
     // Create scope with BOTH TenantId and UserId (like a consumer's BFF does)
     var scopeDelta = _createScopeDelta(
-      tenantId: "c0ffee00-cafe-f00d-face-feed12345678",
+      tenantId: "7a3f9c10-4b2e-4d8a-9f61-0c5e2d8b1a47",
       userId: "925321d2-9635-49e5-abd8-87b43dcf7e19",
       roles: []
     );
@@ -827,7 +827,7 @@ public class ScopeDeltaIntegrationTests {
     var scopeContext = deserializedHop.Scope.ApplyTo(null);
 
     // Verify BOTH TenantId and UserId are extracted correctly
-    await Assert.That(scopeContext.Scope.TenantId).IsEqualTo("c0ffee00-cafe-f00d-face-feed12345678")
+    await Assert.That(scopeContext.Scope.TenantId).IsEqualTo("7a3f9c10-4b2e-4d8a-9f61-0c5e2d8b1a47")
       .Because("TenantId should be preserved after combined context round-trip");
     await Assert.That(scopeContext.Scope.UserId).IsEqualTo("925321d2-9635-49e5-abd8-87b43dcf7e19")
       .Because("UserId should be preserved after combined context round-trip");

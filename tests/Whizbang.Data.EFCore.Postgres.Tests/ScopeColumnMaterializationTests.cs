@@ -46,7 +46,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard3")]
 public class ScopeColumnMaterializationTests : EFCoreTestBase {
 
-  private const string TenantId = "c0ffee00-cafe-f00d-face-feed12345678";
+  private const string TenantId = "7a3f9c10-4b2e-4d8a-9f61-0c5e2d8b1a47";
   private const string UserId = "2ef787e2-bf41-4f3b-a968-28e7099c20bc";
 
   /// <summary>The scope shape a deployment actually stores: short keys, arrays present.</summary>

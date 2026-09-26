@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 
@@ -132,22 +133,24 @@ internal sealed class ContainmentSqlRewriter : ExpressionVisitor {
       return expression;
     }
 
-    return _asContainment(binary.Left, binary.Right)
-        ?? _asContainment(binary.Right, binary.Left)
+    return _asContainment(binary, binary.Left, binary.Right)
+        ?? _asContainment(binary, binary.Right, binary.Left)
         ?? expression;
   }
 
   /// <summary>
   /// The containment test for one equality, or null when this one is to be left alone.
   /// </summary>
-  private SqlExpression? _asContainment(SqlExpression candidateMember, SqlExpression candidateValue) {
+  private SqlExpression? _asContainment(
+      SqlExpression comparison, SqlExpression candidateMember, SqlExpression candidateValue) {
     if (candidateMember is not JsonScalarExpression member) {
       return null;
     }
 
-    // A comparison against null is the one equality containment cannot reproduce: an extraction of an
-    // absent key is null and excludes the row, while containment of an explicit JSON null does not
-    // match a key that is absent at all.
+    // A null written into the query is the one equality containment cannot reproduce: an extraction
+    // of an absent key is null and excludes the row, while containment of an explicit JSON null does
+    // not match a key that is absent at all. A null that arrives as a parameter is the same question
+    // asked later, and is handled by the guard this builds rather than by standing down.
     if (candidateValue is SqlConstantExpression { Value: null }) {
       return null;
     }
@@ -178,8 +181,58 @@ internal sealed class ContainmentSqlRewriter : ExpressionVisitor {
       return null;
     }
 
-    return JsonbContainmentSql.TryBuild(member, candidateValue);
+    var containment = JsonbContainmentSql.TryBuild(member, candidateValue);
+    if (containment is null || candidateValue is SqlConstantExpression) {
+      // A constant that survived the null check above is a value, so nothing can turn it null later.
+      return containment;
+    }
+
+    return _guardedAgainstNull(containment, comparison, candidateValue);
   }
+
+  /// <summary>
+  /// Both forms of the filter, each behind a test of whether the value is null, so that the one that
+  /// answers correctly for the value the query actually runs with is the one that survives.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An extraction reads an absent key as SQL NULL and so matches a row when the value is null;
+  /// containment of an explicit JSON null does not match an absent key at all. A parameter's value is
+  /// not known here — the command is built for a particular set of values further down the pipeline —
+  /// so the decision is written into the expression and made there.
+  /// </para>
+  /// <para>
+  /// Every connective collapses around the answer once it is known. A value that is not null leaves
+  /// the containment test alone, reaching the index exactly as before; a null one leaves the equality
+  /// alone. Neither form survives into the other's SQL, so nothing is paid for the guard.
+  /// </para>
+  /// </remarks>
+  /// <param name="containment">The containment test built for this equality.</param>
+  /// <param name="comparison">The equality the containment test would replace.</param>
+  /// <param name="value">The parameter the member is compared with.</param>
+  private static SqlBinaryExpression _guardedAgainstNull(
+      SqlExpression containment, SqlExpression comparison, SqlExpression value) =>
+    new(
+      ExpressionType.OrElse,
+      _onlyWhen(ExpressionType.NotEqual, value, containment),
+      _onlyWhen(ExpressionType.Equal, value, comparison),
+      typeof(bool),
+      BoolTypeMapping.Default);
+
+  /// <summary>One form of the filter, behind a null test over the value.</summary>
+  /// <param name="test">
+  /// <see cref="ExpressionType.Equal"/> for IS NULL, <see cref="ExpressionType.NotEqual"/> for IS NOT
+  /// NULL.
+  /// </param>
+  /// <param name="value">The value operand being tested.</param>
+  /// <param name="form">The filter that answers correctly under that test.</param>
+  private static SqlBinaryExpression _onlyWhen(ExpressionType test, SqlExpression value, SqlExpression form) =>
+    new(
+      ExpressionType.AndAlso,
+      new SqlUnaryExpression(test, value, typeof(bool), BoolTypeMapping.Default),
+      form,
+      typeof(bool),
+      BoolTypeMapping.Default);
 
   /// <summary>The table name behind each alias this select brings into scope.</summary>
   private static Dictionary<string, string> _aliasesOf(SelectExpression select) {

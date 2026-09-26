@@ -225,7 +225,7 @@ public class NamespaceRoutingTransportTests {
       new RecordingTransport(), ("control", new RecordingTransport()), ("bulk", new RecordingTransport()));
 
     await Assert.That(transport.NamespaceKeys)
-      .IsEquivalentTo(new[] { TransportNamespaces.DefaultKey, "bulk", "control" });
+      .IsEquivalentTo([TransportNamespaces.DefaultKey, "bulk", "control"]);
   }
 
   [Test]

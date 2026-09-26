@@ -175,7 +175,7 @@ public interface IEventStore {
 
   /// <summary>
   /// Reads events from a stream by stream ID (UUID) starting after a specific event ID.
-  /// Uses UUIDv7 (Medo.Uuid7) for time-based ordering - events are ordered by event ID directly.
+  /// Uses UUIDv7 (the framework's generator) for time-based ordering - events are ordered by event ID directly.
   /// Supports perspective checkpoint processing where last processed event ID is tracked.
   /// </summary>
   /// <typeparam name="TMessage">The message type to deserialize (must match stored event types)</typeparam>

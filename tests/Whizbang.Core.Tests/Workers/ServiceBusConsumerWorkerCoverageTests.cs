@@ -10,6 +10,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -604,6 +605,52 @@ public class ServiceBusConsumerWorkerCoverageTests {
       Func<TState, Exception?, string> formatter) {
       Entries.Add((logLevel, exception));
     }
+  }
+
+  #endregion
+
+  #region Runtime receptor lookup
+
+  // Receive-time dropping asks the runtime registry whether anything was registered for the
+  // message type at the pre-inbox stages. The type comes from resolving a wire type name, and
+  // that resolution returns null whenever the producing assembly is not loaded here — the normal
+  // case for a topic carrying another domain's events. Without the guard the lookup would throw
+  // inside the registry for every such message, turning a message that should simply be dropped
+  // into a receive-loop fault.
+  [Test]
+  public async Task RuntimeHasReceptors_UnresolvedMessageType_ReportsNoReceptorsWithoutAskingTheRegistryAsync() {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    var runtimeRegistry = new AlwaysReceptorRegistry();
+    var worker = new ServiceBusConsumerWorker(
+      transport: new TestTransport(),
+      scopeFactory: scopeFactory,
+      logger: new TestLogger<ServiceBusConsumerWorker>(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: runtimeRegistry,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: new ServiceBusConsumerOptions { Subscriptions = [] });
+
+    var forUnresolvedType = worker.RuntimeHasReceptors(null, LifecycleStage.PreInboxDetached);
+
+    await Assert.That(forUnresolvedType).IsFalse()
+      .Because("a wire type name this service cannot resolve has no runtime receptors by definition");
+    await Assert.That(runtimeRegistry.Questions).IsEmpty()
+      .Because("the guard has to answer before the registry is asked; this registry throws on a null "
+        + "type, which is exactly what the callers would hit without it");
+
+    var forResolvedType = worker.RuntimeHasReceptors(typeof(CoverageWorkerTestEvent), LifecycleStage.PreInboxDetached);
+    await Assert.That(forResolvedType).IsTrue()
+      .Because("the registry reports a receptor for every type it is asked about, so the false above "
+        + "is the guard's answer rather than an empty registry's");
+    await Assert.That(runtimeRegistry.Questions.Count).IsEqualTo(1)
+      .Because("exactly one lookup reached the registry — the resolved one");
   }
 
   #endregion

@@ -310,7 +310,7 @@ public sealed class SystemEventOptions {
     // An index advisory is a perspective-related finding, so it rides the flag that already covers
     // them rather than adding another switch for one event. A host that wants perspective events
     // wants to hear this one too; a host that does not is not asking to be advised.
-    if (systemEventType == typeof(PerspectiveIndexAdvised)) {
+    if (systemEventType == typeof(PerspectiveIndexAdvised) || systemEventType == typeof(PerspectiveScanAdvised)) {
       return PerspectiveEventsEnabled;
     }
 

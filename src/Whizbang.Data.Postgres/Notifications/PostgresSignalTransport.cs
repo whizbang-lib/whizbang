@@ -30,6 +30,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
 public sealed partial class PostgresSignalTransport(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
@@ -194,11 +195,12 @@ public sealed partial class PostgresSignalTransport(
     _busLiveness?.MarkWireSignalReceived(_time.GetUtcNow());
     var sink = _sink;
     var map = _wireNameToEntry;
-    if (sink is null || map is null) {
+    // Nothing to route to, or nothing this host routes: an unknown wire-name (a signal type not
+    // present here) is ignored, and so is a payload arriving before StartAsync published the sink
+    // and the routing map — which the subscriptions being created inside StartAsync, after both are
+    // set, means cannot actually happen, so it shares this exit rather than owning an unreachable one.
+    if (sink is null || map is null || !map.TryGetValue(payload, out var entry)) {
       return;
-    }
-    if (!map.TryGetValue(payload, out var entry)) {
-      return;  // unknown wire-name (e.g. a signal type not present in this host) — ignore
     }
     // Enqueue-and-return: dispatch runs on the shared connection's receive loop, so handlers must
     // be non-blocking. Complete synchronously where possible; otherwise observe off the loop.

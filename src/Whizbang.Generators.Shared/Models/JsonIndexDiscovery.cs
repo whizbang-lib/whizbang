@@ -26,6 +26,7 @@ public static class JsonIndexDiscovery {
   /// <summary>The kinds as the attribute's flag enumeration spells them.</summary>
   private const int KIND_ORDERED = 1;
   private const int KIND_SUBSTRING = 2;
+  private const int KIND_SEARCH = 4;
 
   /// <summary>
   /// The store type a field's extraction is cast to, or null when its extraction cannot carry an
@@ -44,7 +45,7 @@ public static class JsonIndexDiscovery {
   /// Null is the answer for the whole date and time family, and not for want of trying: the cast out
   /// of text to a timestamp or a date is stable rather than immutable, so PostgreSQL refuses to build
   /// an index over it. Those become indexable once their stored form is a number, which is the
-  /// canonical-format work in plans/lens-full-index-coverage.md.
+  /// canonical-format work in plans/archive/lens-full-index-coverage.md.
   /// </para>
   /// </remarks>
   public static JsonIndexCast? CastFor(ITypeSymbol? type) {
@@ -270,7 +271,8 @@ public static class JsonIndexDiscovery {
         CaseInsensitive: caseInsensitive,
         Superseded: CanonicalTemporalDiscovery.KindOf(property.Type) == CanonicalTemporalKind.Day
           ? JsonIndexCast.Int4
-          : JsonIndexCast.None);
+          : JsonIndexCast.None,
+        Search: IncludesSearch(kind) && text);
 
   /// <summary>
   /// The composite and partial indexes a model declares with <c>[PerspectiveIndex]</c>.
@@ -320,6 +322,9 @@ public static class JsonIndexDiscovery {
   /// what one means. Inline it was a loop inside a loop inside a loop, which the quality gate
   /// measured at cognitive complexity 21.
   /// </remarks>
+  /// <summary>The index methods, in the order the declaring enum defines them.</summary>
+  private static readonly string[] _methodNames = ["btree", "hash", "gin", "gist", "spgist", "brin"];
+
   private static CompositeIndexInfo? _compositeFor(
       AttributeData declaration, Dictionary<string, IPropertySymbol> properties) {
     var elements = _elementsFor(declaration, properties);
@@ -329,7 +334,10 @@ public static class JsonIndexDiscovery {
 
     string? declaredName = null;
     string? where = null;
+    string? method = null;
+    string? operatorClass = null;
     var unique = false;
+    var expressions = new List<string>();
 
     foreach (var argument in declaration.NamedArguments) {
       switch (argument.Key) {
@@ -342,11 +350,37 @@ public static class JsonIndexDiscovery {
         case "Unique":
           unique = argument.Value.Value is true;
           break;
+        case "OperatorClass":
+          operatorClass = argument.Value.Value as string;
+          break;
+        case "Method":
+          // Btree is the default and is left unwritten, so an index that never asked for a method
+          // produces the statement it always produced.
+          method = argument.Value.Value is int m && m > 0 ? _methodNames[m] : null;
+          break;
+        case "Expressions":
+          expressions.AddRange(_expressionsIn(argument.Value));
+          break;
       }
     }
 
-    return new CompositeIndexInfo([.. elements], declaredName, where, unique);
+    // Properties first and expressions after, which is the order the index is built in and so the
+    // order a filter has to lead with.
+    var covered = elements.Concat(expressions.Select(e => new CompositeIndexElement(e, e)));
+
+    return new CompositeIndexInfo([.. covered], declaredName, where, unique, method, operatorClass);
   }
+
+  /// <summary>The non-empty expressions of a declared Expressions argument.</summary>
+  /// <remarks>
+  /// Its own step so the decision above stays one loop over the named arguments rather than a loop
+  /// inside a loop, which is what the quality gate measures.
+  /// </remarks>
+  private static IEnumerable<string> _expressionsIn(TypedConstant argument) =>
+    argument.Values
+      .Select(static value => value.Value as string)
+      .Where(static expression => !string.IsNullOrWhiteSpace(expression))
+      .Select(static expression => expression!);
 
   /// <summary>
   /// The declaration's properties resolved to the SQL each is indexed over, or null when any one of
@@ -419,6 +453,11 @@ public static class JsonIndexDiscovery {
   /// of a magic number is how they would come to disagree about what a declaration said.
   /// </remarks>
   public static bool IncludesSubstring(int kind) => (kind & KIND_SUBSTRING) != 0;
+
+  /// <summary>Whether a declared kind asks for a folded search index.</summary>
+  /// <param name="kind">The declared kinds.</param>
+  /// <returns>True when <c>IndexKinds.Search</c> is among them.</returns>
+  public static bool IncludesSearch(int kind) => (kind & KIND_SEARCH) != 0;
 
   /// <summary>
   /// Whether a combined kind includes the ordered capability.

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Whizbang.Core.Versioning;
 
@@ -138,6 +139,7 @@ public readonly struct SemanticVersion : IEquatable<SemanticVersion>, IComparabl
     return _comparePreRelease(PreRelease.AsSpan(), other.PreRelease.AsSpan());
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Pre-release precedence is defined identifier by identifier, and the rule differs by whether either side is exhausted, whether both identifiers are numeric, or whether only one is. The branches are the specification's own cases.")]
   private static int _comparePreRelease(ReadOnlySpan<char> left, ReadOnlySpan<char> right) {
     while (true) {
       if (left.IsEmpty || right.IsEmpty) {

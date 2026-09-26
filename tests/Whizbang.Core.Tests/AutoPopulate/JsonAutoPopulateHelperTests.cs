@@ -80,7 +80,7 @@ public class JsonAutoPopulateHelperTests {
       TimestampKind = TimestampKind.DeliveredAt,
     });
 
-    var payload = _parseObject("""{}""");
+    var payload = _parseObject("{}");
     var ts = new DateTimeOffset(2026, 5, 28, 13, 0, 0, TimeSpan.Zero);
 
     var result = JsonAutoPopulateHelper.PopulateTimestampByName(
@@ -123,7 +123,7 @@ public class JsonAutoPopulateHelperTests {
       TimestampKind = TimestampKind.QueuedAt,
     });
 
-    var payload = JsonDocument.Parse("""[1,2,3]""").RootElement.Clone();
+    var payload = JsonDocument.Parse("[1,2,3]").RootElement.Clone();
     var ts = new DateTimeOffset(2026, 5, 28, 15, 0, 0, TimeSpan.Zero);
 
     var result = JsonAutoPopulateHelper.PopulateTimestamp(
@@ -151,7 +151,7 @@ public class JsonAutoPopulateHelperTests {
         TimestampKind = TimestampKind.QueuedAt,
       });
 
-    var payload = _parseObject("""{}""");
+    var payload = _parseObject("{}");
     var ts = new DateTimeOffset(2026, 5, 28, 16, 0, 0, TimeSpan.Zero);
 
     var result = JsonAutoPopulateHelper.PopulateTimestamp(

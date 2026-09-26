@@ -20,7 +20,7 @@ public class EmptyStreamIdExceptionTests {
 
   [Test]
   public async Task Constructor_CarriesMessageIdAndTypeAsync() {
-    Guid messageId = TrackedGuid.NewMedo();
+    Guid messageId = TrackedGuid.New();
     var messageType = "App.Contracts.Auth.RemoveUserCommand";
 
     var ex = new EmptyStreamIdException(messageId, messageType);
@@ -33,7 +33,7 @@ public class EmptyStreamIdExceptionTests {
 
   [Test]
   public async Task Constructor_MessageContainsBothIdAndTypeAsync() {
-    Guid messageId = TrackedGuid.NewMedo();
+    Guid messageId = TrackedGuid.New();
     var messageType = "Sample.MessageType";
 
     var ex = new EmptyStreamIdException(messageId, messageType);

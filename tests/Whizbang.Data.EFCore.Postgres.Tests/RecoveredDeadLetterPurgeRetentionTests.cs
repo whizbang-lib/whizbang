@@ -22,7 +22,7 @@ public class RecoveredDeadLetterPurgeRetentionTests : EFCoreTestBase {
   private static async Task<Guid> _seedRecoveredAsync(
       NpgsqlConnection conn, string fingerprint,
       string deadLetteredOffset, string? recoveredOffset) {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     await using var ins = conn.CreateCommand();
     ins.CommandText = """
 
@@ -36,7 +36,7 @@ public class RecoveredDeadLetterPurgeRetentionTests : EFCoreTestBase {
               'seed/1', @fp, 1)
 """;
     ins.Parameters.AddWithValue("id", id);
-    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.NewMedo());
+    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.New());
     ins.Parameters.AddWithValue("dl", deadLetteredOffset);
     ins.Parameters.AddWithValue("rec", (object?)recoveredOffset ?? DBNull.Value);
     ins.Parameters.AddWithValue("fp", fingerprint);

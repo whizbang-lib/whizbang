@@ -147,4 +147,43 @@ public class SyncEventTrackerCoverageTests {
       .Because("every waiter racing a concurrent MarkProcessed drain must resolve true, never be "
         + "stranded until timeout.");
   }
+
+  // ==========================================================================
+  // The post-registration re-check inside the shared wait helper
+  // ==========================================================================
+
+  // Mark*Processed signals every waiter registered at the moment it runs. A caller that checks
+  // "still pending?", is beaten to the registry by that sweep, and only then registers its own
+  // TCS is therefore registered against an event nobody will ever signal again. The re-check
+  // after registration is the only thing that closes that window; without it the caller waits
+  // out its entire timeout and reports failure for work that had in fact completed. Driving it
+  // through a predicate that flips between the two calls pins the behavior without racing two
+  // threads and hoping the interleaving lands.
+  [Test]
+  public async Task WaitForCompletion_KeyCompletesBetweenTheCheckAndTheRegistration_ResolvesImmediatelyAsync() {
+    var tracker = new SyncEventTracker();
+    var waiters = new ConcurrentDictionary<Guid, ConcurrentDictionary<Guid, TaskCompletionSource<bool>>>();
+    var eventId = Guid.NewGuid();
+    var awaiterId = Guid.NewGuid();
+    var answers = 0;
+
+    var completed = await tracker.WaitForCompletionAsync(
+      waiters,
+      [eventId],
+      // First answer: still pending, so a waiter is registered. Second answer (the re-check that
+      // runs immediately after registration): already processed — exactly the interleaving a
+      // concurrent MarkProcessed produces.
+      _ => Interlocked.Increment(ref answers) == 1,
+      awaiterId,
+      TimeSpan.FromSeconds(30),
+      CancellationToken.None);
+
+    await Assert.That(answers).IsEqualTo(2)
+      .Because("the helper has to ask a second time after registering; one answer would mean the "
+        + "re-check never ran and this test proves nothing");
+    await Assert.That(completed).IsTrue()
+      .Because("a waiter registered after the completion sweep has already passed must be signaled "
+        + "by the re-check; otherwise the caller waits out its full timeout and reports failure for "
+        + "work that already finished");
+  }
 }

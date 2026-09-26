@@ -122,7 +122,7 @@ public class RecentlyProcessedEventCacheSweepWorkerTests {
     // the worker exists to prevent -- and nothing would report it beyond a single warning.
     var clock = new SteppableClock();
     var cache = new RecentlyProcessedEventCache(clock, ttl: TimeSpan.FromMinutes(5));
-    cache.MarkProcessed((Guid)TrackedGuid.NewMedo());
+    cache.MarkProcessed((Guid)TrackedGuid.New());
     await Assert.That(cache.Count).IsEqualTo(1);
 
     clock.AdvanceBy(TimeSpan.FromMinutes(10));  // the entry is now well past its TTL
@@ -170,6 +170,12 @@ public class RecentlyProcessedEventCacheSweepWorkerTests {
       .Because("disabled means the cache is never swept at all, not merely swept less often");
 
     await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the park ends by the stopping token cancelling the infinite delay, and a deliberately "
+             + "disabled worker must absorb that and return; letting the cancellation escape leaves a "
+             + "faulted execute task that StopAsync never observes, so it surfaces only as an "
+             + "unobserved exception long after the shutdown that caused it");
   }
 
   [Test]

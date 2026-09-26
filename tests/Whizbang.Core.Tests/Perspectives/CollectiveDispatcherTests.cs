@@ -1,5 +1,4 @@
-#pragma warning disable CA1707
-#pragma warning disable CA1859 // tests assert against the interface return type, not the concrete record
+#pragma warning disable CA1707, CA1859 // tests assert against the interface return type, not the concrete record
 
 using System.Diagnostics;
 using System.Diagnostics.Metrics;

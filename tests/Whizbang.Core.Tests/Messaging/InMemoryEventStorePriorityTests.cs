@@ -28,7 +28,7 @@ public sealed class InMemoryEventStorePriorityTests {
   [Test]
   public async Task AppendAsync_WithMessage_WhileHandlingBackgroundWork_TheStoredEnvelopeCarriesTheAmbientParentAsync() {
     var store = new InMemoryEventStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     using (PriorityContext.Enter(WorkPriority.BACKGROUND)) {
       await store.AppendAsync(streamId, new StorePriorityProbe("a"));
@@ -42,7 +42,7 @@ public sealed class InMemoryEventStorePriorityTests {
   [Test]
   public async Task AppendAsync_WithMessage_OutsideAnyHandling_TheStoredEnvelopeStaysUndeclaredAsync() {
     var store = new InMemoryEventStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     await store.AppendAsync(streamId, new StorePriorityProbe("b"));
 
@@ -54,7 +54,7 @@ public sealed class InMemoryEventStorePriorityTests {
   [Test]
   public async Task AppendAsync_WithEnvelope_KeepsTheEnvelopesOwnNumberAsync() {
     var store = new InMemoryEventStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<StorePriorityProbe> {
       MessageId = MessageId.New(),
       Payload = new StorePriorityProbe("c"),

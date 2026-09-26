@@ -36,6 +36,32 @@ public class DispatcherSyncModeContractTests {
   }
 
   [Test]
+  public async Task ExplicitSecurityContext_CanTerminateWithTheSyncingLocalInvokeAsync() {
+    // A caller that needs an explicit security context reaches the dispatcher through the security
+    // builder, and the builder can only terminate with the verbs it carries. It carried SendAsync,
+    // PublishAsync and LocalInvokeAsync but not the syncing local invoke, so a caller that needed
+    // both an explicit context and read-after-write could have neither: it had to drop the context
+    // to keep the sync, or drop the sync to keep the context. Startup seeding is exactly that
+    // caller, since it writes under an explicit cross-tenant context and reads what it wrote
+    // immediately afterwards.
+    var onDispatcher = typeof(IDispatcher).GetMethods()
+      .SingleOrDefault(m => m.Name == "LocalInvokeAndSyncAsync"
+        && m.GetParameters().Length == 3 && m.GetParameters()[1].ParameterType == typeof(SyncMode));
+
+    var onBuilder = typeof(Whizbang.Core.Dispatch.DispatcherSecurityBuilder).GetMethods()
+      .SingleOrDefault(m => m.Name == "LocalInvokeAndSyncAsync"
+        && m.GetParameters().Length == 3 && m.GetParameters()[1].ParameterType == typeof(SyncMode));
+
+    await Assert.That(onDispatcher).IsNotNull();
+    await Assert.That(onBuilder).IsNotNull()
+      .Because("every verb a caller can reach without an explicit security context has to be reachable with one");
+
+    var modeParam = onBuilder!.GetParameters()[1];
+    await Assert.That(modeParam.HasDefaultValue).IsFalse()
+      .Because("the builder keeps the dispatcher's own contract, where the sync expectation is explicit at the callsite");
+  }
+
+  [Test]
   public async Task LocalInvokeAndSyncAsync_NewOverload_SyncModeIsRequiredNotDefaultedAsync() {
     // Design lock: the SyncMode parameter MUST NOT have a default value. Two reasons:
     //   1. C# overload resolution: a defaulted SyncMode + the legacy timeout-shaped overload's

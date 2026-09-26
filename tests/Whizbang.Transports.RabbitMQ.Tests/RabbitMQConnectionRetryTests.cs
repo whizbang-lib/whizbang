@@ -422,4 +422,102 @@ public class RabbitMQConnectionRetryTests {
   }
 
   #endregion
+
+  #region Connection Success Path
+
+  /// <summary>
+  /// An <see cref="IConnectionFactory"/> whose connect step is supplied per test. Only the
+  /// no-hostname overload is used by the retry helper; the rest refuse so a wiring mistake
+  /// surfaces instead of quietly returning nothing.
+  /// </summary>
+  private sealed class ScriptedConnectionFactory(Func<int, Task<IConnection>> connect) : IConnectionFactory {
+    private int _attempts;
+
+    public int Attempts => _attempts;
+
+    public Task<IConnection> CreateConnectionAsync(CancellationToken cancellationToken = default) =>
+      connect(Interlocked.Increment(ref _attempts));
+
+    public Task<IConnection> CreateConnectionAsync(string clientProvidedName, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("The retry helper never names the client.");
+    public Task<IConnection> CreateConnectionAsync(IEnumerable<string> hostnames, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("The retry helper never supplies hostnames.");
+    public Task<IConnection> CreateConnectionAsync(IEnumerable<string> hostnames, string clientProvidedName, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("The retry helper never supplies hostnames with a client name.");
+    public Task<IConnection> CreateConnectionAsync(IEnumerable<AmqpTcpEndpoint> endpoints, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("The retry helper never supplies endpoints.");
+    public Task<IConnection> CreateConnectionAsync(IEnumerable<AmqpTcpEndpoint> endpoints, string clientProvidedName, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("The retry helper never supplies endpoints with a client name.");
+    public IAuthMechanismFactory AuthMechanismFactory(IEnumerable<string> mechanismNames) =>
+      throw new NotSupportedException("The retry helper never negotiates auth mechanisms.");
+
+    public IDictionary<string, object?> ClientProperties { get; set; } = new Dictionary<string, object?>();
+    public string Password { get; set; } = "";
+    public ushort RequestedChannelMax { get; set; }
+    public uint RequestedFrameMax { get; set; }
+    public TimeSpan RequestedHeartbeat { get; set; }
+    public string UserName { get; set; } = "";
+    public string VirtualHost { get; set; } = "/";
+    public ICredentialsProvider? CredentialsProvider { get; set; }
+    public Uri Uri { get; set; } = new("amqp://probe-host:5672");
+    public string? ClientProvidedName { get; set; }
+    public TimeSpan HandshakeContinuationTimeout { get; set; }
+    public TimeSpan ContinuationTimeout { get; set; }
+    public ushort ConsumerDispatchConcurrency { get; set; }
+  }
+
+  private static RabbitMQOptions _fastRetryOptions() => new() {
+    InitialRetryAttempts = 1,
+    InitialRetryDelay = TimeSpan.FromMilliseconds(1),
+    MaxRetryDelay = TimeSpan.FromMilliseconds(1),
+    BackoffMultiplier = 1.0,
+    RetryIndefinitely = true
+  };
+
+  private static FakeConnection _openConnection() =>
+    new(() => Task.FromResult<IChannel>(new FakeChannel()));
+
+  [Test]
+  public async Task CreateConnectionWithRetryAsync_WhenTheBrokerAnswersOnTheSecondAttempt_ReturnsThatConnectionAsync(
+      CancellationToken cancellationToken) {
+    // Recovering is the point of retrying: a broker that refuses once and accepts next time has
+    // to end with the connection it accepted on, not another retry. The Information line is the
+    // only signal an operator gets that a host stuck at startup finally connected, so it must
+    // carry the attempt it actually took.
+    var logger = new RecordingLogger();
+    var retry = new RabbitMQConnectionRetry(_fastRetryOptions(), logger);
+    var expected = _openConnection();
+    var factory = new ScriptedConnectionFactory(attempt => attempt == 1
+      ? Task.FromException<IConnection>(new BrokerUnreachableException(new IOException("connection refused")))
+      : Task.FromResult<IConnection>(expected));
+
+    var connection = await retry.CreateConnectionWithRetryAsync(factory, cancellationToken);
+
+    await Assert.That(connection).IsSameReferenceAs(expected);
+    await Assert.That(factory.Attempts).IsEqualTo(2);
+    await Assert.That(logger.Entries.Count(e =>
+        e.Level == LogLevel.Information &&
+        e.Message.Contains("established after 2 attempts", StringComparison.Ordinal)))
+      .IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task CreateConnectionWithRetryAsync_WhenTheBrokerAnswersImmediately_LogsNoRecoveryLineAsync(
+      CancellationToken cancellationToken) {
+    // A first-attempt connect is the normal case. Reporting "established after 1 attempts" at
+    // Information on every healthy start would turn the recovery signal above into noise.
+    var logger = new RecordingLogger();
+    var retry = new RabbitMQConnectionRetry(_fastRetryOptions(), logger);
+    var expected = _openConnection();
+    var factory = new ScriptedConnectionFactory(_ => Task.FromResult<IConnection>(expected));
+
+    var connection = await retry.CreateConnectionWithRetryAsync(factory, cancellationToken);
+
+    await Assert.That(connection).IsSameReferenceAs(expected);
+    await Assert.That(factory.Attempts).IsEqualTo(1);
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("established after", StringComparison.Ordinal)))
+      .IsFalse();
+  }
+
+  #endregion
 }

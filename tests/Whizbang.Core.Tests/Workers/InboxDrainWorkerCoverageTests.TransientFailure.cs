@@ -18,9 +18,9 @@ namespace Whizbang.Core.Tests.Workers;
 public partial class InboxDrainWorkerCoverageTests {
   [Test]
   public async Task DrainBatch_TransientDatabaseFailure_IsNamedAsSuchAndTheNextBatchDrainsAsync() {
-    var deadlockedStream = (Guid)TrackedGuid.NewMedo();
-    var nextStream = (Guid)TrackedGuid.NewMedo();
-    var nextMessage = (Guid)TrackedGuid.NewMedo();
+    var deadlockedStream = (Guid)TrackedGuid.New();
+    var nextStream = (Guid)TrackedGuid.New();
+    var nextMessage = (Guid)TrackedGuid.New();
 
     var coord = new ScriptedWorkCoordinator();
     coord.Enqueue(_ => throw FakeDbException.WithSqlState("40P01", message: "deadlock detected"));

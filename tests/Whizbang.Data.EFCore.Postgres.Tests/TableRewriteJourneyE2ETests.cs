@@ -34,7 +34,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class TableRewriteJourneyE2ETests : EFCoreTestBase {
 
   private sealed class Pod : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "rewrite-svc";
     public string HostName => "rewrite-host";
     public int ProcessId => 1;

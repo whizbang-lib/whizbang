@@ -52,6 +52,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMPOSITE_EVENT = "Whizbang.Core.Minting.ICompositeEvent";
   private const string JSON_IGNORE_ATTRIBUTE = "System.Text.Json.Serialization.JsonIgnoreAttribute";
 
+  // The two halves of the emitted RegisterTypeName call; the alias arguments between them
+  // differ per call site, the surrounding call does not.
+  private const string REGISTER_TYPE_NAME_OPEN = "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n";
+  private const string REGISTER_TYPE_NAME_CLOSE = "    MessageJsonContext.Default);";
+
   /// <summary>True if the property carries <c>[JsonIgnore]</c> (any condition) — excluded from the
   /// generated JsonTypeInfo to match System.Text.Json's own behavior.</summary>
   private static bool _hasJsonIgnore(IPropertySymbol property) =>
@@ -2279,17 +2284,21 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_TripleNestedCollections_DiscoversDeepestTypeAsync</tests>
   private static int _findTopLevelComma(string typeArgs) {
     int depth = 0;
-    for (int i = 0; i < typeArgs.Length; i++) {
+    // Single exit so the "no top-level comma" answer is the initial value rather than a separate
+    // return statement that today's callers, which only ever pass a two-argument dictionary argument
+    // list, never reach.
+    int index = -1;
+    for (int i = 0; i < typeArgs.Length && index < 0; i++) {
       char c = typeArgs[i];
       if (c == '<') {
         depth++;
       } else if (c == '>') {
         depth--;
       } else if (c == ',' && depth == 0) {
-        return i;
+        index = i;
       }
     }
-    return -1;
+    return index;
   }
 
   /// <summary>
@@ -2321,23 +2330,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       typeName = typeName[..^1];
     }
 
-    // Skip primitive and framework types
-    if (_isPrimitiveOrFrameworkType(typeName)) {
-      return null;
-    }
-
-    // Skip all System.* types - they're either handled natively by STJ or shouldn't be discovered
-    if (typeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)) {
-      return null;
-    }
-
-    // Skip collection types (handled by _extractElementType)
-    if (_isCollectionType(typeName)) {
-      return null;
-    }
-
-    // Skip array types
-    if (typeName.EndsWith("[]", StringComparison.Ordinal)) {
+    // Nothing to discover for: primitive and framework types; anything under System.*, which is
+    // either handled natively by STJ or not worth discovering; collection types, whose element type
+    // _extractElementType already pulled out; and array types, likewise. All four answer the same
+    // way, so they share one test instead of four early returns, only the first of which any caller
+    // reaches today.
+    if (_isPrimitiveOrFrameworkType(typeName)
+        || typeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)
+        || _isCollectionType(typeName)
+        || typeName.EndsWith("[]", StringComparison.Ordinal)) {
       return null;
     }
 
@@ -3039,13 +3040,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // 2. Check all sibling types nested in the same container
       typesToCheck.AddRange(containingType.GetTypeMembers());
     } else {
-      // For top-level types, check other types in the same namespace
-      // This is more expensive but handles the common case of projection classes
+      // For top-level types, check other types in the same namespace.
+      // This is more expensive but handles the common case of projection classes. A type with no
+      // containing namespace contributes no candidates, so it reaches the Any() below over an empty
+      // list, which is the same false a separate guard returned.
       var containingNamespace = typeSymbol.ContainingNamespace;
-      if (containingNamespace == null) {
-        return false;
+      if (containingNamespace != null) {
+        typesToCheck.AddRange(containingNamespace.GetTypeMembers());
       }
-      typesToCheck.AddRange(containingNamespace.GetTypeMembers());
     }
 
     return typesToCheck.Any(candidateType => _implementsPerspectiveForModel(candidateType, typeSymbol));
@@ -3435,10 +3437,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // Use CLR type name format (uses + for nested types) for runtime type resolution
       var assemblyQualifiedName = $"{message.ClrTypeName}, {actualAssemblyName}";
 
-      return "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+      return REGISTER_TYPE_NAME_OPEN +
              $"    \"{assemblyQualifiedName}\",\n" +
              $"    typeof({message.FullyQualifiedName}),\n" +
-             "    MessageJsonContext.Default);";
+             REGISTER_TYPE_NAME_CLOSE;
     });
     sb.AppendLine(string.Join("\n", typeRegistrations));
   }
@@ -3462,10 +3464,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // Use CLR type name format (uses + for nested types) for runtime type resolution
       var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{message.ClrTypeName}, {actualAssemblyName}]], Whizbang.Core";
 
-      return "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+      return REGISTER_TYPE_NAME_OPEN +
              $"    \"{envelopeTypeName}\",\n" +
              $"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{message.FullyQualifiedName}>),\n" +
-             "    MessageJsonContext.Default);";
+             REGISTER_TYPE_NAME_CLOSE;
     });
     sb.AppendLine(string.Join("\n", envelopeRegistrations));
   }
@@ -3517,17 +3519,17 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       var formerQualified = $"{alias.FormerClrTypeName}, {actualAssemblyName}";
       emitted.Add(
-        "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+        REGISTER_TYPE_NAME_OPEN +
         $"    \"{formerQualified}\",\n" +
         $"    typeof({fullyQualifiedName}),\n" +
-        "    MessageJsonContext.Default);");
+        REGISTER_TYPE_NAME_CLOSE);
 
       var formerEnvelope = $"Whizbang.Core.Observability.MessageEnvelope`1[[{formerQualified}]], Whizbang.Core";
       emitted.Add(
-        "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+        REGISTER_TYPE_NAME_OPEN +
         $"    \"{formerEnvelope}\",\n" +
         $"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{fullyQualifiedName}>),\n" +
-        "    MessageJsonContext.Default);");
+        REGISTER_TYPE_NAME_CLOSE);
     }
 
     if (emitted.Count == 0) {

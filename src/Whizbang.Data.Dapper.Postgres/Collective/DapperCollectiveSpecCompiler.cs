@@ -151,6 +151,31 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
     public Dictionary<string, object?> Parameters { get; } = new(StringComparer.Ordinal);
 
     protected override Expression VisitMethodCall(MethodCallExpression node) {
+      // Match: ICollectiveSetters<TModel>.UpsertElement<TElement, TKey>(collection, key, element). The array is
+      // rewritten in place by the shared upsert expression, so it rides the same jsonb_set chain.
+      if (node.Method.DeclaringType is { IsGenericType: true } upsertDeclaring &&
+          upsertDeclaring.GetGenericTypeDefinition() == typeof(ICollectiveSetters<>) &&
+          node.Method.Name == "UpsertElement" &&
+          node.Arguments.Count == 3) {
+        var collection = _extractScalarPropertyName(_unwrapLambda(node.Arguments[0]));
+        var key = _tryPropertyName(_unwrapLambda(node.Arguments[1]).Body)
+          ?? throw new NotSupportedException(
+            "UpsertElement's key must be a direct property of the element (c => c.Key); nested or computed keys are not supported.");
+        var element = _evaluateValue(node.Arguments[2])
+          ?? throw new ArgumentException($"UpsertElement on {collection} needs an element; null cannot be keyed.");
+        // The earlier calls in the chain first, so setters are recorded in call order and an upsert can
+        // start from the value an earlier setter gave the same property.
+        if (node.Object is not null) {
+          Visit(node.Object);
+        }
+        var paramName = _nextParam(collection);
+        Parameters[paramName] = JsonSerializer.Serialize(element, element.GetType(), _jsonOptions);
+        var source = Properties.LastOrDefault(p => p.JsonbPath == collection)?.ValueSql;
+        Properties.Add(new PropertyAssignment(collection,
+          Whizbang.Data.Postgres.Collective.CollectiveElementUpsertSql.ValueSql(collection, key, $"@{paramName}::jsonb", source)));
+        return node;
+      }
+
       // Match: ICollectiveSetters<TModel>.SetProperty<TProp>(selector, value)
       if (node.Method.DeclaringType is { IsGenericType: true } declaring &&
           declaring.GetGenericTypeDefinition() == typeof(ICollectiveSetters<>) &&
@@ -160,29 +185,29 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
         var selector = _unwrapLambda(node.Arguments[0]);
         var propertyName = _extractScalarPropertyName(selector);
 
+        // The earlier calls in the chain first, so setters are recorded in call order: on the same
+        // property the last call wins, as it does on the EF Core path.
+        if (node.Object is not null) {
+          Visit(node.Object);
+        }
         var valueExpr = node.Arguments[1];
         var valueSql = _isLambda(valueExpr)
           ? _compileComputedValue(valueExpr, propertyName)
           : _compileConstantValue(valueExpr, propertyName);
         Properties.Add(new PropertyAssignment(propertyName, valueSql));
-
-        // Continue visiting in case this is part of a chain — the visitor
-        // call below recurses into the Object expression of the next
-        // chained call.
-        if (node.Object is not null) {
-          Visit(node.Object);
-        }
         return node;
       }
 
       return base.VisitMethodCall(node);
     }
 
+    // A bare lambda is still accepted, but it cannot arrive: SetProperty's parameter is
+    // Expression<Func<...>>, so both C# lambda syntax and Expression.Call quote it. Folding that
+    // arm into the fallback keeps the tolerance without a line no caller can reach.
     private static LambdaExpression _unwrapLambda(Expression e) =>
       e switch {
         UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression inner } => inner,
-        LambdaExpression direct => direct,
-        _ => throw new InvalidOperationException(
+        _ => e as LambdaExpression ?? throw new InvalidOperationException(
           $"Expected a lambda expression for the SetProperty selector; got {e.NodeType} of type {e.Type}. The spec's SetProperty calls must pass a property-selector lambda as the first argument.")
       };
 

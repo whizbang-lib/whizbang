@@ -33,4 +33,18 @@ public sealed class DispatcherSagaEventEmitter(IDispatcher dispatcher) : ISagaEv
   public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken) where TEvent : IEvent {
     return _dispatcher.PublishOnceAsync(claimKey, eventData, cancellationToken);
   }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// Published as the system through the dispatcher's explicit security context: for the saga's tenant
+  /// when it has one, for all tenants when sagas are not tenant-scoped.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Sagas.Tests/DispatcherSagaEventEmitterTests.cs:PublishOnceInTenantAsync_PublishesAsTheSystemInThatTenantAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/DispatcherSagaEventEmitterTests.cs:PublishOnceInTenantAsync_NoTenant_PublishesForAllTenantsAsync</tests>
+  public Task<bool> PublishOnceInTenantAsync<TEvent>(string? tenantId, string claimKey, TEvent eventData, CancellationToken cancellationToken)
+      where TEvent : IEvent {
+    var system = _dispatcher.AsSystem();
+    var scoped = string.IsNullOrWhiteSpace(tenantId) ? system.ForAllTenants() : system.ForTenant(tenantId);
+    return scoped.PublishOnceAsync(claimKey, eventData, cancellationToken);
+  }
 }

@@ -31,7 +31,7 @@ public class InboxDispatchWorkerParallelismTests {
   // ---------- shared test doubles (mirrors the gating-tests scaffolding) ----------
 
   private sealed class FakeInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -208,9 +208,9 @@ public class InboxDispatchWorkerParallelismTests {
     // stream affinity, msg2 would proceed on a different consumer task while msg1 was gated —
     // and the assertion below (msg1 ends BEFORE msg2 starts) would fail.
     await using var harness = _buildWorker(maxConcurrent: 8);
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var m1 = (Guid)TrackedGuid.NewMedo();
-    var m2 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var m1 = (Guid)TrackedGuid.New();
+    var m2 = (Guid)TrackedGuid.New();
     var m1Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     harness.Invoker.ReleaseGates[m1] = m1Gate;
 
@@ -263,8 +263,8 @@ public class InboxDispatchWorkerParallelismTests {
     await using var harness = _buildWorker(maxConcurrent: 8);
     var s1 = _streamIdInPartition(0, 8);
     var s2 = _streamIdInPartition(1, 8);
-    var m1 = (Guid)TrackedGuid.NewMedo();
-    var m2 = (Guid)TrackedGuid.NewMedo();
+    var m1 = (Guid)TrackedGuid.New();
+    var m2 = (Guid)TrackedGuid.New();
     var m1Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var m2Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     harness.Invoker.ReleaseGates[m1] = m1Gate;
@@ -314,7 +314,7 @@ public class InboxDispatchWorkerParallelismTests {
   /// </summary>
   private static Guid _streamIdInPartition(int partition, int partitionCount) {
     while (true) {
-      var candidate = (Guid)TrackedGuid.NewMedo();
+      var candidate = (Guid)TrackedGuid.New();
       if ((uint)candidate.GetHashCode() % (uint)partitionCount == partition) {
         return candidate;
       }
@@ -339,8 +339,8 @@ public class InboxDispatchWorkerParallelismTests {
     // the worker's token is canceled — which is exactly the window the partition consumer's
     // filtered catch exists for.
     await using var harness = _buildWorker(maxConcurrent: 4);
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
     harness.Invoker.ReleaseGates[messageId] =
       new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 

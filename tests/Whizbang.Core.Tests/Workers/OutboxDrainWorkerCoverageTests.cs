@@ -14,6 +14,7 @@ using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Workers;
@@ -62,7 +63,7 @@ public partial class OutboxDrainWorkerCoverageTests {
   }
 
   private sealed class ServiceInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "coverage-test-svc";
     public string HostName => "coverage-test-host";
     public int ProcessId => 1;
@@ -313,7 +314,8 @@ public partial class OutboxDrainWorkerCoverageTests {
       IMessagePublishStrategy? publish = null,
       OutboxDrainWorkerOptions? options = null,
       ILifecycleMessageDeserializer? deserializer = null,
-      IServiceProvider? sp = null) {
+      IServiceProvider? sp = null,
+      IReceptorRegistry? runtimeReceptorRegistry = null) {
     sp ??= new ServiceCollection().BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -330,7 +332,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       publishStrategy: publish ?? new ThrowIfCalledPublishStrategy(),
       lifecycleMessageDeserializer: deserializer ?? new JsonLifecycleMessageDeserializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      runtimeReceptorRegistry: runtimeReceptorRegistry ?? NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(options ?? new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
@@ -393,9 +395,9 @@ public partial class OutboxDrainWorkerCoverageTests {
   /// </summary>
   [Test]
   public async Task DrainStreamInner_ConfirmationFetchReturnsZeroRows_ExitsCleanlyAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const int maxPerStream = 50;
-    var msgs = Enumerable.Range(0, maxPerStream * 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var msgs = Enumerable.Range(0, maxPerStream * 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ConsumingCoordinator();
     coord.RowsByStream[streamId] = [.. msgs.Select(m => _row(m, streamId))];
@@ -450,9 +452,9 @@ public partial class OutboxDrainWorkerCoverageTests {
   /// </summary>
   [Test]
   public async Task DrainStreamInner_RefetchAtExactCapReturnsSameRows_SkipsAlreadySeenAndExitsAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const int maxPerStream = 5;
-    var msgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var msgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new StaticRowsCoordinator();
     coord.Rows.AddRange(msgs.Select(m => _row(m, streamId)));
@@ -511,10 +513,10 @@ public partial class OutboxDrainWorkerCoverageTests {
   /// </summary>
   [Test]
   public async Task DrainStreamInner_CanceledBetweenInnerFetches_StopsAtNextIterationBoundaryAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const int maxPerStream = 2;
-    var firstPassMsgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
-    var secondPassMsgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var firstPassMsgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var secondPassMsgs = Enumerable.Range(0, maxPerStream).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ScriptedCoordinator();
     using var cts = new CancellationTokenSource();
@@ -599,8 +601,8 @@ public partial class OutboxDrainWorkerCoverageTests {
       deserializer: new PassthroughDeserializer(),
       sp: sp);
 
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var row = _row(messageId, (Guid)TrackedGuid.NewMedo());
+    var messageId = (Guid)TrackedGuid.New();
+    var row = _row(messageId, (Guid)TrackedGuid.New());
 
     await worker.PublishBulkAsync([row], CancellationToken.None);
 
@@ -634,7 +636,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       deserializer: new PassthroughDeserializer(),
       sp: sp);
 
-    var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
+    var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 
     await worker.PublishOneAsync(row, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -664,7 +666,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       publish: strategy,
       options: new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100, PublishTimeoutSeconds = 1 });
 
-    var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
+    var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 
     var bulkTask = worker.PublishBulkAsync([row], CancellationToken.None);
     await bulkTask.WaitAsync(TimeSpan.FromSeconds(5));
@@ -711,7 +713,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       publish: strategy,
       options: new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100, PublishTimeoutSeconds = 1 });
 
-    var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
+    var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 
     var singularTask = worker.PublishOneAsync(row, CancellationToken.None);
     await singularTask.WaitAsync(TimeSpan.FromSeconds(5));
@@ -751,7 +753,7 @@ public partial class OutboxDrainWorkerCoverageTests {
     var failure = new FailureChannel();
     var worker = _buildDirectCallWorker(failure);
     var invoker = new CapturingReceptorInvoker();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var work = _work(messageId, destination: null);
 
     await worker.InvokeOutboxLifecycleStageAsync(
@@ -762,5 +764,37 @@ public partial class OutboxDrainWorkerCoverageTests {
     await Assert.That(invoker.Stages).IsEmpty()
       .Because("an event-store-only message (null destination) must never invoke transport-side lifecycle stages");
     await Assert.That(failure.All).IsEmpty();
+  }
+
+  // ============================================================
+  // The runtime-receptor lookup
+  // ============================================================
+
+  // The drain worker decides whether to fire outbox lifecycle stages by asking the runtime
+  // registry about the type it resolved from the row's wire type name. That resolution returns
+  // null for any type whose assembly is not loaded in this process — routine for a service that
+  // relays another domain's events. Without the guard the lookup would throw inside the registry
+  // and fault the drain of an otherwise perfectly publishable row.
+  [Test]
+  public async Task RuntimeHasReceptors_UnresolvedMessageType_ReportsNoReceptorsWithoutAskingTheRegistryAsync() {
+    var runtimeRegistry = new AlwaysReceptorRegistry();
+    var worker = _buildDirectCallWorker(
+      failure: new FailureChannel(),
+      runtimeReceptorRegistry: runtimeRegistry);
+
+    var forUnresolvedType = worker.RuntimeHasReceptors(null, LifecycleStage.PostOutboxDetached);
+
+    await Assert.That(forUnresolvedType).IsFalse()
+      .Because("a wire type name this service cannot resolve has no runtime receptors by definition");
+    await Assert.That(runtimeRegistry.Questions).IsEmpty()
+      .Because("the guard has to answer before the registry is asked; this registry throws on a null "
+        + "type, which is exactly what the callers would hit without it");
+
+    var forResolvedType = worker.RuntimeHasReceptors(typeof(OutboxDrainWorkerCoverageTests), LifecycleStage.PostOutboxDetached);
+    await Assert.That(forResolvedType).IsTrue()
+      .Because("the registry reports a receptor for every type it is asked about, so the false above "
+        + "is the guard's answer rather than an empty registry's");
+    await Assert.That(runtimeRegistry.Questions.Count).IsEqualTo(1)
+      .Because("exactly one lookup reached the registry — the resolved one");
   }
 }

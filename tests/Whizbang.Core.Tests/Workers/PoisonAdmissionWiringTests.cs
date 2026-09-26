@@ -117,16 +117,35 @@ public partial class PoisonAdmissionWiringTests {
   }
 
   [Test]
-  public async Task RowsPastTheCeilingAreNotReadmittedAsync() {
-    // Default MaxAttempts is 10; these are done and should be retired, not re-run.
-    var rows = new List<InboxBatchRow> { _row(15), _row(1), _row(1), _row(1) };
+  public async Task RowsPastTheCeiling_AreHandedToTheDispatcherToRetireAsync() {
+    // Default MaxAttempts is 10; this row is done. The dispatcher is the only place a row past its
+    // ceiling is dead-lettered, so deferring it here does not retire it: it stays leased, lapses, is
+    // re-claimed with one more attempt, and is deferred again, for ever.
+    var rows = new List<InboxBatchRow> { _rowWithError(15, "boom"), _row(1), _row(1), _row(1) };
 
     var plan = _worker().AdmissionPlanForTest(rows);
 
-    await Assert.That(plan[0]).IsFalse()
-      .Because("rows were observed at attempts 17 and 21 against a max of 10 — re-admitting them "
-             + "keeps doomed work in the set long after it should have retired");
-    await Assert.That(plan[1]).IsTrue();
+    await Assert.That(plan[0]).IsTrue()
+      .Because("a row past its attempt ceiling must reach the dispatcher, which dead-letters it; skipping it "
+             + "in the drain leaves it leased and re-claimed with ever-growing attempts, never retired");
+    await Assert.That(plan.Skip(1).All(x => x)).IsTrue().Because("fresh rows are never gated");
+  }
+
+  [Test]
+  public async Task ARowPastTheCeiling_IsHandedOn_EvenWhenRetriedRowsDominateAsync() {
+    // 6 retried rows with recorded failures dominate the set (share past 0.5), one of them past the
+    // ceiling. The saturated ones yield; the one past the ceiling does not, because yielding is how it
+    // was kept from ever retiring.
+    var rows = new List<InboxBatchRow> {
+      _rowWithError(11, "boom"), _rowWithError(5, "boom"), _rowWithError(5, "boom"),
+      _rowWithError(5, "boom"), _rowWithError(5, "boom"), _rowWithError(5, "boom"), _row(1),
+    };
+
+    var plan = _worker().AdmissionPlanForTest(rows);
+
+    await Assert.That(plan[0]).IsTrue()
+      .Because("the row past its ceiling goes to the dispatcher to be dead-lettered, not back to the claim");
+    await Assert.That(plan[6]).IsTrue().Because("the fresh row gets through");
   }
 
   [Test]

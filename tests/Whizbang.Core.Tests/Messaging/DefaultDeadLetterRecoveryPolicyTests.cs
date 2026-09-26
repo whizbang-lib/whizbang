@@ -26,9 +26,9 @@ public class DefaultDeadLetterRecoveryPolicyTests {
       DeadLetterRecoveryStatus status = DeadLetterRecoveryStatus.Pending,
       Guid? streamId = null) {
     return new DeadLetterEntry(
-      DeadLetterId: (Guid)TrackedGuid.NewMedo(),
+      DeadLetterId: (Guid)TrackedGuid.New(),
       SourceTable: DeadLetterSourceTable.INBOX,
-      SourceId: (Guid)TrackedGuid.NewMedo(),
+      SourceId: (Guid)TrackedGuid.New(),
       StreamId: streamId,
       MessageType: "Test.Event",
       FailureReason: reason,
@@ -109,7 +109,7 @@ public class DefaultDeadLetterRecoveryPolicyTests {
   [Test]
   public async Task GetStreamMode_StreamIdPresent_ReturnsTailAwareAsync() {
     var policy = _newPolicy();
-    var mode = policy.GetStreamMode(_entry(MessageFailureReason.Throttled, streamId: (Guid)TrackedGuid.NewMedo()));
+    var mode = policy.GetStreamMode(_entry(MessageFailureReason.Throttled, streamId: (Guid)TrackedGuid.New()));
     await Assert.That(mode).IsEqualTo(StreamRecoveryMode.TailAware);
   }
 

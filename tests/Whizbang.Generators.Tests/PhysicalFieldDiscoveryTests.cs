@@ -176,10 +176,11 @@ public class PhysicalFieldDiscoveryTests {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
 
-    // Assert - Should include VARCHAR with max length
+    // Assert - the column is text; the declared length is carried by a check constraint, which is
+    // what a table can be given after it exists
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("VARCHAR(200)");
+    await Assert.That(generatedSource).Contains("CHECK (length(sku) <= 200) NOT VALID");
   }
 
   [Test]

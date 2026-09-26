@@ -149,11 +149,8 @@ internal sealed class TestTransport : ITransport {
 /// Test transport that fails during initialization.
 /// </summary>
 internal sealed class FailingInitializationTransport : ITransport {
-#pragma warning disable CS0649 // Field is never assigned to, and will always have its default value - intentional for test
-  private readonly bool _isInitialized; // Intentionally never set - initialization always fails
-#pragma warning restore CS0649
-
-  public bool IsInitialized => _isInitialized;
+  // Never set: this transport's initialization always fails, so it never reports itself ready.
+  public bool IsInitialized { get; }
   public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
 
   public Task InitializeAsync(CancellationToken cancellationToken = default) {

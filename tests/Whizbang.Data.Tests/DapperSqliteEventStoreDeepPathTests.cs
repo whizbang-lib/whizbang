@@ -67,7 +67,7 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
       new InvalidOperationException("simulated UNIQUE constraint violation from pooled wrapper"),
       timesToThrow: 1);
     var eventStore = _createEventStore(executor);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var envelope = _createEnvelope(streamId, "unique-constraint-message");
 
     // Act - first INSERT throws, message-based detection triggers one retry
@@ -89,7 +89,7 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
       new InvalidOperationException("write aborted because a constraint failed mid-batch"),
       timesToThrow: 1);
     var eventStore = _createEventStore(executor);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var envelope = _createEnvelope(streamId, "constraint-failed-message");
 
     // Act
@@ -111,7 +111,7 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
       new InvalidOperationException("driver reported Error 19 during INSERT"),
       timesToThrow: 1);
     var eventStore = _createEventStore(executor);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var envelope = _createEnvelope(streamId, "error-19-message");
 
     // Act
@@ -133,7 +133,7 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
       new InvalidOperationException("transient network failure"),
       timesToThrow: 1);
     var eventStore = _createEventStore(executor);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var envelope = _createEnvelope(streamId, "never-stored");
 
     // Act
@@ -160,7 +160,7 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
   public async Task AppendAsync_MessageOverload_WithActiveActivity_CapturesTraceParentAsync() {
     // Arrange
     var eventStore = _createEventStore(_testBase.Executor);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     using var activity = new Activity("DapperSqliteEventStoreDeepPathTests.TraceParent");
     activity.Start();
 
@@ -186,7 +186,7 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
   public async Task ReadAsync_BySequence_RowWithNullEnvelopeJson_IsSkippedAsync() {
     // Arrange - one real event plus a raw row whose envelope column is the JSON literal null
     var eventStore = _createEventStore(_testBase.Executor);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var envelope = _createEnvelope(streamId, "real-event");
     await eventStore.AppendAsync(streamId, envelope);
     await _seedRawEnvelopeRowAsync(streamId, 1, "null");
@@ -207,7 +207,7 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
   public async Task ReadAsync_ByEventId_NullFromEventId_ReturnsAllAndSkipsNullEnvelopeRowAsync() {
     // Arrange - two real events plus a literal-null envelope row
     var eventStore = _createEventStore(_testBase.Executor);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var envelope1 = _createEnvelope(streamId, "event-1");
     var envelope2 = _createEnvelope(streamId, "event-2");
     await eventStore.AppendAsync(streamId, envelope1);
@@ -232,7 +232,7 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
   public async Task ReadAsync_BySequence_EarlyBreak_StopsAfterFirstEventAsync() {
     // Arrange
     var eventStore = _createEventStore(_testBase.Executor);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await eventStore.AppendAsync(streamId, _createEnvelope(streamId, "event-1"));
     await eventStore.AppendAsync(streamId, _createEnvelope(streamId, "event-2"));
     await eventStore.AppendAsync(streamId, _createEnvelope(streamId, "event-3"));
@@ -252,7 +252,7 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
   public async Task ReadAsync_ByEventId_EarlyBreak_StopsAfterFirstEventAsync() {
     // Arrange
     var eventStore = _createEventStore(_testBase.Executor);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await eventStore.AppendAsync(streamId, _createEnvelope(streamId, "event-1"));
     await eventStore.AppendAsync(streamId, _createEnvelope(streamId, "event-2"));
 
@@ -270,9 +270,9 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
   public async Task ReadPolymorphicAsync_EarlyBreak_StopsAfterFirstEventAsync() {
     // Arrange - two fully-valid legacy rows readable via the object-form MessageId resolver
     var eventStore = _createLegacyFormatEventStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    await _seedLegacyRowAsync(streamId, 0, (Guid)TrackedGuid.NewMedo(), "poly-1");
-    await _seedLegacyRowAsync(streamId, 1, (Guid)TrackedGuid.NewMedo(), "poly-2");
+    var streamId = (Guid)TrackedGuid.New();
+    await _seedLegacyRowAsync(streamId, 0, (Guid)TrackedGuid.New(), "poly-1");
+    await _seedLegacyRowAsync(streamId, 1, (Guid)TrackedGuid.New(), "poly-2");
 
     // Act - abandon the polymorphic iterator after the first yielded envelope
     var payloads = new List<string> {
@@ -293,8 +293,8 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
   public async Task ReadPolymorphicAsync_LegacyRow_ReconstructsFullEnvelopeAsync() {
     // Arrange - legacy row with MessageId + Payload but no Hops property
     var eventStore = _createLegacyFormatEventStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var rowEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var rowEventId = (Guid)TrackedGuid.New();
     await _seedLegacyRowAsync(streamId, 0, rowEventId, "reconstructed-event");
 
     // Act
@@ -318,9 +318,9 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
     // Arrange - serialize a real hop list with the same options the store will read with
     var jsonOptions = _createLegacyMessageIdOptions();
     var eventStore = _createEventStore(_testBase.Executor, jsonOptions);
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var rowEventId = (Guid)TrackedGuid.NewMedo();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var rowEventId = (Guid)TrackedGuid.New();
+    var instanceId = (Guid)TrackedGuid.New();
 
     var hops = new List<MessageHop> {
       new() {
@@ -356,8 +356,8 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
     // Arrange - "Hops" property present but holding the JSON literal null, so the
     // hops deserialization returns null and falls back to the empty list
     var eventStore = _createLegacyFormatEventStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var rowEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var rowEventId = (Guid)TrackedGuid.New();
     var envelopeJson = $$$"""{"MessageId":{"Value":"{{{rowEventId}}}"},"Payload":{"StreamId":"{{{streamId}}}","Payload":"null-hops"},"Hops":null}""";
     await _seedRawEnvelopeRowAsync(streamId, 0, envelopeJson);
 
@@ -375,9 +375,9 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
     // Arrange - payload deserializes as BOTH ServiceInstanceInfo (registered, but not an
     // IEvent, so discarded) and TestEvent, exercising continue-then-match in the type loop
     var eventStore = _createLegacyFormatEventStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var rowEventId = (Guid)TrackedGuid.NewMedo();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var rowEventId = (Guid)TrackedGuid.New();
+    var instanceId = (Guid)TrackedGuid.New();
     var envelopeJson = $$$"""{"MessageId":{"Value":"{{{rowEventId}}}"},"Payload":{"StreamId":"{{{streamId}}}","Payload":"dual-shape","sn":"legacy-service","ii":"{{{instanceId}}}","hn":"legacy-host","pi":42}}""";
     await _seedRawEnvelopeRowAsync(streamId, 0, envelopeJson);
 
@@ -395,13 +395,13 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
     // Arrange - one malformed row (no MessageId) followed by a valid legacy row,
     // read with a non-null fromEventId that the valid row's id passes
     var eventStore = _createLegacyFormatEventStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     // A real UUIDv7 (2026-era timestamp) compares greater than Guid.Empty, so the
     // valid row passes the non-null fromEventId filter while the malformed row is
     // skipped earlier at MessageId extraction. A non-v7 id would trip the legacy
     // converter's UUIDv7 enforcement.
     var fromEventId = Guid.Empty;
-    var rowEventId = (Guid)TrackedGuid.NewMedo();
+    var rowEventId = (Guid)TrackedGuid.New();
     var malformedJson = $$$"""{"Payload":{"StreamId":"{{{streamId}}}","Payload":"orphan"}}""";
     await _seedRawEnvelopeRowAsync(streamId, 0, malformedJson);
     await _seedLegacyRowAsync(streamId, 1, rowEventId, "survivor");
@@ -455,7 +455,7 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
           Type = HopType.Current,
           ServiceInstance = new ServiceInstanceInfo {
             ServiceName = "DapperSqliteEventStoreDeepPathTests",
-            InstanceId = (Guid)TrackedGuid.NewMedo(),
+            InstanceId = (Guid)TrackedGuid.New(),
             HostName = "test-host",
             ProcessId = 24680
           }

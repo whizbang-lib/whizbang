@@ -1,0 +1,55 @@
+name: Verify NuGet packages
+description: >-
+  Fails unless a directory holds EXACTLY the packages in .github/nuget-packages.txt, each at EXACTLY
+  the given version: nothing missing, nothing extra, no second version. Every pack and publish path
+  runs this, so the shipped set is defined in one place.
+
+inputs:
+  path:
+    description: Directory holding the .nupkg files
+    required: false
+    default: ./packages
+  version:
+    description: The one version every package must carry
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Verify the package set and version
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.path }}
+        VERSION: ${{ inputs.version }}
+        LIST: ${{ github.action_path }}/../../nuget-packages.txt
+      run: |
+        set -euo pipefail
+        shopt -s nullglob   # an empty directory must read as "nothing there", not a file named *.nupkg
+        mapfile -t EXPECTED < <(grep -v '^[[:space:]]*\(#\|$\)' "$LIST")
+        PROBLEMS=0
+        for id in "${EXPECTED[@]}"; do
+          if [ -f "$PKG_DIR/$id.$VERSION.nupkg" ]; then
+            echo "✓ $id $VERSION"
+          else
+            echo "::error::$id $VERSION is missing"
+            PROBLEMS=$((PROBLEMS + 1))
+          fi
+        done
+        # Anything else in the directory is a package the list does not know about, or a second
+        # version of one it does: either way the publish would not be the set we mean to ship.
+        for f in "$PKG_DIR"/*.nupkg; do
+          name=$(basename "$f")
+          known=false
+          for id in "${EXPECTED[@]}"; do
+            [ "$name" = "$id.$VERSION.nupkg" ] && known=true && break
+          done
+          if [ "$known" = false ]; then
+            echo "::error::Unexpected package $name (add it to .github/nuget-packages.txt if it now ships)"
+            PROBLEMS=$((PROBLEMS + 1))
+          fi
+        done
+        if [ "$PROBLEMS" -gt 0 ]; then
+          echo "::error::$PROBLEMS package problem(s) at version $VERSION"
+          exit 1
+        fi
+        echo "All ${#EXPECTED[@]} packages present at $VERSION, and nothing else."

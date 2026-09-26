@@ -185,8 +185,10 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
   /// Attempts to parse scope values from the PerspectiveScope format (short keys: t, u, c, o, ap, ex).
   /// </summary>
   private (string? TenantId, string? UserId) _tryParsePerspectiveScope(string scopeJson) {
-    var perspectiveScopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
-    if (perspectiveScopeTypeInfo == null) {
+    // Ask rather than demand: GetTypeInfo throws when the context does not carry PerspectiveScope,
+    // which turned "this reader cannot speak the short-key format" into a hard failure instead of
+    // the legacy-format fallback the caller is written around.
+    if (!_jsonOptions.TryGetTypeInfo(typeof(PerspectiveScope), out var perspectiveScopeTypeInfo)) {
       return (null, null);
     }
 

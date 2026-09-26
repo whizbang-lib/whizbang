@@ -120,4 +120,53 @@ public class PostgresDriverRegistrationTests {
       .Because("a turnkey service that cannot be built from the container the driver registered "
              + "it into fails at startup, not here");
   }
+
+  /// <summary>
+  /// The three surfaces the driver exists to hand a host that wired nothing: the checkpoint
+  /// completer a rebuild needs to persist its cursors (without it a rebuild reprojects every row
+  /// and leaves wh_perspective_cursors wherever live processing last wrote), the apply-stack query
+  /// the lineage endpoints answer from, and the fleet source the startup status report's fleet
+  /// section reads. Each is built by its own factory over the CONSUMER's DbContext type, and each
+  /// factory only runs on first resolution — so the registration has to be resolved, and resolved
+  /// to the Postgres implementation, for any of that to be true.
+  /// </summary>
+  [Test]
+  public async Task Postgres_ResolvesTheRebuildAndStatusSurfacesOverTheConsumersDbContextAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+    services.AddWhizbang();
+
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddSingleton(dataSource);
+    services.AddDbContext<DriverSelectorTestDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services)
+      .WithEFCore<DriverSelectorTestDbContext>()
+      .WithDriver.Postgres;
+
+    await using var provider = services.BuildServiceProvider();
+    using var first = provider.CreateScope();
+    using var second = provider.CreateScope();
+
+    var completer = first.ServiceProvider.GetService<IPerspectiveCheckpointCompleter>();
+    var applyStack = first.ServiceProvider.GetService<Whizbang.Core.Lineage.IApplyStackQuery>();
+    var fleet = first.ServiceProvider.GetService<Whizbang.Core.Startup.IStartupFleetStatusSource>();
+
+    await Assert.That(completer).IsTypeOf<EFCorePostgresPerspectiveCheckpointCompleter>()
+      .Because("a rebuild resolves this interface to write its cursor checkpoints; anything else leaves them unwritten");
+    await Assert.That(applyStack).IsTypeOf<EFCorePostgresApplyStackQuery>()
+      .Because("the lineage surfaces answer from whatever is registered here");
+    await Assert.That(fleet).IsTypeOf<EFCorePostgresStartupFleetStatusSource>()
+      .Because("the startup report's fleet section reads wh_service_instances through this source");
+
+    await Assert.That(second.ServiceProvider.GetService<IPerspectiveCheckpointCompleter>())
+      .IsNotSameReferenceAs(completer)
+      .Because("the completer writes through the DbContext of the scope that asked for it, so it cannot be shared across scopes");
+    await Assert.That(second.ServiceProvider.GetService<Whizbang.Core.Lineage.IApplyStackQuery>())
+      .IsSameReferenceAs(applyStack)
+      .Because("the query opens its own scope per call, so one instance serves the whole host");
+    await Assert.That(second.ServiceProvider.GetService<Whizbang.Core.Startup.IStartupFleetStatusSource>())
+      .IsSameReferenceAs(fleet)
+      .Because("the fleet source opens its own scope per call, so one instance serves the whole host");
+  }
 }

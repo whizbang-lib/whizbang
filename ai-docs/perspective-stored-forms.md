@@ -7,7 +7,7 @@ the stored-form rewrite, or the perspective worker's failure path; or reading a
 
 This is the distilled record of a split-brain that stopped a feature in a deployed service and of the
 design that closed it. The full design and its progress table are in
-`plans/canonical-temporal-storage-unification.md`; the user-facing pages are
+`plans/archive/canonical-temporal-storage-unification.md`; the user-facing pages are
 `fundamentals/perspectives/jsonb-containment` and `operations/infrastructure/migrations` on the docs
 site.
 

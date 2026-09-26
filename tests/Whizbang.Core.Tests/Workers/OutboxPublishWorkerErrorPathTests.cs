@@ -334,7 +334,7 @@ public class OutboxPublishWorkerErrorPathTests {
   }
 
   private sealed class RecordingReceptorInvoker : IReceptorInvoker {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<LifecycleStage> _stages = [];
     public List<LifecycleStage> Stages() { lock (_gate) { return [.. _stages]; } }
     public ValueTask InvokeAsync(
@@ -394,7 +394,7 @@ public class OutboxPublishWorkerErrorPathTests {
   private const string VALID_TRACEPARENT = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
 
   private static OutboxWork _work(string? destination = "test-topic", string? traceParent = null) {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     List<MessageHop> hops = traceParent is null
       ? []
       : [
@@ -416,7 +416,7 @@ public class OutboxPublishWorkerErrorPathTests {
       },
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
@@ -495,10 +495,10 @@ public class OutboxPublishWorkerErrorPathTests {
     await Assert.That(published.MessageId).IsEqualTo(work.MessageId)
       .Because("The not-ready path MUST re-buffer the same work item so the retry publishes it, not lose it.");
     await fx.Renewal.WaitForCountAsync(1, TimeSpan.FromSeconds(5));
-    var renewal = fx.Renewal.All.Single();
-    await Assert.That(renewal.Category).IsEqualTo(WorkCategory.Outbox)
+    var (Category, Id) = fx.Renewal.All.Single();
+    await Assert.That(Category).IsEqualTo(WorkCategory.Outbox)
       .Because("Not-ready re-queue must renew the OUTBOX lease so another instance doesn't steal the row mid-wait.");
-    await Assert.That(renewal.Id).IsEqualTo(work.MessageId)
+    await Assert.That(Id).IsEqualTo(work.MessageId)
       .Because("The lease renewal must reference the re-buffered row.");
 
     await cts.CancelAsync();

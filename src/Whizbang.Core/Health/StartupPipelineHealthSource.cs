@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Whizbang.Core.Startup;
 
@@ -43,6 +44,7 @@ public sealed class StartupPipelineHealthSource : IWhizbangHealthSource {
   public string Component => "startup";
 
   /// <inheritdoc />
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One report walks every step once and folds its status, whether it blocks, and whether the run has started into a single component health. The branches are the status table, and a helper per status would return a value this method has to fold anyway.")]
   public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) {
     if (!_state.HasRunStarted) {
       return new ValueTask<ComponentHealth>(

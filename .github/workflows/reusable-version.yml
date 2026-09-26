@@ -32,7 +32,7 @@ on:
 
 jobs:
   version:
-    name: Calculate Version
+    name: GitVersion
     runs-on: ubuntu-latest
     outputs:
       semver: ${{ steps.release_override.outputs.semVer || steps.gitversion.outputs.semVer || steps.fallback.outputs.semVer }}

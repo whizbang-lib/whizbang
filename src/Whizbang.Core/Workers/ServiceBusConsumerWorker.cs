@@ -137,6 +137,7 @@ public partial class ServiceBusConsumerWorker(
   /// messages land in inbox tables the migration creates. Both halves are fixed by moving the
   /// subscribe here, behind the gate.
   /// </remarks>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup waits on the schema gate, subscribes to each configured topic and keeps the worker alive, with shutdown cancellation separated from a subscribe failure in both the per-topic and the outer scope.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     using var activity = WhizbangActivitySource.Hosting.StartActivity("ServiceBusConsumerWorker.Start");
     activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);
@@ -217,12 +218,11 @@ public partial class ServiceBusConsumerWorker(
     LogBackgroundProcessingStarted(_logger);
 
     try {
+      // An infinite delay on the stopping token ends one way only, so cancellation is the
+      // single case to handle here.
       await Task.Delay(Timeout.Infinite, stoppingToken);
     } catch (OperationCanceledException) {
       LogWorkerStopping(_logger);
-    } catch (Exception ex) {
-      LogFatalError(_logger, ex);
-      throw;
     }
   }
 
@@ -367,8 +367,8 @@ public partial class ServiceBusConsumerWorker(
       var runtimeMessageType = typedEnvelope.Payload?.GetType();
       if (!_receptorRegistry.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType)
           && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
-          && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxDetached)
-          && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxInline)) {
+          && !RuntimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxDetached)
+          && !RuntimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxInline)) {
         continue;
       }
       var lifecycleContext = new LifecycleExecutionContext {
@@ -380,7 +380,7 @@ public partial class ServiceBusConsumerWorker(
         AttemptNumber = null
       };
 
-      _fireDetachedStageAsync(typedEnvelope, LifecycleStage.PreInboxDetached, lifecycleContext, ct);
+      _fireDetachedStage(typedEnvelope, LifecycleStage.PreInboxDetached, lifecycleContext, ct);
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
       await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
@@ -435,7 +435,7 @@ public partial class ServiceBusConsumerWorker(
         AttemptNumber = null
       };
 
-      _fireDetachedStageAsync(typedEnvelope, LifecycleStage.PostInboxDetached, lifecycleContext, ct);
+      _fireDetachedStage(typedEnvelope, LifecycleStage.PostInboxDetached, lifecycleContext, ct);
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
       await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
@@ -481,14 +481,19 @@ public partial class ServiceBusConsumerWorker(
       lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
   }
 
-  private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
+  /// <summary>
+  /// Whether any receptor was registered at runtime for this message type at this stage. Internal
+  /// so the unresolved-type answer can be asserted directly; the callers pass a type that a wire
+  /// name may not have resolved to.
+  /// </summary>
+  internal bool RuntimeHasReceptors(Type? messageType, LifecycleStage stage) {
     if (messageType is null) {
       return false;
     }
     return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
   }
 
-  private void _fireDetachedStageAsync(
+  private void _fireDetachedStage(
       IMessageEnvelope envelope, LifecycleStage stage,
       LifecycleExecutionContext context, CancellationToken ct) {
     var task = Task.Run(async () => {
@@ -771,13 +776,6 @@ public partial class ServiceBusConsumerWorker(
   static partial void LogWorkerStopping(ILogger logger);
 
   [LoggerMessage(
-    EventId = 7,
-    Level = LogLevel.Error,
-    Message = "Fatal error in ServiceBusConsumerWorker"
-  )]
-  static partial void LogFatalError(ILogger logger, Exception ex);
-
-  [LoggerMessage(
     EventId = 8,
     Level = LogLevel.Information,
     Message = "Processing message {MessageId} from Service Bus"
@@ -890,7 +888,7 @@ public partial class ServiceBusConsumerWorker(
   static partial void LogCreatedInboxMessage(ILogger logger, Guid messageId, bool isEvent, Guid? streamId, string messageType, string? envelopeType, JsonValueKind payloadType);
 
   [LoggerMessage(
-    EventId = 25,
+    EventId = 26,
     Level = LogLevel.Debug,
     Message = "ServiceBus dropped message {MessageId} of unsubscribed type {EnvelopeType} — no consumer registered on this service"
   )]

@@ -11,10 +11,11 @@ namespace Whizbang.Testing.Tests.Transport;
 /// <see cref="TransportTestHarness"/> factory.
 /// </summary>
 /// <remarks>
-/// The full happy-path of <c>SetupSubscriptionAsync</c> (warmup publish loop) is not
-/// exercised end-to-end because the harness hard-codes SubscriptionWarmup's 5-second
-/// initial delay with no way to configure it; instead setup is driven up to the warmup
-/// delay with a pre-canceled token, which still wires the subscription and test awaiter.
+/// Most tests here drive setup only as far as the warmup delay, with a pre-canceled token: that
+/// wires the subscription and the test awaiter deterministically and costs nothing. The one test
+/// that runs setup to completion pays SubscriptionWarmup's hard-coded 5-second initial delay,
+/// which <c>SetupSubscriptionAsync</c> does not expose - that delay belongs to the code under
+/// test, and completion is still the echoed warmup signal rather than a wait.
 /// </remarks>
 public class TransportTestHarnessTests {
   private static readonly TransportDestination _subscribeDestination = new("topic/subscription");
@@ -156,6 +157,41 @@ public class TransportTestHarnessTests {
     await harness.DisposeAsync();
 
     await Assert.That(transport.IsInitialized).IsTrue();
+  }
+
+  [Test]
+  public async Task SetupSubscriptionAsync_WhenTheWarmupMessageComesBack_CompletesSetupAsync(
+      CancellationToken cancellationToken) {
+    // The happy path through setup: the harness mints a warmup id, subscribes, and keeps
+    // publishing an envelope built from THAT id until the subscription echoes one back. The
+    // looping transport echoes the first publish, so warmup completes on the first attempt and
+    // setup returns.
+    //
+    // This test spends SubscriptionWarmup's hard-coded 5-second initial delay, which
+    // SetupSubscriptionAsync does not expose. The wait is the code under test's own, not a
+    // synchronization device: completion is still the echoed warmup signal, nothing is polled,
+    // and no timeout stands in for a signal.
+    var transport = new FakeTransport { LoopbackOnPublish = true };
+    await using var harness = _createHarness(transport);
+
+    await harness.SetupSubscriptionAsync(
+      _subscribeDestination, _publishDestination, cancellationToken: cancellationToken);
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("the echoed warmup message ends the loop after a single publish");
+
+    var warmupPayload = ((IMessageEnvelope<TestPayload>)transport.Published[0]).Payload.Content;
+    await Assert.That(SubscriptionWarmup.IsWarmupMessage(warmupPayload)).IsTrue()
+      .Because("setup must publish the warmup id it minted, not test content - the two awaiters "
+             + "tell the traffic apart by exactly that marker");
+
+    // Setup ran to completion, so the test awaiter is wired and the warmup message did not
+    // resolve it.
+    await Assert.That(harness.TestAwaiter).IsNotNull();
+    await Assert.That(harness.TestAwaiter!.IsCompleted).IsFalse();
+
+    var received = await harness.PublishAndWaitAsync(_publishDestination, _longTimeout, cancellationToken: cancellationToken);
+    await Assert.That(((IMessageEnvelope<TestPayload>)received).Payload.Content).IsEqualTo("test-content");
   }
 }
 

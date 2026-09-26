@@ -68,7 +68,7 @@ public partial class LifecycleExceptionInvariantTests {
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -129,7 +129,7 @@ public partial class LifecycleExceptionInvariantTests {
       generationProvider: new DefaultGenerationProvider(),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -214,7 +214,7 @@ public partial class LifecycleExceptionInvariantTests {
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider());
 
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -232,7 +232,7 @@ public partial class LifecycleExceptionInvariantTests {
     await using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
 
     await worker.InvokeInboxLifecycleStageAsync(
-      work, envelope, scope,
+      work, envelope,
       new ThrowingReceptorInvoker(thrown),
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
       "PreInbox", CancellationToken.None);
@@ -275,7 +275,7 @@ public partial class LifecycleExceptionInvariantTests {
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider());
 
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -293,7 +293,7 @@ public partial class LifecycleExceptionInvariantTests {
     await using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
 
     await worker.InvokeInboxLifecycleStageAsync(
-      work, envelope, scope,
+      work, envelope,
       new ThrowingReceptorInvoker(thrown),
       LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
       "PostInbox", CancellationToken.None);

@@ -50,7 +50,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
 
     _options = options;
     _flushCallback = flushCallback;
-    _slideTimer = new Timer(_slideTimerCallback, null, Timeout.Infinite, Timeout.Infinite);
+    _slideTimer = new Timer(SlideTimerTick, null, Timeout.Infinite, Timeout.Infinite);
     _hardMaxTimer = new Timer(_hardMaxTimerCallback, null, Timeout.Infinite, Timeout.Infinite);
   }
 
@@ -111,7 +111,11 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     await _flushBatchAsync();
   }
 
-  private void _slideTimerCallback(object? state) {
+  /// <summary>
+  /// One timer tick. Internal rather than private so the disposed guard can be driven
+  /// deterministically; the timer supplies the real cadence.
+  /// </summary>
+  internal void SlideTimerTick(object? state) {
     if (_disposed) {
       return;
     }
@@ -125,7 +129,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     // Slide and hard-max timers currently share the same flush-on-fire behaviour.
     // Delegate to the slide callback so the two stay identical by construction
     // (fixes sonar S4144).
-    _slideTimerCallback(state);
+    SlideTimerTick(state);
   }
 
   private async Task _flushBatchAsync() {

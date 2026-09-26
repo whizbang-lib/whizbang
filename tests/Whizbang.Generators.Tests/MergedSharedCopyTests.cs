@@ -298,9 +298,9 @@ public class MergedSharedCopyTests {
 
     // Every constructor parameter, positionally: Activator.CreateInstance matches arity exactly and
     // does not apply a defaulted parameter, so a member added to the record has to be added here.
-    // The trailing null is ColumnType.
+    // The trailing null is ColumnType, then IsSplit and IsSearch.
     object?[] arguments = [
-      "Embedding", "embedding", "float[]", true, false, null, true, null, null, null, null, null,
+      "Embedding", "embedding", "float[]", true, false, null, true, null, null, null, null, null, false, false,
     ];
     var one = Activator.CreateInstance(fieldType, arguments)!;
     var same = Activator.CreateInstance(fieldType, arguments)!;
@@ -320,10 +320,22 @@ public class MergedSharedCopyTests {
     // column type the author declared would share a cache entry and one of them would be generated
     // with the other's type.
     object?[] differingType = [.. arguments];
-    differingType[^1] = "uuid[]";
+    differingType[^3] = "uuid[]";
     var declaredType = Activator.CreateInstance(fieldType, differingType)!;
     await Assert.That(one.Equals(declaredType)).IsFalse()
       .Because("a declared column type is part of what makes the field the value it is");
+    // And the split flag: a field that became Split must not share a cache entry with its Extracted self,
+    // or the schema would keep backfilling a column the document no longer has a copy for.
+    object?[] differingSplit = [.. arguments];
+    differingSplit[^2] = true;
+    var split = Activator.CreateInstance(fieldType, differingSplit)!;
+    await Assert.That(one.Equals(split)).IsFalse()
+      .Because("whether the field is Split is part of what makes it the value it is");
+    object?[] differingSearch = [.. arguments];
+    differingSearch[^1] = true;
+    var search = Activator.CreateInstance(fieldType, differingSearch)!;
+    await Assert.That(one.Equals(search)).IsFalse()
+      .Because("whether the field is searched is part of what makes it the value it is");
 
     await Assert.That(one.Equals(other)).IsFalse()
       .Because("a copy that found every field equal would cache a stale result and emit code for "

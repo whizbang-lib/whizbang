@@ -1,5 +1,6 @@
 using Npgsql;
 using Whizbang.Core.Observability;
+using Whizbang.Data.EFCore.Postgres.Observability;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -10,7 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs</tests>
-public sealed class PostgresTableStatisticsProvider(
+public sealed partial class PostgresTableStatisticsProvider(
   NpgsqlDataSource dataSource,
   string schema = "public") : ITableStatisticsProvider {
 
@@ -124,5 +125,116 @@ public sealed class PostgresTableStatisticsProvider(
     }
 
     return results;
+  }
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// Read from the same catalog view the sizes come from, so this costs another cheap statement on
+  /// the maintenance cadence rather than anything that touches the tables themselves.
+  /// </remarks>
+  public async Task<IReadOnlyDictionary<string, TableScanStatistics>> GetTableScanStatisticsAsync(
+      CancellationToken ct = default) {
+    var statistics = new Dictionary<string, TableScanStatistics>(StringComparer.Ordinal);
+
+    await using var connection = await dataSource.OpenConnectionAsync(ct);
+    await using var cmd = new NpgsqlCommand("""
+      SELECT relname,
+             COALESCE(seq_scan, 0) AS seq_scans,
+             COALESCE(seq_tup_read, 0) AS seq_rows,
+             COALESCE(idx_scan, 0) AS idx_scans
+      FROM pg_stat_user_tables
+      WHERE schemaname = @schema
+      """, connection);
+
+    cmd.Parameters.AddWithValue("schema", schema);
+
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      statistics[reader.GetString(0)] =
+        new TableScanStatistics(reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3));
+    }
+
+    return statistics;
+  }
+
+  /// <summary>
+  /// Adds the document filters one recorded statement names, to the table it reads.
+  /// </summary>
+  /// <remarks>
+  /// Separated from the read so that what it understands can be established without a database.
+  /// What it reads is the tag the naming interceptor writes, because a recorded statement has had
+  /// its constants replaced by placeholders and a JSON key is a constant; see
+  /// <see cref="DocumentFilterNaming"/>.
+  /// </remarks>
+  /// <param name="collected">The filters found so far, by table.</param>
+  /// <param name="statement">The recorded statement text.</param>
+  /// <param name="calls">How many times it ran.</param>
+  /// <param name="meanMilliseconds">Its mean execution time.</param>
+  internal static void Collect(
+      Dictionary<string, List<ExpensivePredicate>> collected,
+      string statement, long calls, double meanMilliseconds) {
+    var table = DocumentFilterNaming.PerspectiveTable().Match(statement);
+    if (!table.Success) {
+      return;
+    }
+
+    var name = table.Value.ToLowerInvariant();
+    if (!collected.TryGetValue(name, out var predicates)) {
+      predicates = [];
+      collected[name] = predicates;
+    }
+
+    foreach (var (document, field) in DocumentFilterNaming.FiltersIn(statement)) {
+      // The same field named twice in one statement is one filter, and the same field across
+      // statements is still one thing to promote, so the dearest sighting is the one kept -- which
+      // is the first seen, because the statements arrive dearest first.
+      if (!predicates.Exists(p => p.Document == document && p.Field == field)) {
+        predicates.Add(new ExpensivePredicate(document, field, calls, meanMilliseconds));
+      }
+    }
+  }
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// Answers empty rather than throwing when the statistics are not collected. The extension has to
+  /// be installed AND loaded at startup, and a deployment may have done neither; naming the filter
+  /// is an improvement on the advice rather than a condition of it, so its absence is not a fault.
+  /// </remarks>
+  public async Task<IReadOnlyDictionary<string, IReadOnlyList<ExpensivePredicate>>> GetExpensivePredicatesAsync(
+      CancellationToken ct = default) {
+    var byTable = new Dictionary<string, IReadOnlyList<ExpensivePredicate>>(StringComparer.Ordinal);
+
+    await using var connection = await dataSource.OpenConnectionAsync(ct);
+
+    try {
+      await using var cmd = new NpgsqlCommand("""
+        SELECT query, calls, mean_exec_time
+        FROM pg_stat_statements
+        WHERE query ILIKE '%wh\_per\_%' AND query LIKE '%->%'
+        ORDER BY mean_exec_time DESC
+        LIMIT 200
+        """, connection);
+
+      await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+      var collected = new Dictionary<string, List<ExpensivePredicate>>(StringComparer.Ordinal);
+
+      while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+        var statement = reader.GetString(0);
+        var calls = reader.GetInt64(1);
+        var mean = reader.GetDouble(2);
+
+        Collect(collected, statement, calls, mean);
+      }
+
+      foreach (var (table, predicates) in collected) {
+        byTable[table] = predicates;
+      }
+    } catch (PostgresException) {
+      // Not installed, not loaded, or not readable by this role. The table-level advice stands on
+      // its own and this only ever made it sharper.
+      return byTable;
+    }
+
+    return byTable;
   }
 }

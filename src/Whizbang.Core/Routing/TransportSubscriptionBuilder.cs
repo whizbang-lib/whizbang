@@ -102,11 +102,10 @@ public sealed class TransportSubscriptionBuilder {
   /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderTests.cs:BuildInboxDestinations_MultiSubscriptionStrategy_BuildsOneDestinationPerSubscriptionAsync</tests>
   public IReadOnlyList<TransportDestination> BuildInboxDestinations() {
     // DI-resolved strategy wins; options is the fallback (plan-flagged fix: the strategy
-    // was read off options only, silently ignoring a DI-registered override).
+    // was read off options only, silently ignoring a DI-registered override). The fallback is
+    // never null — RoutingOptions sets it in its constructor and SetInboxStrategy rejects null —
+    // so the coalesce always answers and there is nothing left to guard against.
     var inboxStrategy = _inboxStrategy ?? _routingOptions.InboxStrategy;
-    if (inboxStrategy is null) {
-      return [];
-    }
 
     var context = new InboxSubscriptionContext(
         _serviceName,

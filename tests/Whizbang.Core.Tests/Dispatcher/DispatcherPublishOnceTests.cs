@@ -56,7 +56,7 @@ public class DispatcherPublishOnceTests {
     private readonly HashSet<string> _claimed = new(StringComparer.Ordinal);
     private readonly Lock _lock = new();
 
-    public List<string> AttemptedKeys { get; } = new();
+    public List<string> AttemptedKeys { get; } = [];
 
     public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken) {
       lock (_lock) {

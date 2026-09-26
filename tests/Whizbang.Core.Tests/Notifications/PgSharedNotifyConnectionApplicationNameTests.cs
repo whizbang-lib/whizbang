@@ -5,8 +5,7 @@ using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Core.Tests.Notifications;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Slice 2 of zero-idle-polling — locks the application_name format that

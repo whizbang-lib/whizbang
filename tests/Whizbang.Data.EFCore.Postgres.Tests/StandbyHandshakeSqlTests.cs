@@ -30,7 +30,7 @@ public class StandbyHandshakeSqlTests : EFCoreTestBase {
   private async Task<Guid> _joinFleetAsync(CancellationToken ct) {
     await using var ctx = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(id, "standby-svc", "standby-host", 1), ct);
     return id;
   }

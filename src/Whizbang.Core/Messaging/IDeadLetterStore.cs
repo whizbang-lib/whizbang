@@ -35,6 +35,7 @@ public interface IDeadLetterStore {
   /// <param name="ct">Cancellation.</param>
   /// <returns>The <paramref name="deadLetterId"/> on success, <c>null</c> when the source
   /// row was already gone (no-op).</returns>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The signature is the move: which dead letter, which row it came from, why it failed, and which instance and generation is moving it. Those last two are the store's audit columns; grouping them would put the audit trail behind a type every caller has to build.")]
   Task<Guid?> MoveAsync(
     Guid deadLetterId,
     string sourceTable,

@@ -76,7 +76,7 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
 
     var row = await _readLiveInstanceRowAsync(conn, meId);
@@ -92,7 +92,7 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
 
     await using var sideConn = await _openSideConnectionAsync(meId);
@@ -116,10 +116,10 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var staleOwnerId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var staleOwnerId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     // staleOwnerId registered with a heartbeat older than _staleCutoff — dead.
     await _registerInstanceAsync(conn, staleOwnerId, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
@@ -147,10 +147,10 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var alivePodId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var alivePodId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     // alivePodId has stale heartbeat — under heartbeat-only semantics, dead.
     await _registerInstanceAsync(conn, alivePodId, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
@@ -181,10 +181,10 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var staleOwnerId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var staleOwnerId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _registerInstanceAsync(conn, staleOwnerId, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
     await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0,
@@ -204,10 +204,10 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var alivePodId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var alivePodId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _registerInstanceAsync(conn, alivePodId, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
     await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0,
@@ -238,11 +238,11 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var deadId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var deadId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     // deadId never registered — its wh_service_instances row doesn't exist.
     await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0, ownerInstanceId: deadId);
@@ -265,11 +265,11 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var rebootingPodId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var rebootingPodId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     // rebootingPodId's wh_service_instances row is GONE (cleanup_stale_instances)
     // — but a LISTEN connection is currently registered, proving the pod is

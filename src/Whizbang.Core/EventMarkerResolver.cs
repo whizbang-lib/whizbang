@@ -74,10 +74,8 @@ public sealed class EventMarkerResolver : IEventMarkerResolver {
     // own CLR name (name reuse) must not overwrite the live registration.
     foreach (var entry in entries) {
       var flags = _byClrTypeName[entry.ClrTypeName];
-      foreach (var formerName in entry.FormerNames) {
-        if (!string.IsNullOrEmpty(formerName)) {
-          _byClrTypeName.TryAdd(formerName, flags);
-        }
+      foreach (var formerName in entry.FormerNames.Where(n => !string.IsNullOrEmpty(n))) {
+        _byClrTypeName.TryAdd(formerName, flags);
       }
     }
   }

@@ -20,7 +20,7 @@ public sealed record PermissionChanged : ISystemEvent {
   /// Unique identifier for this event.
   /// </summary>
   [StreamId]
-  public Guid Id { get; init; } = TrackedGuid.NewMedo();
+  public Guid Id { get; init; } = TrackedGuid.New();
 
   /// <summary>
   /// User whose permissions changed.

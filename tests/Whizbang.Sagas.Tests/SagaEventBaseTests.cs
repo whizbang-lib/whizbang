@@ -31,7 +31,7 @@ public class SagaEventBaseTests {
     var version = (bytes[6] & 0xF0) >> 4;
 
     await Assert.That(version).IsEqualTo(7)
-      .Because("TrackedGuid.NewMedo() emits UUIDv7 — sortable, time-prefixed. A degradation to v4 would lose the database-friendly ordering that justified picking it.");
+      .Because("TrackedGuid.New() emits UUIDv7 — sortable, time-prefixed. A degradation to v4 would lose the database-friendly ordering that justified picking it.");
   }
 
   [Test]

@@ -40,14 +40,11 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
       CancellationToken ct) {
 
     var typeDecl = (TypeDeclarationSyntax)context.Node;
-    var typeSymbol = context.SemanticModel.GetDeclaredSymbol(typeDecl, ct);
 
-    if (typeSymbol is null) {
-      return null;
-    }
-
-    // Only process public types to avoid discovering test types
-    if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+    // Only process public types to avoid discovering test types. The bind guard shares that exit: a
+    // declaration Roslyn cannot bind has no declared accessibility to inspect either.
+    if (context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) is not { } typeSymbol
+        || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
       return null;
     }
 

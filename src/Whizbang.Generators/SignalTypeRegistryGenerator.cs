@@ -38,10 +38,10 @@ public class SignalTypeRegistryGenerator : IIncrementalGenerator {
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
     var declaration = (TypeDeclarationSyntax)context.Node;
-    if (context.SemanticModel.GetDeclaredSymbol(declaration, cancellationToken) is not INamedTypeSymbol symbol) {
-      return null;
-    }
-    if (symbol.IsAbstract) {
+    // The bind guard shares the abstract-type exit: an unbound declaration is no more listable by a
+    // closed typeof than an abstract one, and merging keeps the symbol from being dereferenced first.
+    if (context.SemanticModel.GetDeclaredSymbol(declaration, cancellationToken) is not INamedTypeSymbol symbol
+        || symbol.IsAbstract) {
       return null;
     }
     if (symbol.IsGenericType && symbol.TypeParameters.Length > 0) {

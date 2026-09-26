@@ -96,7 +96,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
   public async Task Claim_PausesPerspectiveAcquisitionWhileTheDrainBacklogIsAboveItsCapAsync() {
     var drain = new PerspectiveDrainChannel();
     for (var i = 0; i < 5; i++) {
-      drain.TryWrite(TrackedGuid.NewMedo().Value);
+      drain.TryWrite(TrackedGuid.New().Value);
     }
     var coord = new ScriptedCoordinator(_ => _emptyBatch());
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
@@ -115,7 +115,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
   [Test]
   public async Task Claim_LeavesPerspectiveAcquisitionAloneWhileTheDrainBacklogIsUnderItsCapAsync() {
     var drain = new PerspectiveDrainChannel();
-    drain.TryWrite(TrackedGuid.NewMedo().Value);
+    drain.TryWrite(TrackedGuid.New().Value);
     var coord = new ScriptedCoordinator(_ => _emptyBatch());
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
       PollingIntervalMilliseconds = 20,
@@ -133,7 +133,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
   public async Task Claim_IgnoresTheDrainBacklogWhenTheCapIsZeroAsync() {
     var drain = new PerspectiveDrainChannel();
     for (var i = 0; i < 5; i++) {
-      drain.TryWrite(TrackedGuid.NewMedo().Value);
+      drain.TryWrite(TrackedGuid.New().Value);
     }
     var coord = new ScriptedCoordinator(_ => _emptyBatch());
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
@@ -189,8 +189,8 @@ public class ClaimWorkerAcquisitionBoundsTests {
 
   [Test]
   public async Task RepeatedReoffer_ReleasesOnlyTheStreamsNotInFlight_OncePerStreakAsync() {
-    var started = TrackedGuid.NewMedo().Value;
-    var unstarted = TrackedGuid.NewMedo().Value;
+    var started = TrackedGuid.New().Value;
+    var unstarted = TrackedGuid.New().Value;
     var batch = new WorkBatch {
       OutboxWork = [],
       InboxWork = [],
@@ -327,7 +327,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
   private static WorkBatch _batchOfInboxRows(int rows) {
     var inbox = new List<InboxWork>(rows);
     for (var i = 0; i < rows; i++) {
-      inbox.Add(new InboxWork { MessageId = TrackedGuid.NewMedo().Value, MessageType = "TestEvent", Envelope = null!, Attempts = 1 });
+      inbox.Add(new InboxWork { MessageId = TrackedGuid.New().Value, MessageType = "TestEvent", Envelope = null!, Attempts = 1 });
     }
     return new WorkBatch { OutboxWork = [], InboxWork = inbox, PerspectiveWork = [] };
   }
@@ -335,7 +335,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
   private static WorkBatch _batchOfInboxStreams(int streams) {
     var ids = new List<Guid>(streams);
     for (var i = 0; i < streams; i++) {
-      ids.Add(TrackedGuid.NewMedo().Value);
+      ids.Add(TrackedGuid.New().Value);
     }
     return new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [], InboxStreamIds = ids };
   }
@@ -420,7 +420,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
     private readonly Dictionary<int, TaskCompletionSource> _watchers = [];
     private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public List<ClaimWorkRequest> Requests { get; } = [];
     /// <summary>Runs inside each claim with the 1-based call number; a test advances a fake clock here.</summary>
     public Action<int>? OnClaim { get; set; }

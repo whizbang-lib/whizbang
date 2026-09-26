@@ -60,7 +60,7 @@ public partial class LifecycleExceptionInvariantTests {
 
   private static async Task<IReadOnlyList<FakeLogRecord>> _invokeThrowingStageAsync(Exception thrown) {
     var (worker, logger, sp) = _inboxWorkerWithLogger();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -77,7 +77,7 @@ public partial class LifecycleExceptionInvariantTests {
     await using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
 
     await worker.InvokeInboxLifecycleStageAsync(
-      work, envelope, scope,
+      work, envelope,
       new ThrowingReceptorInvoker(thrown),
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
       "PreInbox", CancellationToken.None);

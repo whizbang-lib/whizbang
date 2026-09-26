@@ -65,13 +65,10 @@ public sealed partial class AzureServiceBusConnectionRetry {
           LogConnectionAttempt(_logger, attempt);
         }
 
-        // Create client and admin client
+        // Create the client, then prove the namespace actually answers — constructing a client
+        // connects to nothing, so the verification below is what makes an attempt meaningful.
         var client = new ServiceBusClient(connectionString);
-        var adminClient = new ServiceBusAdministrationClient(connectionString);
-
-        // Verify connectivity by getting namespace properties
-        // This forces actual connection to Service Bus
-        _ = await adminClient.GetNamespacePropertiesAsync(cancellationToken).ConfigureAwait(false);
+        await VerifyNamespaceReachableAsync(connectionString, cancellationToken).ConfigureAwait(false);
 
         if (attempt > 1 && _logger is not null) {
           LogConnectionEstablished(_logger, attempt);
@@ -85,6 +82,20 @@ public sealed partial class AzureServiceBusConnectionRetry {
       }
     }
   }
+
+  /// <summary>
+  /// Proves the namespace answers, by reading its properties over the management plane.
+  /// </summary>
+  /// <remarks>
+  /// This round trip is the only step of the retry loop that needs a live namespace, so it is the
+  /// seam the unit suite replaces to drive the loop's backoff and success paths offline.
+  /// Production always uses the default.
+  /// </remarks>
+  internal Func<string, CancellationToken, Task> VerifyNamespaceReachableAsync { get; init; } =
+    _verifyNamespaceReachableAsync;
+
+  private static Task _verifyNamespaceReachableAsync(string connectionString, CancellationToken cancellationToken) =>
+    new ServiceBusAdministrationClient(connectionString).GetNamespacePropertiesAsync(cancellationToken);
 
   /// <summary>
   /// Handles retry logic: logs and optionally rethrows based on retry configuration.

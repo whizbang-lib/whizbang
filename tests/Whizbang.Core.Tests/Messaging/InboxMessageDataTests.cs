@@ -22,7 +22,7 @@ public class InboxMessageDataTests {
 
   [Test]
   public async Task Construction_ExposesAllPropertiesAsync() {
-    var messageId = MessageId.From((Guid)TrackedGuid.NewMedo());
+    var messageId = MessageId.From((Guid)TrackedGuid.New());
     using var doc = JsonDocument.Parse("{\"answer\":42}");
     var data = new InboxMessageData {
       MessageId = messageId,
@@ -160,7 +160,7 @@ public class InboxMessageDataTests {
   private static InboxMessageData _createData(string payloadJson) {
     using var doc = JsonDocument.Parse(payloadJson);
     return new InboxMessageData {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = doc.RootElement.Clone(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
     };

@@ -62,7 +62,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
   }
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     public string ServiceName => "test";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -227,8 +227,8 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       await reg.ExecuteNonQueryAsync();
     }
 
-    var streamId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
-    var firstMsgId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    var streamId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var firstMsgId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     await _storeInboxMessageAsync(conn, ownerInstanceId, firstMsgId, streamId);
     await using (var drain = conn.CreateCommand()) {
       drain.CommandText = "UPDATE wh_inbox_state SET processed_at = NOW() WHERE message_id = @mid";
@@ -292,7 +292,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     // The measured hop: a real store into the drained hot stream. Its edge doorbell —
     // NOT the 5 s poll — must produce the next claim.
     var notifyAt = DateTimeOffset.UtcNow;
-    await _storeInboxMessageAsync(conn, ownerInstanceId, (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(), streamId);
+    await _storeInboxMessageAsync(conn, ownerInstanceId, (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), streamId);
 
     await coord.SecondCallSeen.Task.WaitAsync(TimeSpan.FromSeconds(15));
     var secondCallAt = coord.ClaimCallTimes[1];

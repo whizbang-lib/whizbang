@@ -28,8 +28,8 @@ namespace Whizbang.Sagas.Tests;
 public class StrandedSagaRecoveryIntegrationTests {
 
   private const string SAGA_NAME = "BulkImportSimulator";
-  private static readonly Guid _sagaId = Guid.Parse("01900000-0000-7000-8000-000000000001");  // a production forensic id
-  private static readonly Guid _entityId = Guid.Parse("c0ffee00-cafe-f00d-face-feed12345678");
+  private static readonly Guid _sagaId = Guid.Parse("01900000-0000-7000-8000-000000000001");
+  private static readonly Guid _entityId = Guid.Parse("7a3f9c10-4b2e-4d8a-9f61-0c5e2d8b1a47");
 
   // ────────────────────────────────────────────────────────────────────
   //   E2E-1: happy path. Every item completes through the framework

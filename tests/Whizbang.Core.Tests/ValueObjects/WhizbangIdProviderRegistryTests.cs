@@ -6,6 +6,9 @@ namespace Whizbang.Core.Tests.ValueObjects;
 // Test ID types are defined in WhizbangIdTestTypes.cs
 // This ensures source generator runs before test code references Provider types
 
+// Shares WhizbangIdProviderRegistry's process-global registration list with
+// WhizbangIdProviderRegistryCoverageTests, which empties and restores it.
+[NotInParallel("WhizbangIdProviderRegistry")]
 public class WhizbangIdProviderRegistryTests {
   [Test]
   public async Task RegisterFactory_WithValidFactory_RegistersSuccessfullyAsync() {

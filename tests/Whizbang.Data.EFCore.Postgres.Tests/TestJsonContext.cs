@@ -33,6 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [JsonSerializable(typeof(FullLinqSupportTests.CustomerOrder))]
 [JsonSerializable(typeof(FullLinqSupportTests.Address))]
 [JsonSerializable(typeof(FullLinqSupportTests.OrderItem))]
+[JsonSerializable(typeof(Collective.CollectiveDispatcherEFCoreIntegrationTests.CellsModel))]
 public partial class TestJsonContext : JsonSerializerContext {
   /// <summary>
   /// Module initializer that registers TestJsonContext with the global registry.

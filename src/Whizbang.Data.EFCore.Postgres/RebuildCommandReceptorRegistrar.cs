@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
 
@@ -29,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the logger for the receptor it constructs and hands it straight over, so the category names the type that actually writes the entries.")]
 internal sealed class RebuildCommandReceptorRegistrar(
     IServiceProvider services,
     IServiceScopeFactory scopeFactory,
@@ -38,7 +40,10 @@ internal sealed class RebuildCommandReceptorRegistrar(
     // Receptor registry is optional — hosts that wire the Postgres driver without a dispatcher
     // (minimal diagnostic hosts, schema-only tools) should still boot.
     var registry = services.GetService<IReceptorRegistry>();
-    if (registry is null) {
+    // INullDefault, not null: every framework dependency resolves now, so "no registry" arrives as
+    // the turnkey default rather than as an absent service. Registering into it throws by design,
+    // which would take the whole host down on a service that simply declares no receptors.
+    if (registry is null or INullDefault) {
       return Task.CompletedTask;
     }
 

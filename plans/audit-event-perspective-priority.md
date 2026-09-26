@@ -1,7 +1,7 @@
 # Audit Event Perspective Priority
 
 > **Status.** Still open, on a different axis from what shipped. The message-priority work
-> (`plans/priority-and-composite-integrity.md`; docs `fundamentals/messaging/message-priority`) gives every
+> (`plans/archive/priority-and-composite-integrity.md`; docs `fundamentals/messaging/message-priority`) gives every
 > message a number, stores it on `wh_perspective_events` (migration 149), and makes the perspective claim take
 > the most urgent streams first with a floor for the background band (migration 150). That answers "the bulk
 > import's perspective work waits behind the interactive command's" for every perspective alike. The tier this

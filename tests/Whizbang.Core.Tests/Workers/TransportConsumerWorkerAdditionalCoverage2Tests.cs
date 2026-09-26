@@ -1095,12 +1095,10 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
   /// This exercises the throw path in _serializeToNewInboxMessage (line 607-608).
   /// </summary>
   private sealed class Cov2JsonElementPayloadEnvelope : IMessageEnvelope {
-    private readonly List<MessageHop> _hops;
-
     public Cov2JsonElementPayloadEnvelope(MessageId messageId, JsonElement payload) {
       MessageId = messageId;
       Payload = payload; // Payload is JsonElement typed as object
-      _hops = [new MessageHop {
+      Hops = [new MessageHop {
         Type = HopType.Current,
         Timestamp = DateTimeOffset.UtcNow,
         ServiceInstance = ServiceInstanceInfo.Unknown,
@@ -1111,9 +1109,9 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox };
     public MessageId MessageId { get; }
     public object Payload { get; }
-    public List<MessageHop> Hops => _hops;
-    public void AddHop(MessageHop hop) => _hops.Add(hop);
-    public DateTimeOffset GetMessageTimestamp() => _hops[0].Timestamp;
+    public List<MessageHop> Hops { get; }
+    public void AddHop(MessageHop hop) => Hops.Add(hop);
+    public DateTimeOffset GetMessageTimestamp() => Hops[0].Timestamp;
     public CorrelationId? GetCorrelationId() => null;
     public MessageId? GetCausationId() => null;
     public JsonElement? GetMetadata(string key) => null;

@@ -42,7 +42,7 @@ public class EphemeralBlobOffloadEndToEndTests : EFCoreTestBase {
     // A body far larger than any transport claim-check threshold, on an ephemeral event.
     const int bigLen = 300_000;
     var big = new string('z', bigLen);
-    var eventId = (Guid)TrackedGuid.NewMedo();   // MessageId requires UUIDv7
+    var eventId = (Guid)TrackedGuid.New();   // MessageId requires UUIDv7
     var streamId = Guid.NewGuid();
     using var payloadDoc = JsonDocument.Parse($$"""{"OrderId":42,"blob":"{{big}}"}""");
 

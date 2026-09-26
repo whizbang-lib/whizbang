@@ -1617,7 +1617,7 @@ public class DispatcherCoverageWave3Tests {
   public async Task LocalInvokeAsync_Result_AnyInvokerFallback_ExtractsResultAsync() {
     // Arrange - only anyInvoker, no typed invoker
     ValueTask<object?> anyInvoker(object msg) =>
-      new ValueTask<object?>(new W3Result(Guid.NewGuid(), true));
+      new(new W3Result(Guid.NewGuid(), true));
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new W3Command("rpc-extract");
 

@@ -25,7 +25,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class ClaimWorkerCoverageTests {
 
   private sealed class StubInstance : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = TrackedGuid.New();
     public string ServiceName => "test";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -371,7 +371,7 @@ public class ClaimWorkerCoverageTests {
   /// </summary>
   [Test]
   public async Task ClaimedOutboxWork_IsWrittenToTheOutboxChannelAsync() {
-    var ids = new[] { TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value };
+    var ids = new[] { TrackedGuid.New().Value, TrackedGuid.New().Value, TrackedGuid.New().Value };
     var coord = new RecordingCoordinator {
       BatchToReturn = new WorkBatch {
         OutboxWork = [.. ids.Select(id => new OutboxWork {
@@ -414,13 +414,13 @@ public class ClaimWorkerCoverageTests {
   /// </summary>
   [Test]
   public async Task ClaimedPerspectiveWork_IsWrittenToThePerspectiveChannelAsync() {
-    var streamIds = new[] { TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value };
+    var streamIds = new[] { TrackedGuid.New().Value, TrackedGuid.New().Value };
     var coord = new RecordingCoordinator {
       BatchToReturn = new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
         PerspectiveWork = [.. streamIds.Select(sid => new PerspectiveWork {
-          WorkId = TrackedGuid.NewMedo().Value,
+          WorkId = TrackedGuid.New().Value,
           StreamId = sid,
           PerspectiveName = "Test.Perspective",
           LastProcessedEventId = null,
@@ -473,7 +473,7 @@ public class ClaimWorkerCoverageTests {
     // grows it. Five rows against a floor of 25 leaves the window pinned at its floor, so the
     // later narrowing would be indistinguishable from the window never having moved.
     var cleanRowIds = Enumerable.Range(0, 30)
-      .Select(_ => TrackedGuid.NewMedo().Value)
+      .Select(_ => TrackedGuid.New().Value)
       .ToList();
     var coord = new RecordingCoordinator {
       // Phase 1: fully materialized, first-attempt rows — a real, clean, MEASURABLE cycle that lets
@@ -518,7 +518,7 @@ public class ClaimWorkerCoverageTests {
       // Floor-wide here too: under the new rule a claim narrower than MinStreamsPerBatch does not
       // move the window in EITHER direction, so a 4-id batch would leave the window pinned and the
       // narrowing this test exists to prove could never be observed.
-      InboxStreamIds = [.. Enumerable.Range(0, 30).Select(_ => TrackedGuid.NewMedo().Value)],
+      InboxStreamIds = [.. Enumerable.Range(0, 30).Select(_ => TrackedGuid.New().Value)],
     };
 
     // The swap has to be visible to a WHOLE cycle before the churn is reported, and that ordering
@@ -551,5 +551,33 @@ public class ClaimWorkerCoverageTests {
              + "ClaimWorker had observed the re-claims itself — without the reconstruction, the "
              + "stream-id path stays blind to the condition the window exists to correct, and the "
              + "window would only have kept growing");
+  }
+
+  // A wake runs from a notification callback and from the channel writer. The nap it cancels is
+  // disposed by the loop the moment the nap ends, so a wake that lands in that window finds a
+  // disposed source. Throwing there would propagate out of a PostgreSQL notification callback —
+  // taking down the listener that delivers every subsequent doorbell — over a nap that had
+  // already ended and needed no cancelling: the permit released just before this covers the wake.
+  [Test]
+  public async Task CancelNapIgnoringDisposal_NapAlreadyEnded_DoesNotThrowAsync() {
+    var endedNap = new CancellationTokenSource();
+    endedNap.Dispose();
+
+    await Assert.That(() => ClaimWorker.CancelNapIgnoringDisposal(endedNap)).ThrowsNothing()
+      .Because("a wake must never fault its caller; a nap that already ended needs no cancel");
+    await Assert.That(() => ClaimWorker.CancelNapIgnoringDisposal(null)).ThrowsNothing()
+      .Because("there is no nap in progress between poll cycles, and a wake then is still valid");
+  }
+
+  // The control: a nap that IS in progress gets canceled, so the silence above is the disposed
+  // case being absorbed rather than the wake having stopped waking anything.
+  [Test]
+  public async Task CancelNapIgnoringDisposal_NapInProgress_CancelsItAsync() {
+    using var nap = new CancellationTokenSource();
+
+    ClaimWorker.CancelNapIgnoringDisposal(nap);
+
+    await Assert.That(nap.IsCancellationRequested).IsTrue()
+      .Because("the spacing nap is one of the two waits a wake has to break out of");
   }
 }

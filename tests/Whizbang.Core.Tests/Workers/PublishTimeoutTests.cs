@@ -83,7 +83,7 @@ public class PublishTimeoutTests {
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -212,8 +212,8 @@ public class PublishTimeoutTests {
         PublishTimeoutSeconds = 1,
       })).Value));
 
-    var row1 = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
-    var row2 = _row((Guid)TrackedGuid.NewMedo(), row1.StreamId!.Value);
+    var row1 = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
+    var row2 = _row((Guid)TrackedGuid.New(), row1.StreamId!.Value);
 
     // Drive the bulk publish path with two rows. The hanging transport blocks —
     // the per-call timeout fires at ~1s and the failure-channel enqueue should
@@ -279,7 +279,7 @@ public class PublishTimeoutTests {
         PublishTimeoutSeconds = 1,
       })).Value));
 
-    var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
+    var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 
     var singularTask = worker.PublishOneAsync(row, CancellationToken.None);
 
@@ -342,8 +342,8 @@ public class PublishTimeoutTests {
         PublishTimeoutSeconds = 1,
       })).Value));
 
-    var row1 = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
-    var row2 = _row((Guid)TrackedGuid.NewMedo(), row1.StreamId!.Value);
+    var row1 = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
+    var row2 = _row((Guid)TrackedGuid.New(), row1.StreamId!.Value);
 
     // Drive the bulk publish path with a transport that ignores CT. v0.648's pattern
     // would hang forever; v0.651's WaitAsync(TimeSpan, ct) forces a TimeoutException at

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Messaging.ServiceBus;
@@ -58,6 +59,7 @@ public sealed class AzureServiceBusDeadLetterDrainer(
   public string TransportName => $"asb:{_topicName}/{_subscriptionName}";
 
   /// <inheritdoc />
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Draining pages the dead-letter queue until the count is met, the queue stops yielding, or a page makes no progress, and a message that will not convert to an import is skipped rather than failing the page. The three loop exits are the three ways a drain legitimately ends.")]
   public async Task<int> DrainDeadLetterQueueAsync(int maxCount, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     if (maxCount <= 0) {

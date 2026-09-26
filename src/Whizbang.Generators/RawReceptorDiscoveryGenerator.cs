@@ -46,11 +46,10 @@ public class RawReceptorDiscoveryGenerator : IIncrementalGenerator {
     var typeDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol typeSymbol) {
-      return null;
-    }
-
-    if (typeSymbol.IsAbstract || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+    // The bind guard shares the abstract/non-public exit — an unbound declaration is not a receptor
+    // the registry can construct either, and merging keeps the symbol from being dereferenced first.
+    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol typeSymbol
+        || typeSymbol.IsAbstract || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
       return null;
     }
 

@@ -92,8 +92,8 @@ public interface IStartupPipelineState {
 /// </summary>
 /// <remarks>
 /// Re-entrant with the runner: a new run's first notification resets the previous run's answers,
-/// because a reviving instance re-enters the pipeline and reporting the OLD run as complete would
-/// tell it it is ready when it is not. Thread-safe; waiters registered before a step completes are
+/// because a reviving instance re-enters the pipeline, and reporting the OLD run as complete would
+/// tell that instance it is ready when it is not. Thread-safe; waiters registered before a step completes are
 /// released when it does, and late waiters return immediately.
 /// </remarks>
 /// <docs>operations/startup/startup-pipeline#hooks</docs>

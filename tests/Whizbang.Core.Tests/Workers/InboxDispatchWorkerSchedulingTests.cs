@@ -30,7 +30,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class InboxDispatchWorkerSchedulingTests {
 
   private sealed class FakeInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -111,7 +111,7 @@ public class InboxDispatchWorkerSchedulingTests {
   }
 
   private static InboxWork _makeWork() {
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     return new InboxWork {
       MessageId = messageId,
       Envelope = new MessageEnvelope<JsonElement> {
@@ -121,7 +121,7 @@ public class InboxDispatchWorkerSchedulingTests {
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },
       MessageType = "Whizbang.Core.Tests.SchedulingFixture.Event, TestAsm",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,

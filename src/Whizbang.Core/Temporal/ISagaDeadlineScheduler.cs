@@ -18,6 +18,7 @@ public interface ISagaDeadlineScheduler {
   /// stream, running as <paramref name="authorityPrincipalId"/>. Re-arming the same (saga, name) replaces
   /// the existing deadline in place.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Arming a deadline carries the saga, the deadline's name and time, the event to spawn and the authority it runs as. The optional tail is the payload and scope that travel with the spawned event, which most callers leave out.")]
   Task<ScheduleHandle> SetDeadlineAsync(
     Guid sagaStreamId,
     string deadlineName,

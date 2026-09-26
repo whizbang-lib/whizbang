@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -62,6 +63,7 @@ internal readonly record struct FlushContext(
 /// </para>
 /// </remarks>
 internal static class WorkCoordinatorFlushHelper {
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One flush decides, for each of six independent streams (outbox rows, inbox rows, outbox completions and failures, inbox completions and failures, and commit notifications), whether there is anything to send and which channel to send it on. The branches are one per stream and do not nest.")]
   internal static async Task<WorkBatch> ExecuteFlushAsync(
     FlushContext ctx,
     CancellationToken ct

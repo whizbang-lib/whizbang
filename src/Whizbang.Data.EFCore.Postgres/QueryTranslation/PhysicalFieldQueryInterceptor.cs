@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
   private readonly PhysicalFieldExpressionVisitor _visitor = new();
   private readonly OrdinalEqualsRewriter _ordinalEquals = new();
+  private readonly SearchContainsRewriter _search = new();
 
   /// <summary>
   /// Called by EF Core to allow transformation of the query expression tree
@@ -39,8 +40,12 @@ public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
   public Expression QueryCompilationStarting(Expression queryExpression, QueryExpressionEventData eventData) {
     ArgumentNullException.ThrowIfNull(eventData);
 
-    // First, redirect promoted properties to their real columns.
-    var rewritten = _visitor.Visit(queryExpression);
+    // First, turn Contains on a Search field into the folded search its index is built over, while the
+    // property is still a plain member access that says which model and field it is.
+    var rewritten = _search.Visit(queryExpression);
+
+    // Then redirect promoted properties to their real columns.
+    rewritten = _visitor.Visit(rewritten);
 
     // Then normalize the one shape Entity Framework refuses to translate at all. Unconditional,
     // because it is a compatibility fix rather than an optimization: turning the containment rewrite

@@ -20,6 +20,8 @@ mono_crash.*
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/
+# ...but not the release skill, which the build-output pattern above would silently swallow
+!.claude/skills/release/
 [Rr]eleases/
 x64/
 x86/

@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class ImmediateBatchStrategyBehaviorTests {
 
   private static InboxMessage _makeInboxMessage() {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     return new InboxMessage {
       MessageId = msgId,
       HandlerName = "TestHandler",
@@ -42,7 +42,7 @@ public class ImmediateBatchStrategyBehaviorTests {
   }
 
   private static OutboxMessage _makeOutboxMessage() {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
       JsonDocument.Parse("{}").RootElement,

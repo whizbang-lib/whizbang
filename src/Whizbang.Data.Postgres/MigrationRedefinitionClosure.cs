@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Whizbang.Data.Postgres;
 
@@ -21,6 +22,7 @@ public static class MigrationRedefinitionClosure {
   /// </summary>
   /// <param name="orderedMigrations">All migrations in ledger (numeric) order with their object lists.</param>
   /// <param name="toRun">Names the ledger already decided to execute (new or hash-drifted).</param>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A fixed-point closure: index the earliest migration that touches each object, then repeatedly add every later migration sharing an object until nothing changes. The nesting is the fixed point.")]
   public static IReadOnlySet<string> Expand(
       IReadOnlyList<(string Name, IReadOnlyCollection<string> Objects)> orderedMigrations,
       IReadOnlyCollection<string> toRun) {

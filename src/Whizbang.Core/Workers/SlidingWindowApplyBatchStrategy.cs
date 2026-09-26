@@ -139,6 +139,18 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
   /// </summary>
   internal Task RunIdleSweepNowForTestAsync() => _runIdleSweepAsync();
 
+  /// <summary>
+  /// Test seam: the drain workers of every mapped stream buffer.
+  /// </summary>
+  /// <remarks>
+  /// How a worker's loop ENDED is invisible from outside: a shutdown absorbed by the loop's own
+  /// catch and one that escapes it both stop draining, and <see cref="FlushAndStopAsync"/> folds a
+  /// faulted worker into the same catch it uses for a caller-canceled shutdown, so it swallows the
+  /// difference in production too. The task's final state is the only evidence, and a worker that
+  /// faults instead of returning is an unobserved exception nobody ever sees.
+  /// </remarks>
+  internal Task WhenWorkersStoppedForTests() => Task.WhenAll(_streams.Values.Select(b => b.Worker));
+
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S1854:Unused assignments should be removed", Justification = "Discard pattern is the canonical fire-and-forget idiom for the timer callback; the returned Task is observed via the worker's internal error handling.")]
   private void _fireAndForgetIdleSweep() {
     _ = _runIdleSweepAsync();

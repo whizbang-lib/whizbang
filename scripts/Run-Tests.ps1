@@ -518,7 +518,8 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
             --publish 0:5432 `
             --restart no `
             pgvector/pgvector:pg17 `
-            -c max_connections=500 2>&1 | Out-Null
+            -c max_connections=500 `
+            -c shared_preload_libraries=pg_stat_statements 2>&1 | Out-Null
         Start-Sleep -Seconds 5
     } elseif ($sharedPgState -ne "running") {
         if (-not $useAiOutput) {

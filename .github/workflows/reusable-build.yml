@@ -17,7 +17,7 @@ env:
 
 jobs:
   build:
-    name: Build
+    name: Compile and hash
     runs-on: ubuntu-latest
     # The analyzers run in every project now, which roughly doubles the solution build on a
     # hosted runner (16 minutes observed); the artifact upload and instrumentation follow it.
@@ -36,7 +36,7 @@ jobs:
         run: dotnet --info
 
       - name: Cache NuGet packages
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
@@ -51,11 +51,9 @@ jobs:
           # directly into a run block — the shell sees only the variable, not the value.
           VERSION: ${{ inputs.version }}
         run: |
-          VERSION_ARGS=""
-          if [ -n "$VERSION" ]; then
-            VERSION_ARGS="-p:Version=$VERSION"
-          fi
-          dotnet build --no-restore --configuration Release $VERSION_ARGS
+          BUILD_ARGS=(--no-restore --configuration Release)
+          if [ -n "$VERSION" ]; then BUILD_ARGS+=("-p:Version=$VERSION"); fi
+          dotnet build "${BUILD_ARGS[@]}"
 
       # Formatting verification runs as a separate parallel job (ci.yml `format`) so it
       # stays off the build -> test-suites critical path.
@@ -84,7 +82,7 @@ jobs:
           echo "hashed $(wc -l < build-determinism/assemblies.sha256) assemblies at version '${VERSION:-<props default>}'"
 
       - name: Upload determinism manifest
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: determinism-manifest-${{ github.run_id }}
           path: build-determinism/
@@ -94,7 +92,7 @@ jobs:
           retention-days: 3
 
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Test jobs execute test modules directly from bin/ (Run-Tests.ps1 -NoBuild uses
           # --test-modules, no MSBuild), so only PACKABLE projects (src/ + tools/ — CLI,
@@ -107,7 +105,9 @@ jobs:
             tools/**/obj/Release
             !**/obj/Release/**/ref/**
             !**/obj/Release/**/refint/**
-          retention-days: 1
+          # A release branch's build is repacked for its beta and rc prereleases
+          # (release-prerelease.yml), so it lives as long as the release PR might stay open.
+          retention-days: ${{ startsWith(github.ref, 'refs/heads/release/v') && 7 || 1 }}
           compression-level: 6
 
       # ----------------------------------------------------------------------------
@@ -200,7 +200,7 @@ jobs:
           echo "packable output is clean"
 
       - name: Upload Instrumented Assemblies
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Overlay only — the instrumented DLLs at their original relative paths. Test jobs
           # download build-<run> first, then this on top, and the paths line up so the

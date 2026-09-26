@@ -37,9 +37,9 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var coordinator = _coordinator(ctx);
 
-    var stream1 = TrackedGuid.NewMedo().Value;
-    var stream2 = TrackedGuid.NewMedo().Value;
-    var streamOtherTenant = TrackedGuid.NewMedo().Value;
+    var stream1 = TrackedGuid.New().Value;
+    var stream2 = TrackedGuid.New().Value;
+    var streamOtherTenant = TrackedGuid.New().Value;
 
     // Stream 1, tenant A — versions inserted OUT OF ORDER to prove result ordering.
     var e1V2 = await _seedAsync(conn, stream1, version: 2, TENANT_A, "Contracts.ThingUpdated");
@@ -94,8 +94,8 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var coordinator = _coordinator(ctx);
 
-    var streamA = TrackedGuid.NewMedo().Value;
-    var streamB = TrackedGuid.NewMedo().Value;
+    var streamA = TrackedGuid.New().Value;
+    var streamB = TrackedGuid.New().Value;
     await _seedAsync(conn, streamA, version: 1, TENANT_A, "Contracts.TypeOne");
     await _seedAsync(conn, streamA, version: 2, TENANT_A, "Contracts.TypeTwo");
     await _seedAsync(conn, streamB, version: 1, TENANT_A, "Contracts.TypeOne");
@@ -134,8 +134,8 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var coordinator = _coordinator(ctx);
 
-    var streamA = TrackedGuid.NewMedo().Value;
-    var streamB = TrackedGuid.NewMedo().Value;
+    var streamA = TrackedGuid.New().Value;
+    var streamB = TrackedGuid.New().Value;
     var streams = new List<Guid> { streamA, streamB };
     await _seedAsync(conn, streamA, version: 1, TENANT_A, "Contracts.PageProbe");
     await _seedAsync(conn, streamA, version: 2, TENANT_A, "Contracts.PageProbe");
@@ -182,7 +182,7 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
   private static async Task<Guid> _seedAsync(
       NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType,
       int flags = 0, string? metadataJson = null, bool reapBody = false) {
-    var eventId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.New().Value;
     await using (var store = conn.CreateCommand()) {
       store.CommandText = @"
         INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags)

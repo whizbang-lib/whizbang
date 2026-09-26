@@ -59,14 +59,12 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
 
   private static CollectiveApplyInfo? _extract(GeneratorSyntaxContext context, CancellationToken ct) {
     var methodDecl = (MethodDeclarationSyntax)context.Node;
-    if (context.SemanticModel.GetDeclaredSymbol(methodDecl, ct) is not IMethodSymbol methodSymbol) {
-      return null;
-    }
-
-    // Find [CollectiveApplyFor] by FQN.
-    var attr = methodSymbol.GetAttributes()
-      .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, ATTRIBUTE_FQN));
-    if (attr is null) {
+    // Find [CollectiveApplyFor] by FQN. The bind guard shares this exit: a method Roslyn cannot bind
+    // exposes no attributes, so it fails the attribute test without ever being dereferenced.
+    if (context.SemanticModel.GetDeclaredSymbol(methodDecl, ct) is not IMethodSymbol methodSymbol
+        || methodSymbol.GetAttributes()
+             .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, ATTRIBUTE_FQN))
+           is not { } attr) {
       return null;
     }
 

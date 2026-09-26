@@ -298,4 +298,42 @@ public class MessageTypeCatalogGeneratorTests {
     await Assert.That(sourcedLine.Contains("IsComposite")).IsFalse();
     await Assert.That(sourcedLine.Contains("IsCompacted")).IsFalse();
   }
+
+  [Test]
+  public async Task Generator_StampsMaxPayloadSizeOnEntriesAsync() {
+    // The payload limit reads a type's own limit from the catalog, so a type's [MaxPayloadSize]
+    // must reach it at compile time, including through a base type and on commands.
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp;
+
+      [MaxPayloadSize(20_000_000)]
+      public record LargeImportedEvent : IEvent;
+
+      [MaxPayloadSize(0)]
+      public record UnlimitedEvent : IEvent;
+
+      [MaxPayloadSize(1024)]
+      public record SmallCommand : ICommand;
+
+      public record DerivedLargeEvent : LargeImportedEvent;
+
+      public record PlainEvent : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var lines = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!.Split('\n');
+    string line(string type) => lines.Single(l => l.Contains($"typeof(global::MyApp.{type})"));
+
+    await Assert.That(line("LargeImportedEvent")).Contains("MaxPayloadBytes = 20000000L");
+    await Assert.That(line("UnlimitedEvent")).Contains("MaxPayloadBytes = 0L");
+    await Assert.That(line("SmallCommand")).Contains("MaxPayloadBytes = 1024L");
+    await Assert.That(line("DerivedLargeEvent")).Contains("MaxPayloadBytes = 20000000L")
+      .Because("the attribute is inherited, so a derived message keeps its base type's limit");
+    await Assert.That(line("PlainEvent").Contains("MaxPayloadBytes")).IsFalse();
+  }
 }

@@ -1031,6 +1031,32 @@ public class VectorSearchExtensionsTests {
     await Assert.That(ordered.Expression).IsNotNull();
   }
 
+  // ========================================
+  // Shadow-property naming
+  // ========================================
+
+  /// <summary>
+  /// A vector search reads its shadow property BY NAME, and that name is derived here while
+  /// EFCorePerspectiveConfigurationGenerator derives it independently for the column. The two
+  /// disagreeing does not return wrong rows, it throws "property not found" at query time, so the
+  /// rule is worth pinning character by character rather than only through a query that happens to
+  /// use a one-word property. The empty input is included because the conversion has to answer
+  /// something for it: returning the input unchanged is what keeps a caller from an index-out-of-
+  /// range on the first character.
+  /// </summary>
+  [Test]
+  [Arguments("Embeddings", "embeddings")]
+  [Arguments("ContentEmbedding", "content_embedding")]
+  [Arguments("TitleEmbedding", "title_embedding")]
+  [Arguments("A", "a")]
+  [Arguments("titleEmbedding", "title_embedding")]
+  [Arguments("Embedding2D", "embedding2_d")]
+  [Arguments("", "")]
+  public async Task ToSnakeCase_MapsAPropertyNameOntoTheGeneratedShadowColumnNameAsync(
+      string input, string expected) {
+    await Assert.That(VectorSearchExtensions.ToSnakeCase(input)).IsEqualTo(expected);
+  }
+
   /// <summary>Projection shape used to select the generic cross-table overloads.</summary>
   private sealed class JoinRow {
     public PerspectiveRow<EmbeddingTestModel> Row { get; init; } = null!;

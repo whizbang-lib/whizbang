@@ -494,15 +494,14 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private static IReadOnlyList<ReceptorInfo> _filterForReplayMode(
       IReadOnlyList<ReceptorInfo> receptors,
       ILifecycleContext? context) {
-    var processingMode = context?.ProcessingMode;
-    if (processingMode is not (ProcessingMode.Replay or ProcessingMode.Rebuild)) {
+    if (context is null || context.ProcessingMode is not (ProcessingMode.Replay or ProcessingMode.Rebuild)) {
       return receptors;
     }
 
     // In Replay/Rebuild, new events still fire all receptors — they have never had their
     // lifecycle invoked before, so there is nothing to be idempotent about. Only
     // already-processed events need to filter down to AlwaysFire receptors.
-    if (context?.IsNewEvent == true) {
+    if (context.IsNewEvent) {
       return receptors;
     }
 

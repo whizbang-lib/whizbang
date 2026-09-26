@@ -638,6 +638,18 @@ public partial class DapperWorkCoordinator(
       CancellationToken cancellationToken = default)
     => _discardPendingAsync(DISCARD_PENDING_OUTBOX_SQL, messageTypeNames, cancellationToken);
 
+  /// <inheritdoc />
+  public async Task<IReadOnlySet<Guid>?> GetStreamsWithPendingMessagesAsync(
+      IReadOnlyList<Guid> streamIds,
+      IReadOnlyList<string> messageTypeNames,
+      CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    await using var command = __scope.Connection.CreateCommand();
+    command.CommandTimeout = 30;
+    return await Whizbang.Data.Postgres.StreamsWithPendingMessagesSql.ExecuteAsync(
+      command, "public", streamIds, messageTypeNames, cancellationToken);
+  }
+
   private const string DISCARD_PENDING_WHERE =
     "WHERE r.processed_at IS NULL AND r.instance_id IS NULL " +
     "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)";
@@ -651,6 +663,11 @@ public partial class DapperWorkCoordinator(
     "WHERE s.message_id = r.message_id AND s.processed_at IS NULL AND s.instance_id IS NULL " +
     "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)";
   private const string DISCARD_PENDING_OUTBOX_SQL = "DELETE FROM public.wh_outbox r " + DISCARD_PENDING_WHERE;
+
+  // The payload builders below write JSON by hand, so they need the lower-case spellings:
+  // StringBuilder.Append(bool) would emit "True"/"False", which no JSON reader accepts.
+  private const string JSON_TRUE = "true";
+  private const string JSON_FALSE = "false";
 
   /// <summary>
   /// The maintenance sweep behind "a feature that is off leaves nothing behind", for one table.
@@ -808,7 +825,10 @@ public partial class DapperWorkCoordinator(
       return;
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var cursorsJson = cursors.Count == 0 ? "[]" : _serializePerspectiveCompletions([.. cursors]);
+    // No caller-side emptiness test: the serializer already answers "[]" for an empty batch, and
+    // duplicating that here left its own guard with no way to be reached (same shape as
+    // SerializeFailures, which callers hand the array unconditionally).
+    var cursorsJson = _serializePerspectiveCompletions([.. cursors]);
     var idArray = eventWorkIds is Guid[] earr ? earr : [.. eventWorkIds];
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
@@ -902,7 +922,7 @@ public partial class DapperWorkCoordinator(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     Guid[] outboxIds = request.OutboxIds switch { null => [], Guid[] a => a, var ids => [.. ids] };
     Guid[] perspIds = request.PerspectiveEventWorkIds switch { null => [], Guid[] p => p, var ids => [.. ids] };
-    var cursorsJson = request.PerspectiveCursors is null || request.PerspectiveCursors.Count == 0
+    var cursorsJson = request.PerspectiveCursors is null
       ? "[]" : _serializePerspectiveCompletions([.. request.PerspectiveCursors]);
     var failuresJson = _buildFailuresByCategoryJson(request.FailuresByCategory);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
@@ -997,7 +1017,7 @@ public partial class DapperWorkCoordinator(
     sb.Append(",\"host_name\":\"").Append(_jsonEscape(request.HostName)).Append('"');
     sb.Append(",\"process_id\":").Append(request.ProcessId);
     sb.Append(",\"partition_count\":").Append(request.PartitionCount);
-    sb.Append(",\"debug_mode\":").Append(request.DebugMode ? "true" : "false");
+    sb.Append(",\"debug_mode\":").Append(request.DebugMode ? JSON_TRUE : JSON_FALSE);
     sb.Append(",\"inbox_completion\":{")
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
@@ -1036,9 +1056,9 @@ public partial class DapperWorkCoordinator(
       sb.Append("{\"InquiryId\":\"").Append(inq.InquiryId).Append("\",")
         .Append("\"StreamId\":\"").Append(inq.StreamId).Append("\",")
         .Append("\"PerspectiveName\":\"").Append(_jsonEscape(inq.PerspectiveName)).Append("\",")
-        .Append("\"DiscoverPendingFromOutbox\":").Append(inq.DiscoverPendingFromOutbox ? "true" : "false").Append(',')
-        .Append("\"IncludePendingEventIds\":").Append(inq.IncludePendingEventIds ? "true" : "false").Append(',')
-        .Append("\"IncludeProcessedEventIds\":").Append(inq.IncludeProcessedEventIds ? "true" : "false");
+        .Append("\"DiscoverPendingFromOutbox\":").Append(inq.DiscoverPendingFromOutbox ? JSON_TRUE : JSON_FALSE).Append(',')
+        .Append("\"IncludePendingEventIds\":").Append(inq.IncludePendingEventIds ? JSON_TRUE : JSON_FALSE).Append(',')
+        .Append("\"IncludeProcessedEventIds\":").Append(inq.IncludeProcessedEventIds ? JSON_TRUE : JSON_FALSE);
       sb.Append('}');
     }
     sb.Append(']');

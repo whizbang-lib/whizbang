@@ -45,8 +45,8 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
   public async Task FindStuckOutboxRows_RowExceedsThreshold_ReturnedAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _insertOutboxRowAsync(conn, messageId, streamId, attempts: 15);
 
     var stuck = await _findStuckOutboxAsync(conn, maxAttempts: 10, limit: 50);
@@ -63,8 +63,8 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
   public async Task FindStuckOutboxRows_HealthyRow_NotReturnedAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    await _insertOutboxRowAsync(conn, messageId, (Guid)TrackedGuid.NewMedo(), attempts: 1);
+    var messageId = (Guid)TrackedGuid.New();
+    await _insertOutboxRowAsync(conn, messageId, (Guid)TrackedGuid.New(), attempts: 1);
 
     var stuck = await _findStuckOutboxAsync(conn, maxAttempts: 10, limit: 50);
 
@@ -81,8 +81,8 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
   public async Task FindStuckOutboxRows_ProcessedRow_NotReturnedAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    await _insertOutboxRowAsync(conn, messageId, (Guid)TrackedGuid.NewMedo(), attempts: 50, processed: true);
+    var messageId = (Guid)TrackedGuid.New();
+    await _insertOutboxRowAsync(conn, messageId, (Guid)TrackedGuid.New(), attempts: 50, processed: true);
 
     var stuck = await _findStuckOutboxAsync(conn, maxAttempts: 10, limit: 50);
 
@@ -99,7 +99,7 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
     for (var i = 0; i < 5; i++) {
-      await _insertOutboxRowAsync(conn, (Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo(), attempts: 15);
+      await _insertOutboxRowAsync(conn, (Guid)TrackedGuid.New(), (Guid)TrackedGuid.New(), attempts: 15);
     }
 
     var stuck = await _findStuckOutboxAsync(conn, maxAttempts: 10, limit: 2);
@@ -115,8 +115,8 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
   public async Task FindStuckInboxRows_RowExceedsThreshold_ReturnedAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 15);
 
     var stuck = await _findStuckInboxAsync(conn, maxAttempts: 10, limit: 50);

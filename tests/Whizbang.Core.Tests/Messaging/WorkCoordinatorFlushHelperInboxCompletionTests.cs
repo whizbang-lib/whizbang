@@ -46,7 +46,7 @@ public class WorkCoordinatorFlushHelperInboxCompletionTests {
   }
 
   private sealed class FakeInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "flush-svc";
     public string HostName => "flush-host";
     public int ProcessId => 7;
@@ -54,7 +54,7 @@ public class WorkCoordinatorFlushHelperInboxCompletionTests {
   }
 
   private static MessageCompletion _completion(MessageProcessingStatus status = MessageProcessingStatus.Published) =>
-    new() { MessageId = (Guid)TrackedGuid.NewMedo(), Status = status };
+    new() { MessageId = (Guid)TrackedGuid.New(), Status = status };
 
   private static FlushContext _ctx(IWorkCoordinator? coordinator, IServiceScopeFactory? scopeFactory, IServiceInstanceProvider instance, MessageCompletion[] inboxCompletions) => new(
     coordinator, scopeFactory, instance, new WorkCoordinatorOptions { DebugMode = true }, "test",

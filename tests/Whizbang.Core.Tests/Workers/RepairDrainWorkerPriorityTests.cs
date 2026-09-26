@@ -25,14 +25,14 @@ namespace Whizbang.Core.Tests.Workers;
 public class RepairDrainWorkerPriorityTests {
   [Test]
   public async Task DrainTick_EveryRepairRequestIsBackgroundAsync() {
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin);
     coordinator.Eligible.AddRange([
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 100, 500),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", TrackedGuid.NewMedo().Value, 300, 700),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", TrackedGuid.New().Value, 300, 700),
     ]);
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
@@ -46,12 +46,12 @@ public class RepairDrainWorkerPriorityTests {
 
   [Test]
   public async Task DrainTick_InsideAnInteractiveHandling_TheRequestStaysBackgroundAsync() {
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin);
-    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 100, 500));
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
 
     using (PriorityContext.Enter(WorkPriority.INTERACTIVE)) {
       await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
@@ -114,7 +114,7 @@ public class RepairDrainWorkerPriorityTests {
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
     public int ProcessId => 1;

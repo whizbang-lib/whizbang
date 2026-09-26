@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -55,6 +56,7 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
     return _flusher.StoppedSignal;
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A renewal batch is grouped by category, and within a group each lease is kept only if the registry still holds it and the handle accepts the new deadline. The nesting is group then item, and the two rejections are different facts.")]
   private async Task _flushBatchAsync(IReadOnlyList<CategorizedLeaseRenewal> batch, CancellationToken ct) {
     if (!_options.Enabled) {
       return;

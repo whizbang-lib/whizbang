@@ -86,6 +86,56 @@ public sealed class PerspectiveIndexAttribute(params string[] properties) : Attr
   /// </remarks>
   public string? Where { get; init; }
 
+  /// <summary>
+  /// The index method, or null for the default btree.
+  /// </summary>
+  /// <remarks>
+  /// Btree answers equality, ranges and ordering and is what almost every filter wants. The others
+  /// exist for shapes it cannot serve: GIN for a containment test over a document or an array, GiST
+  /// for geometric and range overlap, BRIN for a very large table whose rows are already in the
+  /// order being filtered. Choosing one for a shape it does not serve builds an index the planner
+  /// will not use.
+  /// </remarks>
+  public PerspectiveIndexMethod Method { get; init; } = PerspectiveIndexMethod.Btree;
+
+  /// <summary>
+  /// The operator class applied to every covered element, or null for the type's default.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A default operator class is right until the query is not equality. <c>text_pattern_ops</c> is
+  /// what makes a btree answer a prefix match, and <c>jsonb_path_ops</c> builds a smaller and faster
+  /// GIN index for containment at the cost of the key-existence operators.
+  /// </para>
+  /// <para>
+  /// Verbatim, and unchecked: the set of operator classes a server has is open, including any an
+  /// extension adds. A class the server does not have fails when the index is created rather than
+  /// here.
+  /// </para>
+  /// </remarks>
+  public string? OperatorClass { get; init; }
+
+  /// <summary>
+  /// Expressions the index covers, in place of named properties.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A property name is resolved against the model and rendered for wherever the value is stored,
+  /// which is what most indexes want. An expression is for the cases a name cannot reach: a cast,
+  /// a function of a value, a value inside a document that is not a property of the model.
+  /// </para>
+  /// <para>
+  /// Verbatim SQL, written against the STORED form, and unchecked for the same reason
+  /// <see cref="Where"/> is. An expression that PostgreSQL will not accept, or one that is not
+  /// immutable, fails when the index is created.
+  /// </para>
+  /// <para>
+  /// Given alongside properties, the properties come first and the expressions follow, which is the
+  /// order the index is built in and therefore the order a filter has to lead with.
+  /// </para>
+  /// </remarks>
+  public string[]? Expressions { get; init; }
+
   /// <summary>Whether the index enforces uniqueness across the covered properties.</summary>
   /// <remarks>
   /// A unique index over a document extraction constrains what the perspective may hold, and a

@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>
@@ -23,6 +25,7 @@ public static class StreamGroupClosure {
   /// <param name="memberships">Each participating model's memberships (typically from
   /// <see cref="PerspectiveStreamGroupRegistry"/>).</param>
   /// <returns>The (model, row id) pairs the cascade must evict — seeds excluded.</returns>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A closure over a graph: build the group index, then walk a worklist following only the memberships that announce and are followed, excluding the seeds and anything already received. The nesting is the graph walk.")]
   public static IReadOnlyList<(Type Model, Guid RowId)> Compute(
       IReadOnlyList<(Type Model, Guid RowId)> seeds,
       IReadOnlyDictionary<Type, IReadOnlyList<StreamGroupMembership>> memberships) {

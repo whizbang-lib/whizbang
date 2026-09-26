@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -113,6 +114,7 @@ public static partial class CompositeInboxFanout {
   /// <param name="scope">The dispatch scope (serializer, catalog, resolvers, logging).</param>
   /// <param name="replacementInner">A pre-fanout directive's replacement for the inner events.</param>
   /// <param name="hasConsumer">Answers whether this consumer subscribes to a child type (by wire type name); a child it does not subscribe to is dropped at expansion and counted (#736). Null keeps every child.</param>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Expanding a composite checks five things that can disagree (the inner count against the cap, against the carried ids, against the carried sequences, each inner against null, and each child against the consumer's subscriptions) and every disagreement has a different outcome under Atomic than under Independent. The branching is the atomicity contract, and the two modes have to be read together to see that a drop is logged exactly once.")]
   public static FanoutResult TryExpand(
       ICompositeEvent? composite,
       IMessageEnvelope source,
@@ -270,6 +272,7 @@ public static partial class CompositeInboxFanout {
   /// Guards mirror the typed identity-preserving path: raw bundles are machine-built, so any
   /// count desync between payloads, type names, ids, or sequences fails the whole expansion.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The raw path re-checks every guard the typed path checks, because a raw bundle is machine-built and any count desync between payloads, type names, ids and sequences fails the whole expansion. The guards sit in one place so the two paths can be compared line by line.")]
   private static FanoutResult _expandRaw(
       IRawInnerComposite composite,
       string compositeTypeName,
@@ -400,6 +403,7 @@ public static partial class CompositeInboxFanout {
   /// <see cref="IMessage"/>; <see cref="IEnvelopeSerializer.SerializeEnvelope{TMessage}"/> derives the
   /// wire type from the inner event's runtime type, so no reflective generic-method binding is needed.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Writes one inbox row for a fan-out child. Every argument is a column of that row or the resolver its value comes from, so a parameter object would be the row itself, assembled a step earlier and handed back in.")]
   private static InboxMessage _buildChildInbox(
       IMessage inner,
       IMessageEnvelope source,

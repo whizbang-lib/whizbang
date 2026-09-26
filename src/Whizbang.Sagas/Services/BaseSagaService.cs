@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using Whizbang.Sagas.Helpers;
 using Whizbang.Sagas.Models;
@@ -35,6 +36,7 @@ namespace Whizbang.Sagas.Services;
 /// </para>
 /// </remarks>
 public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStarted, TItemCompleted, TItemFailed, TCompleted, TReset, THookStarted, THookCompleted>
+  : ISagaWatchdogParticipant
   where TInit : class, ISagaInitiatedEvent
   where TItemsDispatched : class, ISagaItemsDispatchedEvent
   where TItemStarted : class, ISagaItemStartedEvent
@@ -78,6 +80,13 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
 
   /// <summary>The saga name this service emits events for — matches the value supplied to <c>[Saga("Name")]</c>.</summary>
   protected string SagaName => _sagaName;
+
+  /// <summary>
+  /// The name the framework's watchdog router addresses this saga's ticks to. Implemented
+  /// explicitly so it neither shadows <see cref="SagaName"/> nor the <c>SagaName</c> constant that
+  /// <c>[Saga]</c>-generated receptors bind to.
+  /// </summary>
+  string ISagaWatchdogParticipant.SagaName => _sagaName;
 
   /// <summary>
   /// Backwards-compatible constructor that wires only the emitter + logger.
@@ -324,6 +333,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// not yet at terminal).
   /// </returns>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogAsyncTests.cs</tests>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Recovery tries the in-memory tracker first and falls back to the projection, and the fallback has its own reasons not to run: no loader, the saga gone, completion already dispatched, no items, or counts not yet terminal. The two paths and their exits are the recovery contract the summary describes.")]
   public virtual async Task<bool> TryRecoverViaWatchdogAsync(SagaContext ctx, CancellationToken cancellationToken) {
     cancellationToken.ThrowIfCancellationRequested();
 
@@ -484,6 +494,25 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     var now = DateTimeOffset.UtcNow;
 
     var (nextDelay, nextStallCount, shouldAbandon) = _computeAdaptiveNextDelay(tick, currentAgg, now);
+    if (shouldAbandon && await _resolveStrandedItemsAsync(ctx, cancellationToken).ConfigureAwait(false) > 0) {
+      // Stranded items were failed or re-dispatched. Complete now if that finished the saga, and
+      // otherwise wake again with the stall count reset, so the new terminal events have time to
+      // reach the projection before the saga is judged stuck a second time.
+      if (await TryRecoverViaWatchdogAsync(ctx, cancellationToken).ConfigureAwait(false)) {
+        return WatchdogTickOutcome.Recovered;
+      }
+      await _emitter.PublishAsync(new SagaCompletionWatchdogTickEvent {
+        StreamId = tick.StreamId,
+        SagaName = tick.SagaName,
+        EntityId = tick.EntityId,
+        RescheduleCount = tick.RescheduleCount + 1,
+        LastObservedAt = now,
+        LastObservedCompleted = currentAgg?.Completed ?? 0,
+        LastObservedFailed = currentAgg?.Failed ?? 0,
+        ConsecutiveStallCount = 0,
+      }, now + _options.MinWatchdogDelay).ConfigureAwait(false);
+      return WatchdogTickOutcome.ReArmed;
+    }
     if (shouldAbandon) {
       var abandoned = new SagaCompletionAbandonedEvent {
         StreamId = tick.StreamId,
@@ -508,6 +537,163 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     await _emitter.PublishAsync(next, now + nextDelay).ConfigureAwait(false);
     return WatchdogTickOutcome.ReArmed;
   }
+
+  /// <summary>
+  /// The sagas the stranded-saga sweep should consider: this service's incomplete sagas, each with its
+  /// tenant.
+  /// </summary>
+  /// <remarks>
+  /// Override to enumerate them from the saga projection, across tenants. The default returns none,
+  /// and the sweep then does nothing for this saga, which is how every saga service behaved before
+  /// the sweep existed. Returning sagas that are already complete is harmless; they are skipped.
+  /// </remarks>
+  /// <param name="cancellationToken">Cancels the read.</param>
+  /// <returns>The incomplete sagas, each with its tenant.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs</tests>
+  protected virtual Task<IReadOnlyList<IncompleteSaga>> LoadIncompleteSagasAsync(CancellationToken cancellationToken)
+    => Task.FromResult<IReadOnlyList<IncompleteSaga>>([]);
+
+  /// <inheritdoc cref="ISagaWatchdogParticipant.ArmStrandedSagasAsync"/>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs</tests>
+  public virtual async Task<int> ArmStrandedSagasAsync(ISagaWakeLookup wakes, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(wakes);
+
+    var candidates = (await LoadIncompleteSagasAsync(cancellationToken).ConfigureAwait(false))
+      .Where(c => !c.Saga.CompletionEventDispatched && c.Saga.TotalItems > 0)
+      .ToList();
+    if (candidates.Count == 0) {
+      return 0;
+    }
+
+    // One question for the whole set. Unknown is answered as "a tick is coming": arming beside a live
+    // chain doubles it forever, while leaving a stranded saga for the next sweep costs one interval.
+    var pending = await wakes.WithPendingWakeAsync([.. candidates.Select(c => c.Saga.Id)], cancellationToken)
+      .ConfigureAwait(false);
+    if (pending is null) {
+      return 0;
+    }
+
+    var now = DateTimeOffset.UtcNow;
+    var armed = 0;
+    foreach (var (saga, tenantId) in candidates.Where(c => !pending.Contains(c.Saga.Id))) {
+      var lastActivity = await _lastActivityAsync(saga, cancellationToken).ConfigureAwait(false);
+      if (now - lastActivity < _options.StrandedSagaIdleGuard) {
+        continue;
+      }
+      if (await _armStrandedAsync(saga, tenantId, lastActivity, now, cancellationToken).ConfigureAwait(false)) {
+        armed++;
+      }
+    }
+    return armed;
+  }
+
+  /// <summary>The newest change to the saga or any of its items.</summary>
+  private async Task<DateTimeOffset> _lastActivityAsync(BaseSagaModel saga, CancellationToken cancellationToken) {
+    var itemActivity = _itemRepository is null
+      ? null
+      : await _itemRepository.GetLastActivityAsync(saga.Id, cancellationToken).ConfigureAwait(false);
+    return itemActivity > saga.UpdatedAt ? itemActivity.Value : saga.UpdatedAt;
+  }
+
+  /// <summary>
+  /// Arms one tick for a stranded saga, already at the stall limit: the saga has been still for longer
+  /// than a whole stall count, so the tick resolves stranded items on arrival instead of serving that
+  /// count again. Claimed on the saga and the time of its last change, so every instance and restart
+  /// sweeping the same stop arrive at one tick, and a saga that moves and stops again gets one more.
+  /// </summary>
+  private async Task<bool> _armStrandedAsync(
+      BaseSagaModel saga, string? tenantId, DateTimeOffset lastActivity, DateTimeOffset now, CancellationToken cancellationToken) {
+    var agg = _itemRepository is null
+      ? null
+      : await _itemRepository.GetAggregateForSagaAsync(saga.Id, cancellationToken).ConfigureAwait(false);
+    var tick = new SagaCompletionWatchdogTickEvent {
+      StreamId = saga.Id,
+      SagaName = _sagaName,
+      EntityId = saga.EntityId ?? Guid.Empty,
+      LastObservedAt = now,
+      LastObservedCompleted = agg?.Completed ?? saga.CompletedItems,
+      LastObservedFailed = agg?.Failed ?? saga.FailedItems,
+      ConsecutiveStallCount = Math.Max(0, _options.MaxConsecutiveStalls - 1),
+    };
+    var claimKey = $"saga-watchdog-sweep:{_sagaName}:{saga.Id:N}:{lastActivity.UtcTicks}";
+    return await _emitter.PublishOnceInTenantAsync(tenantId, claimKey, tick, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>Why a stranded item is failed; carried on the item's failed event.</summary>
+  private const string STRANDED_ITEM_MESSAGE =
+    "No terminal event was recorded for this item across every watchdog check before the stall limit; " +
+    "the worker processing it was most likely lost.";
+
+  /// <summary>
+  /// Resolves items left non-terminal once the saga has made no progress across the stall limit.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// At the stall limit no item has moved across every watchdog check. An item still non-terminal
+  /// then, with no terminal event in its per-item stream either, was being processed by a worker
+  /// that no longer exists: the message that would finish it went with the worker, so nothing will
+  /// retry it and nothing will dead-letter it. Left alone, the saga could only be abandoned —
+  /// discarding every item that did finish.
+  /// </para>
+  /// <para>
+  /// Each such item is offered to <see cref="TryRedriveStrandedItemAsync"/>; one that is not
+  /// re-dispatched is failed with a reason, so the saga completes with the failure visible instead of
+  /// hanging on it. An item the store already records as terminal is skipped: there the projection
+  /// is merely behind, which the reconciler resolves. Without an item repository nothing can be
+  /// enumerated, and the saga is abandoned exactly as before.
+  /// </para>
+  /// </remarks>
+  /// <returns>How many items were failed or re-dispatched.</returns>
+  private async Task<int> _resolveStrandedItemsAsync(SagaContext ctx, CancellationToken cancellationToken) {
+    if (_itemRepository is null) {
+      return 0;
+    }
+
+    var items = await _itemRepository.GetItemsAsync(ctx.SagaId, cancellationToken).ConfigureAwait(false);
+    var resolved = 0;
+    foreach (var item in items.Where(i => i.State is SagaItemState.Pending or SagaItemState.Running)) {
+      if (_terminalReader is not null) {
+        var stored = await _terminalReader.CheckAsync(SagaItemStreams.Of(ctx.SagaId, item.ItemIdentifier), cancellationToken)
+          .ConfigureAwait(false);
+        if (stored != SagaItemTerminalOutcome.NotTerminal) {
+          continue;
+        }
+      }
+
+      if (!await TryRedriveStrandedItemAsync(ctx, item, cancellationToken).ConfigureAwait(false)) {
+        await FailItemAsync(
+          ctx,
+          item.ItemIdentifier,
+          STRANDED_ITEM_MESSAGE,
+          $"Started {item.StartedAt:O}; attempts {item.AttemptCount}; state {item.State}.",
+          item.DisplayName,
+          cancellationToken).ConfigureAwait(false);
+      }
+      resolved++;
+    }
+    return resolved;
+  }
+
+  /// <summary>
+  /// Offers a stranded item back to the saga service before it is failed.
+  /// </summary>
+  /// <remarks>
+  /// Called when the saga has made no progress across the watchdog's stall limit and this item has no
+  /// terminal event anywhere — its worker was most likely lost. A service that can safely re-dispatch
+  /// the item's work (its handler is idempotent) should do so and return <see langword="true"/>; the
+  /// item then stays in progress and the watchdog keeps watching. The default returns
+  /// <see langword="false"/>, and the item is failed with a reason so the saga can finish.
+  /// </remarks>
+  /// <param name="ctx">The saga the item belongs to.</param>
+  /// <param name="item">The stranded item, as the item projection last recorded it.</param>
+  /// <param name="cancellationToken">Cancels the attempt.</param>
+  /// <returns><see langword="true"/> when the item's work was re-dispatched.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-items</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_ConsumerRedrivesTheItem_ItIsNotFailedAsync</tests>
+  protected virtual Task<bool> TryRedriveStrandedItemAsync(SagaContext ctx, SagaItemModel item, CancellationToken cancellationToken)
+    => Task.FromResult(false);
 
   /// <summary>
   /// Adaptive next-tick delay computation. Three branches:

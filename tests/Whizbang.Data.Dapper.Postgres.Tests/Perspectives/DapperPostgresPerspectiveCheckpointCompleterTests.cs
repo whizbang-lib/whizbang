@@ -63,8 +63,8 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
 
   private static async Task<(Guid streamId, Guid eventId)> _seedStreamWithEventAsync(
       NpgsqlConnection conn, int version = 1) {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _seedEventStoreRowAsync(conn, eventId, streamId, version);
     return (streamId, eventId);
   }
@@ -167,7 +167,7 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var (goodStream, goodEvent) = await _seedStreamWithEventAsync(conn);
-    var skippedStream = (Guid)TrackedGuid.NewMedo();
+    var skippedStream = (Guid)TrackedGuid.New();
 
     var completer = new DapperPostgresPerspectiveCheckpointCompleter(ConnectionString);
     await completer.CompleteAsync([
@@ -188,7 +188,7 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
   public async Task CompleteAsync_WithAllEmptyGuidCompletions_WritesNoRowsAsync() {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     var completer = new DapperPostgresPerspectiveCheckpointCompleter(ConnectionString);
     // Non-empty list but every completion is skipped — the transaction commits with no inserts.
@@ -206,7 +206,7 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var (streamId, firstEvent) = await _seedStreamWithEventAsync(conn, version: 1);
-    var secondEvent = (Guid)TrackedGuid.NewMedo();
+    var secondEvent = (Guid)TrackedGuid.New();
     await _seedEventStoreRowAsync(conn, secondEvent, streamId, version: 2);
 
     // Seed a pre-existing cursor stuck in Processing, pointing at the first event, with a stale

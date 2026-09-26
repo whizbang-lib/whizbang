@@ -211,8 +211,8 @@ public class PerspectiveRowSweepTests {
 
     await _buildWorker(coordinator, guard).RunMaintenanceOnceAsync(CancellationToken.None);
 
-    var cancelHold = coordinator.Held.Single(h => h.Row.RowId == canceled);
-    await Assert.That(cancelHold.Until).IsEqualTo(DateTimeOffset.MaxValue)
+    var (_, Until) = coordinator.Held.Single(h => h.Row.RowId == canceled);
+    await Assert.That(Until).IsEqualTo(DateTimeOffset.MaxValue)
       .Because("Cancel keeps the row indefinitely — the explicit, observable leak-risk decision");
     var deferHold = coordinator.Held.Single(h => h.Row.RowId == deferred);
     await Assert.That(deferHold.Until).IsEqualTo(until);

@@ -209,18 +209,15 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    var wantsSubstring = JsonIndexDiscovery.IncludesSubstring(declared);
-    var wantsFolding = JsonIndexDiscovery.DeclaresCaseInsensitive(property);
+    var asked = string.Join(" and ", new[] {
+      JsonIndexDiscovery.IncludesSubstring(declared) ? "substring matching" : null,
+      JsonIndexDiscovery.IncludesSearch(declared) ? "search" : null,
+      JsonIndexDiscovery.DeclaresCaseInsensitive(property) ? "case folding" : null,
+    }.Where(c => c is not null));
 
-    if (!wantsSubstring && !wantsFolding) {
+    if (asked.Length == 0) {
       return;
     }
-
-    var asked = (wantsSubstring, wantsFolding) switch {
-      (true, true) => "substring matching and case folding",
-      (true, false) => "substring matching",
-      _ => "case folding",
-    };
 
     context.ReportDiagnostic(Diagnostic.Create(
         DeclaredCapabilityDoesNotApply,

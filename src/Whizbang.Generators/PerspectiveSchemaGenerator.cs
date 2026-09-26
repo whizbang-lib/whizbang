@@ -126,10 +126,13 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
     var modelType = perspectiveInterfaces[0].TypeArguments[0];
     var modelClassName = modelType.Name;
-    // Use shared utility to include inherited properties from base model classes
+    // Use shared utility to include inherited properties from base model classes. A model type that
+    // is NOT a named type — an array (IPerspectiveFor<TModel> only constrains TModel to `class`, which
+    // an array satisfies), a type parameter — declares no member symbols at all in Roslyn, so there is
+    // nothing to enumerate and the row is sized at the base JSON overhead alone.
     var modelProperties = modelType is INamedTypeSymbol namedModelType
         ? namedModelType.GetAllProperties().ToList()
-        : [.. modelType.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic)];
+        : [];
 
     var propertyCount = modelProperties.Count;
     var estimatedSize = _estimateJsonSize(propertyCount);
@@ -430,17 +433,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       perspectiveSqlBuilder.AppendLine(tableCode);
       perspectiveSqlBuilder.AppendLine();
 
-      // Generate standard indexes from snippet
-      var indexesCode = createIndexesSnippet
-          .Replace("__TABLE_NAME__", perspective.TableName);
-
-      perspectiveSqlBuilder.AppendLine(indexesCode);
-
-      // Generate physical field indexes
-      var physicalIndexesSql = _generatePhysicalIndexesSql(perspective.TableName, perspective.PhysicalFields);
-      if (!string.IsNullOrEmpty(physicalIndexesSql)) {
-        perspectiveSqlBuilder.AppendLine(physicalIndexesSql);
-      }
+      _appendPostTableSql(perspectiveSqlBuilder, perspective, createIndexesSnippet);
 
       // Collect per-perspective entry
       perspectiveEntries.Add((perspective.ClassName, perspectiveSqlBuilder.ToString()));
@@ -499,6 +492,42 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates SQL column definitions for physical fields.
   /// </summary>
+  /// <summary>
+  /// The DDL that follows a perspective's table: its standard and physical-field indexes, its length
+  /// constraints, and the backfill of each physical column from the document. Post-table, so a column-copy
+  /// migration runs it against the swapped-in table.
+  /// </summary>
+  private static void _appendPostTableSql(
+      StringBuilder perspectiveSqlBuilder, PerspectiveSchemaInfo perspective, string createIndexesSnippet) {
+    // Generate standard indexes from snippet
+    var indexesCode = createIndexesSnippet
+        .Replace("__TABLE_NAME__", perspective.TableName);
+
+    perspectiveSqlBuilder.AppendLine(indexesCode);
+
+    // Generate physical field indexes
+    var physicalIndexesSql = _generatePhysicalIndexesSql(perspective.TableName, perspective.PhysicalFields);
+    if (!string.IsNullOrEmpty(physicalIndexesSql)) {
+      perspectiveSqlBuilder.AppendLine(physicalIndexesSql);
+    }
+
+    var lengthConstraintsSql = _generateLengthConstraintsSql(perspective.TableName, perspective.PhysicalFields);
+    if (!string.IsNullOrEmpty(lengthConstraintsSql)) {
+      perspectiveSqlBuilder.AppendLine(lengthConstraintsSql);
+    }
+
+    // Fill each physical column from the document for rows written before it existed. Post-table DDL, so
+    // a column-copy migration runs it against the swapped-in table; idempotent, so a re-apply finds
+    // nothing to do. The same statements the EF Core schema emits, so both drivers agree.
+    var isSplit = perspective.StorageMode == GeneratorFieldStorageMode.Split;
+    foreach (var field in perspective.PhysicalFields) {
+      var backfill = PhysicalColumnSql.Backfill(perspective.TableName, field with { IsSplit = isSplit });
+      if (backfill is not null) {
+        perspectiveSqlBuilder.AppendLine(backfill);
+      }
+    }
+  }
+
   private static string _generatePhysicalColumnsSql(PhysicalFieldInfo[] physicalFields) {
     if (physicalFields.Length == 0) {
       return string.Empty;
@@ -526,6 +555,50 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// <summary>
   /// Maps a physical field to its PostgreSQL column type.
   /// </summary>
+  /// <summary>
+  /// The declared length of a promoted text column, as a constraint rather than as the column type.
+  /// </summary>
+  /// <remarks>
+  /// In PostgreSQL a length-limited type is a constraint and nothing else, storage and performance
+  /// being identical. This schema is applied to databases that already exist as well as to new ones,
+  /// and only ever adds, so a limited type would constrain the new while leaving the established
+  /// alone. A check constraint is additive and reaches both; NOT VALID leaves the rows already there
+  /// unscanned, so there is no rewrite and no long lock, and every row written from then on is
+  /// checked. A null is not a violation, because length(NULL) is NULL and a check passes unless it
+  /// is false.
+  /// </remarks>
+  /// <param name="tableName">The perspective's table.</param>
+  /// <param name="fields">The promoted fields.</param>
+  /// <returns>The constraint statements, or an empty string when no length was declared.</returns>
+  private static string _generateLengthConstraintsSql(
+      string tableName, IReadOnlyList<PhysicalFieldInfo> fields) {
+    var sb = new StringBuilder();
+
+    foreach (var field in fields) {
+      if (field.MaxLength is not { } maxLength || field.IsVector || !string.IsNullOrWhiteSpace(field.ColumnType)) {
+        continue;
+      }
+
+      var typeName = field.TypeName.Replace("global::", "").TrimEnd('?');
+      if (typeName is not ("System.String" or "string")) {
+        continue;
+      }
+
+      // PostgreSQL has no ADD CONSTRAINT IF NOT EXISTS, and this script is applied on every start,
+      // so re-running it has to be silent.
+      var name = $"ck_{tableName}_{field.ColumnName}_len";
+      sb.AppendLine("DO $$ BEGIN");
+      sb.AppendLine($"  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '{name}'");
+      sb.AppendLine($"    AND conrelid = '{tableName}'::regclass) THEN");
+      sb.AppendLine($"    ALTER TABLE {tableName} ADD CONSTRAINT {name}");
+      sb.AppendLine($"      CHECK (length({field.ColumnName}) <= {maxLength}) NOT VALID;");
+      sb.AppendLine("  END IF;");
+      sb.AppendLine("END $$;");
+    }
+
+    return sb.ToString();
+  }
+
   private static string _mapToPostgresType(PhysicalFieldInfo field) {
     if (field.IsVector && field.VectorDimensions.HasValue) {
       return $"vector({field.VectorDimensions.Value})";
@@ -545,9 +618,10 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         .TrimEnd('?');
 
     return typeName switch {
-      "System.String" or "string" => field.MaxLength.HasValue
-          ? $"VARCHAR({field.MaxLength.Value})"
-          : "TEXT",
+      // A declared length is carried by a check constraint rather than by the column's type, so the
+      // column is text here as it is in the table. Claiming a limited type while the table holds
+      // text is what made the model and the database describe different columns.
+      "System.String" or "string" => "TEXT",
       "System.Int32" or "int" => "INTEGER",
       "System.Int64" or "long" => "BIGINT",
       "System.Int16" or "short" => "SMALLINT",

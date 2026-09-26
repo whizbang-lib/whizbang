@@ -119,7 +119,7 @@ public class CompositeFanoutPersistenceIntegrationTests {
   [Test]
   public async Task OwnedComposite_PublishedThroughRealDispatcher_IsNameResolvable_And_PersistsProducedInnerEventAsync() {
     var (dispatcher, strategy) = _createOwnedCompositeDispatcher();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     await dispatcher.PublishAsync(_newComposite(streamId));
 
@@ -160,7 +160,7 @@ public class CompositeFanoutPersistenceIntegrationTests {
     // without persisting — no exception, no Warning — so a composite whose stream-creating inner event is
     // not receptor-produced never materializes its read-model instance.
     var (dispatcher, strategy) = _createOwnedCompositeDispatcher();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     await dispatcher.PublishAsync(_newComposite(streamId));
 

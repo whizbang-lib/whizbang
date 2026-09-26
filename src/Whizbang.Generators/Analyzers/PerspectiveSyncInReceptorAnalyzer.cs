@@ -74,15 +74,13 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    // Check if the method belongs to IPerspectiveSyncAwaiter
+    // Check if the method belongs to IPerspectiveSyncAwaiter, matching on the type name so it works
+    // for both the interface and the concrete class. A target method with no containing type has no
+    // name to match, so that guard shares this exit instead of standing on its own line.
     var containingType = invocation.TargetMethod.ContainingType;
-    if (containingType is null) {
-      return;
-    }
-
-    // Match on type name — works for both the interface and the concrete class
-    var typeName = TypeNameUtilities.Display(containingType);
-    if (!typeName.Contains("PerspectiveSyncAwaiter") && !typeName.Contains("IPerspectiveSyncAwaiter")) {
+    var typeName = containingType is null ? null : TypeNameUtilities.Display(containingType);
+    if (typeName is null
+        || (!typeName.Contains("PerspectiveSyncAwaiter") && !typeName.Contains("IPerspectiveSyncAwaiter"))) {
       return;
     }
 

@@ -150,7 +150,7 @@ promised depended on which wait the worker happened to be in.
 
 - Core: `cd tests/Whizbang.Core.Tests && dotnet run --no-build -- --treenode-filter "/*/*/<Class>/*"`.
 - EF Core (Docker required): same in `tests/Whizbang.Data.EFCore.Postgres.Tests`.
-- The plan with the RED/GREEN record: `plans/startup-hardening-619-620-621-630-636.md`.
+- The plan with the RED/GREEN record: `plans/archive/startup-hardening-619-620-621-630-636.md`.
 - Docs pages: `fundamentals/dispatcher/routing#owned-and-subscribed`,
   `data/turnkey-initialization#idempotency`, `operations/startup/rolling-upgrades#assess`,
   `data/drivers#bring-your-own-dbcontext`, `messaging/work-coordinator#local-service-identity`,

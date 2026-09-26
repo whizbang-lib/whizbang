@@ -204,11 +204,11 @@ git push origin feature/my-feature
 
 ## Release Process
 
-For maintainers preparing releases, see [.github/RELEASE.md](.github/RELEASE.md) for the complete release checklist covering:
-- Alpha, Beta, and GA release phases
-- Exit criteria for each phase
-- Quality gates and validation steps
-- Publishing workflow
+Releases follow [docs/RELEASING.md](docs/RELEASING.md), the single source of truth for how Whizbang
+is versioned and published: alpha from `develop` on every merge, beta and rc from an open
+`release/vX.Y.Z` branch, stable when the release PR merges, and hotfixes. It lists every supported
+flow and how to recover when one goes wrong. AI sessions follow the same rules through the `release`
+skill (`.claude/skills/release/SKILL.md`).
 
 ## Community
 

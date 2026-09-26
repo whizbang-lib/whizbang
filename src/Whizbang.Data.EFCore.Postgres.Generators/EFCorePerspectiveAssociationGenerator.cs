@@ -56,12 +56,11 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
     var semanticModel = context.SemanticModel;
 
 
-    if (semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
-      return null;
-    }
-
-    // Skip abstract classes - they can't be instantiated
-    if (classSymbol.IsAbstract) {
+    // Skip abstract classes - they can't be instantiated. The bind guard shares that exit: a
+    // declaration Roslyn bound no named type for is no more instantiable, and the symbol is never
+    // dereferenced.
+    if (semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol
+        || classSymbol.IsAbstract) {
       return null;
     }
 

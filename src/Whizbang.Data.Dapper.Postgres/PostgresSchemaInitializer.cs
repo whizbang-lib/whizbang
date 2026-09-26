@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -36,6 +38,7 @@ public sealed class PostgresSchemaInitializer {
   private readonly KeyValuePair<string, string>[]? _perspectiveEntries;
   private readonly IMigrationProvider _migrationProvider;
   private readonly string? _applicationVersion;
+  private readonly IApplicationSchemaObjects? _applicationObjects;
 
   public PostgresSchemaInitializer(string connectionString, string? perspectiveSchemaSql = null)
     : this(connectionString, perspectiveSchemaSql, new PostgresMigrationProvider()) {
@@ -60,10 +63,12 @@ public sealed class PostgresSchemaInitializer {
       string connectionString,
       KeyValuePair<string, string>[] perspectiveEntries,
       IMigrationProvider? migrationProvider = null,
-      string? applicationVersion = null)
+      string? applicationVersion = null,
+      IApplicationSchemaObjects? applicationObjects = null)
     : this(connectionString, perspectiveSchemaSql: null, migrationProvider ?? new PostgresMigrationProvider()) {
     _perspectiveEntries = perspectiveEntries ?? throw new ArgumentNullException(nameof(perspectiveEntries));
     _applicationVersion = applicationVersion;
+    _applicationObjects = applicationObjects;
   }
 
   /// <summary>
@@ -92,6 +97,12 @@ public sealed class PostgresSchemaInitializer {
     // Execute migration SQL files with hash-based change detection
     await _executeMigrationsWithHashDetectionAsync(connection, cancellationToken);
 
+    // An application's own objects, before anything of its perspectives exists. This is the slot an
+    // immutable function behind an expression index needs: the function has to be there before the
+    // index that calls it is created, and the index is created by the perspective pass below.
+    await _executeApplicationObjectsAsync(
+      connection, _applicationObjects?.BeforePerspectives, "before", cancellationToken);
+
     // Execute perspective schema — per-perspective hash tracking if entries provided, else legacy single-string
     if (_perspectiveEntries is { Length: > 0 }) {
       await _executePerspectiveMigrationsAsync(connection, cancellationToken);
@@ -100,6 +111,76 @@ public sealed class PostgresSchemaInitializer {
       perspectiveCommand.CommandText = _perspectiveSchemaSql;
       perspectiveCommand.CommandTimeout = 30;
       await perspectiveCommand.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    // And the objects that refer to a perspective's table, which can only be created now that the
+    // tables are there.
+    await _executeApplicationObjectsAsync(
+      connection, _applicationObjects?.AfterPerspectives, "after", cancellationToken);
+  }
+
+  /// <summary>
+  /// Applies one slot of an application's own objects, skipping any whose SQL has not changed.
+  /// </summary>
+  /// <remarks>
+  /// Recorded in the same ledger as everything else, under a name that says which slot it came from,
+  /// so a reader of the ledger can see where in the sequence an object was applied rather than
+  /// having to know. Skipping on an unchanged hash is what makes contributing an object cost nothing
+  /// on later starts.
+  /// </remarks>
+  /// <param name="connection">An open connection.</param>
+  /// <param name="objects">The slot's objects, or null when the application contributed none.</param>
+  /// <param name="slot">Which slot, for the ledger entry.</param>
+  /// <param name="cancellationToken">The token.</param>
+  private async Task _executeApplicationObjectsAsync(
+      NpgsqlConnection connection,
+      IReadOnlyList<ApplicationSchemaObject>? objects,
+      string slot,
+      CancellationToken cancellationToken) {
+    if (objects is not { Count: > 0 }) {
+      return;
+    }
+
+    var versionId = await _upsertVersionAsync(connection, cancellationToken);
+
+    foreach (var owned in objects) {
+      var name = $"app:{slot}:{owned.Name}";
+      var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(owned.Sql)));
+      var existingHash = await _getExistingHashAsync(connection, name, cancellationToken);
+
+      if (existingHash == hash) {
+        await _updateMigrationStatusAsync(connection, name, versionId, 3, "Skipped (hash unchanged)", cancellationToken);
+        continue;
+      }
+
+      await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+      Exception? failure = null;
+      try {
+        await using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = owned.Sql;
+        cmd.CommandTimeout = 30;
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+
+        await _upsertMigrationAsync(connection,
+          new MigrationRecord(name, hash, versionId, existingHash is null ? 1 : 2,
+            existingHash is null ? "First apply" : "Re-applied after change"),
+          cancellationToken, transaction);
+        await transaction.CommitAsync(cancellationToken);
+      } catch (Exception ex) {
+        // Captured rather than rethrown here, for the reason the two migration paths above give:
+        // a rethrow from an async catch that also awaits leaves the brace's sequence point on
+        // state-machine cleanup nothing reaches. The order is unchanged -- roll back, record the
+        // failure on the connection the rollback did not touch, propagate.
+        failure = ex;
+        await transaction.RollbackAsync(cancellationToken);
+        await _upsertMigrationAsync(connection,
+          new MigrationRecord(name, hash, versionId, -1, $"Failed: {ex.Message}"), cancellationToken);
+      }
+
+      if (failure is not null) {
+        ExceptionDispatchInfo.Capture(failure).Throw();
+      }
     }
   }
 
@@ -130,16 +211,14 @@ public sealed class PostgresSchemaInitializer {
       return false;
     }
 
-    // Extract the original table name from backup name (remove _bak_<date> suffix)
+    // Extract the original table name from backup name (remove _bak_<date> suffix). The suffix is
+    // what the query matched on, so a missing marker shares the identifier guard's exit rather than
+    // getting a `return false` of its own that no row selected by that LIKE can reach.
     var bakIdx = backupTableName.LastIndexOf("_bak_", StringComparison.Ordinal);
-    if (bakIdx < 0) {
-      return false;
-    }
-
-    var originalTableName = backupTableName[..bakIdx];
+    var originalTableName = bakIdx < 0 ? null : backupTableName[..bakIdx];
 
     // Validate all identifiers before using in DDL
-    if (!_isSafeIdentifier(originalTableName) || !_isSafeIdentifier(backupTableName)) {
+    if (originalTableName is null || !_isSafeIdentifier(originalTableName) || !_isSafeIdentifier(backupTableName)) {
       return false;
     }
 
@@ -338,6 +417,7 @@ public sealed class PostgresSchemaInitializer {
     return dropped;
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Deciding what to run compares each migration's recorded hash against the file, then pulls in the redefinition closure of whatever drifted. Both passes walk the same ordered list, and the second depends on what the first found.")]
   private async Task _executeMigrationsWithHashDetectionAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
     var migrations = _migrationProvider.GetMigrations();
     if (migrations.Count == 0) {
@@ -403,6 +483,7 @@ public sealed class PostgresSchemaInitializer {
       // the rollback, because a row recorded inside the doomed transaction would roll back with it
       // and leave the failure invisible.
       await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+      Exception? failure = null;
       try {
         await using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
@@ -424,12 +505,21 @@ public sealed class PostgresSchemaInitializer {
             cancellationToken, transaction);
         await transaction.CommitAsync(cancellationToken);
       } catch (Exception ex) {
+        // Captured rather than rethrown here. A rethrow from an async catch that also awaits
+        // makes the compiler hoist this handler out of the IL catch region and rewrite
+        // `throw;` as a capture-and-throw; the brace's sequence point then lands on
+        // state-machine cleanup nothing reaches. Throwing after the block keeps the same
+        // order — roll back, record the failure, propagate — with no unreachable line.
+        failure = ex;
         await transaction.RollbackAsync(cancellationToken);
         // Record failure on the connection with no ambient transaction, so it survives the rollback.
         await _upsertMigrationAsync(connection,
             new MigrationRecord(migration.Name, hash, versionId, -1, $"Failed: {ex.Message}"),
             cancellationToken);
-        throw; // Re-throw to halt migration
+      }
+
+      if (failure is not null) {
+        ExceptionDispatchInfo.Capture(failure).Throw();   // halt migration
       }
     }
   }
@@ -468,22 +558,14 @@ public sealed class PostgresSchemaInitializer {
     }
 
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+    Exception? failure = null;
     try {
+      // Event-replay and direct-DDL run the SAME statement; only the ledger entry differs (status 4
+      // "migrating in background" versus a plain apply). Running them through one arm keeps the two
+      // copies of the execute block from drifting apart, and drops an early return that left the
+      // branch it closed with a line the async rewriter emits after the return and nothing reaches.
       if (strategy == MigrationStrategy.ColumnCopy) {
         await _migrateTableColumnCopyAsync(connection, transaction, entry.Value, tableName!, cancellationToken);
-      } else if (strategy == MigrationStrategy.EventReplay) {
-        await using var cmd = connection.CreateCommand();
-        cmd.Transaction = transaction;
-        cmd.CommandText = entry.Value;
-        cmd.CommandTimeout = 30;
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
-
-        await _upsertMigrationAsync(connection,
-          new MigrationRecord(perspectiveName, hash, versionId, 4,
-            $"MigratingInBackground from hash {existingHash![..8]}... (destructive change detected, event replay required)"),
-          cancellationToken, transaction);
-        await transaction.CommitAsync(cancellationToken);
-        return;
       } else {
         await using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
@@ -492,21 +574,35 @@ public sealed class PostgresSchemaInitializer {
         await cmd.ExecuteNonQueryAsync(cancellationToken);
       }
 
-      var status = isUpdate ? 2 : 1;
-      var desc = isUpdate
+      var eventReplay = strategy == MigrationStrategy.EventReplay;
+      var appliedStatus = isUpdate ? 2 : 1;
+      var appliedDesc = isUpdate
         ? $"Updated from hash {existingHash![..8]}... (strategy: {strategy})"
         : "First apply";
+      var status = eventReplay ? 4 : appliedStatus;
+      var desc = eventReplay
+        ? $"MigratingInBackground from hash {existingHash![..8]}... (destructive change detected, event replay required)"
+        : appliedDesc;
 
       await _upsertMigrationAsync(connection,
         new MigrationRecord(perspectiveName, hash, versionId, status, desc),
         cancellationToken, transaction);
       await transaction.CommitAsync(cancellationToken);
     } catch (Exception ex) {
+      // Captured rather than rethrown here. A rethrow from an async catch that also awaits
+      // makes the compiler hoist this handler out of the IL catch region and rewrite
+      // `throw;` as a capture-and-throw; the brace's sequence point then lands on
+      // state-machine cleanup nothing reaches. Throwing after the block keeps the same
+      // order — roll back, record the failure, propagate — with no unreachable line.
+      failure = ex;
       await transaction.RollbackAsync(cancellationToken);
       await _upsertMigrationAsync(connection,
         new MigrationRecord(perspectiveName, hash, versionId, -1, $"Failed: {ex.Message}"),
         cancellationToken);
-      throw;
+    }
+
+    if (failure is not null) {
+      ExceptionDispatchInfo.Capture(failure).Throw();
     }
   }
 
@@ -759,14 +855,13 @@ public sealed class PostgresSchemaInitializer {
         @"(CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+\s*\(.*?\)\s*;)",
         RegexOptions.Singleline | RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
 
-    if (!createTableMatch.Success) {
-      return (ddlSql, string.Empty);
-    }
-
-    var createTableSql = createTableMatch.Groups[1].Value;
-    var postTableSql = ddlSql[(createTableMatch.Index + createTableMatch.Length)..].Trim();
-
-    return (createTableSql, postTableSql);
+    // DDL this cannot split comes back whole with nothing after it. That arm shares the statement
+    // rather than owning a line of its own: the only caller is the ColumnCopy strategy, and
+    // _parseColumnsFromDdl selects that strategy with the same "CREATE TABLE … );" match, so a DDL
+    // reaching here has already matched.
+    return createTableMatch.Success
+      ? (createTableMatch.Groups[1].Value, ddlSql[(createTableMatch.Index + createTableMatch.Length)..].Trim())
+      : (ddlSql, string.Empty);
   }
 
   private static async Task _executeSqlAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string sql, CancellationToken ct) {

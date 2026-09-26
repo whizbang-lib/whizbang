@@ -47,7 +47,7 @@ public sealed partial class RabbitMQConnectionRetry {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>An open RabbitMQ connection.</returns>
   /// <exception cref="BrokerUnreachableException">Thrown when all retry attempts are exhausted.</exception>
-  public async Task<IConnection> CreateConnectionWithRetryAsync(
+  public Task<IConnection> CreateConnectionWithRetryAsync(
       string connectionString,
       CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrEmpty(connectionString);
@@ -58,7 +58,9 @@ public sealed partial class RabbitMQConnectionRetry {
       ConsumerDispatchConcurrency = 200 // Allow concurrent ReceivedAsync dispatch for batch collection
     };
 
-    return await CreateConnectionWithRetryAsync(factory, cancellationToken).ConfigureAwait(false);
+    // Hand the overload's task straight back: this method only builds the factory, so an async
+    // state machine here would add a frame that does nothing.
+    return CreateConnectionWithRetryAsync(factory, cancellationToken);
   }
 
   /// <summary>
@@ -69,8 +71,14 @@ public sealed partial class RabbitMQConnectionRetry {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>An open RabbitMQ connection.</returns>
   /// <exception cref="BrokerUnreachableException">Thrown when RetryIndefinitely is false and all initial attempts are exhausted.</exception>
+  /// <remarks>
+  /// Takes the <see cref="IConnectionFactory"/> interface rather than the concrete sealed
+  /// <see cref="ConnectionFactory"/>: the retry, backoff and recovery-logging behavior here is the
+  /// client library's only untestable-by-hand part otherwise, because the concrete factory seals
+  /// its connect method and every attempt would need a live broker.
+  /// </remarks>
   public async Task<IConnection> CreateConnectionWithRetryAsync(
-      ConnectionFactory factory,
+      IConnectionFactory factory,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(factory);
 
@@ -119,7 +127,8 @@ public sealed partial class RabbitMQConnectionRetry {
     if (attempt <= _options.InitialRetryAttempts) {
       _logRetryAttempt(ex, attempt, currentDelay);
     } else if (!_options.RetryIndefinitely) {
-      _logAndRethrowConnectionFailure(ex);
+      _logConnectionFailure(ex);
+      ExceptionDispatchInfo.Throw(ex);
     } else {
       _logIndefiniteRetry(attempt, currentDelay);
     }
@@ -135,13 +144,13 @@ public sealed partial class RabbitMQConnectionRetry {
   }
 
   /// <summary>
-  /// Logs the final failure and rethrows when not retrying indefinitely.
+  /// Logs the final failure. The rethrow stays at the call site: a helper whose last statement
+  /// always throws has an end the compiler still emits and nothing can ever reach.
   /// </summary>
-  private void _logAndRethrowConnectionFailure(BrokerUnreachableException ex) {
+  private void _logConnectionFailure(BrokerUnreachableException ex) {
     if (_logger is not null) {
       LogConnectionFailed(_logger, ex, _options.InitialRetryAttempts);
     }
-    ExceptionDispatchInfo.Throw(ex);
   }
 
   /// <summary>

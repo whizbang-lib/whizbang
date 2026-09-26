@@ -68,7 +68,7 @@ permissions: {}
 
 jobs:
   pack:
-    name: Build & Pack
+    name: Build and pack (manual only)
     # Skipped when the caller supplies an already-tested packages artifact.
     if: ${{ inputs.artifact-name == '' }}
     runs-on: ubuntu-latest
@@ -106,13 +106,13 @@ jobs:
           fi
 
       - name: Upload packages artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nuget-packages-publish-${{ github.run_id }}
           path: ./packages/*.nupkg
 
   push:
-    name: Push (Trusted Publishing)
+    name: Push
     needs: pack
     # pack is skipped (not failed) when artifact-name is supplied; run on skip, stop on failure.
     if: ${{ !failure() && !cancelled() }}
@@ -127,7 +127,7 @@ jobs:
     secrets: inherit
 
   release:
-    name: Tag & GitHub Release
+    name: Tag and GitHub release
     needs: [pack, push]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
@@ -188,7 +188,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: v${{ inputs.version }}
           name: ${{ steps.release_type.outputs.prerelease == 'true' && format('Pre-release v{0}', inputs.version) || format('Release v{0}', inputs.version) }}

@@ -36,6 +36,10 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   private const string ISYNCRECEPTOR_PREFIX = "global::Whizbang.Core.ISyncReceptor";
   private const string IPERSPECTIVE_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
   private const string IPERSPECTIVE_WITH_ACTIONS_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
+
+  // Stripped from fully qualified names before they go into the registry keys, which are
+  // compared against names the runtime builds without the alias qualifier.
+  private const string GLOBAL_PREFIX = "global::";
   private const string ICOMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Minting.ICompositeEvent";
   private const string ICOLLECTIVE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICollectiveEvent";
   private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";
@@ -64,8 +68,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
 
     var taggedTypes = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) =>
-          (node is ClassDeclarationSyntax c && c.AttributeLists.Count > 0)
-          || (node is RecordDeclarationSyntax r && r.AttributeLists.Count > 0),
+          (node is ClassDeclarationSyntax c && c.AttributeLists.Any())
+          || (node is RecordDeclarationSyntax r && r.AttributeLists.Any()),
         transform: static (ctx, ct) => _extractTaggedMessageEntry(ctx, ct)
     ).Where(static name => name is not null);
 
@@ -144,7 +148,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
 
     var messageTypeSymbol = receptorInterface.TypeArguments[0];
     var messageType = TypeNameUtilities.FullyQualified(messageTypeSymbol)
-      .Replace("global::", "");
+      .Replace(GLOBAL_PREFIX, "");
     // Classification is shared with the ownership analyzer (WHIZ151) via
     // CompileTimeMessageClassification — one mirror, no drift.
     var contractNamespace = CompileTimeMessageClassification.ContractNamespaceOf(messageTypeSymbol);
@@ -180,7 +184,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       // IPerspectiveFor<TModel, TEvent1, TEvent2, ...> — first type arg is the model, rest are events
       for (var i = 1; i < iface.TypeArguments.Length; i++) {
         var eventType = TypeNameUtilities.FullyQualified(iface.TypeArguments[i])
-          .Replace("global::", "");
+          .Replace(GLOBAL_PREFIX, "");
         entries.Add(new PerspectiveRegistryEntry(eventType));
       }
     }
@@ -207,7 +211,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     if (!hasTag) {
       return null;
     }
-    return TypeNameUtilities.FullyQualified(symbol).Replace("global::", "");
+    return TypeNameUtilities.FullyQualified(symbol).Replace(GLOBAL_PREFIX, "");
   }
 
   // ===== Discovery: composite events =====
@@ -230,7 +234,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     if (!implementsComposite) {
       return null;
     }
-    return TypeNameUtilities.FullyQualified(symbol).Replace("global::", "");
+    return TypeNameUtilities.FullyQualified(symbol).Replace(GLOBAL_PREFIX, "");
   }
 
   // ===== Discovery: collective events =====
@@ -254,7 +258,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     if (!implementsCollective) {
       return null;
     }
-    return TypeNameUtilities.FullyQualified(symbol).Replace("global::", "");
+    return TypeNameUtilities.FullyQualified(symbol).Replace(GLOBAL_PREFIX, "");
   }
 
   // ===== Emission =====

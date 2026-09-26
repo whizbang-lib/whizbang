@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -477,6 +478,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     return true;
   }
 
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "An upsert decides between insert and update, and along the way whether the stored commit sequence is newer, whether the scope is a complex property, whether an expiry applies, whether the system timestamp column exists, and whether physical field values were supplied. Each is a property of the model being written rather than a step in a sequence.")]
   private async Task _upsertCoreInnerAsync<TModel>(
       DbContext context,
       UpsertRowArgs<TModel> args,

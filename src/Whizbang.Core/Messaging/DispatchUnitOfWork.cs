@@ -6,7 +6,7 @@ namespace Whizbang.Core.Messaging;
 /// <summary>
 /// Tracks a unit of work originating from Dispatcher.PublishAsync or Dispatcher.SendAsync.
 /// Contains messages queued together for a single process_work_batch call.
-/// Unit ID is time-ordered (Uuid7) for chronological processing.
+/// Unit ID is time-ordered (UUIDv7) for chronological processing.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>
@@ -14,8 +14,8 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
 public class DispatchUnitOfWork {
   /// <summary>
-  /// Unique time-ordered identifier for this unit (Uuid7).
-  /// Generated via Uuid7.NewUuid7().ToGuid() for chronological ordering.
+  /// Unique time-ordered identifier for this unit (UUIDv7).
+  /// Generated via TrackedGuid.New() for chronological ordering.
   /// </summary>
   public Guid UnitId { get; init; }
 

@@ -311,6 +311,82 @@ public class JsonContextRegistryCoverageTests {
     await Assert.That(() => JsonContextRegistry.RemoveTypeInfoModifierForTests(null!)).Throws<ArgumentNullException>();
   }
 
+
+  // --- The trial-configure branches of the lazy builders -------------------------------------------
+
+  /// <summary>
+  /// A trial configure builds the same nested list metadata a real configure does, but deliberately
+  /// scratch-bound and uncached. If that branch's object creator were wrong, the trial would still
+  /// pass — a configure never materializes a list — and the defect would surface only when a
+  /// consumer read a composite's inner-event array off the wire, long after startup said the
+  /// contract was fine. Driving the flag directly is the only way to exercise it: the production
+  /// trial thread configures and then discards everything it built.
+  /// </summary>
+  [Test]
+  public async Task GetLazyPolymorphicListTypeInfo_OnATrialThread_StillMaterializesViaObjectCreatorAsync() {
+    JsonContextRegistry.RegisterContext(ListMaterializationJsonContext.Default);
+    JsonContextRegistry.RegisterDerivedType<IListMaterializationBase, ListMaterializationChild>("ListMaterializationChild");
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    JsonTypeInfo<List<IListMaterializationBase>>? trialListTypeInfo;
+    using (JsonContextRegistry.EnterTrialConfigureForTests()) {
+      trialListTypeInfo = JsonContextRegistry.GetLazyPolymorphicListTypeInfo<IListMaterializationBase>(options);
+    }
+
+    var result = JsonSerializer.Deserialize("[]", trialListTypeInfo!);
+
+    await Assert.That(result).IsNotNull()
+      .Because("the scratch-bound list metadata a trial builds must still be able to allocate its list; "
+        + "a trial that validates metadata it could never materialize validates nothing");
+    await Assert.That(result).IsEmpty()
+      .Because("an empty array materializes as an empty list, not as null or a populated one");
+
+    var cachedListTypeInfo = JsonContextRegistry.GetLazyPolymorphicListTypeInfo<IListMaterializationBase>(options);
+    await Assert.That(ReferenceEquals(trialListTypeInfo, cachedListTypeInfo)).IsFalse()
+      .Because("a trial's typeinfo is bound to throwaway scratch state and must never be published "
+        + "into the shared cache, or a later real caller gets metadata bound to a dead options");
+  }
+
+  // --- The refusal when nothing is registered -----------------------------------------------------
+
+  /// <summary>
+  /// A host whose generated contexts were trimmed away, or that deployed the wrong assemblies, ends
+  /// up here. Every serialize and deserialize in the process runs through these options, so the
+  /// alternative to this refusal is a resolver chain that answers null for everything and a wall of
+  /// unrelated "no metadata for type X" failures at the first message. The message is the entire
+  /// diagnosis, which is why it names what to check rather than only what went wrong.
+  /// </summary>
+  [Test]
+  public async Task CreateCombinedOptions_NoProvidersRegistered_RefusesAndSaysWhatToCheckAsync() {
+    var thrown = Assert.Throws<InvalidOperationException>(
+      () => JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Default, []));
+
+    await Assert.That(thrown).IsNotNull()
+      .Because("options built over no providers resolve nothing, so failing here is the only way the "
+        + "cause is still visible; every later failure names an unrelated type");
+    await Assert.That(thrown!.Message).Contains("No JsonSerializerContext instances registered")
+      .Because("the message has to name the missing thing, not just that serialization is broken");
+    await Assert.That(thrown.Message).Contains("assemblies are loaded")
+      .Because("the fix is a deployment or trimming problem, and the message is where an operator learns that");
+  }
+
+  /// <summary>
+  /// The same entry point with providers present must build options rather than refuse — otherwise
+  /// the refusal above would be indistinguishable from a guard that always fires.
+  /// </summary>
+  [Test]
+  public async Task CreateCombinedOptions_WithProvidersRegistered_BuildsOptionsAsync() {
+    JsonContextRegistry.ResolverEntry[] providers = [
+      new(ListMaterializationJsonContext.Default, Priority: 0, Profile: null, Seq: 1)
+    ];
+
+    var options = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Default, providers);
+
+    await Assert.That(options.TypeInfoResolver).IsNotNull()
+      .Because("with a provider present the same call builds a resolver chain instead of refusing, so "
+        + "the refusal above is about the empty set and not about the guard always firing");
+  }
+
 }
 
 /// <summary>JSON context supplying the derived type for the list-materialization test.</summary>

@@ -74,14 +74,10 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var classSymbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration, context.CancellationToken);
 
-    if (classSymbol is null) {
-      return;
-    }
-
     // Find all perspective interfaces (IPerspectiveFor and IPerspectiveWithActionsFor)
     // Use the display form (not OriginalDefinition) to get the constructed type name
     // e.g., "Whizbang.Core.Perspectives.IPerspectiveFor<OrderView, OrderCreated>"
-    var perspectiveInterfaces = classSymbol.AllInterfaces
+    var perspectiveInterfaces = classSymbol?.AllInterfaces
         .Where(i => {
           var name = TypeNameUtilities.Display(i);
           // Match both IPerspectiveFor<TModel, ...> and IPerspectiveWithActionsFor<TModel, ...>
@@ -90,8 +86,10 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
         })
         .ToList();
 
-    // Need at least 2 interfaces to have a consistency issue
-    if (perspectiveInterfaces.Count < 2) {
+    // Need at least 2 interfaces to have a consistency issue. A declaration Roslyn bound no symbol
+    // for contributes no interfaces at all, so the bind guard shares this exit rather than standing
+    // on a line of its own that no input reaches.
+    if (classSymbol is null || perspectiveInterfaces is not { Count: >= 2 }) {
       return;
     }
 

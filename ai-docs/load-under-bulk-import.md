@@ -5,7 +5,7 @@ two 350-job bulk imports, after every stored form had been converted and every d
 Document indexes were present and used; stored-form reads had zero failures. The server still ran at
 94 to 99 percent CPU for the length of each import and at a third of its capacity with every queue
 empty. This file records where the time went, in measured order, and the rule each finding turned
-into. `plans/db-load-under-bulk-import.md` carries the stage table.
+into. `plans/archive/db-load-under-bulk-import.md` carries the stage table.
 
 ## How to measure this, and how not to
 

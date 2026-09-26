@@ -208,16 +208,13 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // (the typical case), `ContainingType` is the same interface, but in some
     // overload-resolution paths Roslyn returns an open or constructed wrapper
     // whose `OriginalDefinition` is what matches our constant.
+    // A method with no containing type is no more a dispatcher method than one on an unrelated type,
+    // so that guard shares this exit rather than standing on a line of its own.
     var containingType = methodSymbol.ContainingType;
-    if (containingType is null) {
-      return null;
-    }
-    var containingTypeName = TypeNameHelper.GetFullyQualifiedName(containingType);
-    var containingTypeOriginalName = TypeNameHelper.GetFullyQualifiedName(containingType.OriginalDefinition);
-    var isDispatcherMethod =
-        containingTypeName == StandardInterfaceNames.I_DISPATCHER
-        || containingTypeOriginalName == StandardInterfaceNames.I_DISPATCHER
-        || TypeNameHelper.ImplementsInterface(containingType, StandardInterfaceNames.I_DISPATCHER);
+    var isDispatcherMethod = containingType is not null
+        && (TypeNameHelper.GetFullyQualifiedName(containingType) == StandardInterfaceNames.I_DISPATCHER
+            || TypeNameHelper.GetFullyQualifiedName(containingType.OriginalDefinition) == StandardInterfaceNames.I_DISPATCHER
+            || TypeNameHelper.ImplementsInterface(containingType, StandardInterfaceNames.I_DISPATCHER));
     if (!isDispatcherMethod) {
       return null;
     }

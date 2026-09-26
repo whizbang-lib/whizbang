@@ -43,7 +43,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class ClaimWorkerReemissionBackoffTests {
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = TrackedGuid.New();
     public string ServiceName => "test";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -61,7 +61,7 @@ public class ClaimWorkerReemissionBackoffTests {
   /// </summary>
   private sealed class ReemittingCoordinator : IWorkCoordinator {
     private readonly Lock _lock = new();
-    private readonly Guid _stuckStream = TrackedGuid.NewMedo();
+    private readonly Guid _stuckStream = TrackedGuid.New();
     public List<DateTimeOffset> ClaimCallTimes { get; } = [];
     public TaskCompletionSource FirstCallSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource SecondCallSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

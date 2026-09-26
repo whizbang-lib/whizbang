@@ -37,11 +37,11 @@ public class GetStreamEventsCrossPodOwnershipTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var ownerA = (Guid)TrackedGuid.NewMedo();
-    var instanceB = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var ownerA = (Guid)TrackedGuid.New();
+    var instanceB = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
 
     // A and B are both alive (recent heartbeat).

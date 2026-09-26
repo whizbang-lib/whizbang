@@ -30,13 +30,13 @@ public class RedeliveryCompositeEnvelopeReceiveTests {
   private static MessageEnvelope<RedeliveryComposite> _buildEnvelope() {
     using var doc = JsonDocument.Parse("""{"orderId":"abc","qty":3}""");
     return new MessageEnvelope<RedeliveryComposite> {
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RedeliveryComposite {
-        StreamId = TrackedGuid.NewMedo().Value,
+        StreamId = TrackedGuid.New().Value,
         InnerPayloads = [doc.RootElement.Clone()],
         InnerTypeNames = ["Fake.Contracts.OrderPlaced, Fake.Contracts"],
-        InnerEventIds = [TrackedGuid.NewMedo().Value],
-        OriginServiceId = TrackedGuid.NewMedo().Value,
+        InnerEventIds = [TrackedGuid.New().Value],
+        OriginServiceId = TrackedGuid.New().Value,
         InnerCommitSequences = [41L],
       },
       Hops = [],

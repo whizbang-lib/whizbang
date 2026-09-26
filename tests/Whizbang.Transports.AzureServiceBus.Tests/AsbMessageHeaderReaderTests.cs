@@ -52,8 +52,8 @@ public class AsbMessageHeaderReaderTests {
 
   [Test]
   public async Task Read_ValidMessageWithLiftedHeaders_ReturnsHeadersWithBodyBytesPreservedAsync() {
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string body = """{"id":"00000000-0000-0000-0000-000000000000","p":{},"h":[],"v":2}""";
     var message = _build(
       envelopeJson: body,
@@ -96,7 +96,7 @@ public class AsbMessageHeaderReaderTests {
   public async Task Read_MalformedJsonBody_ButLiftedHeaders_StillReturnsHeadersAsync() {
     // Proves slice 1's invariant: malformed payloads do NOT block storage. The header reader
     // never touches the body when MessageId is available from the ApplicationProperty fast path.
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     const string garbage = "not even close to JSON{{{{{{";
     var message = _build(
       envelopeJson: garbage,
@@ -117,7 +117,7 @@ public class AsbMessageHeaderReaderTests {
     // Backward compat with publishers that haven't been updated to lift MessageId to a header.
     // Reader extracts the envelope's "id" property via Utf8JsonReader without binding the typed
     // payload — important because the publisher's contracts assembly may not be loadable here.
-    var envelopeId = (Guid)TrackedGuid.NewMedo();
+    var envelopeId = (Guid)TrackedGuid.New();
     var body = $$"""{"v":2,"id":"{{envelopeId}}","p":{"unknownField":"value"},"h":[]}""";
     var message = _build(
       envelopeJson: body,

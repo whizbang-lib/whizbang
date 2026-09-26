@@ -25,7 +25,7 @@ public class EnvelopeContextReceptorInvocationRegressionTests {
 
   private static MessageEnvelope<TestMessage> _envelopeWithHop(string serviceName) {
     return new MessageEnvelope<TestMessage> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = new TestMessage("test"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [

@@ -218,6 +218,12 @@ public static class SharedPostgresContainer {
           ex
         );
       }
+      // Scratch databases an earlier run abandoned, dropped once per process now that the container
+      // is known good. See PerTestDatabaseFactory.SweepAbandonedAsync for why they are worth more
+      // than disk: a session left idle in a transaction inside one of them holds a snapshot open,
+      // and that is enough to fail a migration test that is perfectly correct. The sweep answers
+      // its own failures, so nothing here depends on it succeeding.
+      _ = await PerTestDatabaseFactory.SweepAbandonedAsync(cancellationToken: ct);
     } finally {
       _initLock.Release();
     }
@@ -238,7 +244,11 @@ public static class SharedPostgresContainer {
                   $"--publish 0:{CONTAINER_PORT} " +
                   "--restart no " +
                   $"{IMAGE_NAME} " +
-                  "-c max_connections=500",
+                  "-c max_connections=500 " +
+                  // Loaded at start because that is the only time it can be. It costs a small
+                  // fixed allocation and tracks nothing until a database creates the extension,
+                  // and it is what lets the statement-statistics reader be tested at all.
+                  "-c shared_preload_libraries=pg_stat_statements",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,
@@ -404,6 +414,7 @@ public static class SharedPostgresContainer {
     using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, retryTimeout.Token);
 
     Exception? lastException = null;
+    var lastError = "none recorded";
     for (var attempt = 1; attempt <= 15; attempt++) {
       try {
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -414,6 +425,7 @@ public static class SharedPostgresContainer {
         throw; // Propagate if main token canceled
       } catch (Exception ex) {
         lastException = ex;
+        lastError = ex.Message;
         Console.WriteLine($"[SharedPostgresContainer] Connection attempt {attempt} failed: {ex.Message}");
       }
 
@@ -423,7 +435,7 @@ public static class SharedPostgresContainer {
     }
 
     throw new InvalidOperationException(
-      $"Could not verify connection to PostgreSQL container after 15 attempts. Last error: {lastException?.Message}",
+      $"Could not verify connection to PostgreSQL container after 15 attempts. Last error: {lastError}",
       lastException);
   }
 

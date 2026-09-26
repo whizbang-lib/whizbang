@@ -109,7 +109,7 @@ public class DeadLetterMetricsEmissionTests {
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -163,7 +163,7 @@ public class DeadLetterMetricsEmissionTests {
     [.. readings.Where(r => r.InstrumentName == "whizbang.dead_letters.added" && r.Value > 0)];
 
   private static OutboxWork _work(int attempts) {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     return new OutboxWork {
       MessageId = msgId,
       Destination = "test-topic",
@@ -175,7 +175,7 @@ public class DeadLetterMetricsEmissionTests {
       },
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PartitionNumber = 1,
       Attempts = attempts,
       Status = MessageProcessingStatus.Stored,

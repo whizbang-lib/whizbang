@@ -1762,10 +1762,9 @@ public class SecurityContextHelperTests {
 
   // Test extractor for mocking security extraction
   private sealed class TestExtractor(int priority, SecurityExtraction? extraction) : ISecurityContextExtractor {
-    private readonly int _priority = priority;
     private readonly SecurityExtraction? _extraction = extraction;
 
-    public int Priority => _priority;
+    public int Priority { get; } = priority;
 
     public ValueTask<SecurityExtraction?> ExtractAsync(
         IMessageEnvelope envelope,

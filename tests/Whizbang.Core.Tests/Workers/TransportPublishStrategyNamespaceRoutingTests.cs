@@ -119,7 +119,7 @@ public class TransportPublishStrategyNamespaceRoutingTests {
       .Select(c => TransportNamespaces.FromMetadata(c.Destination.Metadata))
       .OrderBy(k => k, StringComparer.Ordinal)
       .ToList();
-    await Assert.That(keys).IsEquivalentTo(new[] { "bulk", TransportNamespaces.DefaultKey });
+    await Assert.That(keys).IsEquivalentTo(["bulk", TransportNamespaces.DefaultKey]);
   }
 
   [Test]

@@ -22,9 +22,12 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// two disagree are the places this stands down:
 /// </para>
 /// <list type="bullet">
-/// <item>A comparison against null. An extraction reads a missing key as SQL NULL, while containment
-/// of an explicit JSON null does not match a key that is absent, so a row written before the property
-/// existed would answer differently.</item>
+/// <item>A comparison against a null written into the query. An extraction reads a missing key as SQL
+/// NULL, while containment of an explicit JSON null does not match a key that is absent, so a row
+/// written before the property existed would answer differently. A null that arrives as a parameter
+/// cannot be recognized here, because the value is no longer in the tree by the time this runs; that
+/// case keeps the containment test and carries a guard that restores the extraction's answer when the
+/// value turns out to be null.</item>
 /// <item>Anything but equality. Ranges, ordering and pattern matching cannot be expressed as
 /// containment at all.</item>
 /// <item>Members reached through a collection, where containment means subset rather than equality.</item>
@@ -186,7 +189,7 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
     var right = _stripConverts(node.Right);
 
     // Either side may hold the member; the other must be a value.
-    if (_tryRewrite(left, right, out var rewritten) || _tryRewrite(right, left, out rewritten)) {
+    if (_tryRewrite(node, left, right, out var rewritten) || _tryRewrite(node, right, left, out rewritten)) {
       return rewritten;
     }
 
@@ -219,7 +222,7 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
     var left = _stripConverts(first);
     var right = _stripConverts(second);
 
-    return _tryRewrite(left, right, out rewritten) || _tryRewrite(right, left, out rewritten);
+    return _tryRewrite(node, left, right, out rewritten) || _tryRewrite(node, right, left, out rewritten);
   }
 
   /// <summary>
@@ -337,7 +340,8 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
     member.Expression is ParameterExpression
     || (member.Expression is MemberExpression inner && _isDocumentRoot(inner.Member.Name));
 
-  private bool _tryRewrite(Expression candidateMember, Expression candidateValue, out Expression rewritten) {
+  private bool _tryRewrite(
+      Expression comparison, Expression candidateMember, Expression candidateValue, out Expression rewritten) {
     rewritten = Expression.Empty();
 
     if (candidateMember is not MemberExpression member || !_isJsonMember(member)) {
@@ -361,15 +365,66 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
 
     var parameterType = overload.GetParameters()[0].ParameterType;
 
-    // A nullable member is compared through its underlying type; the rewrite only happens for a
-    // non-null value, so the conversion cannot lose anything a containment test would have matched.
+    // A nullable member is compared through its underlying type. What a null value would have lost
+    // in that conversion is restored by the guard below rather than by refusing the rewrite.
     var memberArgument = member.Type == parameterType ? member : (Expression)Expression.Convert(member, parameterType);
     var valueArgument = candidateValue.Type == parameterType
       ? candidateValue
       : Expression.Convert(candidateValue, parameterType);
 
-    rewritten = Expression.Call(overload, memberArgument, valueArgument);
+    var containment = Expression.Call(overload, memberArgument, valueArgument);
+
+    rewritten = _mayBeNull(candidateValue) ? _guardedAgainstNull(containment, comparison, candidateValue) : containment;
     return true;
+  }
+
+  /// <summary>
+  /// Whether the value could still turn out to be null once the query runs.
+  /// </summary>
+  /// <remarks>
+  /// A literal null has already been refused above, so a constant here is a value. Anything else is
+  /// a parameter: by the time this rewrite runs Entity Framework has lifted every captured variable
+  /// out of the tree, leaving a placeholder with no value attached, so whether it holds null cannot
+  /// be read here at all.
+  /// </remarks>
+  private static bool _mayBeNull(Expression value) =>
+    value is not ConstantExpression
+    && (!value.Type.IsValueType || Nullable.GetUnderlyingType(value.Type) is not null);
+
+  /// <summary>
+  /// Both forms of the filter, each behind a test of whether the value is null, so that the one that
+  /// answers correctly for the value the query actually runs with is the one that survives.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An extraction reads a missing key as SQL NULL and so matches the row when the value is null;
+  /// containment of an explicit JSON null does not match a key that is absent at all. The two
+  /// disagree for exactly one value, and which value it is only becomes known when the query runs:
+  /// by the time this rewrite sees the tree, Entity Framework has lifted every captured variable out
+  /// of it and left a placeholder with no value attached.
+  /// </para>
+  /// <para>
+  /// So the decision is deferred to where it can be made. A null test over a parameter is decided
+  /// while the command is built for a particular set of values, and every connective here collapses
+  /// around that answer: a value that is not null leaves the containment test alone, reaching the
+  /// index exactly as before, and a null one leaves the comparison alone. Neither form survives into
+  /// the other's SQL, so nothing is paid for the guard.
+  /// </para>
+  /// <para>
+  /// The fallback is the original comparison rather than a reconstruction of it, which is what makes
+  /// the rewrite unable to change the answer whatever that comparison was.
+  /// </para>
+  /// </remarks>
+  /// <param name="containment">The containment test built for this equality.</param>
+  /// <param name="comparison">The comparison the containment test would replace.</param>
+  /// <param name="value">The value operand, whose type can hold a null.</param>
+  private static BinaryExpression _guardedAgainstNull(
+      Expression containment, Expression comparison, Expression value) {
+    var nothing = Expression.Constant(null, value.Type);
+
+    return Expression.OrElse(
+      Expression.AndAlso(Expression.NotEqual(value, nothing), containment),
+      Expression.AndAlso(Expression.Equal(value, nothing), comparison));
   }
 
   /// <summary>

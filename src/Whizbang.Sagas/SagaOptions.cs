@@ -76,4 +76,16 @@ public sealed class SagaOptions {
   /// (30s → 60s → 120s → 240s → 480s) before the ceiling kicks in.
   /// </summary>
   public double StallBackoffMultiplier { get; set; } = 2.0;
+
+  /// <summary>
+  /// How long a saga with no tick coming must go without any change, to itself or any of its items,
+  /// before the stranded-saga sweep arms a tick for it.
+  /// </summary>
+  /// <remarks>
+  /// Covers the one moment the pending-wake check cannot see: a tick on the transport, between the
+  /// outbox that sent it and the inbox that will receive it. A saga that changed this recently is
+  /// either moving or has a tick in flight; either way it needs nothing. Defaults to five minutes.
+  /// </remarks>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
+  public TimeSpan StrandedSagaIdleGuard { get; set; } = TimeSpan.FromMinutes(5);
 }
