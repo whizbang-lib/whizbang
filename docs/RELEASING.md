@@ -15,9 +15,13 @@
   passed: develop merges and release PRs by merging, betas and rcs by the open release PR's gate on
   exactly that commit, an older-line hotfix by the fix PR merged into its branch
   (`.github/actions/require-pr-gate`).
-- **Every published package is the tested build.** Nothing is rebuilt to publish: stable promotes the
-  release branch's tested packages, and a beta or rc repacks its tested binaries at the prerelease
-  version (byte-identical DLLs).
+- **Every published package is the tested build, or verified equivalent to it.** Nothing is rebuilt to
+  publish: stable promotes the release branch's own packages, and a beta or rc repacks the release
+  branch's binaries at the prerelease version (byte-identical DLLs). A clean release cut reuses the
+  tests of the develop commit it came from, so its packages are **verified equivalent** to that
+  tested build (same source, same SDK, same assembly set: the standard every alpha ships under);
+  once a stabilization fix lands on the branch, it runs its own full matrix and they are the
+  literally tested bytes.
 - **One number, everywhere.** The version that is *printed* (PR preview) equals what is *published*
   to nuget.org, *stamped* into the `.nupkg`, and *tagged* in git (`vX.Y.Z`). If they differ, it's a bug.
 - **The git tag is the source of truth for "what version are we at."** GitVersion derives the next
@@ -39,7 +43,7 @@ the enforcement points named in the last column refuse it.
 | # | I want to… | Do this | What runs | Enforced by |
 |---|---|---|---|---|
 | F1 | Ship a change | PR from `feat/*`, `fix/*`, `test/*`, `ci/*`, … into `develop`; merge through the queue | CI (1 pre-merge, 2 merge queue, 3 post-merge); develop publishes the changed packages as **`0.Y.0-alpha.N`** | gitflow check; `develop` ruleset |
-| F2 | Cut a release | Actions → **Start Release** from `develop`, `release_type: auto` | Creates `release/vX.Y.Z` and the PR `chore(release): vX.Y.Z` into `main`; CI 4 release candidate | one release in flight; branch must not exist |
+| F2 | Cut a release | Actions → **Start Release** from `develop`, `release_type: auto` | Creates `release/vX.Y.Z` and the PR `chore(release): vX.Y.Z` into `main`; CI 4 release candidate reuses the tested develop commit's results when only the version file differs (build, pack, verify: no suites) | one release in flight; branch must not exist |
 | F3 | Publish a **beta** or **rc** | Actions → **Release Prerelease**, "Use workflow from" = the release branch, pick `beta` or `rc` | Repacks the branch head's tested build as **`X.Y.Z-beta.N`** / **`-rc.N`**, publishes, tags it on the branch. Nothing merges | release branch only; the open release PR's head is this commit and its coverage/Sonar gate passed on it; green CI; no beta after rc; not after stable |
 | F4 | Fix something in an open release | PR from `fix/*` (or `bugfix/*`, `hotfix/*`) into `release/vX.Y.Z` | The branch re-tests; publish the next beta or rc when ready (F3); the fix reaches develop after release (F5) | gitflow check |
 | F5 | Ship the **stable** release | Merge the release PR (merge commit) and approve `nuget-publish` | Promotes the release branch's tested packages as **`X.Y.Z`**, tags `main`, syncs `main` back to `develop` by PR; CI 5 released reuses the release branch's results | release PR must come from `release/vX.Y.Z` with its own stable number; tested tree must equal the tagged tree |
@@ -321,15 +325,28 @@ quality in the queue run:
 
 Escape hatch: repo variable `QUEUE_RUN_FULL_MATRIX=true` forces the full queue matrix.
 
-### queue-validated — skip the redundant *push* matrix
+### queue-validated — skip the redundant *push* and *release cut* matrices
 
-The merge queue fast-forwards develop to the **exact SHA** it just ran (whether that queue run was
-full or ff-skipped), so the post-merge push run used to re-test identical bytes for ~35-40 minutes
-before the alpha could publish. `ci.yml` short-circuits that redundancy while keeping the publish
-gate provable:
+Two pushes carry a tree another run already tested:
 
-- **queue-validated** (develop pushes only) looks for a successful `merge_group` CI run on the
-  pushed SHA. Found ⇒ the six suites and quality skip in the push run.
+- **A develop push.** The merge queue fast-forwards develop to the **exact SHA** it just ran, so the
+  post-merge push used to re-test identical bytes for ~35-40 minutes before the alpha could publish.
+- **A release cut.** `release/vX.Y.Z` is the develop commit it was cut from plus changes to
+  `Directory.Build.props` only (main's previous version, then the new one), a file the build does not
+  read: the version is stamped from the branch name. The cut used to re-run the whole matrix on code
+  develop had already tested, delaying the release PR by ~40 minutes.
+
+`ci.yml` short-circuits both while keeping the publish gate provable:
+
+- **queue-validated** decides. On develop it targets the pushed SHA; on a release branch it asks the
+  compare API for the merge base with develop and every differing file, and targets that merge base
+  only when `Directory.Build.props` is the **only** difference. A stabilization fix on the branch, a
+  hotfix branch cut from a tag, or anything else runs the full matrix.
+- **find-tested-run** (`.github/actions/find-tested-run`, the one copy of this lookup) finds the
+  evidence for the target: the successful `merge_group` run, and the run holding its coverage and its
+  determinism manifest (the queue run, or on a fast-forward the PR run, after proving the trees are
+  identical). `validated` is true only if **both** are still live; otherwise the full matrix runs.
+  Found ⇒ the six suites and quality skip in the push run.
 - **verify-rebuild** replaces them on the publish path. It reads the determinism manifest of the run
   that built this tree (the queue run, or on a fast-forward the PR run), requires that run's exact SDK
   and rebuilds at the queue's placeholder version, then confirms the built **assembly set**
@@ -340,18 +357,18 @@ gate provable:
   an unpredictable subset of assemblies (`[LoggerMessage]` partial-class ordering, ILRepack
   MVIDs), so a hash comparison flakes and a name allowlist can never be complete. Tamper-evidence
   for the published bits is the SLSA provenance attestation, not this rebuild.
-- **reupload-reports** republishes the full-matrix run's coverage and TRX artifacts into the push
-  run, so the Codecov develop baseline, Test Analytics uploads, and the docs test-status
-  publication keep flowing exactly as before. Its source is the queue run — **except** on a
-  fast-forward merge, where the queue run itself ff-skipped its suites and holds no reports; there
-  it falls back to the PR run (the push merge commit's second parent is the PR head) that actually
-  ran the full matrix.
+- **reupload-reports** republishes the tested run's coverage and TRX into the push run, both to
+  Codecov and as its own `coverage-republished` artifact, so the Codecov baseline, Test Analytics,
+  the docs test status and, on a release cut, the release PR's and the main push's Quality (which
+  read coverage from this run) keep working unchanged. Quality recognizes a run that republished
+  instead of running suites.
 
 `prerelease-publish` accepts either gate: every suite green **in this run** (the old invariant,
 still the path whenever queue validation is absent — a standalone push, an expired queue run,
 the escape hatch), or **queue-validated + verify-rebuild green**.
 
-**Escape hatch:** set the repo variable `PUSH_RUN_FULL_MATRIX=true` and re-run **all jobs** on
+**Escape hatches:** `RELEASE_CUT_FULL_MATRIX=true` forces the full matrix on release-branch pushes.
+On develop, set the repo variable `PUSH_RUN_FULL_MATRIX=true` and re-run **all jobs** on
 the push run to force the full matrix. That is the remedy when verify-rebuild refuses a
 toolchain drift (e.g. an SDK patch released in the minutes between the queue run and the push
 run) — the publish stays blocked until either the drifted rebuild is validated by real suites or
@@ -470,8 +487,9 @@ main-line Sonar analysis.
 ### Releases promote the tested packages
 
 `release.yml` never rebuilds. The release-branch push run already packed every package at the release
-version and ran the full matrix against exactly those bytes, so the release publishes that run's
-`nuget-packages-<run>` artifact as-is. `Plan · Locate the tested packages` runs **before anything is
+version, and either ran the full matrix against exactly those bytes or (a clean cut) proved its build
+equivalent to the tested develop build, so the release publishes that run's `nuget-packages-<run>`
+artifact as-is. `Plan · Locate the tested packages` runs **before anything is
 tagged** and fails closed if any of these does not hold:
 
 - HEAD's tree is byte-identical to the tested release-branch tree;
@@ -530,6 +548,8 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Older-line hotfix refused: "pushed directly" | the fix was pushed to the hotfix branch instead of merged through a PR | Put the fix on `fix/<name>`, PR it into the hotfix branch, merge when green |
 | Start Release refused: "release PR still open" | one release is in flight | Merge it (F5) or close it (F6), then retry |
 | Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
+| Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
+| A published prerelease out-sorts develop's current builds ("latest" resolves to old code) | a release cut was abandoned after develop had published in the cut's next band (#872): the open branch raised develop's number, deleting it lowered it again | Find the commit that first published the stale version (its develop run's push log), **tag it with that version** (`git tag -a vX.Y.Z-alpha.N <sha>`; it records a version that really shipped, and develop then computes above it), and **unlist** that version on nuget.org for every package. Never set a version floor in `GitVersion.yml`: versions come from tags only |
 | A job in a release run failed for a flaky test | a real flake | Re-run the failed jobs to unblock, **and** fix the flake in a PR (flakes are fixed on sight, never parked) |
 
 `dry_run` on `release.yml` defaults to `true`: a dispatch without `-f dry_run=false` reports success

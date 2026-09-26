@@ -19,13 +19,14 @@ it: the rules there are enforced by the workflows, and a step that fights them f
 | Situation | Flow | Do |
 |---|---|---|
 | A change is merged, or about to be, and someone wants it "out" | F1 | Nothing to cut. Develop publishes `0.Y.0-alpha.N` on every merge, but **only the changed packages**. If a consumer needs a complete, installable set, that is a beta (F2 + F3). |
-| "Cut a release" / "release what's on develop" | F2 | `gh workflow run start-release.yml --ref develop -f release_type=auto` |
+| "Cut a release" / "release what's on develop" | F2 | `gh workflow run start-release.yml --ref develop -f release_type=auto`. A clean cut reuses the tested develop commit's results (no suites; ready in about 15 minutes). If its verify-rebuild goes red, the recovery is `RELEASE_CUT_FULL_MATRIX=true` and a re-run. |
 | "Give consumers something to test" / beta / rc / release candidate | F3 | Needs an open release branch (F2 first if none). `gh workflow run release-prerelease.yml --ref release/vX.Y.Z -f label=beta` (or `rc`) |
 | A bug found during the release | F4 | Fix on `fix/<name>` cut from `release/vX.Y.Z`, PR **into `release/vX.Y.Z`**. After it merges and the branch goes green, publish the next beta/rc (F3). |
 | "Ship it" / stable | F5 | Merge the release PR **with a merge commit**: `gh pr merge <n> --merge` (or `--auto --merge`). Then the `nuget-publish` approval. |
 | A release must not ship | F6 | Close the release PR, delete `release/vX.Y.Z`. Re-cut later with `auto`: it reuses the number if betas/rcs shipped. |
 | Production bug in the latest stable | F7 | `git switch -c release/vX.Y.(Z+1) vX.Y.Z && git push -u origin HEAD`, then commit the fix and push. CI opens the release PR itself. Continue with F3/F5. |
 | Bug in an older line someone still runs | F8 | Branch `release/vA.B.(C+1)` from the older tag and push it; put the fix on `fix/<name>` and **PR it into that branch** (a direct push is refused). Merging publishes and opens a develop-only back-merge PR; it never touches `main`. |
+| A published prerelease sorts above develop's current builds ("latest" is old code) | F9 | Usually an abandoned cut (#872). Tag the commit that first published the stale version with that version, then unlist it on nuget.org (the user runs the unlist: it needs an API key). Verify with GitVersion 6.2 `/nocache` on develop before pushing the tag. Never add `next-version` to `GitVersion.yml`. |
 | Something is stuck or red | F9 | The **Recovery** table in RELEASING.md, by symptom. |
 
 Only one release is in flight at a time. Before F2, check:

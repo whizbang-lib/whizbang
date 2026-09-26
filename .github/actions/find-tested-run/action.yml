@@ -1,0 +1,86 @@
+name: Find the run that tested a develop commit
+description: >-
+  Given a commit that landed on develop through the merge queue, finds the CI runs holding the
+  evidence that its exact tree was tested: the run whose suites produced its coverage and TRX
+  (reports-run-id) and the run whose build wrote its determinism manifest (manifest-run-id). That is
+  the queue run, or on a fast-forward (the queue skipped its suites and build) the PR run for the PR
+  head the queue merged. The one place this lookup lives: the develop push and a release cut both use
+  it. Works from the GitHub API alone; no checkout needed. Empty outputs mean "no evidence": callers
+  must then run the full matrix.
+
+inputs:
+  sha:
+    description: A develop commit (the queue's merge commit)
+    required: true
+  token:
+    description: A token that can read actions
+    required: true
+
+outputs:
+  queue-run-id:
+    description: The successful merge-queue CI run for this commit, or empty
+    value: ${{ steps.find.outputs.queue-run-id }}
+  reports-run-id:
+    description: The run holding live coverage-* artifacts for this tree, or empty
+    value: ${{ steps.find.outputs.reports-run-id }}
+  manifest-run-id:
+    description: The run holding a live determinism manifest for this tree, or empty
+    value: ${{ steps.find.outputs.manifest-run-id }}
+  summary:
+    description: One line saying what was found and from where
+    value: ${{ steps.find.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - name: Find the tested run
+      id: find
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        SHA: ${{ inputs.sha }}
+      run: |
+        # Never fails the job: every miss is an empty output, and the caller falls back to the full
+        # matrix. A failed lookup must never skip tests.
+        set -uo pipefail
+        out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+        live() {  # $1 run id, $2 artifact name prefix -> count of unexpired artifacts
+          gh api "repos/$REPO/actions/runs/$1/artifacts?per_page=100" \
+            --jq "[.artifacts[] | select((.name | startswith(\"$2\")) and (.expired | not))] | length" 2>/dev/null || echo 0
+        }
+        # Addressed by workflow PATH, not by name: ci.yml sets a run-name.
+        QUEUE=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=merge_group&status=success&per_page=10" \
+          --jq '.workflow_runs[0].id // ""' 2>/dev/null || echo "")
+        out queue-run-id "$QUEUE"
+        if [ -z "$QUEUE" ]; then
+          out reports-run-id ""; out manifest-run-id ""
+          out summary "no successful merge-queue run for $SHA"
+          exit 0
+        fi
+
+        # On a fast-forward the queue ff-skipped its suites and build: the PR run tested this exact
+        # tree. Proven here, not assumed: the commit's second parent is the PR head, and the trees
+        # must be identical.
+        PR_RUN=""
+        COMMIT=$(gh api "repos/$REPO/commits/$SHA" 2>/dev/null || echo '{}')
+        PR_HEAD=$(jq -r '.parents[1].sha // ""' <<< "$COMMIT")
+        if [ -n "$PR_HEAD" ]; then
+          TREE=$(jq -r '.commit.tree.sha // ""' <<< "$COMMIT")
+          PR_TREE=$(gh api "repos/$REPO/commits/$PR_HEAD" --jq '.commit.tree.sha' 2>/dev/null || echo "")
+          if [ -n "$TREE" ] && [ "$TREE" = "$PR_TREE" ]; then
+            PR_RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$PR_HEAD&event=pull_request&status=success&per_page=30" \
+              --jq '[.workflow_runs[]] | sort_by(.run_started_at) | last | .id // ""' 2>/dev/null || echo "")
+          fi
+        fi
+
+        pick() {  # $1 artifact prefix -> first of queue run, PR run holding a live one
+          if [ "$(live "$QUEUE" "$1")" -gt 0 ]; then echo "$QUEUE"
+          elif [ -n "$PR_RUN" ] && [ "$(live "$PR_RUN" "$1")" -gt 0 ]; then echo "$PR_RUN"
+          else echo ""; fi
+        }
+        REPORTS=$(pick coverage-)
+        MANIFEST=$(pick determinism-manifest-)
+        out reports-run-id "$REPORTS"
+        out manifest-run-id "$MANIFEST"
+        out summary "queue run $QUEUE; reports from ${REPORTS:-none}; manifest from ${MANIFEST:-none}${PR_RUN:+ (fast-forward PR run $PR_RUN)}"

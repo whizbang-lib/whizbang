@@ -194,6 +194,31 @@ jobs:
               sleep 30; continue
             fi
             BUILD=$(jq -r '[.jobs[] | select(.name | startswith("Build · Compile")) | .conclusion // "pending"] | first // "pending"' <<< "$JOBS")
+            # A run that REUSED already-tested results (queue-validated: a develop push, or a release
+            # cut from a tested develop commit) skips its suites on purpose and republishes the
+            # tested run's coverage as coverage-republished. Absent or skipped = a normal run.
+            REPUB=$(jq -r '[.jobs[] | select(.name == "Report · Republish the tested run'"'"'s coverage") | .conclusion // "pending"] | first // "absent"' <<< "$JOBS")
+            if [ "$REPUB" != absent ] && [ "$REPUB" != skipped ]; then
+              case "$REPUB" in
+                success)
+                  COUNT=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+                    --jq '[.artifacts[].name | select(startswith("coverage-"))] | length' || echo 0)
+                  if [ "$COUNT" -ge 1 ]; then
+                    echo "Run $RUN_ID reused already-tested results; its republished coverage is present."
+                    exit 0
+                  fi
+                  GRACE=$((GRACE + 1))
+                  if [ "$GRACE" -gt 4 ]; then
+                    echo "::error::Run $RUN_ID republished its tested run's reports but holds no coverage-* artifact."
+                    exit 1
+                  fi ;;
+                failure|cancelled)
+                  echo "::error::Run $RUN_ID reused already-tested results but failed to republish their coverage."
+                  exit 1 ;;
+              esac
+              echo "Run $RUN_ID reuses already-tested results; waiting for its republished coverage — sleeping 30s"
+              sleep 30; continue
+            fi
             # Fail fast when coverage will never arrive: a suite that failed, was canceled, or was
             # SKIPPED (e.g. its build dependency failed), or a failed build job itself.
             DEAD=$(jq "[.jobs[] | select(($SUITE and (.conclusion == \"failure\" or .conclusion == \"cancelled\" or .conclusion == \"skipped\")) or $SKIPPED_SUITE)] | length" <<< "$JOBS")
