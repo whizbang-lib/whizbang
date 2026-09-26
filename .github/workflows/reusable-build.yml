@@ -101,13 +101,13 @@ jobs:
       # where it was ~11 minutes of every single one (70-75% of the job, against 5-23% for
       # the tests themselves).
       #
-      # It runs in the BACKGROUND while the clean build uploads, and writes to a staging
-      # folder outside the workspace (instrument -o), never over the files being uploaded.
+      # It runs in the BACKGROUND while the clean build uploads, on copies in a staging
+      # folder outside the workspace, never on the files being uploaded.
       # Three things that must not break:
       #
       #   1. NuGet. The pack job consumes build-<run> and runs `dotnet pack --no-build`, so
       #      an instrumented src/ or tools/ output would SHIP instrumented assemblies. Only
-      #      tests/ + samples/ copies are instrumented, and only into the staging folder; the
+      #      tests/ + samples/ copies are instrumented, and only in the staging folder; the
       #      guard below re-checks every packable hash after instrumentation finishes.
       #   2. The overlay's layout. Test jobs download build-<run>, then build-instrumented-<run>
       #      on top. The staging folder mirrors the workspace (tests/..., samples/...) and is
@@ -128,15 +128,16 @@ jobs:
           STAGE: ${{ runner.temp }}/coverage-overlay
         run: |
           set -euo pipefail
-          cat > "$RUNNER_TEMP/instrument.sh" <<'SCRIPT'
-          set -euo pipefail
           mapfile -t DLLS < <(find tests samples -path "*/bin/Release/*" -name "Whizbang.*.dll" -type f \
             ! -name "*.resources.dll" ! -path "*/ref/*" ! -name "*.g.dll" | sort)
           echo "found ${#DLLS[@]} paths"
 
-          # One representative per content hash. Both the .dll AND its .pdb are rewritten
-          # (instrument refuses with "no_symbols" when the pdb is absent), so a copy moves
-          # both files: an instrumented dll beside a clean pdb would not map back to source.
+          # One representative per content hash, COPIED into the staging folder here, before
+          # the upload starts. instrument touches its input's files while it works (even with
+          # -o: the upload once failed on a pdb that vanished mid-listing), so it only ever
+          # runs on these copies. Both the .dll AND its .pdb are copied and rewritten
+          # (instrument refuses with "no_symbols" when the pdb is absent): an instrumented dll
+          # beside a clean pdb would not map coverage back to source.
           declare -A REP
           : > "$RUNNER_TEMP/instrument-reps.txt"
           : > "$RUNNER_TEMP/instrument-twins.txt"
@@ -149,34 +150,44 @@ jobs:
             else
               REP[$HASH]="$dll"
               printf '%s\n' "$dll" >> "$RUNNER_TEMP/instrument-reps.txt"
+              mkdir -p "$STAGE/$(dirname "$dll")"
+              cp "$dll" "${dll%.dll}.pdb" "$STAGE/$(dirname "$dll")/"
             fi
           done
+          echo "staged $(wc -l < "$RUNNER_TEMP/instrument-reps.txt") distinct blobs, skipped $SKIPPED without symbols"
 
+          cat > "$RUNNER_TEMP/instrument.sh" <<'SCRIPT'
+          set -euo pipefail
+          cd "$STAGE"
           : > "$RUNNER_TEMP/instrument-failed.txt"
-          export STAGE SESSION_ID
           xargs -a "$RUNNER_TEMP/instrument-reps.txt" -d '\n' -P "$(nproc)" -I{} bash -c '
-            mkdir -p "$STAGE/$(dirname "$1")"
-            dotnet-coverage instrument "$1" -o "$STAGE/$1" --session-id "$SESSION_ID" --nologo -dco \
+            dotnet-coverage instrument "$1" --session-id "$SESSION_ID" --nologo -dco \
               || printf "%s\n" "$1" >> "$RUNNER_TEMP/instrument-failed.txt"' _ {}
 
-          while read -r dll; do echo "::warning::could not instrument $dll"; done < "$RUNNER_TEMP/instrument-failed.txt"
+          # A blob that failed is dropped from the overlay, so the test job keeps its clean
+          # copy; so are its twins, below. instrument's .orig backups are dropped too.
+          while read -r dll; do
+            echo "::warning::could not instrument $dll"
+            rm -f "$dll" "${dll%.dll}.pdb"
+          done < "$RUNNER_TEMP/instrument-failed.txt"
+          find . \( -name "*.dll.orig" -o -name "*.pdb.orig" \) -delete
+
           COPIED=0
           while IFS=$'\t' read -r rep twin; do
-            [ -f "$STAGE/$rep" ] || continue   # its representative failed: the twin stays clean
-            mkdir -p "$STAGE/$(dirname "$twin")"
-            cp -f "$STAGE/$rep" "$STAGE/$twin"
-            cp -f "$STAGE/${rep%.dll}.pdb" "$STAGE/${twin%.dll}.pdb"
+            [ -f "$rep" ] || continue   # its representative failed: the twin stays clean
+            mkdir -p "$(dirname "$twin")"
+            cp -f "$rep" "$twin"
+            cp -f "${rep%.dll}.pdb" "${twin%.dll}.pdb"
             COPIED=$((COPIED+1))
           done < "$RUNNER_TEMP/instrument-twins.txt"
 
           INSTRUMENTED=$(( $(wc -l < "$RUNNER_TEMP/instrument-reps.txt") - $(wc -l < "$RUNNER_TEMP/instrument-failed.txt") ))
-          echo "=== instrumented $INSTRUMENTED blobs, copied to $COPIED duplicates, skipped $SKIPPED without symbols ==="
+          echo "=== instrumented $INSTRUMENTED blobs, copied to $COPIED duplicates ==="
           if [ "$INSTRUMENTED" -eq 0 ]; then
             echo "::error::Nothing was instrumented. Every test job would collect empty coverage."
             exit 1
           fi
           SCRIPT
-          mkdir -p "$STAGE"
           export STAGE SESSION_ID
           # The exit code is written only when the script ends, so the wait step can tell
           # "finished" from "still running" and never mistakes a crash for success.
