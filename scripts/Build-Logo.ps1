@@ -66,33 +66,80 @@ foreach ($i in 0..($bannerHeight - 1)) {
 }
 
 # ============================================================================
-# Read PNG pixel data using Python + Pillow
+# Read PNG pixel data (8-bit RGB or RGBA, non-interlaced) with .NET's zlib: no Python, no Pillow
 # ============================================================================
 
-$pythonScript = @"
-import sys, json
-from PIL import Image
-img = Image.open(sys.argv[1])
-w, h = img.size
-pixels = []
-for y in range(h):
-    row = []
-    for x in range(w):
-        r, g, b = img.getpixel((x, y))[:3]
-        row.append([r, g, b])
-    pixels.append(row)
-json.dump({"width": w, "height": h, "pixels": pixels}, sys.stdout)
-"@
+function Read-PngImage([string]$path) {
+    $bytes = [System.IO.File]::ReadAllBytes($path)
+    $signature = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+    for ($i = 0; $i -lt 8; $i++) { if ($bytes[$i] -ne $signature[$i]) { throw "$path is not a PNG" } }
+    function Read-UInt32([byte[]]$b, [int]$at) { return ([uint32]$b[$at] -shl 24) -bor ([uint32]$b[$at + 1] -shl 16) -bor ([uint32]$b[$at + 2] -shl 8) -bor [uint32]$b[$at + 3] }
 
-$tempPy = [System.IO.Path]::GetTempFileName() + ".py"
-Set-Content -Path $tempPy -Value $pythonScript -Encoding UTF8
+    $width = 0; $height = 0; $channels = 0
+    $idat = [System.IO.MemoryStream]::new()
+    $pos = 8
+    while ($pos -lt $bytes.Length) {
+        $length = [int](Read-UInt32 $bytes $pos)
+        $type = [System.Text.Encoding]::ASCII.GetString($bytes, $pos + 4, 4)
+        $data = $pos + 8
+        switch ($type) {
+            'IHDR' {
+                $width = [int](Read-UInt32 $bytes $data); $height = [int](Read-UInt32 $bytes ($data + 4))
+                $bitDepth = $bytes[$data + 8]; $colorType = $bytes[$data + 9]; $interlace = $bytes[$data + 12]
+                if ($bitDepth -ne 8 -or $interlace -ne 0 -or ($colorType -ne 2 -and $colorType -ne 6)) {
+                    throw "Unsupported PNG (bit depth $bitDepth, color type $colorType, interlace $interlace): only 8-bit RGB/RGBA, non-interlaced"
+                }
+                $channels = if ($colorType -eq 6) { 4 } else { 3 }
+            }
+            'IDAT' { $idat.Write($bytes, $data, $length) }
+        }
+        if ($type -eq 'IEND') { break }
+        $pos = $data + $length + 4   # skip the CRC
+    }
 
-try {
-    $pixelJson = python3 $tempPy $pngPath
-    $pixelData = $pixelJson | ConvertFrom-Json
-} finally {
-    Remove-Item $tempPy -ErrorAction SilentlyContinue
+    $idat.Position = 0
+    $zlib = [System.IO.Compression.ZLibStream]::new($idat, [System.IO.Compression.CompressionMode]::Decompress)
+    $raw = [System.IO.MemoryStream]::new(); $zlib.CopyTo($raw); $zlib.Dispose()
+    $raw = $raw.ToArray()
+
+    # Undo the per-row filters (PNG spec: None, Sub, Up, Average, Paeth).
+    $stride = $width * $channels
+    $prev = [byte[]]::new($stride)
+    $pixels = [object[]]::new($height)
+    for ($y = 0; $y -lt $height; $y++) {
+        $offset = $y * ($stride + 1)
+        $filter = $raw[$offset]
+        $cur = [byte[]]::new($stride)
+        for ($x = 0; $x -lt $stride; $x++) {
+            $v = [int]$raw[$offset + 1 + $x]
+            $a = if ($x -ge $channels) { [int]$cur[$x - $channels] } else { 0 }
+            $b = [int]$prev[$x]
+            $c = if ($x -ge $channels) { [int]$prev[$x - $channels] } else { 0 }
+            $pred = switch ($filter) {
+                0 { 0 }
+                1 { $a }
+                2 { $b }
+                3 { [Math]::Floor(($a + $b) / 2) }
+                4 {
+                    $p = $a + $b - $c; $pa = [Math]::Abs($p - $a); $pb = [Math]::Abs($p - $b); $pc = [Math]::Abs($p - $c)
+                    if ($pa -le $pb -and $pa -le $pc) { $a } elseif ($pb -le $pc) { $b } else { $c }
+                }
+                default { throw "Unknown PNG filter type $filter on row $y" }
+            }
+            $cur[$x] = [byte](($v + $pred) % 256)
+        }
+        $rowPixels = [object[]]::new($width)
+        for ($px = 0; $px -lt $width; $px++) {
+            $k = $px * $channels
+            $rowPixels[$px] = @([int]$cur[$k], [int]$cur[$k + 1], [int]$cur[$k + 2])
+        }
+        $pixels[$y] = $rowPixels
+        $prev = $cur
+    }
+    return [pscustomobject]@{ width = $width; height = $height; pixels = $pixels }
 }
+
+$pixelData = Read-PngImage $pngPath
 
 if ($pixelData.width -ne $bannerWidth -or $pixelData.height -ne $bannerHeight) {
     Write-Error "PNG dimensions ($($pixelData.width)x$($pixelData.height)) don't match text ($bannerWidth x $bannerHeight)"

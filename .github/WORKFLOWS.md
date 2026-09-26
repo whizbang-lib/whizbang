@@ -46,4 +46,4 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 
 Shared data: `.github/nuget-packages.txt` (the packages every full publish ships),
 `.github/inert-paths.txt` (paths that cannot affect the build or tests, read through
-`.github/scripts/inert-diff.sh`).
+`.github/scripts/Test-InertDiff.ps1`).

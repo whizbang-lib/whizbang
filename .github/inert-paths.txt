@@ -3,7 +3,7 @@
 # re-test: every publishing run packs fresh.) The single definition of "docs-only", used by:
 #   - ci.yml "Plan · Detect changes": a push or PR touching ONLY these skips build and tests; any
 #     other file counts as code.
-#   - .github/scripts/inert-diff.sh: a queued PR (ff-validated) and a develop push or release cut
+#   - .github/scripts/Test-InertDiff.ps1: a queued PR (ff-validated) and a develop push or release cut
 #     (find-tested-run) keep an earlier verdict when the tree differs only in these.
 # Add a path only if NOTHING reads it during build, test, analysis or versioning. When unsure,
 # leave it out: a missing entry costs a CI run, a wrong one skips tests on a real change.
