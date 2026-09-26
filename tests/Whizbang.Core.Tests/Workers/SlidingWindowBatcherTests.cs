@@ -7,14 +7,15 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// Change-level tests for <see cref="SlidingWindowBatcher{T}"/>. Uses real <see cref="TimeProvider.System"/>
-/// with small delays for deterministic timer scheduling — FakeTimeProvider was too flaky here
-/// because Task.Yield() doesn't guarantee the consumer task has actually called
-/// <see cref="Task.Delay(TimeSpan, TimeProvider, CancellationToken)"/> before the test advances
-/// fake time. Real-time delays in the 5-100ms range are reliable, fast, and observable.
+/// Change-level tests for <see cref="SlidingWindowBatcher{T}"/>. Most use real <see cref="TimeProvider.System"/>
+/// with small delays. FakeTimeProvider was once too flaky here because the batcher began waiting for the next item
+/// before it armed the window's deadline, so a test could advance fake time in between and the deadline, created
+/// afterwards, never fired. The deadline is now armed first, and
+/// <see cref="ReadBatches_WindowElapsesAsTheInWindowWaitBegins_StillFlushesAsync"/> pins that with a fake clock.
 /// </summary>
 public class SlidingWindowBatcherTests {
   private static readonly int[] _expected123 = [1, 2, 3];
+  private static readonly int[] _expectedOne = [1];
   private static readonly int[] _expected01234 = [0, 1, 2, 3, 4];
   private static readonly int[] _expected12 = [1, 2];
   private static readonly int[] _expected34 = [3, 4];
@@ -266,5 +267,45 @@ public class SlidingWindowBatcherTests {
         MaxWait = TimeSpan.FromSeconds(1)
       }))
       .Throws<ArgumentOutOfRangeException>();
+  }
+
+  /// <summary>Wraps a reader and runs a callback on the consumer's thread as each wait begins.</summary>
+  private sealed class WaitHookReader(ChannelReader<int> inner, Action<int> onWait) : ChannelReader<int> {
+    private int _waits;
+    public override bool TryRead(out int item) => inner.TryRead(out item);
+    public override ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken = default) {
+      onWait(Interlocked.Increment(ref _waits));
+      return inner.WaitToReadAsync(cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// The window's deadline must be armed before the batcher starts waiting for the next item. Time that passes
+  /// between the two must count against the window: here the whole window elapses at the exact moment the
+  /// in-window wait begins, and the batch must still flush. A deadline armed after the wait would be measured
+  /// from the already-advanced clock and never fire, which is the ordering that made fake-clock tests of this
+  /// class unreliable under load.
+  /// </summary>
+  [Test]
+  public async Task ReadBatches_WindowElapsesAsTheInWindowWaitBegins_StillFlushesAsync() {
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+    var ch = Channel.CreateUnbounded<int>();
+    var reader = new WaitHookReader(ch.Reader, wait => {
+      if (wait == 2) {
+        clock.Advance(TimeSpan.FromMilliseconds(100)); // past the 50 ms sliding window, short of MaxWait
+      }
+    });
+    var batcher = new SlidingWindowBatcher<int>(reader, new SlidingWindowBatcherOptions {
+      MaxSize = 100,
+      SlidingWindow = TimeSpan.FromMilliseconds(50),
+      MaxWait = TimeSpan.FromSeconds(1)
+    }, clock);
+    ch.Writer.TryWrite(1);
+
+    await using var batches = batcher.ReadBatchesAsync(CancellationToken.None).GetAsyncEnumerator();
+    var moved = await batches.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(moved).IsTrue();
+    await Assert.That(batches.Current).IsEquivalentTo(_expectedOne);
   }
 }
