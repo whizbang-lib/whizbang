@@ -27,7 +27,7 @@ public partial class InboxDispatchWorkerTests {
   // ============================================================
 
   private sealed class FakeInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 42;
@@ -74,8 +74,8 @@ public partial class InboxDispatchWorkerTests {
   }
 
   private static InboxWork _makeWork(int attempts = 0, MessageProcessingStatus status = MessageProcessingStatus.Stored, Guid? id = null) {
-    var msgId = id ?? (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = id ?? (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     return new InboxWork {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {
@@ -278,7 +278,7 @@ public partial class InboxDispatchWorkerTests {
   }
 
   private static OutboxMessage _outboxMsg(string id) => new() {
-    MessageId = (Guid)TrackedGuid.NewMedo(),
+    MessageId = (Guid)TrackedGuid.New(),
     Envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse($"{{\"id\":\"{id}\"}}").RootElement,

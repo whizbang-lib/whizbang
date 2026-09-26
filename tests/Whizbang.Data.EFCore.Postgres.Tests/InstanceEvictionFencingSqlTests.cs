@@ -27,7 +27,7 @@ public class InstanceEvictionFencingSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var deadInstance = (Guid)TrackedGuid.NewMedo();
+    var deadInstance = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, deadInstance, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
 
     await _cleanupAsync(conn, staleCutoff: DateTimeOffset.UtcNow.AddSeconds(-30));
@@ -42,7 +42,7 @@ public class InstanceEvictionFencingSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var evictedInstance = (Guid)TrackedGuid.NewMedo();
+    var evictedInstance = (Guid)TrackedGuid.New();
     await _tombstoneAsync(conn, evictedInstance);
 
     var accepted = await _recordHeartbeatAsync(conn, evictedInstance);
@@ -60,7 +60,7 @@ public class InstanceEvictionFencingSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var freshInstance = (Guid)TrackedGuid.NewMedo();
+    var freshInstance = (Guid)TrackedGuid.New();
 
     var accepted = await _recordHeartbeatAsync(conn, freshInstance);
 
@@ -76,7 +76,7 @@ public class InstanceEvictionFencingSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var zombie = (Guid)TrackedGuid.NewMedo();
+    var zombie = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, zombie, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
     await _cleanupAsync(conn, staleCutoff: DateTimeOffset.UtcNow.AddSeconds(-30));
     await Assert.That(await _rowExistsAsync(conn, zombie)).IsFalse()

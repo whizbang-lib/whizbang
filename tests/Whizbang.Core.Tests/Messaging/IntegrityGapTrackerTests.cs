@@ -18,8 +18,8 @@ public class IntegrityGapTrackerTests {
   [Test]
   public async Task TakePending_ReturnsAndRemovesOnlyThatOriginAsync() {
     var tracker = new IntegrityGapTracker();
-    var originA = TrackedGuid.NewMedo().Value;
-    var originB = TrackedGuid.NewMedo().Value;
+    var originA = TrackedGuid.New().Value;
+    var originB = TrackedGuid.New().Value;
     tracker.AddPending(_gap(originA, "Contracts.TypeX"));
     tracker.AddPending(_gap(originA, "Contracts.TypeY"));
     tracker.AddPending(_gap(originB, "Contracts.TypeX"));
@@ -36,8 +36,8 @@ public class IntegrityGapTrackerTests {
   [Test]
   public async Task GetStaleOrigins_SurfacesOnlyOriginsPastTheThresholdAsync() {
     var tracker = new IntegrityGapTracker();
-    var fresh = TrackedGuid.NewMedo().Value;
-    var stale = TrackedGuid.NewMedo().Value;
+    var fresh = TrackedGuid.New().Value;
+    var stale = TrackedGuid.New().Value;
     var now = DateTimeOffset.UtcNow;
     tracker.RecordCheckpoint(fresh, "fresh-svc", now - TimeSpan.FromSeconds(30));
     tracker.RecordCheckpoint(stale, "stale-svc", now - TimeSpan.FromMinutes(10));

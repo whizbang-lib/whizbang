@@ -37,7 +37,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     var coordinator = _coordinator(ctx);
 
     // History BEFORE the first advance must never be counted retroactively.
-    await _seedAsync(conn, TrackedGuid.NewMedo().Value, 1, TENANT_A, "Contracts.OldHistory");
+    await _seedAsync(conn, TrackedGuid.New().Value, 1, TENANT_A, "Contracts.OldHistory");
 
     var baseline = await coordinator.AdvanceIntegrityCheckpointAsync();
     await Assert.That(baseline).IsNotNull();
@@ -46,7 +46,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     await Assert.That(baseline.Buckets).IsEmpty();
 
     // A live window: 2× typeX + 1× typeY in tenant A, plus an at-most-once occurrence (excluded).
-    var stream = TrackedGuid.NewMedo().Value;
+    var stream = TrackedGuid.New().Value;
     await _seedAsync(conn, stream, 2, TENANT_A, "Contracts.TypeX");
     await _seedAsync(conn, stream, 3, TENANT_A, "Contracts.TypeX");
     await _seedAsync(conn, stream, 4, TENANT_A, "Contracts.TypeY");
@@ -87,7 +87,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     // A stored checkpoint event lands in wh_event_store under the WIRE form ("Type, Assembly") —
     // the exclusion must match that form, or checkpoints count themselves and every window
     // over-declares by its own heartbeat.
-    var stream = TrackedGuid.NewMedo().Value;
+    var stream = TrackedGuid.New().Value;
     await _seedAsync(conn, stream, 1, TENANT_A,
       Whizbang.Core.TypeNameFormatter.Format(typeof(Whizbang.Core.Messaging.IntegrityCheckpoint)));
     await _seedAsync(conn, stream, 2, TENANT_A, "Contracts.TypeX");
@@ -104,9 +104,9 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var coordinator = _coordinator(ctx);
 
-    var origin = TrackedGuid.NewMedo().Value;
-    var otherOrigin = TrackedGuid.NewMedo().Value;
-    var stream = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
+    var otherOrigin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
     // Received events persist the ORIGIN identity; locally-originated rows have neither column.
     await _seedReceivedAsync(conn, stream, 1, TENANT_A, "Contracts.TypeX", origin, originSeq: 11);
     await _seedReceivedAsync(conn, stream, 2, TENANT_A, "Contracts.TypeX", origin, originSeq: 12);
@@ -132,7 +132,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
   private static async Task _seedReceivedAsync(
       NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType,
       Guid originServiceId, long originSeq) {
-    var eventId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.New().Value;
     await using var store = conn.CreateCommand();
     store.CommandText = @"
       INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags, origin_service_id, origin_commit_sequence)
@@ -157,7 +157,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
   private static async Task<Guid> _seedAsync(
       NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType,
       string? metadataJson = null) {
-    var eventId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.New().Value;
     await using (var store = conn.CreateCommand()) {
       store.CommandText = @"
         INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags)

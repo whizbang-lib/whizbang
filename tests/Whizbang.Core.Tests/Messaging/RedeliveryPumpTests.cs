@@ -25,14 +25,14 @@ public class RedeliveryPumpTests {
 
   [Test]
   public async Task Publish_BundlesPerStream_VersionOrdered_WithOriginalIdsAndTargetAsync() {
-    var streamA = TrackedGuid.NewMedo().Value;
-    var streamB = TrackedGuid.NewMedo().Value;
-    var a1 = TrackedGuid.NewMedo().Value;
-    var a2 = TrackedGuid.NewMedo().Value;
-    var b1 = TrackedGuid.NewMedo().Value;
+    var streamA = TrackedGuid.New().Value;
+    var streamB = TrackedGuid.New().Value;
+    var a1 = TrackedGuid.New().Value;
+    var a2 = TrackedGuid.New().Value;
+    var b1 = TrackedGuid.New().Value;
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     var published = await pump.PublishAsync(
@@ -71,8 +71,8 @@ public class RedeliveryPumpTests {
 
   [Test]
   public async Task Publish_ChunksStreamsByMaxInnerEventsAsync() {
-    var stream = TrackedGuid.NewMedo().Value;
-    var ids = Enumerable.Range(0, 5).Select(_ => TrackedGuid.NewMedo().Value).ToArray();
+    var stream = TrackedGuid.New().Value;
+    var ids = Enumerable.Range(0, 5).Select(_ => TrackedGuid.New().Value).ToArray();
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 2 });
@@ -97,8 +97,8 @@ public class RedeliveryPumpTests {
 
   [Test]
   public async Task Publish_ChunksByRawBodyBytes_BelowTheCountBoundAsync() {
-    var stream = TrackedGuid.NewMedo().Value;
-    var ids = Enumerable.Range(0, 3).Select(_ => TrackedGuid.NewMedo().Value).ToArray();
+    var stream = TrackedGuid.New().Value;
+    var ids = Enumerable.Range(0, 3).Select(_ => TrackedGuid.New().Value).ToArray();
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
     // Each event carries ~102 raw bytes (100-byte body + "{}" metadata); a 100-byte budget is
@@ -122,13 +122,13 @@ public class RedeliveryPumpTests {
 
   [Test]
   public async Task Publish_SingleEventLargerThanByteBudget_StillShipsAloneAsync() {
-    var stream = TrackedGuid.NewMedo().Value;
+    var stream = TrackedGuid.New().Value;
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions { MaxBytesPerComposite = 10 });
 
     var published = await pump.PublishAsync(
-      [_evt(stream, TrackedGuid.NewMedo().Value, 1) with { EventData = "{\"pad\":\"oversized-body\"}" }],
+      [_evt(stream, TrackedGuid.New().Value, 1) with { EventData = "{\"pad\":\"oversized-body\"}" }],
       topic: "repair-topic", target: "svc");
 
     await Assert.That(published).IsEqualTo(1)
@@ -146,7 +146,7 @@ public class RedeliveryPumpTests {
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     var published = await pump.PublishAsync(
-      [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1) with { EventType = "Totally.Unregistered.Type, Nowhere" }],
+      [_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1) with { EventType = "Totally.Unregistered.Type, Nowhere" }],
       topic: "repair-topic", target: "svc");
 
     await Assert.That(published).IsEqualTo(1);
@@ -167,13 +167,13 @@ public class RedeliveryPumpTests {
 
   [Test]
   public async Task Publish_CarriesTheStoredScopeOntoTheWireHopAsync() {
-    var stream = TrackedGuid.NewMedo().Value;
+    var stream = TrackedGuid.New().Value;
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     await pump.PublishAsync(
-      [_scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, _scopeJson("tenant-a", "user-a"))],
+      [_scopedEvt(stream, TrackedGuid.New().Value, 1, _scopeJson("tenant-a", "user-a"))],
       topic: "repair-topic", target: "svc-x");
 
     var hop = serializer.Captured[0].Hops[0];
@@ -188,14 +188,14 @@ public class RedeliveryPumpTests {
     // Same stream, two scopes. A single composite carries ONE hop scope, so bundling these
     // together would stamp one tenant's scope onto the other tenant's event — a cross-tenant
     // mis-attribution created by the repair path itself. Splitting is the only safe answer.
-    var stream = TrackedGuid.NewMedo().Value;
+    var stream = TrackedGuid.New().Value;
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     var published = await pump.PublishAsync([
-        _scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, _scopeJson("tenant-a", "user-a")),
-        _scopedEvt(stream, TrackedGuid.NewMedo().Value, 2, _scopeJson("tenant-b", "user-b")),
+        _scopedEvt(stream, TrackedGuid.New().Value, 1, _scopeJson("tenant-a", "user-a")),
+        _scopedEvt(stream, TrackedGuid.New().Value, 2, _scopeJson("tenant-b", "user-b")),
       ], topic: "repair-topic", target: "svc-x");
 
     await Assert.That(published).IsEqualTo(2)
@@ -213,13 +213,13 @@ public class RedeliveryPumpTests {
   public async Task Publish_LeavesTheHopUnscopedWhenTheEventHadNoScopeAsync() {
     // The other half of the contract: carrying what was stored must never become inventing what
     // was not. An event persisted without a scope stays without one.
-    var stream = TrackedGuid.NewMedo().Value;
+    var stream = TrackedGuid.New().Value;
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     await pump.PublishAsync(
-      [_evt(stream, TrackedGuid.NewMedo().Value, 1)],
+      [_evt(stream, TrackedGuid.New().Value, 1)],
       topic: "repair-topic", target: "svc-x");
 
     await Assert.That(serializer.Captured[0].Hops[0].Scope).IsNull()
@@ -231,13 +231,13 @@ public class RedeliveryPumpTests {
   public async Task Publish_TreatsAJsonNullScopeAsNoScopeAsync() {
     // The stored column holds the JSON null LITERAL, not SQL NULL, so the string reaching the pump
     // is "null" — four characters, not empty. A null-or-empty guard does not fire on it.
-    var stream = TrackedGuid.NewMedo().Value;
+    var stream = TrackedGuid.New().Value;
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     await pump.PublishAsync(
-      [_scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, "null")],
+      [_scopedEvt(stream, TrackedGuid.New().Value, 1, "null")],
       topic: "repair-topic", target: "svc-x");
 
     await Assert.That(serializer.Captured[0].Hops[0].Scope).IsNull()
@@ -294,8 +294,8 @@ public class RedeliveryPumpTests {
     // out of PublishAsync and aborted the WHOLE serve — every later chunk of a 1,400-event
     // repair died with it, the requester's attempt burned, and the deficit stayed frozen. A
     // transient send failure must cost a retry, not the serve.
-    var streamA = TrackedGuid.NewMedo().Value;
-    var streamB = TrackedGuid.NewMedo().Value;
+    var streamA = TrackedGuid.New().Value;
+    var streamB = TrackedGuid.New().Value;
     var transport = new FlakyTransport { FailFirst = 2 };
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions {
       PublishRetryAttempts = 5,
@@ -303,7 +303,7 @@ public class RedeliveryPumpTests {
     });
 
     var published = await pump.PublishAsync(
-      [_evt(streamA, TrackedGuid.NewMedo().Value, 1), _evt(streamB, TrackedGuid.NewMedo().Value, 1)],
+      [_evt(streamA, TrackedGuid.New().Value, 1), _evt(streamB, TrackedGuid.New().Value, 1)],
       topic: "repair-topic", target: "svc-x");
 
     await Assert.That(published).IsEqualTo(2)
@@ -323,7 +323,7 @@ public class RedeliveryPumpTests {
     });
 
     await Assert.That(async () => await pump.PublishAsync(
-        [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1)],
+        [_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1)],
         topic: "repair-topic", target: "svc-x"))
       .Throws<TimeoutException>()
       .Because("a chunk that fails every attempt surfaces the failure — the requester's ladder owns what happens next.");
@@ -340,7 +340,7 @@ public class RedeliveryPumpTests {
     });
 
     await Assert.That(async () => await pump.PublishAsync(
-        [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1)],
+        [_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1)],
         topic: "repair-topic", target: "svc-x"))
       .Throws<OperationCanceledException>()
       .Because("cancellation is a shutdown signal, not a transient fault.");

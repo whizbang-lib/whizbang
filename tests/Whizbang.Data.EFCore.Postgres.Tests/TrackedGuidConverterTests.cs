@@ -28,7 +28,7 @@ public class TrackedGuidConverterTests {
   [Test]
   public async Task WritingThenReading_YieldsTheSameIdentifierAsync() {
     var converter = new TrackedGuidConverter();
-    var original = TrackedGuid.NewMedo();
+    var original = TrackedGuid.New();
 
     var stored = (Guid)converter.ConvertToProvider(original)!;
     var loaded = (TrackedGuid)converter.ConvertFromProvider(stored)!;

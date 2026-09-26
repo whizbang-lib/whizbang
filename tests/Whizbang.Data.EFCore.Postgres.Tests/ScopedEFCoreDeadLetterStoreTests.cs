@@ -59,17 +59,17 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     await _insertOutboxRowAsync(conn, messageId);
 
-    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
     var result = await adapter.MoveAsync(
       deadLetterId: dlqId,
       sourceTable: DeadLetterSourceTable.OUTBOX,
       sourceId: messageId,
       failureReason: MessageFailureReason.MaxAttemptsExceeded,
       errorText: "via singleton adapter",
-      instanceId: (Guid)TrackedGuid.NewMedo(),
+      instanceId: (Guid)TrackedGuid.New(),
       generation: "v0.505-scoped");
 
     await Assert.That(result).IsEqualTo(dlqId)
@@ -91,7 +91,7 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
          created_at, stream_id, partition_number)
       VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{}', '{}', 1, 11, NOW(), @stream, 0)";
     cmd.Parameters.AddWithValue("msg", messageId);
-    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.New());
     await cmd.ExecuteNonQueryAsync();
   }
 

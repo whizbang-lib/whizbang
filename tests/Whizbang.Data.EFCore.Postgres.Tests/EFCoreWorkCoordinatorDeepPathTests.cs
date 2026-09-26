@@ -74,7 +74,7 @@ public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
     var connection = await _openConnectionAsync(dbContext);
     var coordinator = _createCoordinator(dbContext);
 
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
 
     await coordinator.RecordLifecycleCompletionAsync(eventId);
     // ON CONFLICT DO NOTHING — the second call must be a silent no-op.
@@ -126,9 +126,9 @@ public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
     var connection = await _openConnectionAsync(dbContext);
     var coordinator = _createCoordinator(dbContext);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var processedEventId = (Guid)TrackedGuid.NewMedo();
-    var pendingEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var processedEventId = (Guid)TrackedGuid.New();
+    var pendingEventId = (Guid)TrackedGuid.New();
     var pendingWorkId = Guid.NewGuid();
     const string perspectiveName = "P.CursorAdvance";
 
@@ -243,9 +243,9 @@ public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
     var connection = await _openConnectionAsync(dbContext);
     var coordinator = _createCoordinator(dbContext);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var processedEventId = (Guid)TrackedGuid.NewMedo();
-    var pendingEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var processedEventId = (Guid)TrackedGuid.New();
+    var pendingEventId = (Guid)TrackedGuid.New();
     const string perspectiveName = "P.Sync";
 
     await _insertEventStoreRowAsync(connection, processedEventId, streamId, "Type.A", version: 1);

@@ -64,7 +64,7 @@ public class DispatcherEmissionIdentityTests {
   }
 
   private sealed class FakeServiceInstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => serviceName;
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -121,8 +121,8 @@ public class DispatcherEmissionIdentityTests {
   public async Task CascadeMessageAsync_RetryOfSameHandling_DerivesTheSameEventIdsAsync() {
     await using var sp = _buildProvider();
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
-    var sourceMessageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var sourceMessageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     // First run: the handler emits two events of the same type.
     var firstRun = _handlingEnvelope(sourceMessageId, "OrderHandler");
@@ -147,8 +147,8 @@ public class DispatcherEmissionIdentityTests {
   public async Task CascadeMessageAsync_SiblingHandlerRowOfSameMessage_DerivesDistinctEventIdsAsync() {
     await using var sp = _buildProvider();
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
-    var sourceMessageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var sourceMessageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await dispatcher.CascadeMessageAsync(new ProbeEvent(streamId), _handlingEnvelope(sourceMessageId, "FirstHandler"), DispatchModes.Outbox);
     await dispatcher.CascadeMessageAsync(new ProbeEvent(streamId), _handlingEnvelope(sourceMessageId, "SecondHandler"), DispatchModes.Outbox);
@@ -162,8 +162,8 @@ public class DispatcherEmissionIdentityTests {
     await using var sp = _buildProvider();
     var orders = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
     var billing = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("billing"));
-    var sourceMessageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var sourceMessageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await orders.CascadeMessageAsync(new ProbeEvent(streamId), _handlingEnvelope(sourceMessageId, "Handler"), DispatchModes.Outbox);
     await billing.CascadeMessageAsync(new ProbeEvent(streamId), _handlingEnvelope(sourceMessageId, "Handler"), DispatchModes.Outbox);
@@ -175,8 +175,8 @@ public class DispatcherEmissionIdentityTests {
   public async Task CascadeMessageAsync_DifferentEmittedTypes_DeriveDistinctEventIdsAsync() {
     await using var sp = _buildProvider();
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
-    var source = _handlingEnvelope((Guid)TrackedGuid.NewMedo(), "Handler");
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var source = _handlingEnvelope((Guid)TrackedGuid.New(), "Handler");
+    var streamId = (Guid)TrackedGuid.New();
 
     await dispatcher.CascadeMessageAsync(new ProbeEvent(streamId), source, DispatchModes.Outbox);
     await dispatcher.CascadeMessageAsync(new OtherProbeEvent(streamId), source, DispatchModes.Outbox);
@@ -188,23 +188,66 @@ public class DispatcherEmissionIdentityTests {
   public async Task CascadeMessageAsync_DerivedEventId_IsVersion7ShapedAndKeepsSourceTimePrefixAsync() {
     await using var sp = _buildProvider();
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
-    var sourceMessageId = (Guid)TrackedGuid.NewMedo();
+    var sourceMessageId = (Guid)TrackedGuid.New();
 
-    await dispatcher.CascadeMessageAsync(new ProbeEvent((Guid)TrackedGuid.NewMedo()), _handlingEnvelope(sourceMessageId, "Handler"), DispatchModes.Outbox);
+    await dispatcher.CascadeMessageAsync(new ProbeEvent((Guid)TrackedGuid.New()), _handlingEnvelope(sourceMessageId, "Handler"), DispatchModes.Outbox);
 
     var eventId = dispatcher.OutboxCascades[0].EventId!.Value;
     await Assert.That(eventId.Version).IsEqualTo(7)
       .Because("downstream id value objects accept only v7; a derived id must pass where a minted one passes");
-    var prefixMatches = eventId.ToByteArray(bigEndian: true).AsSpan(0, 6).SequenceEqual(sourceMessageId.ToByteArray(bigEndian: true).AsSpan(0, 6));
+    var prefixMatches = eventId.ToByteArray(bigEndian: true).AsSpan(0, 10).SequenceEqual(sourceMessageId.ToByteArray(bigEndian: true).AsSpan(0, 10));
     await Assert.That(prefixMatches).IsTrue()
-      .Because("derived ids inherit the source's millisecond prefix so they index next to the message that caused them");
+      .Because("derived ids inherit the source's millisecond and counter, so they sort and index next to the message that caused them");
+  }
+
+  private static int _compareBigEndian(Guid a, Guid b) =>
+    a.ToByteArray(bigEndian: true).AsSpan().SequenceCompareTo(b.ToByteArray(bigEndian: true));
+
+  [Test]
+  public async Task CascadeMessageAsync_BackToBackHandlingsOnOneStream_EventIdsFollowHandlingOrderAsync() {
+    // Two commands sent one after the other on one stream, most pairs inside one millisecond. The event store
+    // versions a stream's events in event id order, so the first command's event must carry the smaller id.
+    await using var sp = _buildProvider();
+    var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
+    var streamId = (Guid)TrackedGuid.New();
+    const int pairs = 2_000;
+
+    for (int i = 0; i < pairs; i++) {
+      var createCommand = (Guid)TrackedGuid.New();
+      var addCommand = (Guid)TrackedGuid.New();
+      await dispatcher.CascadeMessageAsync(new ProbeEvent(streamId), _handlingEnvelope(createCommand, "CreateHandler"), DispatchModes.Outbox);
+      await dispatcher.CascadeMessageAsync(new OtherProbeEvent(streamId), _handlingEnvelope(addCommand, "AddHandler"), DispatchModes.Outbox);
+    }
+
+    var ids = dispatcher.OutboxCascades.ConvertAll(c => c.EventId!.Value);
+    var outOfOrder = Enumerable.Range(1, ids.Count - 1).Count(i => _compareBigEndian(ids[i], ids[i - 1]) <= 0);
+    await Assert.That(outOfOrder).IsEqualTo(0)
+      .Because("an event derived from a later command must sort after an event derived from an earlier one");
+  }
+
+  [Test]
+  public async Task CascadeMessageAsync_SeveralEmissionsOfOneHandling_EventIdsFollowEmissionOrderAsync() {
+    await using var sp = _buildProvider();
+    var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
+    var handling = _handlingEnvelope((Guid)TrackedGuid.New(), "Handler");
+    var streamId = (Guid)TrackedGuid.New();
+
+    for (int i = 0; i < 20; i++) {
+      IMessage emitted = i % 2 == 0 ? new OtherProbeEvent(streamId) : new ProbeEvent(streamId);
+      await dispatcher.CascadeMessageAsync(emitted, handling, DispatchModes.Outbox);
+    }
+
+    var ids = dispatcher.OutboxCascades.ConvertAll(c => c.EventId!.Value);
+    var outOfOrder = Enumerable.Range(1, ids.Count - 1).Count(i => _compareBigEndian(ids[i], ids[i - 1]) <= 0);
+    await Assert.That(outOfOrder).IsEqualTo(0)
+      .Because("a handler's emissions on one stream must apply in the order it produced them");
   }
 
   [Test]
   public async Task CascadeMessageAsync_NoSourceEnvelope_MintsFreshTimeOrderedIdsAsync() {
     await using var sp = _buildProvider();
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     await dispatcher.CascadeMessageAsync(new ProbeEvent(streamId), sourceEnvelope: null, DispatchModes.Outbox);
     await dispatcher.CascadeMessageAsync(new ProbeEvent(streamId), sourceEnvelope: null, DispatchModes.Outbox);
@@ -220,7 +263,7 @@ public class DispatcherEmissionIdentityTests {
   public async Task CascadeMessageAsync_SourceWithoutMessageId_MintsFreshIdsAsync() {
     await using var sp = _buildProvider();
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     // A default-initialized id carries an empty value: the shape of an envelope built without one.
     var anonymous = new MessageEnvelope<object> {
       MessageId = default,
@@ -243,10 +286,10 @@ public class DispatcherEmissionIdentityTests {
   public async Task CascadeMessageAsync_LocalDispatch_HandsReceptorsAWrapperAnchoredOnTheCascadedEventAsync() {
     await using var sp = _buildProvider();
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
-    var sourceMessageId = (Guid)TrackedGuid.NewMedo();
+    var sourceMessageId = (Guid)TrackedGuid.New();
     var handling = _handlingEnvelope(sourceMessageId, "OrderHandler");
 
-    await dispatcher.CascadeMessageAsync(new ProbeEvent((Guid)TrackedGuid.NewMedo()), handling, DispatchModes.Local);
+    await dispatcher.CascadeMessageAsync(new ProbeEvent((Guid)TrackedGuid.New()), handling, DispatchModes.Local);
 
     await Assert.That(dispatcher.LocalDispatchEnvelopes).Count().IsEqualTo(1);
     var wrapper = dispatcher.LocalDispatchEnvelopes[0] as CascadeEnvelopeWrapper;
@@ -260,7 +303,7 @@ public class DispatcherEmissionIdentityTests {
   public async Task CascadeMessageAsync_LocalDispatchOfACommand_AnchorsOnAnOrdinalOfTheHandlingAsync() {
     await using var sp = _buildProvider();
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
-    var sourceMessageId = (Guid)TrackedGuid.NewMedo();
+    var sourceMessageId = (Guid)TrackedGuid.New();
 
     await dispatcher.CascadeMessageAsync(new ProbeCascadedCommand("first"), _handlingEnvelope(sourceMessageId, "OrderHandler"), DispatchModes.Local);
     await dispatcher.CascadeMessageAsync(new ProbeCascadedCommand("retry"), _handlingEnvelope(sourceMessageId, "OrderHandler"), DispatchModes.Local);
@@ -277,8 +320,8 @@ public class DispatcherEmissionIdentityTests {
   public async Task CascadeMessageAsync_EmissionThroughAnAnchoredWrapper_DerivesFromTheAnchorNotTheInboundMessageAsync() {
     await using var sp = _buildProvider();
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
-    var sourceMessageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var sourceMessageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     var handling = _handlingEnvelope(sourceMessageId, "OrderHandler");
 
     // Top-level: the handler emits a ProbeEvent (ordinal 0 of the handling).
@@ -299,10 +342,10 @@ public class DispatcherEmissionIdentityTests {
   public async Task CascadeMessageAsync_EmissionThroughAnUnanchoredWrapper_FallsBackToTheInboundMessageIdAsync() {
     await using var sp = _buildProvider();
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
-    var sourceMessageId = (Guid)TrackedGuid.NewMedo();
+    var sourceMessageId = (Guid)TrackedGuid.New();
     var wrapper = new CascadeEnvelopeWrapper(_handlingEnvelope(sourceMessageId, "OrderHandler"));
 
-    await dispatcher.CascadeMessageAsync(new ProbeEvent((Guid)TrackedGuid.NewMedo()), wrapper, DispatchModes.Outbox);
+    await dispatcher.CascadeMessageAsync(new ProbeEvent((Guid)TrackedGuid.New()), wrapper, DispatchModes.Outbox);
 
     await Assert.That(dispatcher.OutboxCascades[0].EventId).IsEqualTo(
       EmissionIdentity.Derive(sourceMessageId, "orders", "OrderHandler", TypeNameFormatter.Format(typeof(ProbeEvent)), ordinal: 0));
@@ -313,9 +356,9 @@ public class DispatcherEmissionIdentityTests {
     var logs = new List<string>();
     await using var sp = _buildProvider(logs);
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
-    var sourceMessageId = (Guid)TrackedGuid.NewMedo();
+    var sourceMessageId = (Guid)TrackedGuid.New();
 
-    await dispatcher.CascadeMessageAsync(new ProbeEvent((Guid)TrackedGuid.NewMedo()), _handlingEnvelope(sourceMessageId, "Handler"), DispatchModes.Outbox);
+    await dispatcher.CascadeMessageAsync(new ProbeEvent((Guid)TrackedGuid.New()), _handlingEnvelope(sourceMessageId, "Handler"), DispatchModes.Outbox);
 
     List<string> lines;
     lock (logs) { lines = [.. logs]; }

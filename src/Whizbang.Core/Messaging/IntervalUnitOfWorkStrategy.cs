@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Medo;
 
 namespace Whizbang.Core.Messaging;
 
@@ -51,7 +50,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
       // Create new accumulating unit if none exists
       if (_currentUnit == null) {
         _currentUnit = new DispatchUnitOfWork {
-          UnitId = Uuid7.NewUuid7().ToGuid(),
+          UnitId = ValueObjects.TrackedGuid.New(),
           Messages = [],
           CreatedAt = DateTimeOffset.UtcNow,
           LifecycleStages = []

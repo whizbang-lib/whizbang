@@ -189,7 +189,7 @@ public sealed partial class PgSharedNotifyConnection(
   internal async Task<bool> RunProbeAsync(NpgsqlConnection conn, string connectionString, CancellationToken ct) {
     // Nonce uses 8 hex chars of a fresh UUIDv7 — plenty of entropy for a 2 s self-test
     // window while keeping the channel name short. Per `feedback_use_trackedguid`.
-    var nonce = global::Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value.ToString("N")[..12];
+    var nonce = global::Whizbang.Core.ValueObjects.TrackedGuid.New().Value.ToString("N")[..12];
     var channelName = $"wh_selftest_{_instanceProvider.InstanceId:N}_{nonce}";
     var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 

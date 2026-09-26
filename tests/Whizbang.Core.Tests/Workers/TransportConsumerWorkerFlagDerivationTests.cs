@@ -113,7 +113,7 @@ public class TransportConsumerWorkerFlagDerivationTests {
     await worker.StartAsync(cts.Token);
     await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(5));
     try {
-      var envelope = _createJsonEnvelope(new MessageId(TrackedGuid.NewMedo()));
+      var envelope = _createJsonEnvelope(new MessageId(TrackedGuid.New()));
       // The wire envelope-type string the transport hands over: the worker extracts the payload's
       // assembly-qualified name from between the [[ ]] — the same shape a real broker delivers.
       var envelopeType = $"Whizbang.Core.Messaging.MessageEnvelope`1[[{payloadType.AssemblyQualifiedName}]]";

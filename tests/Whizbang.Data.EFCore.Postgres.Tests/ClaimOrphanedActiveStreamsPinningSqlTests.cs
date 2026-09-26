@@ -51,10 +51,10 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     // Insert perspective-event row but NO wh_active_streams entry (mirrors a consumer's
     // strategy-flush path that calls store_outbox_messages with NULL p_instance_id).
@@ -75,10 +75,10 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     // The "post-restart" scenario: row exists, but cleanup_stale_instances has nulled
     // assigned_instance_id. The stale-ownership state observed in production.
@@ -98,11 +98,11 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var deadId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var deadId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     // claim_orphaned_perspective_events treats "dead" as "no row in wh_service_instances"
     // (cleanup_stale_instances has DELETEd the row). Don't register deadId — its lease
@@ -123,11 +123,11 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var liveOtherId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var liveOtherId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     // liveOtherId is alive and currently owns the stream.
     await _registerInstanceAsync(conn, liveOtherId);
@@ -148,10 +148,10 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     // I already own the stream. last_activity_at is stale (1 hour ago).
     var staleActivity = DateTimeOffset.UtcNow.AddHours(-1);
@@ -178,9 +178,9 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _insertOutboxRowAsync(conn, msgId, streamId, partitionNumber: 0,
       instanceId: null, leaseExpiry: null, attempts: 0);
@@ -196,9 +196,9 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0, ownerInstanceId: null);
     await _insertOutboxRowAsync(conn, msgId, streamId, partitionNumber: 0,
@@ -219,9 +219,9 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _insertInboxRowAsync(conn, msgId, streamId, partitionNumber: 0,
       instanceId: null, leaseExpiry: null, attempts: 0);
@@ -237,9 +237,9 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0, ownerInstanceId: null);
     await _insertInboxRowAsync(conn, msgId, streamId, partitionNumber: 0,

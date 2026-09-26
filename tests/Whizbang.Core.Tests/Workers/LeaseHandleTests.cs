@@ -44,7 +44,7 @@ public class LeaseHandleTests {
     var provider = _provider(out var fake);
     var deadline = fake.GetUtcNow() + TimeSpan.FromSeconds(60);
     using var lease = new LeaseHandle(
-      workId: (Guid)TrackedGuid.NewMedo(),
+      workId: (Guid)TrackedGuid.New(),
       category: WorkCategory.Inbox,
       deadline: deadline,
       maxRenewals: 6,
@@ -62,7 +62,7 @@ public class LeaseHandleTests {
     var provider = _provider(out var fake);
     var deadline = fake.GetUtcNow() + TimeSpan.FromSeconds(60);
     using var lease = new LeaseHandle(
-      workId: (Guid)TrackedGuid.NewMedo(),
+      workId: (Guid)TrackedGuid.New(),
       category: WorkCategory.Inbox,
       deadline: deadline,
       maxRenewals: 6,
@@ -79,7 +79,7 @@ public class LeaseHandleTests {
     var provider = _provider(out var fake);
     var firstDeadline = fake.GetUtcNow() + TimeSpan.FromSeconds(60);
     using var lease = new LeaseHandle(
-      workId: (Guid)TrackedGuid.NewMedo(),
+      workId: (Guid)TrackedGuid.New(),
       category: WorkCategory.Inbox,
       deadline: firstDeadline,
       maxRenewals: 6,
@@ -100,7 +100,7 @@ public class LeaseHandleTests {
   public async Task TryExtendDeadline_AfterMaxRenewals_ReturnsFalseAsync() {
     var provider = _provider(out var fake);
     using var lease = new LeaseHandle(
-      workId: (Guid)TrackedGuid.NewMedo(),
+      workId: (Guid)TrackedGuid.New(),
       category: WorkCategory.Inbox,
       deadline: fake.GetUtcNow() + TimeSpan.FromSeconds(60),
       maxRenewals: 3,
@@ -124,7 +124,7 @@ public class LeaseHandleTests {
   public async Task Disposal_CancelsTokenAsync() {
     var provider = _provider(out _);
     var lease = new LeaseHandle(
-      workId: (Guid)TrackedGuid.NewMedo(),
+      workId: (Guid)TrackedGuid.New(),
       category: WorkCategory.Inbox,
       deadline: provider.GetUtcNow() + TimeSpan.FromMinutes(5),
       maxRenewals: 6,
@@ -141,7 +141,7 @@ public class LeaseHandleTests {
   public async Task Disposal_IsIdempotentAsync() {
     var provider = _provider(out _);
     var lease = new LeaseHandle(
-      workId: (Guid)TrackedGuid.NewMedo(),
+      workId: (Guid)TrackedGuid.New(),
       category: WorkCategory.Inbox,
       deadline: provider.GetUtcNow() + TimeSpan.FromMinutes(5),
       maxRenewals: 6,
@@ -159,7 +159,7 @@ public class LeaseHandleTests {
   public async Task TryExtendDeadline_AfterDispose_ReturnsFalseAsync() {
     var provider = _provider(out var fake);
     var lease = new LeaseHandle(
-      workId: (Guid)TrackedGuid.NewMedo(),
+      workId: (Guid)TrackedGuid.New(),
       category: WorkCategory.Inbox,
       deadline: fake.GetUtcNow() + TimeSpan.FromSeconds(60),
       maxRenewals: 6,
@@ -178,7 +178,7 @@ public class LeaseHandleTests {
     var provider = _provider(out _);
     using var stoppingTokenSource = new CancellationTokenSource();
     using var lease = new LeaseHandle(
-      workId: (Guid)TrackedGuid.NewMedo(),
+      workId: (Guid)TrackedGuid.New(),
       category: WorkCategory.Inbox,
       deadline: provider.GetUtcNow() + TimeSpan.FromMinutes(5),
       maxRenewals: 6,
@@ -194,7 +194,7 @@ public class LeaseHandleTests {
   [Test]
   public async Task Properties_ExposeConstructorArgsAsync() {
     var provider = _provider(out _);
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     using var lease = new LeaseHandle(
       workId: workId,
       category: WorkCategory.PerspectiveEvent,

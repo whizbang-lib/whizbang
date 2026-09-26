@@ -32,7 +32,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class PerspectiveWorkerStartupGateTests {
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "svc";
     public string HostName => "host";
     public int ProcessId => 1;

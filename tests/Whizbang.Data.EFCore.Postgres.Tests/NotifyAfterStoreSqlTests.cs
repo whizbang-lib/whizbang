@@ -52,7 +52,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, instanceB);
     await _registerInstanceAsync(conn, instanceC);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     // partition_number 7 % 3 active = rank 1 = instanceB. If Step 2 ran, instanceB would
     // get a notify even though the stream is pinned to instanceA — wrong.
     const int partitionNumber = 7;
@@ -85,11 +85,11 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, instanceB);
     await _registerInstanceAsync(conn, instanceC);
 
-    var pinnedStream = (Guid)TrackedGuid.NewMedo();
+    var pinnedStream = (Guid)TrackedGuid.New();
     await _insertOutboxRowAsync(conn, pinnedStream, partitionNumber: 0);
     await _upsertActiveStreamAsync(conn, pinnedStream, partitionNumber: 0, instanceA);
 
-    var unclaimedStream = (Guid)TrackedGuid.NewMedo();
+    var unclaimedStream = (Guid)TrackedGuid.New();
     // partition 7 % 3 = rank 1 → instanceB. The ledger carries the number and no owner: that is
     // what "unclaimed" means to Step 2, and the ledger is where the number comes from now that a
     // doorbell no longer recovers it by reading the queue table.
@@ -139,8 +139,8 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, instanceB);
     await _registerInstanceAsync(conn, instanceC);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     var json = $"[{_inboxMessageJson(msgId, streamId)}]";
 
     var received = await _captureNotificationsAsync(
@@ -166,7 +166,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
     await _registerInstanceAsync(conn, instanceA);
 
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     var json = $"[{_inboxMessageJsonNullStream(msgId)}]";
 
     var received = await _captureNotificationsAsync(
@@ -204,8 +204,8 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     // event type. Seeded here; the association-less case has its own lock below.
     await _seedPerspectiveAssociationAsync(conn);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     var json = $"[{_outboxMessageJson(msgId, streamId, isEvent: true)}]";
 
     var received = await _captureNotificationsAsync(
@@ -242,10 +242,10 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
     await _registerInstanceAsync(conn, instanceA);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     // First call: stream is COLD → NOTIFY must fire (cold-start contract).
-    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    var firstMsgId = (Guid)TrackedGuid.New();
     var firstJson = $"[{_inboxMessageJson(firstMsgId, streamId)}]";
     var firstReceived = await _captureNotificationsAsync(
       conn,
@@ -256,7 +256,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
 
     // Second call (DIFFERENT message_id, SAME stream): stream is now HOT (pinned
     // in wh_active_streams) → NOTIFY must be skipped.
-    var secondMsgId = (Guid)TrackedGuid.NewMedo();
+    var secondMsgId = (Guid)TrackedGuid.New();
     var secondJson = $"[{_inboxMessageJson(secondMsgId, streamId)}]";
     var secondReceived = await _captureNotificationsAsync(
       conn,
@@ -278,10 +278,10 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, instanceA);
 
     await _seedPerspectiveAssociationAsync(conn);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     // First call (event): wake.
-    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    var firstMsgId = (Guid)TrackedGuid.New();
     var firstJson = $"[{_outboxMessageJson(firstMsgId, streamId, isEvent: true)}]";
     var firstReceived = await _captureNotificationsAsync(
       conn,
@@ -292,7 +292,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await Assert.That(firstPayloads).Contains("perspective");
 
     // Second call (event, same stream): hot stream → no NOTIFYs.
-    var secondMsgId = (Guid)TrackedGuid.NewMedo();
+    var secondMsgId = (Guid)TrackedGuid.New();
     var secondJson = $"[{_outboxMessageJson(secondMsgId, streamId, isEvent: true)}]";
     var secondReceived = await _captureNotificationsAsync(
       conn,
@@ -313,11 +313,11 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
     await _registerInstanceAsync(conn, instanceA);
 
-    var hotStream = (Guid)TrackedGuid.NewMedo();
-    var coldStream = (Guid)TrackedGuid.NewMedo();
+    var hotStream = (Guid)TrackedGuid.New();
+    var coldStream = (Guid)TrackedGuid.New();
 
     // Pre-pin hotStream by storing a first message; consume that NOTIFY.
-    var preMsgId = (Guid)TrackedGuid.NewMedo();
+    var preMsgId = (Guid)TrackedGuid.New();
     var preJson = $"[{_inboxMessageJson(preMsgId, hotStream)}]";
     _ = await _captureNotificationsAsync(
       conn,
@@ -325,8 +325,8 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, preJson));
 
     // Now batch a hot-stream message AND a cold-stream message in one call.
-    var hotMsg = (Guid)TrackedGuid.NewMedo();
-    var coldMsg = (Guid)TrackedGuid.NewMedo();
+    var hotMsg = (Guid)TrackedGuid.New();
+    var coldMsg = (Guid)TrackedGuid.New();
     var batchJson = $"[{_inboxMessageJson(hotMsg, hotStream)},{_inboxMessageJson(coldMsg, coldStream)}]";
     var received = await _captureNotificationsAsync(
       conn,
@@ -348,8 +348,8 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
     await _registerInstanceAsync(conn, instanceA);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     var json = $"[{_outboxMessageJson(msgId, streamId, isEvent: false)}]";
 
     var received = await _captureNotificationsAsync(
@@ -390,15 +390,15 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
     await _registerInstanceAsync(conn, instanceA);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var firstMsgId = (Guid)TrackedGuid.New();
     _ = await _captureNotificationsAsync(conn, [instanceA],
       emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson(firstMsgId, streamId)}]"));
 
     await _markInboxDrainedAsync(conn, firstMsgId);
 
     var received = await _captureNotificationsAsync(conn, [instanceA],
-      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId)}]"));
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson((Guid)TrackedGuid.New(), streamId)}]"));
 
     await Assert.That(received).Count().IsEqualTo(1)
       .Because("A store into a DRAINED (empty-queue) stream must ring the doorbell — the wake condition is queue emptiness, not stream age. Without this, an interactive stream waits on the notify-healthy claim poll (5-10 s) for every hop after its first.");
@@ -418,8 +418,8 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, instanceA);
     await _seedPerspectiveAssociationAsync(conn);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var firstMsgId = (Guid)TrackedGuid.New();
     _ = await _captureNotificationsAsync(conn, [instanceA],
       emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, $"[{_outboxMessageJson(firstMsgId, streamId, isEvent: true)}]"));
 
@@ -427,7 +427,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await _markPerspectiveWorkDrainedAsync(conn, streamId);
 
     var received = await _captureNotificationsAsync(conn, [instanceA],
-      emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, $"[{_outboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId, isEvent: true)}]"));
+      emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, $"[{_outboxMessageJson((Guid)TrackedGuid.New(), streamId, isEvent: true)}]"));
 
     var payloads = received.Select(r => r.Payload).Order().ToList();
     await Assert.That(payloads).Contains("outbox")
@@ -448,15 +448,15 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
     await _registerInstanceAsync(conn, instanceA);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var firstMsgId = (Guid)TrackedGuid.New();
     _ = await _captureNotificationsAsync(conn, [instanceA],
       emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson(firstMsgId, streamId)}]"));
 
     await _deferInboxRowAsync(conn, firstMsgId);
 
     var received = await _captureNotificationsAsync(conn, [instanceA],
-      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId)}]"));
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson((Guid)TrackedGuid.New(), streamId)}]"));
 
     await Assert.That(received).Count().IsEqualTo(1)
       .Because("The emptiness probe must mirror the drain fetch's eligibility predicate: a future-scheduled row is invisible to the drain, so it must be invisible to the probe too — the new (drainable-now) row is the stream's first pending work.");
@@ -475,14 +475,14 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, instanceA);
     await _registerInstanceAsync(conn, instanceB);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var firstMsgId = (Guid)TrackedGuid.New();
     _ = await _captureNotificationsAsync(conn, [instanceA, instanceB],
       emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson(firstMsgId, streamId)}]"));
     await _markInboxDrainedAsync(conn, firstMsgId);
 
     var received = await _captureNotificationsAsync(conn, [instanceA, instanceB],
-      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceB, $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId)}]"));
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceB, $"[{_inboxMessageJson((Guid)TrackedGuid.New(), streamId)}]"));
 
     await Assert.That(received).Count().IsEqualTo(1)
       .Because("Exactly one doorbell for the drained stream's first new row.");
@@ -500,11 +500,11 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
     await _registerInstanceAsync(conn, instanceA);
 
-    var busyStream = (Guid)TrackedGuid.NewMedo();
-    var drainedStream = (Guid)TrackedGuid.NewMedo();
+    var busyStream = (Guid)TrackedGuid.New();
+    var drainedStream = (Guid)TrackedGuid.New();
 
-    var busyMsg = (Guid)TrackedGuid.NewMedo();
-    var drainedMsg = (Guid)TrackedGuid.NewMedo();
+    var busyMsg = (Guid)TrackedGuid.New();
+    var drainedMsg = (Guid)TrackedGuid.New();
     _ = await _captureNotificationsAsync(conn, [instanceA],
       emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA,
         $"[{_inboxMessageJson(busyMsg, busyStream)},{_inboxMessageJson(drainedMsg, drainedStream)}]"));
@@ -513,7 +513,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
 
     var received = await _captureNotificationsAsync(conn, [instanceA],
       emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA,
-        $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), busyStream)},{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), drainedStream)}]"));
+        $"[{_inboxMessageJson((Guid)TrackedGuid.New(), busyStream)},{_inboxMessageJson((Guid)TrackedGuid.New(), drainedStream)}]"));
 
     await Assert.That(received).Count().IsEqualTo(1)
       .Because("Per-stream edges: the busy stream's new row piles behind pending work (silent), while the drained stream's new row is its first pending row (rings). One doorbell total, for the drained stream only.");
@@ -536,8 +536,8 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
     await _registerInstanceAsync(conn, instanceA);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var firstMsgId = (Guid)TrackedGuid.New();
     _ = await _captureNotificationsAsync(conn, [instanceA],
       emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson(firstMsgId, streamId)}]"));
 
@@ -558,7 +558,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
         var storeTask = Task.Run(async () => {
           await using var storeContext = CreateDbContext();
           var storeConn = await _openAsync(storeContext);
-          await _callStoreInboxMessagesAsync(storeConn, instanceA, $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId)}]");
+          await _callStoreInboxMessagesAsync(storeConn, instanceA, $"[{_inboxMessageJson((Guid)TrackedGuid.New(), streamId)}]");
         });
 
         // Commit the completion once the store is provably parked on the row lock —
@@ -594,8 +594,8 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, instanceA);
     // Deliberately NO association seeded: this event type feeds no perspective. The
     // suite-level seed helper is idempotent per type, so this test uses its own type name.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var json = $"[{_outboxMessageJsonOfType((Guid)TrackedGuid.NewMedo(), streamId, "Test.NoPerspectives, Test")}]";
+    var streamId = (Guid)TrackedGuid.New();
+    var json = $"[{_outboxMessageJsonOfType((Guid)TrackedGuid.New(), streamId, "Test.NoPerspectives, Test")}]";
 
     var received = await _captureNotificationsAsync(
       conn,
@@ -760,7 +760,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       INSERT INTO wh_outbox
         (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number)
       VALUES (@mid, 'test-topic', 'TestEvent', '{}', '{}', 0, 0, NOW(), @sid, @part)";
-    cmd.Parameters.AddWithValue("mid", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("mid", (Guid)TrackedGuid.New());
     cmd.Parameters.AddWithValue("sid", streamId);
     cmd.Parameters.AddWithValue("part", partitionNumber);
     await cmd.ExecuteNonQueryAsync();

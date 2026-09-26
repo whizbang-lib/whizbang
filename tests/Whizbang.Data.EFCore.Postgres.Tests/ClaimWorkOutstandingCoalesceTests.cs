@@ -45,7 +45,7 @@ public class ClaimWorkOutstandingCoalesceTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     // More held rows than the claim below may return: the counts must come from the untruncated
     // probe, not from the claim's LIMITed CTEs, or the budget reads its own output.
     await _seedLeasedInboxAsync(conn, instanceId, rows: 7);
@@ -66,7 +66,7 @@ public class ClaimWorkOutstandingCoalesceTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _seedLeasedInboxAsync(conn, instanceId, rows: 3);
 
     var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(

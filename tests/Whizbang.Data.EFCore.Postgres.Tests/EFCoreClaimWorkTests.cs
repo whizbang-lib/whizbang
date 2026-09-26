@@ -26,7 +26,7 @@ public class EFCoreClaimWorkTests : EFCoreTestBase {
     var coordinator = Coord(dbContext);
 
     var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
-      InstanceId: TrackedGuid.NewMedo(),
+      InstanceId: TrackedGuid.New(),
       ServiceName: "test-svc",
       HostName: "test-host",
       ProcessId: 1));
@@ -57,9 +57,9 @@ public class EFCoreClaimWorkTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = TrackedGuid.NewMedo();
-    var streamId = TrackedGuid.NewMedo();
-    var eventId = TrackedGuid.NewMedo();
+    var instanceId = TrackedGuid.New();
+    var streamId = TrackedGuid.New();
+    var eventId = TrackedGuid.New();
 
     // Heartbeat (claim_work uses calculate_instance_rank which reads this).
     await using (var hb = conn.CreateCommand()) {
@@ -147,8 +147,8 @@ public class EFCoreClaimWorkTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = TrackedGuid.NewMedo();
-    var streamId = TrackedGuid.NewMedo();
+    var instanceId = TrackedGuid.New();
+    var streamId = TrackedGuid.New();
 
     // Heartbeat.
     await using (var hb = conn.CreateCommand()) {
@@ -167,7 +167,7 @@ public class EFCoreClaimWorkTests : EFCoreTestBase {
           (stream_id, perspective_name, event_id, status, attempts, created_at)
         VALUES (@stream, 'TestPerspective', @eid, 0, 0, NOW())";
       ins.Parameters.AddWithValue("stream", (Guid)streamId);
-      ins.Parameters.AddWithValue("eid", (Guid)TrackedGuid.NewMedo());
+      ins.Parameters.AddWithValue("eid", (Guid)TrackedGuid.New());
       await ins.ExecuteNonQueryAsync();
     }
 

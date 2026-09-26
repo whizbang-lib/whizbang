@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Medo;
 
 namespace Whizbang.Core.Messaging;
 
@@ -10,7 +9,7 @@ namespace Whizbang.Core.Messaging;
 /// Scoped unit of work strategy - accumulates messages in single unit, flushes on DisposeAsync.
 /// Provides good balance of latency and coordination overhead.
 /// Best for: Web APIs, message handlers, transactional operations, scoped lifetimes.
-/// All messages in scope share single unit with time-ordered Uuid7 ID.
+/// All messages in scope share single unit with time-ordered UUIDv7 ID.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
@@ -31,7 +30,7 @@ public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy {
 
     // Create unit on first message
     _currentUnit ??= new DispatchUnitOfWork {
-      UnitId = Uuid7.NewUuid7().ToGuid(),
+      UnitId = ValueObjects.TrackedGuid.New(),
       Messages = [],
       CreatedAt = DateTimeOffset.UtcNow,
       LifecycleStages = []

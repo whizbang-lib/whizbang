@@ -408,7 +408,7 @@ public sealed partial class OutboxPublishWorker(
     }
     try {
       await _deadLetterStore.MoveAsync(
-        deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+        deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
         sourceTable: DeadLetterSourceTable.OUTBOX,
         sourceId: work.MessageId,
         failureReason: MessageFailureReason.MaxAttemptsExceeded,

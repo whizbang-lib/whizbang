@@ -92,7 +92,7 @@ public class PolymorphicQuarantineTests {
     // The load-bearing assertion: serializing a HEALTHY message through the polymorphic base —
     // the composite/envelope path that failed fleet-wide — must succeed even though a poisoned
     // type is registered beside it.
-    IMessage healthy = new HealthyProbeEvent { ProbeStreamId = TrackedGuid.NewMedo().Value, X = 7 };
+    IMessage healthy = new HealthyProbeEvent { ProbeStreamId = TrackedGuid.New().Value, X = 7 };
     var json = JsonSerializer.Serialize(healthy, options.GetTypeInfo(typeof(IMessage)));
     await Assert.That(json).Contains("\"X\":7")
       .Because("one bad contract type must degrade THAT type, never the whole wire");

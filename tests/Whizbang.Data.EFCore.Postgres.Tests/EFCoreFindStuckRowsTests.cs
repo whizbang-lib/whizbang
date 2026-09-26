@@ -32,8 +32,8 @@ public class EFCoreFindStuckRowsTests : EFCoreTestBase {
   public async Task FindStuckOutboxRows_PostgresBacking_DelegatesToSqlFunctionAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    Guid messageId = TrackedGuid.NewMedo();
-    Guid streamId = TrackedGuid.NewMedo();
+    Guid messageId = TrackedGuid.New();
+    Guid streamId = TrackedGuid.New();
     const string messageType = "Consumer.RemoveUserCommand";
     await _insertOutboxRowAsync(conn, messageId, streamId, messageType, attempts: 992);
 
@@ -55,8 +55,8 @@ public class EFCoreFindStuckRowsTests : EFCoreTestBase {
   public async Task FindStuckInboxRows_PostgresBacking_DelegatesToSqlFunctionAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    Guid messageId = TrackedGuid.NewMedo();
-    Guid streamId = TrackedGuid.NewMedo();
+    Guid messageId = TrackedGuid.New();
+    Guid streamId = TrackedGuid.New();
     await _insertInboxRowAsync(conn, messageId, streamId, "Consumer.SampleEvent", attempts: 15);
 
     var coordinator = _buildCoordinator(ctx);

@@ -141,10 +141,10 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceA = (Guid)TrackedGuid.NewMedo();  // commit instance
-    var instanceB = (Guid)TrackedGuid.NewMedo();  // stream owner
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var instanceA = (Guid)TrackedGuid.New();  // commit instance
+    var instanceB = (Guid)TrackedGuid.New();  // stream owner
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
 
     await _registerAssociationAsync(conn, EVENT_TYPE, PERSPECTIVE_NAME);
     await _registerLiveInstanceAsync(conn, instanceA);
@@ -174,9 +174,9 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var commitInstance = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var commitInstance = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
 
     await _registerAssociationAsync(conn, EVENT_TYPE, PERSPECTIVE_NAME);
     await _registerLiveInstanceAsync(conn, commitInstance);
@@ -202,10 +202,10 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var commitInstance = (Guid)TrackedGuid.NewMedo();
-    var deadOwner = (Guid)TrackedGuid.NewMedo();  // never inserted into wh_service_instances
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var commitInstance = (Guid)TrackedGuid.New();
+    var deadOwner = (Guid)TrackedGuid.New();  // never inserted into wh_service_instances
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
 
     await _registerAssociationAsync(conn, EVENT_TYPE, PERSPECTIVE_NAME);
     await _registerLiveInstanceAsync(conn, commitInstance);
@@ -237,9 +237,9 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var streamOwner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var streamOwner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
 
     await _registerAssociationAsync(conn, EVENT_TYPE, PERSPECTIVE_NAME);
     await _registerLiveInstanceAsync(conn, streamOwner);
@@ -282,9 +282,9 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instance = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var instance = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
 
     await _registerAssociationAsync(conn, EVENT_TYPE, PERSPECTIVE_NAME);
     await _registerLiveInstanceAsync(conn, instance);

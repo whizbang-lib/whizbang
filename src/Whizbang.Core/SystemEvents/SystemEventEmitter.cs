@@ -95,7 +95,7 @@ public sealed class SystemEventEmitter(
 
     // Create the audit event with generic scope
     var auditEvent = new EventAudited {
-      Id = TrackedGuid.NewMedo(),
+      Id = TrackedGuid.New(),
       OriginalEventType = typeof(TEvent).Name,
       OriginalStreamId = streamId.ToString(),
       OriginalStreamPosition = streamPosition,
@@ -147,7 +147,7 @@ public sealed class SystemEventEmitter(
 
     // Create the audit event with generic scope
     var auditEvent = new CommandAudited {
-      Id = TrackedGuid.NewMedo(),
+      Id = TrackedGuid.New(),
       CommandType = typeof(TCommand).Name,
       CommandBody = commandJson,
       Timestamp = DateTimeOffset.UtcNow,

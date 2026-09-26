@@ -25,7 +25,7 @@ public class StackHistorySqlTests : EFCoreTestBase {
     new(ctx, null);
 
   private static async Task<Guid> _seedAsync(NpgsqlConnection conn, string errorText) {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
       INSERT INTO wh_dead_letters
@@ -33,7 +33,7 @@ public class StackHistorySqlTests : EFCoreTestBase {
          attempts_when_dlq, recovery_status, generation, error_text)
       VALUES (@id, 'wh_inbox', @src, 'T.A', '{}'::jsonb, 5, 3, 2, 'seed/1', @err)";
     ins.Parameters.AddWithValue("id", id);
-    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.NewMedo());
+    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.New());
     ins.Parameters.AddWithValue("err", errorText);
     await ins.ExecuteNonQueryAsync();
     return id;

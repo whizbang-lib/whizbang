@@ -87,7 +87,7 @@ public class MessageIdAdditionalTests {
 
   [Test]
   public async Task ExplicitOperator_FromGuid_BuildsIdAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var id = (MessageId)g;
     await Assert.That(id.Value).IsEqualTo(g);
   }
@@ -107,7 +107,7 @@ public class MessageIdAdditionalTests {
 
   [Test]
   public async Task Parse_ValidUuidV7_RoundTripsAsync() {
-    var g = (Guid)TrackedGuid.NewMedo();
+    var g = (Guid)TrackedGuid.New();
     var id = MessageId.Parse(g.ToString());
     await Assert.That(id.Value).IsEqualTo(g);
   }

@@ -24,7 +24,7 @@ namespace Whizbang.Core.Tests.Priority;
 public class PriorityHooksTests {
 
   private static MessageEnvelope<string> _envelope(MessageSource source, string? handlerName = null, int declared = WorkPriority.UNDECLARED) => new() {
-    MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+    MessageId = MessageId.From((Guid)TrackedGuid.New()),
     Payload = "hi",
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Both, Source = source, HandlerName = handlerName },

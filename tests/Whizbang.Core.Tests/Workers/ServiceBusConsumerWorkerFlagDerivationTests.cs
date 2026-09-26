@@ -126,7 +126,7 @@ public class ServiceBusConsumerWorkerFlagDerivationTests {
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
     try {
-      var envelope = _createJsonEnvelope(new MessageId(TrackedGuid.NewMedo()));
+      var envelope = _createJsonEnvelope(new MessageId(TrackedGuid.New()));
       // The wire envelope-type string the ASB transport hands over — the worker extracts the
       // payload's assembly-qualified name from between the [[ ]], the same shape the real broker
       // delivers via the EnvelopeType application property.

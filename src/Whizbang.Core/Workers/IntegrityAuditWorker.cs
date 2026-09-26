@@ -211,7 +211,7 @@ public sealed partial class IntegrityAuditWorker(
           IncludeStreamIds: [gap.StreamId])).ConfigureAwait(false);
       }
       await dispatcher.PublishAsync(new PerspectiveCoverageGapDetected {
-        ReportStreamId = TrackedGuid.NewMedo().Value,
+        ReportStreamId = TrackedGuid.New().Value,
         PerspectiveName = gap.PerspectiveName,
         GapStreamId = gap.StreamId,
         EventCount = gap.EventCount,
@@ -258,7 +258,7 @@ public sealed partial class IntegrityAuditWorker(
       var since = sweep ? 0L : await coordinator.GetIntegritySealAsync(originId, cancellationToken).ConfigureAwait(false);
       var envelope = new MessageEnvelope<RequestIntegrityManifest> {
         Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
-        MessageId = new MessageId(TrackedGuid.NewMedo()),
+        MessageId = new MessageId(TrackedGuid.New()),
         Payload = new RequestIntegrityManifest {
           RequesterService = requester,
           Topic = topic,

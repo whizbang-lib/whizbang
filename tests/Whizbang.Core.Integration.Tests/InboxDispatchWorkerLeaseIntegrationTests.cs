@@ -53,7 +53,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
   public sealed record TestMessage(string Name) : IMessage;
 
   private sealed class FakeInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "integration-test-svc";
     public string HostName => "integration-test-host";
     public int ProcessId => 1;
@@ -139,7 +139,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
   }
 
   private static InboxWork _makeWork() {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     return new InboxWork {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {
@@ -149,7 +149,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },
       MessageType = "Whizbang.Core.Integration.Tests.InboxDispatchWorkerLeaseIntegrationTests+TestMessage, Whizbang.Core.Integration.Tests",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PartitionNumber = 0,
       Attempts = 1,
       Status = MessageProcessingStatus.Stored,

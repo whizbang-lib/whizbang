@@ -28,7 +28,7 @@ public class InboxDeserializeCacheTests {
   public async Task TryGet_NeverSeen_ReturnsFalseAsync() {
     var cache = new InboxDeserializeCache(_fakeProvider(out _));
 
-    var hit = cache.TryGet((Guid)TrackedGuid.NewMedo(), out var message);
+    var hit = cache.TryGet((Guid)TrackedGuid.New(), out var message);
 
     await Assert.That(hit).IsFalse();
     await Assert.That(message).IsNull();
@@ -37,7 +37,7 @@ public class InboxDeserializeCacheTests {
   [Test]
   public async Task Set_ThenTryGet_WithinTtl_ReturnsCachedReferenceAsync() {
     var cache = new InboxDeserializeCache(_fakeProvider(out _));
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var payload = new TestMessage("Hello");
 
     cache.Set(messageId, payload);
@@ -52,7 +52,7 @@ public class InboxDeserializeCacheTests {
   public async Task DefaultTtl_IsTwoMinutesAsync() {
     var provider = _fakeProvider(out var fake);
     var cache = new InboxDeserializeCache(provider);
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
 
     cache.Set(messageId, new TestMessage("x"));
     fake.Advance(TimeSpan.FromSeconds(119));
@@ -69,7 +69,7 @@ public class InboxDeserializeCacheTests {
   public async Task Set_PastTtl_TryGetReturnsFalseAsync() {
     var provider = _fakeProvider(out var fake);
     var cache = new InboxDeserializeCache(provider, ttl: TimeSpan.FromMinutes(2));
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
 
     cache.Set(messageId, new TestMessage("x"));
     fake.Advance(TimeSpan.FromMinutes(3));
@@ -83,7 +83,7 @@ public class InboxDeserializeCacheTests {
   public async Task Set_RemarkRefreshesExpiryAsync() {
     var provider = _fakeProvider(out var fake);
     var cache = new InboxDeserializeCache(provider, ttl: TimeSpan.FromMinutes(2));
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
 
     cache.Set(messageId, new TestMessage("first"));
     fake.Advance(TimeSpan.FromSeconds(90));
@@ -100,8 +100,8 @@ public class InboxDeserializeCacheTests {
   public async Task SweepExpired_DropsPastTtlEntriesAsync() {
     var provider = _fakeProvider(out var fake);
     var cache = new InboxDeserializeCache(provider, ttl: TimeSpan.FromMinutes(2));
-    var stale = (Guid)TrackedGuid.NewMedo();
-    var fresh = (Guid)TrackedGuid.NewMedo();
+    var stale = (Guid)TrackedGuid.New();
+    var fresh = (Guid)TrackedGuid.New();
 
     cache.Set(stale, new TestMessage("stale"));
     fake.Advance(TimeSpan.FromMinutes(3));
@@ -122,12 +122,12 @@ public class InboxDeserializeCacheTests {
     // Insert 10 — at cap. Then advance time and insert 1 more — overflow triggers eviction.
     var oldest = new List<Guid>();
     for (int i = 0; i < 10; i++) {
-      var id = (Guid)TrackedGuid.NewMedo();
+      var id = (Guid)TrackedGuid.New();
       oldest.Add(id);
       cache.Set(id, new TestMessage($"old{i}"));
       fake.Advance(TimeSpan.FromSeconds(1));
     }
-    var newest = (Guid)TrackedGuid.NewMedo();
+    var newest = (Guid)TrackedGuid.New();
     cache.Set(newest, new TestMessage("new"));
 
     await Assert.That(cache.Count).IsLessThanOrEqualTo(10)

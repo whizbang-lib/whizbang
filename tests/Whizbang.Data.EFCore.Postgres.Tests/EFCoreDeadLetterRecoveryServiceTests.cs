@@ -80,7 +80,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var svc = _newService(ctx);
 
-    var ok = await svc.RecoverAsync((Guid)TrackedGuid.NewMedo());
+    var ok = await svc.RecoverAsync((Guid)TrackedGuid.New());
 
     await Assert.That(ok).IsFalse();
   }
@@ -188,9 +188,9 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
 
   private static async Task<(Guid DlqId, Guid OriginalMessageId)> _seedDlqAsync(
       NpgsqlConnection conn, string generation = "v0.502") {
-    var dlqId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
@@ -209,7 +209,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     move.Parameters.AddWithValue("src", messageId);
     move.Parameters.AddWithValue("reason", 5);
     move.Parameters.AddWithValue("err", "seeded");
-    move.Parameters.AddWithValue("inst", (Guid)TrackedGuid.NewMedo());
+    move.Parameters.AddWithValue("inst", (Guid)TrackedGuid.New());
     move.Parameters.AddWithValue("gen", generation);
     await move.ExecuteNonQueryAsync();
     return (dlqId, messageId);

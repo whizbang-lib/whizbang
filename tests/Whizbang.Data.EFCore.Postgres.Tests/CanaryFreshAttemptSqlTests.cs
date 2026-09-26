@@ -24,7 +24,7 @@ public class CanaryFreshAttemptSqlTests : EFCoreTestBase {
   private const int HELD = 2;
 
   private static async Task<Guid> _seedSpentHeldAsync(NpgsqlConnection conn, string fp, string mt) {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
       INSERT INTO wh_dead_letters
@@ -33,7 +33,7 @@ public class CanaryFreshAttemptSqlTests : EFCoreTestBase {
          error_fingerprint_version)
       VALUES (@id, 'wh_inbox', @src, @mt, '{}'::jsonb, 5, 3, @st, 3, 'seed/1', @fp, 1)";
     ins.Parameters.AddWithValue("id", id);
-    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.NewMedo());
+    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.New());
     ins.Parameters.AddWithValue(nameof(mt), mt);
     ins.Parameters.AddWithValue("st", HELD);
     ins.Parameters.AddWithValue(nameof(fp), fp);

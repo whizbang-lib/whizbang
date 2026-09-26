@@ -28,12 +28,12 @@ public class RedeliveryPumpPriorityTests {
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
-    var streamA = TrackedGuid.NewMedo().Value;
-    var streamB = TrackedGuid.NewMedo().Value;
+    var streamA = TrackedGuid.New().Value;
+    var streamB = TrackedGuid.New().Value;
 
     var published = await pump.PublishAsync(
       [_evt(streamA, 1), _evt(streamA, 2), _evt(streamB, 1)],
-      topic: "repair-topic", target: "svc-x", originServiceId: TrackedGuid.NewMedo().Value);
+      topic: "repair-topic", target: "svc-x", originServiceId: TrackedGuid.New().Value);
 
     await Assert.That(published).IsEqualTo(2);
     foreach (var envelope in serializer.Captured) {
@@ -46,7 +46,7 @@ public class RedeliveryPumpPriorityTests {
   public async Task Publish_EveryBundleOnTheWireIsBackgroundAsync() {
     var transport = new CaptureTransport();
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
-    var stream = TrackedGuid.NewMedo().Value;
+    var stream = TrackedGuid.New().Value;
 
     await pump.PublishAsync([_evt(stream, 1), _evt(stream, 2)], topic: "repair-topic", target: "svc-x");
 
@@ -61,7 +61,7 @@ public class RedeliveryPumpPriorityTests {
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     using (PriorityContext.Enter(WorkPriority.INTERACTIVE)) {
-      await pump.PublishAsync([_evt(TrackedGuid.NewMedo().Value, 1)], topic: "repair-topic", target: null);
+      await pump.PublishAsync([_evt(TrackedGuid.New().Value, 1)], topic: "repair-topic", target: null);
     }
 
     await Assert.That(serializer.Captured.Single().Priority).IsEqualTo(WorkPriority.BACKGROUND)
@@ -69,7 +69,7 @@ public class RedeliveryPumpPriorityTests {
   }
 
   private static RedeliveryEvent _evt(Guid streamId, long version) => new() {
-    EventId = TrackedGuid.NewMedo().Value,
+    EventId = TrackedGuid.New().Value,
     StreamId = streamId,
     Version = version,
     CommitSequence = version,

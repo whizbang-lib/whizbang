@@ -39,13 +39,13 @@ public class InboxAttemptAccountingBoundaryTests : EFCoreTestBase {
   public async Task RepeatedCrashesWithoutRelease_ConvergeOnTheCapAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = TrackedGuid.NewMedo().Value;
-    var streamId = TrackedGuid.NewMedo().Value;
+    var messageId = TrackedGuid.New().Value;
+    var streamId = TrackedGuid.New().Value;
 
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 0);
 
     for (var crash = 0; crash < 6; crash++) {
-      await _claimOrphanedInboxAsync(conn, TrackedGuid.NewMedo().Value);
+      await _claimOrphanedInboxAsync(conn, TrackedGuid.New().Value);
       await _expireLeaseAsync(conn, messageId);
     }
 
@@ -63,13 +63,13 @@ public class InboxAttemptAccountingBoundaryTests : EFCoreTestBase {
   public async Task ReleasingDoesNotErasePreviouslySpentBudgetAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = TrackedGuid.NewMedo().Value;
-    var streamId = TrackedGuid.NewMedo().Value;
+    var messageId = TrackedGuid.New().Value;
+    var streamId = TrackedGuid.New().Value;
 
     // Three attempts genuinely consumed by crashes before this worker ever sees the row.
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 3);
 
-    var instance = TrackedGuid.NewMedo().Value;
+    var instance = TrackedGuid.New().Value;
     await _claimOrphanedInboxAsync(conn, instance);          // 3 -> 4
     await _releaseUnprocessedAsync(conn, instance, [messageId]);  // 4 -> 3
 

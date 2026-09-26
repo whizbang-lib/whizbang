@@ -26,10 +26,10 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
   public async Task MoveToDeadLetters_OutboxRow_MovesIntoDlqAndDeletesSourceAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var dlqId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var instanceId = (Guid)TrackedGuid.New();
     await _insertOutboxRowAsync(conn, messageId, streamId, attempts: 7);
 
     var resultId = await _callMoveAsync(conn, dlqId, "wh_outbox", messageId,
@@ -60,14 +60,14 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
   public async Task MoveToDeadLetters_InboxRow_MovesIntoDlqAndDeletesSourceAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var dlqId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 11);
 
     var resultId = await _callMoveAsync(conn, dlqId, "wh_inbox", messageId,
       failureReason: 2, errorText: "transport exception",
-      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "g1");
+      instanceId: (Guid)TrackedGuid.New(), generation: "g1");
 
     await Assert.That(resultId).IsEqualTo(dlqId);
     await Assert.That(await _inboxRowExistsAsync(conn, messageId)).IsFalse();
@@ -82,15 +82,15 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
   public async Task MoveToDeadLetters_PerspectiveEventRow_MovesIntoDlqAndDeletesSourceAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var dlqId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _insertPerspectiveEventAsync(conn, workId, streamId, "Test.Projection", eventId, attempts: 3);
 
     var resultId = await _callMoveAsync(conn, dlqId, "wh_perspective_events", workId,
       failureReason: 4, errorText: "validation error",
-      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "g2");
+      instanceId: (Guid)TrackedGuid.New(), generation: "g2");
 
     await Assert.That(resultId).IsEqualTo(dlqId);
     await Assert.That(await _perspectiveEventExistsAsync(conn, workId)).IsFalse();
@@ -105,12 +105,12 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
   public async Task MoveToDeadLetters_AlreadyMovedRow_ReturnsNullAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var dlqId = (Guid)TrackedGuid.NewMedo();
-    var nonExistentMessageId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
+    var nonExistentMessageId = (Guid)TrackedGuid.New();
 
     var resultId = await _callMoveAsync(conn, dlqId, "wh_outbox", nonExistentMessageId,
       failureReason: 8, errorText: "would be racy",
-      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "g3");
+      instanceId: (Guid)TrackedGuid.New(), generation: "g3");
 
     await Assert.That(resultId).IsNull()
       .Because("idempotent — when the source row was already removed, return NULL no-op");
@@ -120,12 +120,12 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
   public async Task MoveToDeadLetters_UnknownSourceTable_RaisesExceptionAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var dlqId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
 
     await Assert.That(async () => await _callMoveAsync(conn, dlqId, "wh_nonexistent", messageId,
       failureReason: 99, errorText: "x",
-      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "g"))
+      instanceId: (Guid)TrackedGuid.New(), generation: "g"))
       .Throws<PostgresException>()
       .Because("unsupported source table must fail loudly, not silently no-op");
   }
@@ -270,15 +270,15 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
     // unrecoverable. The move must preserve the source row's stored error.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var dlqId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    await _insertPerspectiveEventWithErrorAsync(conn, workId, (Guid)TrackedGuid.NewMedo(),
-      "Test.Projection", (Guid)TrackedGuid.NewMedo(), attempts: 12,
+    var dlqId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    await _insertPerspectiveEventWithErrorAsync(conn, workId, (Guid)TrackedGuid.New(),
+      "Test.Projection", (Guid)TrackedGuid.New(), attempts: 12,
       error: "System.InvalidOperationException: the actual root cause");
 
     _ = await _callMoveAsync(conn, dlqId, "wh_perspective_events", workId,
       failureReason: 5, errorText: "PerspectiveWorker dead-lettered perspective event: attempts=12 > max=10",
-      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "g3");
+      instanceId: (Guid)TrackedGuid.New(), generation: "g3");
 
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT error_text FROM wh_dead_letters WHERE dead_letter_id = @id";
@@ -321,15 +321,15 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
   public async Task MoveToDeadLetters_SameMessageDeadLetteredTwice_CarriesRecoveryBudgetForwardAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     // First failure → row A, then recovery spends one attempt on it.
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 11);
-    var firstDlqId = (Guid)TrackedGuid.NewMedo();
+    var firstDlqId = (Guid)TrackedGuid.New();
     _ = await _callMoveAsync(conn, firstDlqId, "wh_inbox", messageId,
       failureReason: 5, errorText: "attempts=11 > max=10",
-      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "gen-1");
+      instanceId: (Guid)TrackedGuid.New(), generation: "gen-1");
     await using (var spend = conn.CreateCommand()) {
       spend.CommandText = "UPDATE wh_dead_letters SET recovery_attempts = 1, recovery_status = 3, recovered_at = NOW() WHERE dead_letter_id = @id";
       spend.Parameters.AddWithValue("id", firstDlqId);
@@ -338,10 +338,10 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
 
     // Recovery re-emitted it; it fails AGAIN → row B.
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 11);
-    var secondDlqId = (Guid)TrackedGuid.NewMedo();
+    var secondDlqId = (Guid)TrackedGuid.New();
     _ = await _callMoveAsync(conn, secondDlqId, "wh_inbox", messageId,
       failureReason: 5, errorText: "attempts=11 > max=10",
-      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "gen-1");
+      instanceId: (Guid)TrackedGuid.New(), generation: "gen-1");
 
     await using var read = conn.CreateCommand();
     read.CommandText = "SELECT recovery_attempts FROM wh_dead_letters WHERE dead_letter_id = @id";
@@ -359,13 +359,13 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
     // Guard: carrying history forward must not penalise a message failing for the first time.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    await _insertInboxRowAsync(conn, messageId, (Guid)TrackedGuid.NewMedo(), attempts: 11);
-    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    await _insertInboxRowAsync(conn, messageId, (Guid)TrackedGuid.New(), attempts: 11);
+    var dlqId = (Guid)TrackedGuid.New();
 
     _ = await _callMoveAsync(conn, dlqId, "wh_inbox", messageId,
       failureReason: 5, errorText: "first failure",
-      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "gen-1");
+      instanceId: (Guid)TrackedGuid.New(), generation: "gen-1");
 
     await using var read = conn.CreateCommand();
     read.CommandText = "SELECT recovery_attempts FROM wh_dead_letters WHERE dead_letter_id = @id";
@@ -380,14 +380,14 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
     // error, it must survive into the DLQ row instead of being replaced by the attempts wrapper.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    await _insertInboxRowWithErrorAsync(conn, messageId, (Guid)TrackedGuid.NewMedo(),
+    var messageId = (Guid)TrackedGuid.New();
+    await _insertInboxRowWithErrorAsync(conn, messageId, (Guid)TrackedGuid.New(),
       attempts: 11, error: "System.InvalidOperationException: the real inbox cause");
-    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
 
     _ = await _callMoveAsync(conn, dlqId, "wh_inbox", messageId,
       failureReason: 5, errorText: "InboxDispatchWorker dead-lettered: attempts=11 > max=10",
-      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "gen-1");
+      instanceId: (Guid)TrackedGuid.New(), generation: "gen-1");
 
     await using var read = conn.CreateCommand();
     read.CommandText = "SELECT error_text FROM wh_dead_letters WHERE dead_letter_id = @id";
@@ -425,14 +425,14 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
     // message getting a fresh chance after a deploy.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 11);
-    var oldGenDlq = (Guid)TrackedGuid.NewMedo();
+    var oldGenDlq = (Guid)TrackedGuid.New();
     _ = await _callMoveAsync(conn, oldGenDlq, "wh_inbox", messageId,
       failureReason: 5, errorText: "exhausted on the old build",
-      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "whizbang/1.0.0");
+      instanceId: (Guid)TrackedGuid.New(), generation: "whizbang/1.0.0");
     await using (var spend = conn.CreateCommand()) {
       spend.CommandText = "UPDATE wh_dead_letters SET recovery_attempts = 5 WHERE dead_letter_id = @id";
       spend.Parameters.AddWithValue("id", oldGenDlq);
@@ -441,10 +441,10 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
 
     // A NEW build deploys and the message fails again.
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 11);
-    var newGenDlq = (Guid)TrackedGuid.NewMedo();
+    var newGenDlq = (Guid)TrackedGuid.New();
     _ = await _callMoveAsync(conn, newGenDlq, "wh_inbox", messageId,
       failureReason: 5, errorText: "first failure on the new build",
-      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "whizbang/2.0.0");
+      instanceId: (Guid)TrackedGuid.New(), generation: "whizbang/2.0.0");
 
     await using var read = conn.CreateCommand();
     read.CommandText = "SELECT recovery_attempts FROM wh_dead_letters WHERE dead_letter_id = @id";

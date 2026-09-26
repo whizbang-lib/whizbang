@@ -120,7 +120,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
 
       // E05: CombGuidIdGeneration detection
       if (expressionText.Contains("CombGuidIdGeneration")) {
-        warnings.Add($"Line {lineNumber}: CombGuidIdGeneration found. In Whizbang, use TrackedGuid.NewMedo() " +
+        warnings.Add($"Line {lineNumber}: CombGuidIdGeneration found. In Whizbang, use TrackedGuid.New() " +
             "for sequential GUIDs with sub-millisecond precision. This provides similar benefits to Marten's " +
             "CombGuid but with UUIDv7 compliance.");
       }
@@ -135,7 +135,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
            bodyText.Contains("attempt") || bodyText.Contains("collision") ||
            bodyText.Contains("duplicate key"))) {
         var lineNumber = forLoop.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-        warnings.Add($"Line {lineNumber}: GUID collision retry pattern detected. TrackedGuid.NewMedo() " +
+        warnings.Add($"Line {lineNumber}: GUID collision retry pattern detected. TrackedGuid.New() " +
             "uses timestamp-based UUIDs that are virtually collision-free, making retry logic typically " +
             "unnecessary. Consider simplifying to a single ID generation call.");
       }

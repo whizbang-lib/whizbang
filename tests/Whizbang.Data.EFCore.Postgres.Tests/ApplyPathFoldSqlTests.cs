@@ -30,7 +30,7 @@ public class ApplyPathFoldSqlTests : EFCoreTestBase {
       await using var cmd = new NpgsqlCommand(
         "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at) " +
         "VALUES (@e, @s, @s, 'TestAggregate', @t, @v, NOW())", conn);
-      cmd.Parameters.AddWithValue("e", (Guid)TrackedGuid.NewMedo());
+      cmd.Parameters.AddWithValue("e", (Guid)TrackedGuid.New());
       cmd.Parameters.AddWithValue("s", streamId);
       cmd.Parameters.AddWithValue("t", eventTypes[version - 1]);
       cmd.Parameters.AddWithValue("v", version);

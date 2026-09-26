@@ -72,7 +72,7 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     // 20 retried streams, hours older — the backlog. 10 fresh streams, arriving now.
     await _seedOwnedInboxAsync(conn, instanceId, streams: 20, attempts: 2, ageOffset: "-2 hours");
     await _seedOwnedInboxAsync(conn, instanceId, streams: 10, attempts: 0, ageOffset: "0");
@@ -92,7 +92,7 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _seedOwnedInboxAsync(conn, instanceId, streams: 12, attempts: 3, ageOffset: "-1 hour");
 
     var batch = await _coordinator(ctx).ClaimWorkAsync(new ClaimWorkRequest(
@@ -108,7 +108,7 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _seedOwnedInboxAsync(conn, instanceId, streams: 12, attempts: 0, ageOffset: "0");
 
     var batch = await _coordinator(ctx).ClaimWorkAsync(new ClaimWorkRequest(
@@ -122,7 +122,7 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _seedOwnedInboxAsync(conn, instanceId, streams: 20, attempts: 2, ageOffset: "-2 hours");
     await _seedOwnedInboxAsync(conn, instanceId, streams: 6, attempts: 0, ageOffset: "0");
 
@@ -143,8 +143,8 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     // One stream whose HEAD is a retry and whose second row is fresh: the stream classifies
     // as retry, and the fresh row must not be claimable ahead of its own head.
     await using (var ins = conn.CreateCommand()) {
@@ -218,7 +218,7 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _seedBulkStreamAsync(conn, instanceId, rows: 300, ageOffset: "-10 minutes");
     var interactive = await _seedBulkStreamAsync(conn, instanceId, rows: 1, ageOffset: "0");
 
@@ -238,7 +238,7 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await using (var hb = conn.CreateCommand()) {
       hb.CommandText = "SELECT record_heartbeat(@id, 'svc', 'host', 1, '{}'::jsonb)";
       hb.Parameters.AddWithValue("id", instanceId);

@@ -33,7 +33,7 @@ public class CooldownGateDecisionTests {
   };
 
   private static StreamEventData _raw(Guid eventId, Guid workId, string? perspectiveName = null) => new() {
-    StreamId = (Guid)TrackedGuid.NewMedo(),
+    StreamId = (Guid)TrackedGuid.New(),
     EventId = eventId,
     EventType = "TestEvent",
     EventData = "{}",
@@ -48,8 +48,8 @@ public class CooldownGateDecisionTests {
 
   [Test]
   public async Task ShouldSkip_NullCache_ReturnsFalseAsync() {
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var raw = new[] { _raw(eventId, (Guid)TrackedGuid.NewMedo()) }.ToLookup(r => r.EventId);
+    var eventId = (Guid)TrackedGuid.New();
+    var raw = new[] { _raw(eventId, (Guid)TrackedGuid.New()) }.ToLookup(r => r.EventId);
     var events = new List<MessageEnvelope<IEvent>> { _envelope(eventId) };
 
     var skip = PerspectiveWorker._shouldSkipApplyDueToCooldown(events, raw, cache: null);
@@ -70,10 +70,10 @@ public class CooldownGateDecisionTests {
   [Test]
   public async Task ShouldSkip_AllWorkIdsInCache_ReturnsTrueAsync() {
     var cache = new RecentlyProcessedEventCache(_provider());
-    var event1 = (Guid)TrackedGuid.NewMedo();
-    var event2 = (Guid)TrackedGuid.NewMedo();
-    var work1 = (Guid)TrackedGuid.NewMedo();
-    var work2 = (Guid)TrackedGuid.NewMedo();
+    var event1 = (Guid)TrackedGuid.New();
+    var event2 = (Guid)TrackedGuid.New();
+    var work1 = (Guid)TrackedGuid.New();
+    var work2 = (Guid)TrackedGuid.New();
     cache.MarkProcessed(work1);
     cache.MarkProcessed(work2);
 
@@ -88,10 +88,10 @@ public class CooldownGateDecisionTests {
   [Test]
   public async Task ShouldSkip_OneFresh_ReturnsFalseAsync() {
     var cache = new RecentlyProcessedEventCache(_provider());
-    var event1 = (Guid)TrackedGuid.NewMedo();
-    var event2 = (Guid)TrackedGuid.NewMedo();
-    var work1 = (Guid)TrackedGuid.NewMedo();
-    var work2 = (Guid)TrackedGuid.NewMedo();
+    var event1 = (Guid)TrackedGuid.New();
+    var event2 = (Guid)TrackedGuid.New();
+    var work1 = (Guid)TrackedGuid.New();
+    var work2 = (Guid)TrackedGuid.New();
     cache.MarkProcessed(work1); // only work1 is cooled
 
     var raw = new[] { _raw(event1, work1), _raw(event2, work2) }.ToLookup(r => r.EventId);
@@ -108,9 +108,9 @@ public class CooldownGateDecisionTests {
     // Same event_id queued for multiple perspectives → multiple work_ids per event_id in lookup.
     // Every work_id must be cooled for skip to fire.
     var cache = new RecentlyProcessedEventCache(_provider());
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workA = (Guid)TrackedGuid.NewMedo();
-    var workB = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workA = (Guid)TrackedGuid.New();
+    var workB = (Guid)TrackedGuid.New();
     cache.MarkProcessed(workA);
     cache.MarkProcessed(workB);
 
@@ -125,9 +125,9 @@ public class CooldownGateDecisionTests {
   [Test]
   public async Task ShouldSkip_EventMapsToMultipleWorkIds_OneFresh_ReturnsFalseAsync() {
     var cache = new RecentlyProcessedEventCache(_provider());
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workA = (Guid)TrackedGuid.NewMedo();
-    var workB = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workA = (Guid)TrackedGuid.New();
+    var workB = (Guid)TrackedGuid.New();
     cache.MarkProcessed(workA); // only workA cooled, workB fresh
 
     var raw = new[] { _raw(eventId, workA), _raw(eventId, workB) }.ToLookup(r => r.EventId);
@@ -164,9 +164,9 @@ public class CooldownGateDecisionTests {
     // Pre-fix: returns true because the loop sees A's work_id cooled and the bug treats it
     // as proof that "every work_id for this event is cooled" — incorrectly skipping B.
     var cache = new RecentlyProcessedEventCache(_provider());
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workForA = (Guid)TrackedGuid.NewMedo();
-    var workForB = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workForA = (Guid)TrackedGuid.New();
+    var workForB = (Guid)TrackedGuid.New();
     cache.MarkProcessed(workForA);  // only A's work is cooled
 
     var raw = new[] {
@@ -186,9 +186,9 @@ public class CooldownGateDecisionTests {
     // Symmetry check: when B's own work IS cooled, drain for B correctly skips.
     // This guards against an over-zealous fix that would always return false.
     var cache = new RecentlyProcessedEventCache(_provider());
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workForA = (Guid)TrackedGuid.NewMedo();
-    var workForB = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workForA = (Guid)TrackedGuid.New();
+    var workForB = (Guid)TrackedGuid.New();
     cache.MarkProcessed(workForB);  // B is cooled
 
     var raw = new[] {
@@ -210,9 +210,9 @@ public class CooldownGateDecisionTests {
     // MUST NOT be marked. Pre-fix: both A's and B's work_ids end up in the cache, and the
     // next drain for B incorrectly skips Apply.
     var cache = new RecentlyProcessedEventCache(_provider());
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workForA = (Guid)TrackedGuid.NewMedo();
-    var workForB = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workForA = (Guid)TrackedGuid.New();
+    var workForB = (Guid)TrackedGuid.New();
 
     var raw = new[] {
       _raw(eventId, workForA, PERSP_A),
@@ -233,9 +233,9 @@ public class CooldownGateDecisionTests {
     // Back-compat: when callers don't supply a perspective name, every raw row under the
     // event_id is marked. This preserves the pre-fix behavior for legacy/test paths.
     var cache = new RecentlyProcessedEventCache(_provider());
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workA = (Guid)TrackedGuid.NewMedo();
-    var workB = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workA = (Guid)TrackedGuid.New();
+    var workB = (Guid)TrackedGuid.New();
 
     var raw = new[] {
       _raw(eventId, workA, perspectiveName: null),
@@ -255,10 +255,10 @@ public class CooldownGateDecisionTests {
     // own work IS cooled. The other two perspectives' work_ids are also in the cache (from
     // their own apply success). Drain for B should skip — its OWN work is cooled.
     var cache = new RecentlyProcessedEventCache(_provider());
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workA = (Guid)TrackedGuid.NewMedo();
-    var workB = (Guid)TrackedGuid.NewMedo();
-    var workC = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workA = (Guid)TrackedGuid.New();
+    var workB = (Guid)TrackedGuid.New();
+    var workC = (Guid)TrackedGuid.New();
     cache.MarkProcessed(workA);
     cache.MarkProcessed(workB);
     cache.MarkProcessed(workC);
@@ -285,14 +285,14 @@ public class CooldownGateDecisionTests {
     // fail: drain returns early without populating batchProcessedEvents, the standard-mode
     // guard doesn't fire, and neither path applies the event.
     var cache = new RecentlyProcessedEventCache(_provider());
-    var unrelatedEventId = (Guid)TrackedGuid.NewMedo();
-    var unrelatedWorkId = (Guid)TrackedGuid.NewMedo();
+    var unrelatedEventId = (Guid)TrackedGuid.New();
+    var unrelatedWorkId = (Guid)TrackedGuid.New();
     cache.MarkProcessed(unrelatedWorkId);
 
     // Lookup contains an UNRELATED entry — the envelope's MessageId is NOT a key.
     var raw = new[] { _raw(unrelatedEventId, unrelatedWorkId) }.ToLookup(r => r.EventId);
 
-    var orphanEventId = (Guid)TrackedGuid.NewMedo();
+    var orphanEventId = (Guid)TrackedGuid.New();
     var events = new List<MessageEnvelope<IEvent>> { _envelope(orphanEventId) };
 
     var skip = PerspectiveWorker._shouldSkipApplyDueToCooldown(events, raw, cache);
@@ -308,12 +308,12 @@ public class CooldownGateDecisionTests {
     // decision (zero inner-loop iterations) and the first one's "cooled" state alone
     // returns true. Post-fix: the missing-mapping envelope MUST default to false.
     var cache = new RecentlyProcessedEventCache(_provider());
-    var mappedEventId = (Guid)TrackedGuid.NewMedo();
-    var mappedWorkId = (Guid)TrackedGuid.NewMedo();
+    var mappedEventId = (Guid)TrackedGuid.New();
+    var mappedWorkId = (Guid)TrackedGuid.New();
     cache.MarkProcessed(mappedWorkId);
 
     var raw = new[] { _raw(mappedEventId, mappedWorkId) }.ToLookup(r => r.EventId);
-    var orphanEventId = (Guid)TrackedGuid.NewMedo();
+    var orphanEventId = (Guid)TrackedGuid.New();
     var events = new List<MessageEnvelope<IEvent>> {
       _envelope(mappedEventId),   // mapped + cooled
       _envelope(orphanEventId),   // not in lookup — pre-fix bug treats this as "skip OK"
@@ -375,11 +375,11 @@ public class CooldownGateDecisionTests {
     // SagaCompletedEvent was never emitted.
     var coordinator = new CapturingLifecycleCoordinator();
     var batchProcessed = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "TestPerspective";
     var events = new List<MessageEnvelope<IEvent>> {
-      _envelope((Guid)TrackedGuid.NewMedo()),
-      _envelope((Guid)TrackedGuid.NewMedo()),
+      _envelope((Guid)TrackedGuid.New()),
+      _envelope((Guid)TrackedGuid.New()),
     };
 
     PerspectiveWorker._signalCooldownSkippedEvents(events, perspectiveName, streamId, batchProcessed, coordinator);
@@ -403,8 +403,8 @@ public class CooldownGateDecisionTests {
     // throw — and BatchProcessedEvents still gets populated so the WhenAll-disabled path
     // (no expectations registered) lets PostAllPerspectives fire via the always-true gate.
     var batchProcessed = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var events = new List<MessageEnvelope<IEvent>> { _envelope((Guid)TrackedGuid.NewMedo()) };
+    var streamId = (Guid)TrackedGuid.New();
+    var events = new List<MessageEnvelope<IEvent>> { _envelope((Guid)TrackedGuid.New()) };
 
     PerspectiveWorker._signalCooldownSkippedEvents(events, "TestPerspective", streamId, batchProcessed, lifecycleCoordinator: null);
 
@@ -416,7 +416,7 @@ public class CooldownGateDecisionTests {
     var coordinator = new CapturingLifecycleCoordinator();
     var batchProcessed = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
 
-    PerspectiveWorker._signalCooldownSkippedEvents([], "TestPerspective", (Guid)TrackedGuid.NewMedo(), batchProcessed, coordinator);
+    PerspectiveWorker._signalCooldownSkippedEvents([], "TestPerspective", (Guid)TrackedGuid.New(), batchProcessed, coordinator);
 
     await Assert.That(batchProcessed.Count).IsEqualTo(0);
     await Assert.That(coordinator.Signaled.Count).IsEqualTo(0);

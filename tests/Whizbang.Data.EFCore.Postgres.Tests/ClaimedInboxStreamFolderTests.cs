@@ -23,8 +23,8 @@ public class ClaimedInboxStreamFolderTests {
 
   [Test]
   public async Task Fold_GroupsInboxRowsByStream_InFirstAppearanceOrderAsync() {
-    var a = (Guid)TrackedGuid.NewMedo();
-    var b = (Guid)TrackedGuid.NewMedo();
+    var a = (Guid)TrackedGuid.New();
+    var b = (Guid)TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       _row("inbox", a, WorkPriority.STANDARD, _t0.AddMinutes(-2)),
       _row("inbox", b, WorkPriority.BACKGROUND, _t0.AddMinutes(-9)),
@@ -50,7 +50,7 @@ public class ClaimedInboxStreamFolderTests {
 
   [Test]
   public async Task Fold_SkipsOtherSources_AndInboxRowsWithoutAStreamAsync() {
-    var a = (Guid)TrackedGuid.NewMedo();
+    var a = (Guid)TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       _row("outbox", a, WorkPriority.INTERACTIVE, _t0),
       _row("perspective", a, null, null),
@@ -71,7 +71,7 @@ public class ClaimedInboxStreamFolderTests {
   [Test]
   public async Task Fold_RowsWithoutANumberOrAnArrival_FoldToTheStandardBandAsync() {
     // What a claim_work that predates migration 150 returns: the rows without the two columns.
-    var a = (Guid)TrackedGuid.NewMedo();
+    var a = (Guid)TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       _row("inbox", a, null, null),
       _row("inbox", a, null, null),
@@ -88,7 +88,7 @@ public class ClaimedInboxStreamFolderTests {
 
   [Test]
   public async Task Fold_AnUnknownArrival_NeverDisplacesAKnownOldestAsync() {
-    var a = (Guid)TrackedGuid.NewMedo();
+    var a = (Guid)TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       _row("inbox", a, WorkPriority.STANDARD, null),
       _row("inbox", a, WorkPriority.STANDARD, _t0),

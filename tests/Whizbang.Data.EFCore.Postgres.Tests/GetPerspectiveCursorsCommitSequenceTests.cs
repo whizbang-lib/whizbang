@@ -29,8 +29,8 @@ public class GetPerspectiveCursorsCommitSequenceTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     const long expectedSeq = 4242L;
 
     await _insertEventStoreRowAsync(conn, eventId, streamId, "T", expectedSeq);
@@ -55,8 +55,8 @@ public class GetPerspectiveCursorsCommitSequenceTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
 
     await _insertEventStoreRowAsync(conn, eventId, streamId, "T", commitSequence: null);
     await _insertCursorAsync(conn, streamId, "Some.Perspective", eventId);
@@ -80,7 +80,7 @@ public class GetPerspectiveCursorsCommitSequenceTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _insertCursorAsync(conn, streamId, "Some.Perspective", lastEventId: null);
 
     var coord = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
@@ -100,8 +100,8 @@ public class GetPerspectiveCursorsCommitSequenceTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     const long expectedSeq = 9001L;
 
     await _insertEventStoreRowAsync(conn, eventId, streamId, "T", expectedSeq);

@@ -220,7 +220,7 @@ public sealed partial class IntegrityCheckpointReceptor(
       }
       gapReportsPublished++;
       await dispatcher.PublishAsync(new IntegrityGapDetected {
-        ReportStreamId = TrackedGuid.NewMedo().Value,
+        ReportStreamId = TrackedGuid.New().Value,
         OriginServiceId = pending.OriginServiceId,
         OriginServiceName = pending.OriginServiceName,
         TenantScope = pending.TenantScope,
@@ -290,7 +290,7 @@ public sealed partial class IntegrityCheckpointReceptor(
 
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestRedeliveryCommand {
         TenantScope = pending.TenantScope,
         EventTypes = [pending.EventType],

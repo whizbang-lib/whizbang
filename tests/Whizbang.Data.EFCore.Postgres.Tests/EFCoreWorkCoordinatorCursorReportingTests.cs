@@ -54,8 +54,8 @@ public class EFCoreWorkCoordinatorCursorReportingTests : EFCoreTestBase {
     var logger = new CapturingLogger();
     var coordinator = _createCoordinator(dbContext, logger);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     const string perspectiveName = "P.Advance";
 
     await _insertEventStoreRowAsync(connection, eventId, streamId);
@@ -97,8 +97,8 @@ public class EFCoreWorkCoordinatorCursorReportingTests : EFCoreTestBase {
     var logger = new CapturingLogger();
     var coordinator = _createCoordinator(dbContext, logger);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
 
     // No cursor row exists — the UPDATE is a silent no-op and the diagnostic
     // read-back takes the "checkpoint not found" branch.
@@ -132,7 +132,7 @@ public class EFCoreWorkCoordinatorCursorReportingTests : EFCoreTestBase {
     await Assert.That(async () => await coordinator.ReportPerspectiveCompletionAsync(new PerspectiveCursorCompletion {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "P.Broken",
-      LastEventId = (Guid)TrackedGuid.NewMedo(),
+      LastEventId = (Guid)TrackedGuid.New(),
       Status = PerspectiveProcessingStatus.Completed
     })).Throws<PostgresException>();
 
@@ -173,8 +173,8 @@ public class EFCoreWorkCoordinatorCursorReportingTests : EFCoreTestBase {
     var logger = new CapturingLogger();
     var coordinator = _createCoordinator(dbContext, logger);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     const string perspectiveName = "P.Failing";
 
     await _insertEventStoreRowAsync(connection, eventId, streamId);

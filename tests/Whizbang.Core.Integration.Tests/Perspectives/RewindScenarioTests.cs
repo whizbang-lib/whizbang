@@ -807,13 +807,13 @@ public class RewindScenarioTests {
   }
 
   private static List<MessageEnvelope<IEvent>> _createSequentialEvents(int count) {
-    // TrackedGuid.NewMedo() wraps Medo.Uuid7 which has sub-millisecond precision and
+    // TrackedGuid.New() wraps Medo.Uuid7 which has sub-millisecond precision and
     // guaranteed monotonicity within a tight loop — preferred throughout Whizbang over
     // Guid.CreateVersion7() (ms precision only).
     var list = new List<MessageEnvelope<IEvent>>(count);
     for (var i = 0; i < count; i++) {
       list.Add(new MessageEnvelope<IEvent> {
-        MessageId = MessageId.From(TrackedGuid.NewMedo().Value),
+        MessageId = MessageId.From(TrackedGuid.New().Value),
         Payload = new FakeEvent(i + 1),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

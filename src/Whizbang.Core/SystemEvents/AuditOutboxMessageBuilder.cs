@@ -68,7 +68,7 @@ public static partial class AuditOutboxMessageBuilder {
 
     // Build the EventAudited payload
     var auditEvent = new EventAudited {
-      Id = TrackedGuid.NewMedo(),
+      Id = TrackedGuid.New(),
       OriginalEventId = eventMessage.MessageId,
       OriginalEventType = eventTypeName,
       OriginalStreamId = eventMessage.StreamId?.ToString() ?? string.Empty,

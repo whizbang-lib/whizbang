@@ -27,7 +27,7 @@ public class PerspectiveFailureCounterSqlTests : EFCoreTestBase {
   public async Task LeasingViaGetStreamEvents_BumpsAttempts_NeverFailuresAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var instance = (Guid)TrackedGuid.NewMedo();
+    var instance = (Guid)TrackedGuid.New();
     var (streamId, workId) = await _seedPendingRowAsync(conn);
 
     // Three leases of the same row, each lapsing before the next, none applied.
@@ -45,7 +45,7 @@ public class PerspectiveFailureCounterSqlTests : EFCoreTestBase {
   public async Task RecordedFailure_BumpsFailures_AndLeavesAttemptsAloneAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var instance = (Guid)TrackedGuid.NewMedo();
+    var instance = (Guid)TrackedGuid.New();
     var (streamId, workId) = await _seedPendingRowAsync(conn);
     await _callGetStreamEventsAsync(conn, instance, streamId);   // attempts = 1, leased
 
@@ -70,7 +70,7 @@ public class PerspectiveFailureCounterSqlTests : EFCoreTestBase {
   public async Task RecordedFailure_InTheShapeTheRuntimeWrites_IsRecordedAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var instance = (Guid)TrackedGuid.NewMedo();
+    var instance = (Guid)TrackedGuid.New();
     var (streamId, workId) = await _seedPendingRowAsync(conn);
     await _callGetStreamEventsAsync(conn, instance, streamId);
 
@@ -100,7 +100,7 @@ public class PerspectiveFailureCounterSqlTests : EFCoreTestBase {
   public async Task GetStreamEvents_SurfacesFailures_ForTheDeadLetterDecisionAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var instance = (Guid)TrackedGuid.NewMedo();
+    var instance = (Guid)TrackedGuid.New();
     var (streamId, workId) = await _seedPendingRowAsync(conn);
     await _setFailuresAsync(conn, workId, 4);
 
@@ -121,9 +121,9 @@ public class PerspectiveFailureCounterSqlTests : EFCoreTestBase {
   }
 
   private static async Task<(Guid StreamId, Guid WorkId)> _seedPendingRowAsync(NpgsqlConnection conn) {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     await using (var cmd = conn.CreateCommand()) {
       cmd.CommandText = """
         INSERT INTO wh_event_store

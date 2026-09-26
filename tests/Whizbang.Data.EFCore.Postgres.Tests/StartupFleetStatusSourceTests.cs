@@ -28,8 +28,8 @@ public class StartupFleetStatusSourceTests : EFCoreTestBase {
     await using var ctxB = CreateDbContext();
     var podA = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctxA, JsonContextRegistry.CreateCombinedOptions());
     var podB = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctxB, JsonContextRegistry.CreateCombinedOptions());
-    var idA = (Guid)TrackedGuid.NewMedo();
-    var idB = (Guid)TrackedGuid.NewMedo();
+    var idA = (Guid)TrackedGuid.New();
+    var idB = (Guid)TrackedGuid.New();
     await podA.RecordHeartbeatAsync(new HeartbeatRequest(idA, "fleet-svc", "host-a", 1), cancellationToken);
     await podB.RecordHeartbeatAsync(new HeartbeatRequest(idB, "fleet-svc", "host-b", 1), cancellationToken);
 

@@ -47,7 +47,7 @@ public class PriorityTagSurfaceTests {
   });
 
   private static MessageEnvelope<T> _envelope<T>(T payload, int declared = WorkPriority.UNDECLARED) => new() {
-    MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+    MessageId = MessageId.From((Guid)TrackedGuid.New()),
     Payload = payload,
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Both, Source = MessageSource.Local, HandlerName = "H" },

@@ -72,7 +72,7 @@ public class ThirdPartyGuidInterceptionTests {
 
   /// <summary>
   /// Test that direct Medo.Uuid7.NewUuid7() usage is intercepted.
-  /// Note: Internal Whizbang use via TrackedGuid.NewMedo() should NOT be intercepted.
+  /// Note: Internal Whizbang use via TrackedGuid.New() should NOT be intercepted.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]

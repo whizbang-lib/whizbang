@@ -121,7 +121,7 @@ public class LeaseRenewalWorkerCoverageTests {
     // fallback would unconditionally submit this id to RenewLeasesAsync, making the assertion
     // below meaningful rather than accidentally true for an unrelated reason.
 
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     await worker.EnqueueAsync(WorkCategory.Inbox, workId, testToken);
     // The flusher's coalescing loop started in the constructor; StopAsync drains it and waits for
     // the loop to exit, which only happens once the (disabled, so immediately-returning) flush for

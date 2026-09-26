@@ -39,16 +39,16 @@ public class InboxAbandonedAttemptDiagnosticsSqlTests : EFCoreTestBase {
   public async Task ClaimOrphanedInbox_AbandonedLease_RecordsWhyTheAttemptWasConsumedAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var deadInstance = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var deadInstance = (Guid)TrackedGuid.New();
 
     // A row claimed by an instance that then died mid-dispatch: lease is in the past, and nothing
     // ever reported a failure, so error/failure_reason were never written.
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 3,
       instanceId: deadInstance, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-5));
 
-    await _claimOrphanedInboxAsync(conn, (Guid)TrackedGuid.NewMedo());
+    await _claimOrphanedInboxAsync(conn, (Guid)TrackedGuid.New());
 
     var (Attempts, FailureReason, Error) = await _readInboxRowAsync(conn, messageId);
 
@@ -70,15 +70,15 @@ public class InboxAbandonedAttemptDiagnosticsSqlTests : EFCoreTestBase {
   public async Task ClaimOrphanedInbox_RecordedFailure_DoesNotOverwriteTheRealErrorAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     // The shape process_inbox_failures leaves behind: lease released, real error recorded.
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 2,
       instanceId: null, leaseExpiry: null,
       error: "ValidationError: Price must be positive", failureReason: 4);
 
-    await _claimOrphanedInboxAsync(conn, (Guid)TrackedGuid.NewMedo());
+    await _claimOrphanedInboxAsync(conn, (Guid)TrackedGuid.New());
 
     var (_, FailureReason, Error) = await _readInboxRowAsync(conn, messageId);
 
@@ -93,14 +93,14 @@ public class InboxAbandonedAttemptDiagnosticsSqlTests : EFCoreTestBase {
   public async Task ClaimOrphanedInbox_FreshRow_RecordsNoFailureAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     // Never claimed: no instance, no lease, no error.
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 0,
       instanceId: null, leaseExpiry: null);
 
-    await _claimOrphanedInboxAsync(conn, (Guid)TrackedGuid.NewMedo());
+    await _claimOrphanedInboxAsync(conn, (Guid)TrackedGuid.New());
 
     var (Attempts, _, Error) = await _readInboxRowAsync(conn, messageId);
 

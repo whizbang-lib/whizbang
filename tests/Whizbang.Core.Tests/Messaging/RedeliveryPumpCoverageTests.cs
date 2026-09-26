@@ -110,7 +110,7 @@ public class RedeliveryPumpCoverageTests {
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions { PublishRetryAttempts = 3, PublishRetryBaseDelayMs = 5 });
 
     var published = await pump.PublishAsync(
-      [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1)],
+      [_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1)],
       topic: "repair-topic", target: "svc-x", cancellationToken: testToken);
 
     await Assert.That(published).IsEqualTo(1)

@@ -369,7 +369,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         try {
           var promotionErrorText = _buildPromotionErrorText(work, maxAttempts.Value);
           var movedId = await _deadLetterStore.MoveAsync(
-            deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+            deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
             sourceTable: DeadLetterSourceTable.INBOX,
             sourceId: work.MessageId,
             failureReason: Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded,
@@ -677,7 +677,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     if (_deadLetterStore.IsConfigured) {
       try {
         var movedId = await _deadLetterStore.MoveAsync(
-          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
           sourceTable: DeadLetterSourceTable.INBOX,
           sourceId: work.MessageId,
           failureReason: reason,
@@ -769,7 +769,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     if (_deadLetterStore.IsConfigured) {
       try {
         var movedId = await _deadLetterStore.MoveAsync(
-          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
           sourceTable: DeadLetterSourceTable.INBOX,
           sourceId: work.MessageId,
           failureReason: reason,

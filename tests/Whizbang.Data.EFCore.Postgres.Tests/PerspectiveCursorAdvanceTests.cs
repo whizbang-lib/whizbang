@@ -41,16 +41,16 @@ public class PerspectiveCursorAdvanceTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "BulkImportSagaProjection.GapInvariantTest";
 
-    // Four events in strict UUIDv7 order (TrackedGuid.NewMedo guarantees monotonic).
+    // Four events in strict UUIDv7 order (TrackedGuid.New guarantees monotonic).
     // Mirrors the production sequence: events arrive in order, but the projection's
     // Apply chain runs out of order under the rewind race — leaving a gap.
-    var eventId1 = (Guid)TrackedGuid.NewMedo();
-    var eventId2 = (Guid)TrackedGuid.NewMedo();
-    var eventId3 = (Guid)TrackedGuid.NewMedo();
-    var eventId4 = (Guid)TrackedGuid.NewMedo();
+    var eventId1 = (Guid)TrackedGuid.New();
+    var eventId2 = (Guid)TrackedGuid.New();
+    var eventId3 = (Guid)TrackedGuid.New();
+    var eventId4 = (Guid)TrackedGuid.New();
 
     // event 1 — processed.
     await _insertPerspectiveEventAsync(conn, streamId, perspectiveName, eventId1, processed: true);
@@ -87,12 +87,12 @@ public class PerspectiveCursorAdvanceTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "BulkImportSagaProjection.NoGapTest";
 
-    var eventId1 = (Guid)TrackedGuid.NewMedo();
-    var eventId2 = (Guid)TrackedGuid.NewMedo();
-    var eventId3 = (Guid)TrackedGuid.NewMedo();
+    var eventId1 = (Guid)TrackedGuid.New();
+    var eventId2 = (Guid)TrackedGuid.New();
+    var eventId3 = (Guid)TrackedGuid.New();
 
     await _insertPerspectiveEventAsync(conn, streamId, perspectiveName, eventId1, processed: true);
     await _insertPerspectiveEventAsync(conn, streamId, perspectiveName, eventId2, processed: true);
@@ -118,12 +118,12 @@ public class PerspectiveCursorAdvanceTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "BulkImportSagaProjection.PreserveOnNoProgress";
 
-    var existingCursorEvent = (Guid)TrackedGuid.NewMedo();
-    var futureEvent1 = (Guid)TrackedGuid.NewMedo();
-    var futureEvent2 = (Guid)TrackedGuid.NewMedo();
+    var existingCursorEvent = (Guid)TrackedGuid.New();
+    var futureEvent1 = (Guid)TrackedGuid.New();
+    var futureEvent2 = (Guid)TrackedGuid.New();
 
     // Seed wh_event_store with the existing-cursor event so the FK on
     // wh_perspective_cursors.last_event_id is satisfied when we seed the cursor below.
@@ -171,7 +171,7 @@ public class PerspectiveCursorAdvanceTests : EFCoreTestBase {
       : @"INSERT INTO wh_perspective_events
             (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at)
           VALUES (@work, @stream, @pname, @eid, 0, 0, NOW())";
-    cmd.Parameters.AddWithValue("work", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("work", (Guid)TrackedGuid.New());
     cmd.Parameters.AddWithValue("stream", streamId);
     cmd.Parameters.AddWithValue("pname", perspectiveName);
     cmd.Parameters.AddWithValue("eid", eventId);

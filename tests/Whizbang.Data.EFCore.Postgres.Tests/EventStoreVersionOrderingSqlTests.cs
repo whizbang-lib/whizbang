@@ -48,16 +48,16 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
     // Three message_ids in canonical UUIDv7 order: A < B < C.
-    var idA = (Guid)TrackedGuid.NewMedo();
+    var idA = (Guid)TrackedGuid.New();
     await Task.Delay(2);
-    var idB = (Guid)TrackedGuid.NewMedo();
+    var idB = (Guid)TrackedGuid.New();
     await Task.Delay(2);
-    var idC = (Guid)TrackedGuid.NewMedo();
+    var idC = (Guid)TrackedGuid.New();
 
     // Deliberately INSERT in reverse-message-id order so the ROW_NUMBER OVER ORDER BY
     // created_at would produce versions C=1, B=2, A=3 — i.e. version order DISAGREES with
@@ -87,15 +87,15 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
-    var idA = (Guid)TrackedGuid.NewMedo();
+    var idA = (Guid)TrackedGuid.New();
     await Task.Delay(2);
-    var idB = (Guid)TrackedGuid.NewMedo();
+    var idB = (Guid)TrackedGuid.New();
     await Task.Delay(2);
-    var idC = (Guid)TrackedGuid.NewMedo();
+    var idC = (Guid)TrackedGuid.New();
 
     // INSERT in reverse message_id order → received_at ascending DOES NOT match message_id ascending.
     var nowOldest = DateTimeOffset.UtcNow.AddSeconds(-30);
@@ -128,13 +128,13 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
     var ids = new Guid[50];
     for (var i = 0; i < 50; i++) {
-      ids[i] = (Guid)TrackedGuid.NewMedo();
+      ids[i] = (Guid)TrackedGuid.New();
       await Task.Delay(1);
     }
 
@@ -167,15 +167,15 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
     // 5 messages per stream, interleaved A/B in message_id order.
     var ids = new (Guid Id, Guid Stream)[10];
     for (var i = 0; i < 10; i++) {
-      ids[i] = ((Guid)TrackedGuid.NewMedo(), i % 2 == 0 ? streamA : streamB);
+      ids[i] = ((Guid)TrackedGuid.New(), i % 2 == 0 ? streamA : streamB);
       await Task.Delay(1);
     }
 
@@ -213,13 +213,13 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
     var ordered = new Guid[20];
     for (var i = 0; i < 20; i++) {
-      ordered[i] = (Guid)TrackedGuid.NewMedo();
+      ordered[i] = (Guid)TrackedGuid.New();
       await Task.Delay(1);
     }
 

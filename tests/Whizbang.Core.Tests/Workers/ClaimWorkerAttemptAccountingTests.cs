@@ -176,7 +176,7 @@ public class ClaimWorkerAttemptAccountingTests {
 
     Exception? caught = null;
     try {
-      await bare.ReleaseUnprocessedInboxAsync(TrackedGuid.NewMedo().Value, [TrackedGuid.NewMedo().Value]);
+      await bare.ReleaseUnprocessedInboxAsync(TrackedGuid.New().Value, [TrackedGuid.New().Value]);
     } catch (Exception ex) {
       caught = ex;
     }
@@ -210,7 +210,7 @@ public class ClaimWorkerAttemptAccountingTests {
     var inbox = new List<InboxWork>(rows);
     for (var i = 0; i < rows; i++) {
       inbox.Add(new InboxWork {
-        MessageId = TrackedGuid.NewMedo().Value,
+        MessageId = TrackedGuid.New().Value,
         MessageType = "TestEvent",
         Envelope = null!,
         Attempts = attempts,
@@ -218,7 +218,7 @@ public class ClaimWorkerAttemptAccountingTests {
     }
     var streamIds = new List<Guid>(streams);
     for (var i = 0; i < streams; i++) {
-      streamIds.Add(TrackedGuid.NewMedo().Value);
+      streamIds.Add(TrackedGuid.New().Value);
     }
     return new WorkBatch {
       OutboxWork = [],
@@ -232,7 +232,7 @@ public class ClaimWorkerAttemptAccountingTests {
     var inbox = new List<InboxWork>(rows);
     for (var i = 0; i < rows; i++) {
       inbox.Add(new InboxWork {
-        MessageId = TrackedGuid.NewMedo().Value,
+        MessageId = TrackedGuid.New().Value,
         MessageType = "TestEvent",
         Envelope = null!,
         Attempts = attempts,
@@ -329,7 +329,7 @@ public class ClaimWorkerAttemptAccountingTests {
     var inbox = new List<InboxWork>(inboxRows);
     for (var i = 0; i < inboxRows; i++) {
       inbox.Add(new InboxWork {
-        MessageId = TrackedGuid.NewMedo().Value,
+        MessageId = TrackedGuid.New().Value,
         MessageType = "TestEvent",
         Envelope = null!,
         Attempts = 1,
@@ -338,7 +338,7 @@ public class ClaimWorkerAttemptAccountingTests {
     var outbox = new List<OutboxWork>(outboxRows);
     for (var i = 0; i < outboxRows; i++) {
       outbox.Add(new OutboxWork {
-        MessageId = TrackedGuid.NewMedo().Value,
+        MessageId = TrackedGuid.New().Value,
         Envelope = null!,
         EnvelopeType = "TestEvent",
         MessageType = "TestEvent",
@@ -349,8 +349,8 @@ public class ClaimWorkerAttemptAccountingTests {
     var perspective = new List<PerspectiveWork>(perspectiveRows);
     for (var i = 0; i < perspectiveRows; i++) {
       perspective.Add(new PerspectiveWork {
-        WorkId = TrackedGuid.NewMedo().Value,
-        StreamId = TrackedGuid.NewMedo().Value,
+        WorkId = TrackedGuid.New().Value,
+        StreamId = TrackedGuid.New().Value,
         PerspectiveName = "Test.Perspective",
         LastProcessedEventId = null,
         PartitionNumber = 1,
@@ -510,7 +510,7 @@ public class ClaimWorkerAttemptAccountingTests {
   }
 
   private sealed class StubInstance : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = TrackedGuid.New();
     public string ServiceName => "test";
     public string HostName => "test-host";
     public int ProcessId => 1;

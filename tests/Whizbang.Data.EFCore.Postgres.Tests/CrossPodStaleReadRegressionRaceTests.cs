@@ -72,7 +72,7 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
   private static PerspectiveMetadata Meta(string eventType) =>
     new() {
       EventType = eventType,
-      EventId = TrackedGuid.NewMedo().Value.ToString(),
+      EventId = TrackedGuid.New().Value.ToString(),
       Timestamp = DateTime.UtcNow,
       CommitSequence = null  // Deliberately null — production saga_item writes ship NULL here today.
     };
@@ -105,7 +105,7 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
   [Test]
   public async Task StaleSecondWriter_RegressesTerminalRowToEarlierState_StoreFailsToProtectAsync() {
     EnableAtomicPath();
-    var id = TrackedGuid.NewMedo().Value;
+    var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
 
@@ -162,7 +162,7 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
   [Test]
   public async Task RunningFirstThenCompletedSecond_RowEndsAtCompleted_NoRegressionAsync() {
     EnableAtomicPath();
-    var id = TrackedGuid.NewMedo().Value;
+    var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
 
@@ -207,7 +207,7 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
   [Test]
   public async Task ProductionStrand_LargeItemBatchOneItemRegressedAndLeftAtRunningAsync() {
     EnableAtomicPath();
-    var id = TrackedGuid.NewMedo().Value;
+    var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
 

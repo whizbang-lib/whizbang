@@ -60,8 +60,8 @@ public partial class OutboxDrainWorkerCoverageTests {
   /// </summary>
   private static async Task<EventIdSignalingLogger<OutboxDrainWorker>> _runBatchAfterAFailedFlushAsync(
       Exception flushFailure, int expectedEventId) {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var row = _row((Guid)TrackedGuid.NewMedo(), streamId);
+    var streamId = (Guid)TrackedGuid.New();
+    var row = _row((Guid)TrackedGuid.New(), streamId);
     var coord = new OneRowThenEmptyCoordinator(row);
     var drain = new DrainChannel();
     var gate = new SchemaReadyGate();
@@ -100,7 +100,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       .Because("the failed batch must not end the loop: the outbox rows are durable and the claim "
              + "backstop re-offers their streams, while a stopped host publishes nothing at all");
 
-    _ = drain.TryWrite((Guid)TrackedGuid.NewMedo());
+    _ = drain.TryWrite((Guid)TrackedGuid.New());
     await coord.SecondFetch.WaitAsync(TimeSpan.FromSeconds(10));
     await Assert.That(coord.FetchCalls).IsEqualTo(2)
       .Because("the batch after the failure drains as if nothing had happened");

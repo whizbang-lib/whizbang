@@ -5,14 +5,14 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace Whizbang.Migrate.Transformers;
 
 /// <summary>
-/// Transforms Guid.NewGuid() and Guid.CreateVersion7() calls to use TrackedGuid.NewMedo().
+/// Transforms Guid.NewGuid() and Guid.CreateVersion7() calls to use TrackedGuid.New().
 /// This provides UUIDv7 with sub-millisecond precision via Medo.Uuid7.
 /// Handles:
-/// - Guid.NewGuid() → TrackedGuid.NewMedo()
-/// - Guid.CreateVersion7() → TrackedGuid.NewMedo()
-/// - System.Guid.NewGuid() → TrackedGuid.NewMedo()
-/// - System.Guid.CreateVersion7() → TrackedGuid.NewMedo()
-/// - CombGuidIdGeneration.NewGuid() → TrackedGuid.NewMedo() (Marten sequential GUIDs)
+/// - Guid.NewGuid() → TrackedGuid.New()
+/// - Guid.CreateVersion7() → TrackedGuid.New()
+/// - System.Guid.NewGuid() → TrackedGuid.New()
+/// - System.Guid.CreateVersion7() → TrackedGuid.New()
+/// - CombGuidIdGeneration.NewGuid() → TrackedGuid.New() (Marten sequential GUIDs)
 /// - Adds using Whizbang.Core.ValueObjects; directive
 /// - Removes using Marten.Schema.Identity; directive (when CombGuid is transformed)
 /// - Emits warnings for default StreamId check patterns (G03)
@@ -231,7 +231,7 @@ public sealed class GuidToTrackedGuidTransformer : ICodeTransformer {
 
     foreach (var forLoop in forStatements) {
       var lineNumber = forLoop.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-      warnings.Add($"Line {lineNumber}: GUID collision retry pattern detected. TrackedGuid.NewMedo() " +
+      warnings.Add($"Line {lineNumber}: GUID collision retry pattern detected. TrackedGuid.New() " +
           "is virtually collision-free (timestamp + random), making retry logic typically unnecessary. " +
           "Consider simplifying to a single ID generation call.");
     }
@@ -250,13 +250,13 @@ public sealed class GuidToTrackedGuidTransformer : ICodeTransformer {
 
     foreach (var whileLoop in whileStatements) {
       var lineNumber = whileLoop.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-      warnings.Add($"Line {lineNumber}: GUID collision retry pattern detected. TrackedGuid.NewMedo() " +
+      warnings.Add($"Line {lineNumber}: GUID collision retry pattern detected. TrackedGuid.New() " +
           "is virtually collision-free, making retry logic typically unnecessary.");
     }
   }
 
   /// <summary>
-  /// Rewriter that transforms Guid.NewGuid()/Guid.CreateVersion7()/CombGuidIdGeneration.NewGuid() to TrackedGuid.NewMedo().
+  /// Rewriter that transforms Guid.NewGuid()/Guid.CreateVersion7()/CombGuidIdGeneration.NewGuid() to TrackedGuid.New().
   /// </summary>
   private sealed class GuidCallRewriter(List<CodeChange> changes) : CSharpSyntaxRewriter {
     private readonly List<CodeChange> _changes = changes;
@@ -267,25 +267,25 @@ public sealed class GuidToTrackedGuidTransformer : ICodeTransformer {
       if (expr is "Guid.NewGuid" or "System.Guid.NewGuid" or
           "Guid.CreateVersion7" or "System.Guid.CreateVersion7" or
           "CombGuidIdGeneration.NewGuid" or "Marten.Schema.Identity.CombGuidIdGeneration.NewGuid") {
-        // Replace with TrackedGuid.NewMedo()
+        // Replace with TrackedGuid.New()
         var newExpression = SyntaxFactory.InvocationExpression(
                 SyntaxFactory.MemberAccessExpression(
                     SyntaxKind.SimpleMemberAccessExpression,
                     SyntaxFactory.IdentifierName("TrackedGuid"),
-                    SyntaxFactory.IdentifierName("NewMedo")))
+                    SyntaxFactory.IdentifierName("New")))
             .WithLeadingTrivia(node.GetLeadingTrivia())
             .WithTrailingTrivia(node.GetTrailingTrivia());
 
         var description = expr.Contains("CombGuid")
-            ? "Replaced CombGuidIdGeneration.NewGuid() with 'TrackedGuid.NewMedo()' - MEDO provides similar sequential GUID benefits"
-            : $"Replaced '{expr}()' with 'TrackedGuid.NewMedo()'";
+            ? "Replaced CombGuidIdGeneration.NewGuid() with 'TrackedGuid.New()' - MEDO provides similar sequential GUID benefits"
+            : $"Replaced '{expr}()' with 'TrackedGuid.New()'";
 
         _changes.Add(new CodeChange(
             node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
             ChangeType.MethodCallReplacement,
             description,
             node.ToString(),
-            "TrackedGuid.NewMedo()"));
+            "TrackedGuid.New()"));
 
         return newExpression;
       }

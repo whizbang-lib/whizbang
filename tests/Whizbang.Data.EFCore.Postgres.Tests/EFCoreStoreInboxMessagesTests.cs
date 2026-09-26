@@ -71,8 +71,8 @@ public class EFCoreStoreInboxMessagesTests : EFCoreTestBase {
   public async Task SingleMessage_StoresInboxAndDedupAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = _build(dbContext);
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await coordinator.StoreInboxMessagesAsync([_makeInbox(msgId, streamId)], partitionCount: 100);
 
@@ -88,8 +88,8 @@ public class EFCoreStoreInboxMessagesTests : EFCoreTestBase {
   public async Task DuplicateMessageId_SecondCallNoOpsAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = _build(dbContext);
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     var msg = _makeInbox(msgId, streamId);
 
     await coordinator.StoreInboxMessagesAsync([msg], partitionCount: 100);
@@ -107,10 +107,10 @@ public class EFCoreStoreInboxMessagesTests : EFCoreTestBase {
   public async Task BatchOf25Messages_AllStoredViaSingleDriverCallAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = _build(dbContext);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var messages = new InboxMessage[25];
     for (var i = 0; i < 25; i++) {
-      messages[i] = _makeInbox((Guid)TrackedGuid.NewMedo(), streamId);
+      messages[i] = _makeInbox((Guid)TrackedGuid.New(), streamId);
     }
 
     await coordinator.StoreInboxMessagesAsync(messages, partitionCount: 100);
@@ -127,8 +127,8 @@ public class EFCoreStoreInboxMessagesTests : EFCoreTestBase {
     // Locks the EFCore C# → JSONB → SQL → wh_inbox round-trip for IsEvent.
     await using var dbContext = CreateDbContext();
     var coordinator = _build(dbContext);
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await coordinator.StoreInboxMessagesAsync([_makeInbox(msgId, streamId)], partitionCount: 100);
 

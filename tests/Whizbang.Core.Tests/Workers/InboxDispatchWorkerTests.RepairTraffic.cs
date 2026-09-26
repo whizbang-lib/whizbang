@@ -24,11 +24,11 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 public partial class InboxDispatchWorkerTests {
   private static RedeliveryComposite _redeliveryBundle(int innerCount) {
-    var composite = new RedeliveryComposite { OriginServiceId = (Guid)TrackedGuid.NewMedo() };
+    var composite = new RedeliveryComposite { OriginServiceId = (Guid)TrackedGuid.New() };
     for (var i = 0; i < innerCount; i++) {
       composite.InnerPayloads.Add(JsonDocument.Parse("{}").RootElement);
       composite.InnerTypeNames.Add(typeof(InnerImportEvent).AssemblyQualifiedName!);
-      composite.InnerEventIds.Add((Guid)TrackedGuid.NewMedo());
+      composite.InnerEventIds.Add((Guid)TrackedGuid.New());
     }
     return composite;
   }

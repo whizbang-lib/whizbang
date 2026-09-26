@@ -18,7 +18,7 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IAwaiterIdentity, IDis
 
   private readonly List<(IHost Host, IReceptorRegistry Registry, CountingReceptor Receptor, TaskCompletionSource<bool> Tcs)> _hostRegistrations = [];
 
-  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+  public Guid AwaiterId { get; } = TrackedGuid.New();
   private bool _disposed;
 
   /// <summary>

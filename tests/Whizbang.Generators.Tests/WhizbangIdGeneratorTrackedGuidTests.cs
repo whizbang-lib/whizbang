@@ -41,11 +41,11 @@ public class WhizbangIdGeneratorTrackedGuidTests {
   }
 
   /// <summary>
-  /// Test that generated New() method calls TrackedGuid.NewMedo().
+  /// Test that generated New() method calls TrackedGuid.New().
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_GeneratedNew_CallsTrackedGuidNewMedoAsync() {
+  public async Task Generator_GeneratedNew_CallsTrackedGuidNewAsync() {
     // Arrange
     const string source = """
             using Whizbang.Core;
@@ -63,8 +63,8 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
     await Assert.That(generatedSource).IsNotNull();
 
-    // Should use TrackedGuid.NewMedo() for ID generation
-    await Assert.That(generatedSource).Contains("TrackedGuid.NewMedo()");
+    // Should use TrackedGuid.New() for ID generation
+    await Assert.That(generatedSource).Contains("TrackedGuid.New()");
   }
 
   /// <summary>

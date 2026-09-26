@@ -145,8 +145,8 @@ public class InboxDrainWorkerTests {
   /// </summary>
   [Test]
   public async Task InboxDrainWorker_StampsTheRowsPriorityOnTheEnvelopeAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId, priority: 250)];
     var drain = new FakeInboxDrainChannel();
@@ -178,9 +178,9 @@ public class InboxDrainWorkerTests {
 
   [Test]
   public async Task InboxDrainWorker_OnStreamId_FetchesBatch_FeedsInboxChannelInOrderAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgA = (Guid)TrackedGuid.NewMedo();
-    var msgB = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgA = (Guid)TrackedGuid.New();
+    var msgB = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgA, streamId), _row(msgB, streamId)];
@@ -221,8 +221,8 @@ public class InboxDrainWorkerTests {
   public async Task InboxDrainWorker_MoreRowsThanMaxPerStream_LoopsUntilEmptyAsync() {
     // Phase H step 6 slice 3: same loop-until-empty pattern as OutboxDrainWorker.
     // The fake "consumes" returned rows on each fetch — mimics post-completion DELETE.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgs = Enumerable.Range(0, 250).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgs = Enumerable.Range(0, 250).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ConsumingFakeWorkCoordinator();
     coord.RowsByStream[streamId] = [.. msgs.Select(m => _row(m, streamId))];
@@ -321,9 +321,9 @@ public class InboxDrainWorkerTests {
     // _toInboxWork — the drainer logs and CONTINUES (loop continue), enqueues good rows
     // around it. Without this guard, a single corrupted row would block all subsequent
     // inbox processing for the stream.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var badMsg = (Guid)TrackedGuid.NewMedo();
-    var goodMsg = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var badMsg = (Guid)TrackedGuid.New();
+    var goodMsg = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_malformedRow(badMsg, streamId), _row(goodMsg, streamId)];
@@ -402,10 +402,10 @@ public class InboxDrainWorkerTests {
   /// </summary>
   [Test]
   public async Task InboxDrainWorker_TransientFetchFailure_SurvivesAndDrainsNextBatchAsync() {
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
     var coord = new ThrowingFirstFetchFakeWorkCoordinator();
-    coord.RowsByStream[streamB] = [_row((Guid)TrackedGuid.NewMedo(), streamB)];
+    coord.RowsByStream[streamB] = [_row((Guid)TrackedGuid.New(), streamB)];
 
     var drainChannel = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 1 };
@@ -488,14 +488,14 @@ public class InboxDrainWorkerTests {
   /// <docs>fundamentals/work-coordinator/inbox-drain</docs>
   [Test]
   public async Task InboxDrainWorker_MultipleStreamsInBatch_FetchesOnceWithAllStreamIdsAsync() {
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
-    var streamC = (Guid)TrackedGuid.NewMedo();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
+    var streamC = (Guid)TrackedGuid.New();
 
     var coord = new CountingFakeWorkCoordinator();
-    coord.RowsByStream[streamA] = [_row((Guid)TrackedGuid.NewMedo(), streamA), _row((Guid)TrackedGuid.NewMedo(), streamA)];
-    coord.RowsByStream[streamB] = [_row((Guid)TrackedGuid.NewMedo(), streamB), _row((Guid)TrackedGuid.NewMedo(), streamB)];
-    coord.RowsByStream[streamC] = [_row((Guid)TrackedGuid.NewMedo(), streamC), _row((Guid)TrackedGuid.NewMedo(), streamC)];
+    coord.RowsByStream[streamA] = [_row((Guid)TrackedGuid.New(), streamA), _row((Guid)TrackedGuid.New(), streamA)];
+    coord.RowsByStream[streamB] = [_row((Guid)TrackedGuid.New(), streamB), _row((Guid)TrackedGuid.New(), streamB)];
+    coord.RowsByStream[streamC] = [_row((Guid)TrackedGuid.New(), streamC), _row((Guid)TrackedGuid.New(), streamC)];
 
     var drainChannel = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 6 };
@@ -557,7 +557,7 @@ public class InboxDrainWorkerTests {
   /// </summary>
   [Test]
   public async Task InboxDrainWorker_EmptyGuidStreamId_IsDrainedUnderItsMessageIdAsync() {
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var coord = new FakeWorkCoordinator();
     // The SQL matches this row by message_id (the sentinel), so the fake keys it that way —
     // while the ROW itself carries Guid.Empty as its stream_id.

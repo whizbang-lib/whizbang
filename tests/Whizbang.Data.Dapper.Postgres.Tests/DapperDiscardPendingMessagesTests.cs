@@ -35,7 +35,7 @@ public class DapperDiscardPendingMessagesTests : PostgresTestBase {
 
   /// <summary>Seeds one pending row in <paramref name="table"/> (wh_inbox or wh_outbox), leased or not.</summary>
   private static async Task<Guid> _seedAsync(NpgsqlConnection conn, string table, string messageType, bool leased) {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     var sql = table == "wh_inbox"
       ? @"WITH m AS (
             INSERT INTO wh_inbox
@@ -58,8 +58,8 @@ public class DapperDiscardPendingMessagesTests : PostgresTestBase {
     await conn.ExecuteAsync(sql, new {
       id,
       type = messageType,
-      stream = (Guid)TrackedGuid.NewMedo(),
-      inst = leased ? (Guid?)(Guid)TrackedGuid.NewMedo() : null,
+      stream = (Guid)TrackedGuid.New(),
+      inst = leased ? (Guid?)(Guid)TrackedGuid.New() : null,
       lease = leased ? (DateTime?)DateTime.UtcNow.AddMinutes(5) : null,
     });
     return id;

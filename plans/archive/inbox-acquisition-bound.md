@@ -208,7 +208,7 @@ size should be bounded by commit cost, not only by row count.
 
 Today every `EventAudited` single is minted on its own fresh stream (`AuditOutboxMessageBuilder`,
 `StreamId = auditEvent.Id`) and every folded `sys-audit` composite gets another fresh stream
-(`CoalesceShipWorker`, `TrackedGuid.NewMedo()`): a bulk import creates tens of thousands of singleton
+(`CoalesceShipWorker`, `TrackedGuid.New()`): a bulk import creates tens of thousands of singleton
 streams with no ordering across audit records and full per-stream machinery spent on each. Audit records
 are a ledger about the domain event, not part of the domain stream (they are `IsEvent = false`), so they
 belong on neither the original stream nor a per-composite stream. Decision (owner, 2026-09-07): one

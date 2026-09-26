@@ -41,7 +41,7 @@ public class IntegrityLedgerCancellationTests : EFCoreTestBase {
       ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
   private static IntegrityRepairLedger.DivergenceKey _key(Guid origin) =>
-    new(origin, TenantScope: "tenant-a", EventType: "OrderPlaced", StreamId: (Guid)TrackedGuid.NewMedo());
+    new(origin, TenantScope: "tenant-a", EventType: "OrderPlaced", StreamId: (Guid)TrackedGuid.New());
 
   [Test]
   [Timeout(60000)]

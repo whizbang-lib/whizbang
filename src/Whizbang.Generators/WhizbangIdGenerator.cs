@@ -476,7 +476,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("  bool global::Whizbang.Core.IWhizbangId.IsTimeOrdered => _tracked.IsTimeOrdered;");
     sb.AppendLine();
 
-    sb.AppendLine("  /// <summary>Gets whether this ID has sub-millisecond precision (Medo-generated).</summary>");
+    sb.AppendLine("  /// <summary>Gets whether this ID has sub-millisecond precision (from the framework's UUIDv7 generator).</summary>");
     sb.AppendLine("  bool global::Whizbang.Core.IWhizbangId.SubMillisecondPrecision => _tracked.SubMillisecondPrecision;");
     sb.AppendLine();
 
@@ -536,9 +536,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("  }");
     sb.AppendLine();
 
-    // New factory method using TrackedGuid.NewMedo() - generates new UUIDv7 with tracking
-    sb.AppendLine("  /// <summary>Creates a new instance with sub-millisecond precision using Medo.Uuid7. Preserves tracking metadata.</summary>");
-    sb.AppendLine($"  public static {id.TypeName} New() => new(TrackedGuid.NewMedo());");
+    // New factory method using TrackedGuid.New() - generates new UUIDv7 with tracking
+    sb.AppendLine("  /// <summary>Creates a new instance with sub-millisecond precision from the framework's UUIDv7 generator. Preserves tracking metadata.</summary>");
+    sb.AppendLine($"  public static {id.TypeName} New() => new(TrackedGuid.New());");
     sb.AppendLine();
 
     // Equality members - compare Guid values directly
@@ -641,9 +641,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     sb.AppendLine("using System;");
+    sb.AppendLine("using System.Globalization;");
     sb.AppendLine("using System.Text.Json;");
     sb.AppendLine("using System.Text.Json.Serialization;");
-    sb.AppendLine("using Medo;");
     sb.AppendLine();
 
     sb.AppendLine($"namespace {id.Namespace};");
@@ -652,24 +652,21 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Converter class
     sb.AppendLine("/// <summary>");
     sb.AppendLine($"/// AOT-compatible JSON converter for {id.TypeName}.");
-    sb.AppendLine($"/// Serializes {id.TypeName} using Medo.Uuid7 format for time-ordered UUIDs.");
+    sb.AppendLine($"/// Serializes {id.TypeName} as the standard lowercase hyphenated UUID string.");
     sb.AppendLine("/// </summary>");
     sb.AppendLine($"public sealed class {id.TypeName}JsonConverter : JsonConverter<{id.TypeName}> {{");
 
     // Read method
     sb.AppendLine("  /// <inheritdoc/>");
     sb.AppendLine($"  public override {id.TypeName} Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {{");
-    sb.AppendLine("    var uuid7String = reader.GetString()!;");
-    sb.AppendLine("    var uuid7 = Uuid7.Parse(uuid7String);");
-    sb.AppendLine($"    return {id.TypeName}.From(uuid7.ToGuid());");
+    sb.AppendLine($"    return {id.TypeName}.From(Guid.Parse(reader.GetString()!, CultureInfo.InvariantCulture));");
     sb.AppendLine("  }");
     sb.AppendLine();
 
     // Write method
     sb.AppendLine("  /// <inheritdoc/>");
     sb.AppendLine($"  public override void Write(Utf8JsonWriter writer, {id.TypeName} value, JsonSerializerOptions options) {{");
-    sb.AppendLine("    var uuid7 = new Uuid7(value.Value);");
-    sb.AppendLine("    writer.WriteStringValue(uuid7.ToString());");
+    sb.AppendLine("    writer.WriteStringValue(value.Value);");
     sb.AppendLine("  }");
 
     sb.AppendLine("}");

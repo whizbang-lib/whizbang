@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tests.Workers;
 [NotInParallel(Order = 200)]
 public class HeartbeatWorkerLifecycleSignalsTests {
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "svc";
     public string HostName => "host";
     public int ProcessId => 1;

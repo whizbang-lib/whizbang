@@ -67,7 +67,7 @@ public class ClaimWorkerPriorityBatchHookTests {
   }
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "claim-svc";
     public string HostName => "claim-host";
     public int ProcessId => 1;
@@ -127,8 +127,8 @@ public class ClaimWorkerPriorityBatchHookTests {
 
   [Test]
   public async Task Distribute_RunsTheBatchHooks_AndHandsStreamsToTheDrainInTheAdjustedOrderAsync() {
-    var first = (Guid)TrackedGuid.NewMedo();
-    var second = (Guid)TrackedGuid.NewMedo();
+    var first = (Guid)TrackedGuid.New();
+    var second = (Guid)TrackedGuid.New();
     var hook = new Favor(second);
     var (worker, drain, _) = _worker(_batch(first, second), hook);
 
@@ -152,8 +152,8 @@ public class ClaimWorkerPriorityBatchHookTests {
 
   [Test]
   public async Task Distribute_WithoutABatchHook_KeepsTheClaimsOrderAsync() {
-    var first = (Guid)TrackedGuid.NewMedo();
-    var second = (Guid)TrackedGuid.NewMedo();
+    var first = (Guid)TrackedGuid.New();
+    var second = (Guid)TrackedGuid.New();
     var (worker, drain, _) = _worker(_batch(first, second), hook: null);
 
     using var cts = new CancellationTokenSource();

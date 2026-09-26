@@ -42,15 +42,15 @@ public class EFCoreEventStoreDeserializeTests : EFCoreTestBase {
   }
 
   private static StreamEventData _row(string eventData, string? eventType = null) => new() {
-    StreamId = (Guid)TrackedGuid.NewMedo(),
-    EventId = (Guid)TrackedGuid.NewMedo(),
+    StreamId = (Guid)TrackedGuid.New(),
+    EventId = (Guid)TrackedGuid.New(),
     EventType = eventType ?? typeof(ProbeEvent).AssemblyQualifiedName!,
     EventData = eventData,
-    EventWorkId = (Guid)TrackedGuid.NewMedo(),
+    EventWorkId = (Guid)TrackedGuid.New(),
   };
 
   private static string _validPayload(string name = "probe")
-    => JsonSerializer.Serialize(new ProbeEvent { Id = (Guid)TrackedGuid.NewMedo(), Name = name });
+    => JsonSerializer.Serialize(new ProbeEvent { Id = (Guid)TrackedGuid.New(), Name = name });
 
   [Test]
   public async Task NoRows_ProducesNoEnvelopesAsync() {

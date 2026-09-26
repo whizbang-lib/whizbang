@@ -28,11 +28,11 @@ public class NotifySchedulesDueSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
-    await _insertScheduleAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId,
+    await _insertScheduleAsync(conn, (Guid)TrackedGuid.New(), streamId,
       fireOffset: "-1 minute", status: 0);
 
     var received = await _captureNotificationsAsync(conn, [owner], async () =>
@@ -48,11 +48,11 @@ public class NotifySchedulesDueSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
-    await _insertScheduleAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId,
+    await _insertScheduleAsync(conn, (Guid)TrackedGuid.New(), streamId,
       fireOffset: "1 hour", status: 0);
 
     var received = await _captureNotificationsAsync(conn, [owner], async () =>
@@ -67,11 +67,11 @@ public class NotifySchedulesDueSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
-    await _insertScheduleAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId,
+    await _insertScheduleAsync(conn, (Guid)TrackedGuid.New(), streamId,
       fireOffset: "-1 minute", status: 1);   // Paused
 
     var received = await _captureNotificationsAsync(conn, [owner], async () =>

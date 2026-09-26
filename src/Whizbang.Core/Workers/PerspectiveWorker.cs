@@ -810,10 +810,12 @@ public partial class PerspectiveWorker(
       }
 
       using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-      var arrivalTask = drainReader.WaitToReadAsync(waitCts.Token).AsTask();
       // Delayed THROUGH the provider, the same way SlidingWindowBatcher does it, so a fake clock
-      // controls when the window closes instead of only what the elapsed arithmetic reads.
+      // controls when the window closes instead of only what the elapsed arithmetic reads. Armed
+      // BEFORE the wait begins: a deadline created after it would be measured from whatever the
+      // clock reads by then, so time that passed in between would not count against the window.
       var timerTask = Task.Delay(waitFor, timeProvider, waitCts.Token);
+      var arrivalTask = drainReader.WaitToReadAsync(waitCts.Token).AsTask();
       var completed = await Task.WhenAny(arrivalTask, timerTask).ConfigureAwait(false);
       await waitCts.CancelAsync();
 
@@ -1865,7 +1867,7 @@ public partial class PerspectiveWorker(
       if (raw.Failures > maxAttempts.Value) {
         try {
           await _deadLetterStore.MoveAsync(
-            deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+            deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
             sourceTable: DeadLetterSourceTable.PERSPECTIVE_EVENTS,
             sourceId: raw.EventWorkId,
             failureReason: Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded,

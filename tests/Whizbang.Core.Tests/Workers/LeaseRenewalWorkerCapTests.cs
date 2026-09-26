@@ -90,7 +90,7 @@ public class LeaseRenewalWorkerCapTests {
   /// </summary>
   private static async Task _drainAsync(LeaseRenewalWorker worker, FakeCoordinator coord, FakeTimeProvider time,
                                         LeaseRegistry? registry, CancellationToken ct) {
-    var sentinel = (Guid)TrackedGuid.NewMedo();
+    var sentinel = (Guid)TrackedGuid.New();
     LeaseHandle? handle = null;
     if (registry is not null) {
       handle = _newHandle(time, registry, sentinel, maxRenewals: 1);
@@ -141,7 +141,7 @@ public class LeaseRenewalWorkerCapTests {
   [Test]
   public async Task Renewal_BumpsHandleCountAndCallsRenewLeasesAsync() {
     var (worker, coord, time, registry) = _build();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     using var handle = _newHandle(time, registry, workId, maxRenewals: 6);
     using var cts = new CancellationTokenSource();
 
@@ -167,7 +167,7 @@ public class LeaseRenewalWorkerCapTests {
   [Test]
   public async Task RenewalCount_AtCap_StopsSubmittingToRenewLeasesAsync() {
     var (worker, coord, time, registry) = _build();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     using var handle = _newHandle(time, registry, workId, maxRenewals: 3);
     using var cts = new CancellationTokenSource();
 
@@ -200,7 +200,7 @@ public class LeaseRenewalWorkerCapTests {
   [Test]
   public async Task DisposedHandle_SkippedAtRenewalAsync() {
     var (worker, coord, time, registry) = _build();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     var handle = _newHandle(time, registry, workId, maxRenewals: 6);
     using var cts = new CancellationTokenSource();
 
@@ -245,7 +245,7 @@ public class LeaseRenewalWorkerCapTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     await worker.EnqueueAsync(WorkCategory.Inbox, workId, cts.Token);
 
     await coord.WaitForAsync(c => c.Count >= 1, TimeSpan.FromSeconds(5));

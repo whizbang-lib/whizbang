@@ -47,8 +47,8 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
   public async Task Import_CreatesCustodyRow_WithBrokerProvenanceAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     var imported = await coordinator.ImportBrokerDeadLetterAsync(_import(messageId, streamId));
 
@@ -79,7 +79,7 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
   public async Task Import_SameMessageTwice_SecondReturnsFalse_OneRowAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
 
     var first = await coordinator.ImportBrokerDeadLetterAsync(_import(messageId));
     var second = await coordinator.ImportBrokerDeadLetterAsync(_import(messageId));
@@ -100,7 +100,7 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
   public async Task Import_NonJsonBody_StillGetsCustodyAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
 
     var imported = await coordinator.ImportBrokerDeadLetterAsync(
       _import(messageId, body: "this is not json {{{"));
@@ -114,8 +114,8 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
   public async Task Recover_BrokerRow_ReemitsIntoInboxAndMarksRecoveredAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     _ = await coordinator.ImportBrokerDeadLetterAsync(_import(messageId, streamId));
 
     var conn = await _openAsync(ctx);
@@ -167,7 +167,7 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
   public async Task Import_WithABodyThatIsNotJson_StillTakesCustodyAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
 
     var imported = await coordinator.ImportBrokerDeadLetterAsync(
       _import(messageId, body: "{not json at all"));
@@ -201,7 +201,7 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
     // A wire message with no destination recorded: the call cannot be assembled, which stands
     // in for any failure between here and the store.
     var noDestination = new BrokerDeadLetterImport(
-      MessageId: (Guid)TrackedGuid.NewMedo(),
+      MessageId: (Guid)TrackedGuid.New(),
       StreamId: null,
       MessageType: "Test.Message, Test",
       Destination: null!,
@@ -227,7 +227,7 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
     // a second dead-letter row for the same failure.
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
 
     var first = await coordinator.ImportBrokerDeadLetterAsync(_import(messageId));
     var second = await coordinator.ImportBrokerDeadLetterAsync(_import(messageId));

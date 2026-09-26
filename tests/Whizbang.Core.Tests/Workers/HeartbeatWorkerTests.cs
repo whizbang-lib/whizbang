@@ -71,7 +71,7 @@ public class HeartbeatWorkerTests {
 
   [Test]
   public async Task ExecuteAsync_FirstTick_CallsRecordHeartbeatWithProviderIdentityAsync() {
-    var instanceId = TrackedGuid.NewMedo();
+    var instanceId = TrackedGuid.New();
     var instProvider = new StubInstanceProvider(instanceId, "svc", "host", 42);
     var coord = new StubCoordinator();
 
@@ -113,7 +113,7 @@ public class HeartbeatWorkerTests {
   // forever. The worker must stop rather than loop on a call it cannot win.
   [Test]
   public async Task ExecuteAsync_WhenEvicted_StopsHeartbeatingAsync() {
-    var instanceId = TrackedGuid.NewMedo();
+    var instanceId = TrackedGuid.New();
     var instProvider = new StubInstanceProvider((Guid)instanceId, "svc", "host", 1);
     var coord = new StubCoordinator { AcceptHeartbeats = false };
     var services = new ServiceCollection();
@@ -172,7 +172,7 @@ public class HeartbeatWorkerTests {
 
   [Test]
   public async Task ExecuteAsync_DisabledOptions_NoHeartbeatFiresAsync() {
-    var instanceId = TrackedGuid.NewMedo();
+    var instanceId = TrackedGuid.New();
     var instProvider = new StubInstanceProvider((Guid)instanceId, "svc", "host", 1);
     var coord = new StubCoordinator();
     var services = new ServiceCollection();
@@ -208,7 +208,7 @@ public class HeartbeatWorkerTests {
 
   [Test]
   public async Task ExecuteAsync_BlocksOnSchemaGate_UntilMarkedReadyAsync() {
-    var instanceId = TrackedGuid.NewMedo();
+    var instanceId = TrackedGuid.New();
     var instProvider = new StubInstanceProvider((Guid)instanceId, "svc", "host", 1);
     var coord = new StubCoordinator();
     var services = new ServiceCollection();

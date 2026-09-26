@@ -115,5 +115,5 @@ public sealed record SyncInquiry {
   /// <remarks>
   /// Auto-generated if not specified.
   /// </remarks>
-  public Guid InquiryId { get; init; } = TrackedGuid.NewMedo();
+  public Guid InquiryId { get; init; } = TrackedGuid.New();
 }

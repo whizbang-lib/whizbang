@@ -30,7 +30,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
   [Test]
   public async Task RecordHeartbeatAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
     var request = new HeartbeatRequest(
-      (Guid)TrackedGuid.NewMedo(), "TestService", "test-host", 123);
+      (Guid)TrackedGuid.New(), "TestService", "test-host", 123);
 
     var message = await _captureNotImplementedMessageAsync(
       () => _coordinator.RecordHeartbeatAsync(request));
@@ -49,7 +49,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
 
   [Test]
   public async Task CompleteOutboxPublishedAsync_SimpleOverload_DelegatesToThrowingDebugOverloadAsync() {
-    IReadOnlyList<Guid> ids = [(Guid)TrackedGuid.NewMedo()];
+    IReadOnlyList<Guid> ids = [(Guid)TrackedGuid.New()];
 
     var message = await _captureNotImplementedMessageAsync(
       () => _coordinator.CompleteOutboxPublishedAsync(ids));
@@ -59,7 +59,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
 
   [Test]
   public async Task CompleteOutboxPublishedAsync_DebugOverload_ThrowsNamingTheMemberAsync() {
-    IReadOnlyList<Guid> ids = [(Guid)TrackedGuid.NewMedo()];
+    IReadOnlyList<Guid> ids = [(Guid)TrackedGuid.New()];
 
     var message = await _captureNotImplementedMessageAsync(
       () => _coordinator.CompleteOutboxPublishedAsync(ids, debugMode: true));
@@ -91,7 +91,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
 
   [Test]
   public async Task RenewLeasesAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
-    IReadOnlyList<Guid> ids = [(Guid)TrackedGuid.NewMedo()];
+    IReadOnlyList<Guid> ids = [(Guid)TrackedGuid.New()];
 
     var message = await _captureNotImplementedMessageAsync(
       () => _coordinator.RenewLeasesAsync(WorkCategory.Outbox, ids));
@@ -132,7 +132,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
   [Test]
   public async Task ClaimWorkAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
     var request = new ClaimWorkRequest(
-      (Guid)TrackedGuid.NewMedo(), "TestService", "test-host", 123);
+      (Guid)TrackedGuid.New(), "TestService", "test-host", 123);
 
     var message = await _captureNotImplementedMessageAsync(
       () => _coordinator.ClaimWorkAsync(request));
@@ -169,7 +169,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
     var threw = false;
     try {
       await _coordinator.StoreOutboxMessagesAsync([], 10);
-      await _coordinator.RecordLifecycleCompletionAsync((Guid)TrackedGuid.NewMedo());
+      await _coordinator.RecordLifecycleCompletionAsync((Guid)TrackedGuid.New());
     } catch {
       threw = true;
     }
@@ -179,7 +179,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
 
   [Test]
   public async Task CleanupCompletedStreamsAsync_DefaultImplementation_EvictsZeroStreamsAsync() {
-    IReadOnlyList<Guid> streamIds = [(Guid)TrackedGuid.NewMedo()];
+    IReadOnlyList<Guid> streamIds = [(Guid)TrackedGuid.New()];
 
     var evicted = await _coordinator.CleanupCompletedStreamsAsync(streamIds);
 
@@ -198,7 +198,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
 
   [Test]
   public async Task GetPerspectiveCursorsBatchAsync_DefaultImplementation_ReturnsEmptyListAsync() {
-    Guid[] streamIds = [(Guid)TrackedGuid.NewMedo()];
+    Guid[] streamIds = [(Guid)TrackedGuid.New()];
 
     var cursors = await _coordinator.GetPerspectiveCursorsBatchAsync(streamIds);
 
@@ -230,7 +230,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
 
   [Test]
   public async Task CompletePerspectiveEventsAsync_SimpleOverload_DelegatesToZeroResultDebugOverloadAsync() {
-    Guid[] workItemIds = [(Guid)TrackedGuid.NewMedo()];
+    Guid[] workItemIds = [(Guid)TrackedGuid.New()];
 
     var affected = await _coordinator.CompletePerspectiveEventsAsync(workItemIds);
 
@@ -239,7 +239,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
 
   [Test]
   public async Task CompletePerspectiveEventsAsync_DebugOverload_ReturnsZeroAsync() {
-    Guid[] workItemIds = [(Guid)TrackedGuid.NewMedo()];
+    Guid[] workItemIds = [(Guid)TrackedGuid.New()];
 
     var affected = await _coordinator.CompletePerspectiveEventsAsync(workItemIds, debugMode: true);
 
@@ -248,9 +248,9 @@ public class WorkCoordinatorDefaultInterfaceTests {
 
   [Test]
   public async Task GetStreamEventsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
-    Guid[] streamIds = [(Guid)TrackedGuid.NewMedo()];
+    Guid[] streamIds = [(Guid)TrackedGuid.New()];
 
-    var events = await _coordinator.GetStreamEventsAsync((Guid)TrackedGuid.NewMedo(), streamIds);
+    var events = await _coordinator.GetStreamEventsAsync((Guid)TrackedGuid.New(), streamIds);
 
     await Assert.That(events.Count).IsEqualTo(0);
   }
@@ -264,18 +264,18 @@ public class WorkCoordinatorDefaultInterfaceTests {
 
   [Test]
   public async Task FetchOutboxBatchAsync_DefaultImplementation_ReturnsEmptyListAsync() {
-    IReadOnlyList<Guid> streamIds = [(Guid)TrackedGuid.NewMedo()];
+    IReadOnlyList<Guid> streamIds = [(Guid)TrackedGuid.New()];
 
-    var rows = await _coordinator.FetchOutboxBatchAsync(streamIds, (Guid)TrackedGuid.NewMedo());
+    var rows = await _coordinator.FetchOutboxBatchAsync(streamIds, (Guid)TrackedGuid.New());
 
     await Assert.That(rows.Count).IsEqualTo(0);
   }
 
   [Test]
   public async Task FetchInboxBatchAsync_DefaultImplementation_ReturnsEmptyListAsync() {
-    IReadOnlyList<Guid> streamIds = [(Guid)TrackedGuid.NewMedo()];
+    IReadOnlyList<Guid> streamIds = [(Guid)TrackedGuid.New()];
 
-    var rows = await _coordinator.FetchInboxBatchAsync(streamIds, (Guid)TrackedGuid.NewMedo());
+    var rows = await _coordinator.FetchInboxBatchAsync(streamIds, (Guid)TrackedGuid.New());
 
     await Assert.That(rows.Count).IsEqualTo(0);
   }
@@ -283,7 +283,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
   [Test]
   public async Task FetchPendingPerspectiveEventsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
     var pending = await _coordinator.FetchPendingPerspectiveEventsAsync(
-      (Guid)TrackedGuid.NewMedo(), "TestPerspective", (Guid)TrackedGuid.NewMedo());
+      (Guid)TrackedGuid.New(), "TestPerspective", (Guid)TrackedGuid.New());
 
     await Assert.That(pending.Count).IsEqualTo(0);
   }
@@ -291,14 +291,14 @@ public class WorkCoordinatorDefaultInterfaceTests {
   [Test]
   public async Task ClaimAndFetchPendingPerspectiveEventsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
     var pending = await _coordinator.ClaimAndFetchPendingPerspectiveEventsAsync(
-      (Guid)TrackedGuid.NewMedo(), "TestPerspective", (Guid)TrackedGuid.NewMedo(), TimeSpan.FromMinutes(5));
+      (Guid)TrackedGuid.New(), "TestPerspective", (Guid)TrackedGuid.New(), TimeSpan.FromMinutes(5));
 
     await Assert.That(pending.Count).IsEqualTo(0);
   }
 
   [Test]
   public async Task FetchEventsByIdsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
-    IReadOnlyList<Guid> eventIds = [(Guid)TrackedGuid.NewMedo()];
+    IReadOnlyList<Guid> eventIds = [(Guid)TrackedGuid.New()];
 
     var events = await _coordinator.FetchEventsByIdsAsync(eventIds);
 
@@ -376,18 +376,18 @@ public class WorkCoordinatorDefaultInterfaceTests {
 
   private static HandlerCommitRequest _createHandlerCommitRequest() {
     return new HandlerCommitRequest(
-      (Guid)TrackedGuid.NewMedo(),
-      (Guid)TrackedGuid.NewMedo(),
+      (Guid)TrackedGuid.New(),
+      (Guid)TrackedGuid.New(),
       "TestService",
       "test-host",
       123,
       10_000,
-      new HandlerInboxCompletion((Guid)TrackedGuid.NewMedo(), (int)MessageProcessingStatus.Stored));
+      new HandlerInboxCompletion((Guid)TrackedGuid.New(), (int)MessageProcessingStatus.Stored));
   }
 
   [Test]
   public async Task CountOutstandingWorkAsync_DefaultImplementation_ReportsUnmeasurableNotZeroAsync() {
-    var reported = await _coordinator.CountOutstandingWorkAsync((Guid)TrackedGuid.NewMedo());
+    var reported = await _coordinator.CountOutstandingWorkAsync((Guid)TrackedGuid.New());
 
     // The distinction is load-bearing rather than stylistic. Zero is a MEASUREMENT meaning "this
     // instance holds nothing", which licenses a full-size claim. Null means the figure was never

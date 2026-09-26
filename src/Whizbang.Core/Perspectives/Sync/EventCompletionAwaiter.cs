@@ -26,7 +26,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <exception cref="ArgumentNullException">Thrown when <paramref name="syncEventTracker"/> is null.</exception>
 public sealed class EventCompletionAwaiter(ISyncEventTracker syncEventTracker) : IEventCompletionAwaiter {
   /// <inheritdoc />
-  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+  public Guid AwaiterId { get; } = TrackedGuid.New();
 
   private readonly ISyncEventTracker _syncEventTracker = syncEventTracker ?? throw new ArgumentNullException(nameof(syncEventTracker));
 

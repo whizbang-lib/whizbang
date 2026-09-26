@@ -54,7 +54,7 @@ public class OpportunisticHeartbeatSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     // Heartbeat row stamped 60 s in the past — older than the 10 s freshness
     // guard inside the piggyback's WHERE clause.
     await _registerInstanceAsync(conn, instanceId, lastHeartbeatOffset: TimeSpan.FromSeconds(-60));
@@ -68,7 +68,7 @@ public class OpportunisticHeartbeatSqlTests : EFCoreTestBase {
     // CompleteOutboxPublishedAsync with an empty list still runs the
     // function but returns early before reaching the piggyback — use a
     // dummy ID just to exercise the full path.
-    await coordinator.CompleteOutboxPublishedAsync([(Guid)TrackedGuid.NewMedo()], debugMode: false);
+    await coordinator.CompleteOutboxPublishedAsync([(Guid)TrackedGuid.New()], debugMode: false);
 
     var heartbeatAfter = await _readHeartbeatAsync(conn, instanceId);
     await Assert.That(heartbeatAfter).IsGreaterThan(heartbeatBefore)
@@ -80,7 +80,7 @@ public class OpportunisticHeartbeatSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     // Heartbeat row is fresh — inside the 10 s freshness guard.
     await _registerInstanceAsync(conn, instanceId, lastHeartbeatOffset: TimeSpan.FromSeconds(-2));
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
@@ -90,7 +90,7 @@ public class OpportunisticHeartbeatSqlTests : EFCoreTestBase {
       instanceProvider: new StubInstanceProvider(instanceId));
     var heartbeatBefore = await _readHeartbeatAsync(conn, instanceId);
 
-    await coordinator.CompleteOutboxPublishedAsync([(Guid)TrackedGuid.NewMedo()], debugMode: false);
+    await coordinator.CompleteOutboxPublishedAsync([(Guid)TrackedGuid.New()], debugMode: false);
 
     var heartbeatAfter = await _readHeartbeatAsync(conn, instanceId);
     await Assert.That(heartbeatAfter).IsEqualTo(heartbeatBefore)
@@ -102,7 +102,7 @@ public class OpportunisticHeartbeatSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId, lastHeartbeatOffset: TimeSpan.FromSeconds(-60));
     // Coordinator built without IServiceInstanceProvider — historical
     // construction contract still works, just skips the piggyback.
@@ -112,7 +112,7 @@ public class OpportunisticHeartbeatSqlTests : EFCoreTestBase {
       logger: NullLogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>>.Instance);
     var heartbeatBefore = await _readHeartbeatAsync(conn, instanceId);
 
-    await coordinator.CompleteOutboxPublishedAsync([(Guid)TrackedGuid.NewMedo()], debugMode: false);
+    await coordinator.CompleteOutboxPublishedAsync([(Guid)TrackedGuid.New()], debugMode: false);
 
     var heartbeatAfter = await _readHeartbeatAsync(conn, instanceId);
     await Assert.That(heartbeatAfter).IsEqualTo(heartbeatBefore)

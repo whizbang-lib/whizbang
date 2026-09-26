@@ -249,8 +249,8 @@ public class OutboxDrainWorkerTests {
     var streamIds = new Guid[streamCount];
     var coord = new FakeWorkCoordinator();
     for (var i = 0; i < streamCount; i++) {
-      streamIds[i] = (Guid)TrackedGuid.NewMedo();
-      coord.RowsByStream[streamIds[i]] = [_row((Guid)TrackedGuid.NewMedo(), streamIds[i])];
+      streamIds[i] = (Guid)TrackedGuid.New();
+      coord.RowsByStream[streamIds[i]] = [_row((Guid)TrackedGuid.New(), streamIds[i])];
     }
 
     var drainChannel = new FakeOutboxDrainChannel();
@@ -334,9 +334,9 @@ public class OutboxDrainWorkerTests {
     var streamIds = new Guid[streamCount];
     var coord = new FakeWorkCoordinator();
     for (var i = 0; i < streamCount; i++) {
-      streamIds[i] = (Guid)TrackedGuid.NewMedo();
+      streamIds[i] = (Guid)TrackedGuid.New();
       // The production shape: one pending row per stream.
-      coord.RowsByStream[streamIds[i]] = [_row((Guid)TrackedGuid.NewMedo(), streamIds[i])];
+      coord.RowsByStream[streamIds[i]] = [_row((Guid)TrackedGuid.New(), streamIds[i])];
     }
 
     var drainChannel = new FakeOutboxDrainChannel();
@@ -416,12 +416,12 @@ public class OutboxDrainWorkerTests {
     var expected = new Dictionary<Guid, List<Guid>>();
     var coord = new FakeWorkCoordinator();
     for (var i = 0; i < streamCount; i++) {
-      var sid = (Guid)TrackedGuid.NewMedo();
+      var sid = (Guid)TrackedGuid.New();
       streamIds[i] = sid;
       var rows = new List<OutboxBatchRow>();
       var ids = new List<Guid>();
       for (var r = 0; r < rowsPerStream; r++) {
-        var mid = (Guid)TrackedGuid.NewMedo();
+        var mid = (Guid)TrackedGuid.New();
         ids.Add(mid);
         rows.Add(_row(mid, sid));
       }
@@ -517,8 +517,8 @@ public class OutboxDrainWorkerTests {
     var messageIds = new Guid[streamCount];
     var coord = new FakeWorkCoordinator();
     for (var i = 0; i < streamCount; i++) {
-      streamIds[i] = (Guid)TrackedGuid.NewMedo();
-      messageIds[i] = (Guid)TrackedGuid.NewMedo();
+      streamIds[i] = (Guid)TrackedGuid.New();
+      messageIds[i] = (Guid)TrackedGuid.New();
       coord.RowsByStream[streamIds[i]] = [_row(messageIds[i], streamIds[i])];
     }
 
@@ -623,8 +623,8 @@ public class OutboxDrainWorkerTests {
     var streamIds = new Guid[streamCount];
     var coord = new FakeWorkCoordinator();
     for (var i = 0; i < streamCount; i++) {
-      streamIds[i] = (Guid)TrackedGuid.NewMedo();
-      coord.RowsByStream[streamIds[i]] = [_row((Guid)TrackedGuid.NewMedo(), streamIds[i])];
+      streamIds[i] = (Guid)TrackedGuid.New();
+      coord.RowsByStream[streamIds[i]] = [_row((Guid)TrackedGuid.New(), streamIds[i])];
     }
 
     var drainChannel = new FakeOutboxDrainChannel();
@@ -730,8 +730,8 @@ public class OutboxDrainWorkerTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_StreamWithManyRows_PublishesAsOneBulkCall_WhenStrategySupportsItAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgIds = Enumerable.Range(0, 10).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgIds = Enumerable.Range(0, 10).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [.. msgIds.Select(id => _row(id, streamId))];
@@ -826,10 +826,10 @@ public class OutboxDrainWorkerTests {
   /// and failed rows enqueue a <see cref="MessageFailure"/> with the broker error.</summary>
   [Test]
   public async Task OutboxDrainWorker_BulkResultsMixed_RoutesSuccessToCompletion_FailureToFailureChannelAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var ok1 = (Guid)TrackedGuid.NewMedo();
-    var bad = (Guid)TrackedGuid.NewMedo();
-    var ok2 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var ok1 = (Guid)TrackedGuid.New();
+    var bad = (Guid)TrackedGuid.New();
+    var ok2 = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(ok1, streamId), _row(bad, streamId), _row(ok2, streamId)];
@@ -890,8 +890,8 @@ public class OutboxDrainWorkerTests {
   /// out to the failure channel so claim_orphaned_outbox can re-lease them next cycle.</summary>
   [Test]
   public async Task OutboxDrainWorker_BulkPublishThrows_RoutesAllRowsToFailureChannelAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgIds = Enumerable.Range(0, 5).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgIds = Enumerable.Range(0, 5).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [.. msgIds.Select(id => _row(id, streamId))];
@@ -953,10 +953,10 @@ public class OutboxDrainWorkerTests {
   /// restores the pre-fix serial cross-stream behavior while preserving correctness.</summary>
   [Test]
   public async Task OutboxDrainWorker_MaxConcurrentStreams_OneRestoresSerialCrossStreamDrainAsync() {
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
-    var msgA = (Guid)TrackedGuid.NewMedo();
-    var msgB = (Guid)TrackedGuid.NewMedo();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
+    var msgA = (Guid)TrackedGuid.New();
+    var msgB = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamA] = [_row(msgA, streamA)];
@@ -1015,9 +1015,9 @@ public class OutboxDrainWorkerTests {
 
   [Test]
   public async Task OutboxDrainWorker_OnStreamId_FetchesBatch_PublishesEach_EnqueuesCompletionAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgA = (Guid)TrackedGuid.NewMedo();
-    var msgB = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgA = (Guid)TrackedGuid.New();
+    var msgB = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgA, streamId), _row(msgB, streamId)];
@@ -1083,8 +1083,8 @@ public class OutboxDrainWorkerTests {
     // are NEW rows. Simulates 250 pending rows / MaxPerStream=100 → 3 publish iterations
     // (100 + 100 + 50). The fake "consumes" returned rows on each fetch (mimicking what
     // happens once completion-flush lands and complete_outbox_published deletes them).
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgs = Enumerable.Range(0, 250).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgs = Enumerable.Range(0, 250).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new ConsumingFakeWorkCoordinator();
     coord.RowsByStream[streamId] = [.. msgs.Select(m => _row(m, streamId))];
@@ -1140,8 +1140,8 @@ public class OutboxDrainWorkerTests {
     // SAME rows (because complete_outbox_published hasn't deleted them yet). Drainer must
     // detect via session-set and exit without re-publishing — the next claim_work tick
     // will re-issue once the rows clear.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgs = Enumerable.Range(0, 50).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgs = Enumerable.Range(0, 50).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     var coord = new FakeWorkCoordinator();  // does NOT consume rows on fetch
     coord.RowsByStream[streamId] = [.. msgs.Select(m => _row(m, streamId))];
@@ -1226,8 +1226,8 @@ public class OutboxDrainWorkerTests {
     // re-publish. The drainer fetches eligible rows; once a row is completed (production: deleted)
     // the next fetch returns 0 rows. Models the "rerun-claim doesn't re-issue" guarantee.
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgA = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgA = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgA, streamId)];
@@ -1334,8 +1334,8 @@ public class OutboxDrainWorkerTests {
 
   [Test]
   public async Task OutboxDrainWorker_WithLifecycleDeps_FiresPreAndPostOutboxInline_AroundPublishAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -1398,8 +1398,8 @@ public class OutboxDrainWorkerTests {
     // When lifecycleMessageDeserializer + receptorRegistry are absent (legacy / minimal
     // hosts), the worker must degrade gracefully: publish + complete still happen,
     // lifecycle invocation simply no-ops.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -1462,8 +1462,8 @@ public class OutboxDrainWorkerTests {
     // the actual production BUG (a stuck RemoveUserCommand ran hundreds of retries over
     // 24 h with empty wh_outbox.error). Locking the new "lifecycle exception →
     // failure record" invariant per feedback_lock_invariants_in_tests.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -1548,8 +1548,8 @@ public class OutboxDrainWorkerTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_NoReceptorsRegistered_LifecycleShortCircuits_PublishStillFiresAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -1609,8 +1609,8 @@ public class OutboxDrainWorkerTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_EmptyDestination_SkipsLifecycle_PublishStillFiresAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     var row = _row(msgId, streamId);
@@ -1683,8 +1683,8 @@ public class OutboxDrainWorkerTests {
     // the row must NOT be enqueued for completion — it routes to the failure channel so the
     // lease can release, attempts counter can bump on re-claim, and the row eventually
     // dead-letters per MaxAttempts.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -1753,8 +1753,8 @@ public class OutboxDrainWorkerTests {
     // Locks the publish-throws path: when IMessagePublishStrategy.PublishAsync throws an
     // unexpected exception (NOT OperationCanceledException tied to the worker shutdown),
     // the row routes to the failure channel and the drain loop continues with the next stream.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -1824,8 +1824,8 @@ public class OutboxDrainWorkerTests {
     // not in JSON context, malformed payload) must NOT block publish. The row is still
     // safely durable in the outbox and reaches transport; only lifecycle invocation is
     // skipped for this message.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
@@ -1891,8 +1891,8 @@ public class OutboxDrainWorkerTests {
     var coord = new FakeWorkCoordinator {
       LocalServiceIdFailure = new InvalidOperationException("42P01: relation \"wh_service_config\" does not exist"),
     };
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
 
     var drainChannel = new FakeOutboxDrainChannel();
@@ -1955,14 +1955,14 @@ public class OutboxDrainWorkerTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_LocalServiceIdLookupFailsOnceAtStartup_ResolvesBeforeTheNextBatchAsync() {
-    var serviceId = (Guid)TrackedGuid.NewMedo();
+    var serviceId = (Guid)TrackedGuid.New();
     var coord = new FakeWorkCoordinator {
       LocalServiceIdFailure = new InvalidOperationException("57P03: the database system is starting up"),
       LocalServiceIdFailuresRemaining = 1,
       LocalServiceId = serviceId,
     };
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
 
     var drainChannel = new FakeOutboxDrainChannel();
@@ -2023,11 +2023,11 @@ public class OutboxDrainWorkerTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_LocalServiceIdResolvedAtStartup_DoesNotLookItUpAgainAsync() {
-    var coord = new FakeWorkCoordinator { LocalServiceId = (Guid)TrackedGuid.NewMedo() };
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
-    coord.RowsByStream[streamA] = [_row((Guid)TrackedGuid.NewMedo(), streamA)];
-    coord.RowsByStream[streamB] = [_row((Guid)TrackedGuid.NewMedo(), streamB)];
+    var coord = new FakeWorkCoordinator { LocalServiceId = (Guid)TrackedGuid.New() };
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
+    coord.RowsByStream[streamA] = [_row((Guid)TrackedGuid.New(), streamA)];
+    coord.RowsByStream[streamB] = [_row((Guid)TrackedGuid.New(), streamB)];
 
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new FakeOutboxCompletionChannel();
@@ -2079,8 +2079,8 @@ public class OutboxDrainWorkerTests {
   [Test]
   public async Task OutboxDrainWorker_LocalServiceIdEmptyAtStartup_WarnsAndRetriesBeforeEachBatchAsync() {
     var coord = new FakeWorkCoordinator();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     coord.RowsByStream[streamId] = [_row(msgId, streamId)];
 
     var drainChannel = new FakeOutboxDrainChannel();
@@ -2143,8 +2143,8 @@ public class OutboxDrainWorkerTests {
     var coord = new FakeWorkCoordinator {
       LocalServiceIdFailure = new InvalidOperationException("42P01: relation \"wh_service_config\" does not exist"),
     };
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    coord.RowsByStream[streamId] = [_row((Guid)TrackedGuid.NewMedo(), streamId)];
+    var streamId = (Guid)TrackedGuid.New();
+    coord.RowsByStream[streamId] = [_row((Guid)TrackedGuid.New(), streamId)];
 
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new FakeOutboxCompletionChannel();

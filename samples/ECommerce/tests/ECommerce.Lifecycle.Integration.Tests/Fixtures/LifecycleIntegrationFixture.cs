@@ -4,7 +4,6 @@ using System.Text.Json;
 using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.Lifecycle.Integration.Tests.Domain;
 using ECommerce.Lifecycle.Integration.Tests.Generated;
-using Medo;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -133,7 +132,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
 
     // Service instance provider
     builder.Services.AddSingleton<IServiceInstanceProvider>(
-      new TestServiceInstanceProvider(Uuid7.NewUuid7().ToGuid(), "LifecycleTest"));
+      new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "LifecycleTest"));
 
     // JSON serialization
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();

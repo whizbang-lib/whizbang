@@ -233,7 +233,7 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
       string group,
       int createdAgoSeconds,
       string? scheduledForSql = null) {
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     await using var ins = connection.CreateCommand();
     ins.CommandText = $$"""
 

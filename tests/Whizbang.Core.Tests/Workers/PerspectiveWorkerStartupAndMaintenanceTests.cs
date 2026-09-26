@@ -45,7 +45,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   // ============================================================
 
   private sealed class InstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "startup-test-svc";
     public string HostName => "startup-test-host";
     public int ProcessId => 1;

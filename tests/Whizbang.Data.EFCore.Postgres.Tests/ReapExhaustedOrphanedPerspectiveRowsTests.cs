@@ -32,7 +32,7 @@ public class ReapExhaustedOrphanedPerspectiveRowsTests : EFCoreTestBase {
 
   private static async Task<Guid> _seedRowAsync(
       NpgsqlConnection c, Guid eventId, Guid streamId, Guid instanceId, int attempts) {
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     await using var cmd = c.CreateCommand();
     cmd.CommandText = @"INSERT INTO wh_perspective_events
       (event_work_id, stream_id, perspective_name, event_id, instance_id, partition_number, status, attempts, created_at)
@@ -72,16 +72,16 @@ public class ReapExhaustedOrphanedPerspectiveRowsTests : EFCoreTestBase {
   public async Task Reap_ExhaustedOrphan_IsDeleted_OthersKeptAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
 
     // Exhausted orphan: attempts past the bar, source event absent — the wedge case.
-    var orphan = await _seedRowAsync(conn, (Guid)TrackedGuid.NewMedo(), stream, inst, attempts: 10);
+    var orphan = await _seedRowAsync(conn, (Guid)TrackedGuid.New(), stream, inst, attempts: 10);
     // Control 1 — orphan still under the attempt bar: could be an in-flight write, keep it.
-    var young = await _seedRowAsync(conn, (Guid)TrackedGuid.NewMedo(), stream, inst, attempts: 2);
+    var young = await _seedRowAsync(conn, (Guid)TrackedGuid.New(), stream, inst, attempts: 2);
     // Control 2 — exhausted but its event EXISTS: real work that keeps failing for another
     // reason; the existing joined-row dead-letter cap owns it, not this orphan reaper.
-    var goodEvent = (Guid)TrackedGuid.NewMedo();
+    var goodEvent = (Guid)TrackedGuid.New();
     await _seedEventAsync(conn, goodEvent, stream);
     var healthy = await _seedRowAsync(conn, goodEvent, stream, inst, attempts: 10);
 
@@ -102,14 +102,14 @@ public class ReapExhaustedOrphanedPerspectiveRowsTests : EFCoreTestBase {
   public async Task Reap_ScopesToInstanceAndStreamsAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    var mine = (Guid)TrackedGuid.NewMedo();
-    var other = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
-    var otherStream = (Guid)TrackedGuid.NewMedo();
+    var mine = (Guid)TrackedGuid.New();
+    var other = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
+    var otherStream = (Guid)TrackedGuid.New();
 
-    var otherInstance = await _seedRowAsync(conn, (Guid)TrackedGuid.NewMedo(), stream, other, attempts: 20);
-    var otherStreamRow = await _seedRowAsync(conn, (Guid)TrackedGuid.NewMedo(), otherStream, mine, attempts: 20);
-    var target = await _seedRowAsync(conn, (Guid)TrackedGuid.NewMedo(), stream, mine, attempts: 20);
+    var otherInstance = await _seedRowAsync(conn, (Guid)TrackedGuid.New(), stream, other, attempts: 20);
+    var otherStreamRow = await _seedRowAsync(conn, (Guid)TrackedGuid.New(), otherStream, mine, attempts: 20);
+    var target = await _seedRowAsync(conn, (Guid)TrackedGuid.New(), stream, mine, attempts: 20);
 
     var reaped = await _reapAsync(conn, mine, [stream], 10);
 

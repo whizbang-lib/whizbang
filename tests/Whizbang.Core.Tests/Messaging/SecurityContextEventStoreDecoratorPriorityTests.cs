@@ -30,7 +30,7 @@ public sealed class SecurityContextEventStoreDecoratorPriorityTests {
   public async Task AppendAsync_WithMessage_WhileHandlingBackgroundWork_TheEnvelopeCarriesTheAmbientParentAsync() {
     var inner = new InMemoryEventStore();
     var decorator = new SecurityContextEventStoreDecorator(inner);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     using (PriorityContext.Enter(WorkPriority.BACKGROUND)) {
       await decorator.AppendAsync(streamId, new DecoratorPriorityProbe("a"));
@@ -45,7 +45,7 @@ public sealed class SecurityContextEventStoreDecoratorPriorityTests {
   public async Task AppendAsync_WithMessage_OutsideAnyHandling_TheEnvelopeStaysUndeclaredAsync() {
     var inner = new InMemoryEventStore();
     var decorator = new SecurityContextEventStoreDecorator(inner);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     await decorator.AppendAsync(streamId, new DecoratorPriorityProbe("b"));
 
@@ -58,7 +58,7 @@ public sealed class SecurityContextEventStoreDecoratorPriorityTests {
   public async Task AppendAsync_WithEnvelope_KeepsTheEnvelopesOwnNumber_WhateverTheHandlingAsync() {
     var inner = new InMemoryEventStore();
     var decorator = new SecurityContextEventStoreDecorator(inner);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<DecoratorPriorityProbe> {
       MessageId = MessageId.New(),
       Payload = new DecoratorPriorityProbe("c"),

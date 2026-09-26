@@ -606,7 +606,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
   /// <summary>An instance identity, as a starting pod presents one.</summary>
   private sealed class Pod : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "staged-svc";
     public string HostName => "staged-host";
     public int ProcessId => 7;

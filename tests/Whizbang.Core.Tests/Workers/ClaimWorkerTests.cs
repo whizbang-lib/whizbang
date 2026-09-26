@@ -19,7 +19,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class ClaimWorkerTests {
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = TrackedGuid.New();
     public string ServiceName => "test";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -411,8 +411,8 @@ public class ClaimWorkerTests {
     // The new contract: writes always happen. The drainer's idempotent fetch_*_batch (filters
     // processed_at IS NULL) + sequential channel reads make duplicate emissions harmless —
     // a second drain for the same stream just reads 0 rows from SQL.
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
     var coord = new FakeCoordinator {
       BatchToReturn = new WorkBatch {
         OutboxWork = [],
@@ -465,8 +465,8 @@ public class ClaimWorkerTests {
   [Test]
   public async Task Distribute_OutboxDrainChannel_WritesStreamIds_EvenWhenIsInFlightTrueAsync() {
     // Regression lock — see PerspectiveDrainChannel test for the rationale.
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
     var coord = new FakeCoordinator {
       BatchToReturn = new WorkBatch {
         OutboxWork = [],
@@ -520,8 +520,8 @@ public class ClaimWorkerTests {
     // channels. Production observed this exact failure mode: thousands of inbox rows
     // leased to the healthy instance, claim_work emitting them on every poll, ClaimWorker
     // silently filtering them via IsInFlight, drain pipeline idle for hours.
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
     var coord = new FakeCoordinator {
       BatchToReturn = new WorkBatch {
         OutboxWork = [],
@@ -571,8 +571,8 @@ public class ClaimWorkerTests {
 
   [Test]
   public async Task Distribute_OutboxStreamIds_RoutedToOutboxDrainChannelAsync() {
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
     // Coordinator populates OutboxStreamIds on the batch (real EFCoreWorkCoordinator dedups
     // these from claim_work output). ClaimWorker just forwards to the drain channel.
     var coord = new FakeCoordinator {
