@@ -1,3 +1,5 @@
+> **Archived 2026-09-26.** The work this plan describes has shipped, or its open remainder is carried by a card on the Release 1.0 or 2.0 Planning board; the Done cards carry the Shipped dates. Status lines below are as last written and may be stale.
+
 # Full index coverage for lens filters
 
 ## Goal
@@ -70,7 +72,7 @@ Chosen so the extraction is both immutable-castable and order-preserving.
 
 One unit for the whole family, so any two of them order against each other and a day count can
 never be mistaken for a microsecond count. The first canonical release stored a date as a day count
-and a duration as ticks; `plans/canonical-temporal-storage-unification.md` is the record of why that
+and a duration as ticks; `canonical-temporal-storage-unification.md` is the record of why that
 was wrong and how the stored-form ledger and rewrite converted it.
 | `char` | its code point, as a number | `((data ->> 'X')::bigint)` |
 | `TrackedGuid` | a bare v7 identifier, as text | `((data ->> 'X')::uuid)` |

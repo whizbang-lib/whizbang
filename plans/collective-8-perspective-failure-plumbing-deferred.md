@@ -8,6 +8,14 @@ them — **is fixed and shipped** (it was a production re-dispatch loop / table 
 Failed flag / `error` / `scheduled_for` backoff, because of the identifier mismatch below. That fix touches
 the core failure path shared by every perspective and needs a dedicated session with work-coordinator
 context.
+**Update 2026-09-26 (verified against develop):** the standard-perspective and drain failure paths are now
+fixed: migration 154 (#770) makes `process_perspective_event_failures` read the field names the runtime
+sends, and #771 parks every drain-path apply failure by work id (`_parkLeasedRowsAsync`). **Still open, and
+now the whole of this plan:** the collective sink catches its own exception and reports only a cursor
+failure carrying the last *event* id (or empty), never its rows' work ids, so the failure update matches
+zero rows. A poison collective event is still dead-lettered eventually by attempt count, but with no error,
+no Failed flag and no backoff. Tracked on the Release 1.0 Planning board as "A failed collective apply
+records nothing against its rows".
 **Context**: Whizbang 0.795 collective-event apply hardening. §8 of the 0.795 plan ("Failure / dead-letter
 plumbing"). Root cause D6 from the investigation.
 **Why deferred**: the fix touches the **core perspective failure/completion path shared by every perspective

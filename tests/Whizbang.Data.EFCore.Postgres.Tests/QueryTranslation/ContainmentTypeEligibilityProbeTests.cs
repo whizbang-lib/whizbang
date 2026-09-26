@@ -935,7 +935,7 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
         ?? throw new InvalidOperationException($"no destination recorded for {label}");
 
     // The stored form of each remaining candidate, asserted rather than printed, because the
-    // canonical-format decisions in plans/lens-full-index-coverage.md are derived from exactly these
+    // canonical-format decisions in plans/archive/lens-full-index-coverage.md are derived from exactly these
     // strings. A change here invalidates that plan and should say so.
     await Assert.That(recorded("Day")).IsEqualTo("Day: json=\"2026-03-04\" text=2026-03-04")
       .Because("a date-only value is already fixed width, which is why it is the cheapest to adopt");
@@ -973,7 +973,7 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     await Assert.That(destination("Tracked")).Contains("extraction", StringComparison.Ordinal)
       .Because("an identifier held in a value object stores byte for byte what a bare one stores, "
         + "and still loses the index, because the converter guard is a blanket one. THIS ASSERTION "
-        + "IS EXPECTED TO FAIL when the value-object phase of plans/lens-full-index-coverage.md "
+        + "IS EXPECTED TO FAIL when the value-object phase of plans/archive/lens-full-index-coverage.md "
         + "lands: at that point the destination becomes containment and this line should be "
         + "inverted rather than deleted.");
     await Assert.That(destination("Unsupported")).Contains("extraction", StringComparison.Ordinal)

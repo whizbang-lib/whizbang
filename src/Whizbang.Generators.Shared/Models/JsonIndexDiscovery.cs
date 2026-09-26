@@ -45,7 +45,7 @@ public static class JsonIndexDiscovery {
   /// Null is the answer for the whole date and time family, and not for want of trying: the cast out
   /// of text to a timestamp or a date is stable rather than immutable, so PostgreSQL refuses to build
   /// an index over it. Those become indexable once their stored form is a number, which is the
-  /// canonical-format work in plans/lens-full-index-coverage.md.
+  /// canonical-format work in plans/archive/lens-full-index-coverage.md.
   /// </para>
   /// </remarks>
   public static JsonIndexCast? CastFor(ITypeSymbol? type) {

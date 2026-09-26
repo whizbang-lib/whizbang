@@ -1,3 +1,5 @@
+> **Archived 2026-09-26.** The work this plan describes has shipped, or its open remainder is carried by a card on the Release 1.0 or 2.0 Planning board; the Done cards carry the Shipped dates. Status lines below are as last written and may be stale.
+
 # Priority, composite integrity, and the open issues (one PR)
 
 Branch `feat/priority-and-composite-integrity` off develop (2305f3b08). One pull request, many commits, one

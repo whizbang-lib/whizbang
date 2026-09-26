@@ -1,3 +1,5 @@
+> **Archived 2026-09-26.** The work this plan describes has shipped, or its open remainder is carried by a card on the Release 1.0 or 2.0 Planning board; the Done cards carry the Shipped dates. Status lines below are as last written and may be stale.
+
 # Priority on the wire: every seam carries the number, audit and system work is background
 
 Branch `fix/priority-on-the-wire` off develop (ea22fbd6e, the priority PR merged). One pull request.

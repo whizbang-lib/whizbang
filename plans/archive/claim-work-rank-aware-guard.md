@@ -1,3 +1,5 @@
+> **Superseded, archived 2026-09-26.** Migrations 157-159 cut the cost of no-op claims another way, and work stealing (#725) contradicts a rank-only guard. See the Release 2.0 Planning board.
+
 # Plan: Rank-aware per-queue guards in `claim_work` (v0.688)
 
 > **Status (2026-06-13)**: First hot-swap attempt on the test cluster was rolled
@@ -221,7 +223,7 @@ Sequence (matches `feedback_sql_experiment_in_isolation.md` — the
 "live-traffic deploy is confirmation" caveat applies):
 
 1. **Baseline** (already captured 2026-06-13 ~08:11–08:18, see
-   `plans/notes-track-3-execution.md` if archived). 5,290
+   `notes-track-3-execution.md` if archived). 5,290
    `claim_orphaned_inbox` calls / 98s on the service DB.
 
 2. **Apply** the new `claim_work` via `psql` against the service DB and the
