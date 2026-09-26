@@ -40,7 +40,7 @@ internal delegate void RandomFill(Span<byte> destination);
 /// threads. Randomness is drawn from the random source in bulk into a buffer the lock also guards.
 /// </para>
 /// </remarks>
-/// <docs>extending/internals/event-ordering-invariant</docs>
+/// <docs>fundamentals/identity/whizbang-ids#uuid7-generator</docs>
 /// <tests>tests/Whizbang.Core.Tests/ValueObjects/Uuid7GeneratorTests.cs</tests>
 internal sealed class Uuid7Generator {
   private const int COUNTER_BITS = 26;
