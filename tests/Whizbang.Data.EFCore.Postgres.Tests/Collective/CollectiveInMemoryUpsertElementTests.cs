@@ -25,6 +25,7 @@ public class CollectiveInMemoryUpsertElementTests {
     public string? Tag { get; set; }
     public List<Cell>? Cells { get; set; } = [];
     public IReadOnlyList<Cell> Frozen { get; set; } = [];
+    public Cell[] Fixed { get; set; } = [];
   }
 
   private sealed record Spec(Expression<Action<ICollectiveSetters<Model>>> Setters) : ICollectiveSpec<Model> {
@@ -98,5 +99,18 @@ public class CollectiveInMemoryUpsertElementTests {
     await Assert.That(() => CollectiveInMemoryEvaluator<Model>.Apply(
         new Spec(s => s.UpsertElement(m => m.Cells!.Take(1), c => c.Key, cell)), model))
       .Throws<NotSupportedException>();
+  }
+
+  [Test]
+  public async Task Upsert_IntoACollectionAListCannotBeAssignedTo_IsRefusedAsync() {
+    // An array property cannot hold the list the upsert builds; replacing it would need a conversion
+    // the SQL path does not make, so the in-memory path refuses rather than diverging.
+    var model = new Model { Fixed = [new Cell { Key = "k1", Value = "v1" }] };
+    var cell = new Cell { Key = "k1", Value = "new" };
+
+    await Assert.That(() => CollectiveInMemoryEvaluator<Model>.Apply(
+        new Spec(s => s.UpsertElement(m => m.Fixed, c => c.Key, cell)), model))
+      .Throws<NotSupportedException>();
+    await Assert.That(model.Fixed[0].Value).IsEqualTo("v1");
   }
 }

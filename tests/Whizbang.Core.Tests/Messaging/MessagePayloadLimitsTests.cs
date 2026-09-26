@@ -321,4 +321,13 @@ public class MessagePayloadLimitsTests {
   public async Task Enforce_NullType_ThrowsAsync() {
     await Assert.That(() => _limits().Enforce(_payload(10), null!, _messageId, null)).Throws<ArgumentNullException>();
   }
+
+  [Test]
+  public async Task MaxPayloadSizeAttribute_CarriesItsLimitAsync() {
+    // The generator reads the constructor argument at compile time; the property is what a reader of
+    // the attribute at run time sees, so both must agree.
+    var attribute = new Whizbang.Core.Attributes.MaxPayloadSizeAttribute(20_000_000);
+
+    await Assert.That(attribute.Bytes).IsEqualTo(20_000_000L);
+  }
 }
