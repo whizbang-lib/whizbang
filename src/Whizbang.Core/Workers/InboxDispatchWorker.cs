@@ -221,7 +221,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
                 MessageId = work.MessageId,
                 CompletedStatus = work.Status,
                 Error = ex.Message,
-                Reason = MessageFailureReason.Unknown
+                Reason = ClassifyHandlerFailure(ex)
               }, stoppingToken);
             }
           }
@@ -302,6 +302,20 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     !string.IsNullOrWhiteSpace(work.Error)
       ? work.Error
       : $"InboxDispatchWorker dead-lettered: attempts={work.Attempts} > max={maxAttempts}";
+
+  /// <summary>
+  /// The failure reason recorded on the inbox row for an exception from dispatch: the oversized-message
+  /// reason when a <see cref="MessagePayloadTooLargeException"/> is anywhere in the chain (a handler that
+  /// produced a message over the limit), otherwise unknown.
+  /// </summary>
+  internal static MessageFailureReason ClassifyHandlerFailure(Exception ex) => ex switch {
+    MessagePayloadTooLargeException => MessageFailureReason.MessagePayloadTooLarge,
+    AggregateException aggregate => aggregate.InnerExceptions.Any(e => ClassifyHandlerFailure(e) == MessageFailureReason.MessagePayloadTooLarge)
+      ? MessageFailureReason.MessagePayloadTooLarge
+      : MessageFailureReason.Unknown,
+    { InnerException: { } inner } => ClassifyHandlerFailure(inner),
+    _ => MessageFailureReason.Unknown,
+  };
 
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Dispatching one inbox row decides, in order, whether the subsystem is disabled, whether attempts are exhausted and the row should be dropped or dead-lettered, whether the discard policy skips it, whether the security context timed out, whether the payload is a composite that repair traffic has turned off, and whether the message is state-only. Each decision ends the row's life differently, so they read as one ladder.")]
   internal async Task ProcessOneInnerAsync(InboxWork work, CancellationToken stoppingToken) {
@@ -962,7 +976,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
               MessageId = work.MessageId,
               CompletedStatus = work.Status,
               Error = $"Lifecycle stage {stageName}Detached failed: {ex}",
-              Reason = MessageFailureReason.Unknown,
+              Reason = ClassifyHandlerFailure(ex),
             }, detachedCt);
           }
         }, detachedCt);
@@ -993,7 +1007,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         MessageId = work.MessageId,
         CompletedStatus = work.Status,
         Error = $"Lifecycle stage {stageName} failed: {ex}",
-        Reason = MessageFailureReason.Unknown,
+        Reason = ClassifyHandlerFailure(ex),
       }, cancellationToken);
     }
   }
