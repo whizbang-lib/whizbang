@@ -16,6 +16,9 @@ SELECT __SCHEMA__.drop_all_overloads('wh_fold_pattern');
 
 -- Single quotes, primes (5), double quotes, double primes (5), hyphens and dashes (7), then the no-break
 -- spaces (3), each mapped to its ASCII counterpart position for position.
+-- <docs>fundamentals/perspectives/physical-fields#search</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/FoldFunctionTests.cs</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/SearchQueryIntegrationTests.cs</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_fold(p_value TEXT) RETURNS TEXT AS $$
   SELECT translate(
     lower(p_value),
@@ -29,6 +32,9 @@ COMMENT ON FUNCTION __SCHEMA__.wh_fold(TEXT) IS
 
 -- A contains-pattern for LIKE: the folded term with LIKE''s own wildcards escaped so they match literally,
 -- wrapped in %. Backslash is LIKE''s default escape character.
+-- <docs>fundamentals/perspectives/physical-fields#search</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/FoldFunctionTests.cs</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/SearchQueryIntegrationTests.cs</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_fold_pattern(p_term TEXT) RETURNS TEXT AS $$
   SELECT '%' || replace(replace(replace(__SCHEMA__.wh_fold(p_term), '\', '\\'), '%', '\%'), '_', '\_') || '%';
 $$ LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE;
