@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Medo;
 
 namespace Whizbang.Core.Messaging;
 
@@ -12,7 +11,7 @@ namespace Whizbang.Core.Messaging;
 /// Immediate unit of work strategy - flushes immediately on each QueueMessageAsync call.
 /// Provides lowest latency but highest coordination overhead.
 /// Best for: Real-time scenarios, critical messages, low-throughput services.
-/// Each message gets its own unit with time-ordered Uuid7 ID.
+/// Each message gets its own unit with time-ordered UUIDv7 ID.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
@@ -35,8 +34,8 @@ public class ImmediateUnitOfWorkStrategy : IUnitOfWorkStrategy {
       );
     }
 
-    // Create new unit with time-ordered Uuid7 ID
-    var unitId = Uuid7.NewUuid7().ToGuid();
+    // Create new unit with time-ordered UUIDv7 ID
+    var unitId = ValueObjects.TrackedGuid.NewMedo();
     var unit = new DispatchUnitOfWork {
       UnitId = unitId,
       Messages = [message],

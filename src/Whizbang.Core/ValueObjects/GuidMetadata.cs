@@ -27,7 +27,7 @@ public enum GuidMetadatas : ushort {
   // Creation Source (bits 2-5)
   // ========================================
 
-  /// <summary>Created via Medo.Uuid7 - has sub-millisecond precision.</summary>
+  /// <summary>Created via TrackedGuid.NewMedo() (the framework's UUIDv7 generator) - has sub-millisecond precision.</summary>
   SourceMedo = 1 << 2,
 
   /// <summary>Created via Microsoft's Guid.NewGuid() or Guid.CreateVersion7() - millisecond precision only.</summary>

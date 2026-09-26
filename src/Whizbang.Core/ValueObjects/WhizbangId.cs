@@ -20,7 +20,7 @@ public readonly struct WhizbangId : IWhizbangId, IEquatable<WhizbangId>, ICompar
   public static WhizbangId Empty => new(TrackedGuid.Empty);
 
   /// <summary>
-  /// Creates a new WhizbangId using Medo.Uuid7 with sub-millisecond precision.
+  /// Creates a new WhizbangId using the framework's UUIDv7 generator with sub-millisecond precision.
   /// This is the preferred method for generating new IDs.
   /// </summary>
   public static WhizbangId New() => new(TrackedGuid.NewMedo());

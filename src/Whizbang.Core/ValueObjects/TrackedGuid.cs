@@ -1,4 +1,3 @@
-using Medo;
 
 namespace Whizbang.Core.ValueObjects;
 
@@ -27,7 +26,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
 
   /// <summary>
   /// Gets whether this Guid has sub-millisecond precision.
-  /// Only true for Medo-generated UUIDs; Microsoft's CreateVersion7() has millisecond precision only.
+  /// Only true for ids from <see cref="NewMedo"/>; Microsoft's CreateVersion7() has millisecond precision only.
   /// </summary>
   public bool SubMillisecondPrecision => (Metadata & GuidMetadatas.SourceMedo) != 0;
 
@@ -73,29 +72,17 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   // Factory Methods
   // ========================================
 
-  // Synchronizes Medo.Uuid7.NewUuid7() across threads. Medo's per-process counter
-  // is not strictly monotonic under contention — concurrent callers can observe
-  // interleaved sub-ms tail bytes, producing lex-non-monotonic UUIDv7 IDs. We saw
-  // this manifest as cursor-inversion + rewind storms on a consumer's perspectives
-  // when a receptor returned a list of events generated in parallel. Holding
-  // a lock around the call serializes ID issuance so monotonicity holds.
-  private static readonly Lock _medoLock = new();
-
   /// <summary>
-  /// Creates a new UUIDv7 using Medo.Uuid7 with sub-millisecond precision.
+  /// Creates a new UUIDv7 with sub-millisecond ordering from the framework's generator.
   /// This is the preferred method for generating new IDs in Whizbang.
   /// </summary>
   /// <remarks>
-  /// Calls are serialized through a process-wide lock to guarantee strict
-  /// monotonicity across concurrent threads. Without this lock, concurrent
-  /// generation produces lex-non-monotonic IDs that break downstream cursor
-  /// ordering invariants in event sourcing.
+  /// Every id sorts after every id issued before it in this process, across threads: the generator issues under
+  /// one lock and orders ids within a millisecond by a monotonic counter (see <see cref="Uuid7Generator"/>).
+  /// The name is historical: ids used to come from the Medo.Uuid7 package. They now come from the framework's own
+  /// generator, which issues ids of the same RFC 9562 shape.
   /// </remarks>
-  public static TrackedGuid NewMedo() {
-    lock (_medoLock) {
-      return new(Uuid7.NewUuid7().ToGuid(), GuidMetadataExtensions.MEDO_V7);
-    }
-  }
+  public static TrackedGuid NewMedo() => new(Uuid7Generator.Shared.NewGuid(), GuidMetadataExtensions.MEDO_V7);
 
   /// <summary>
   /// Creates a new UUIDv7 using Microsoft's Guid.CreateVersion7().
@@ -261,12 +248,6 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
       return DateTimeOffset.MinValue;
     }
 
-    // Use Medo's Uuid7 for reliable timestamp extraction
-    try {
-      var uuid7 = new Uuid7(guid);
-      return uuid7.ToDateTimeOffset();
-    } catch {
-      return DateTimeOffset.MinValue;
-    }
+    return Uuid7Generator.GetTimestamp(guid);
   }
 }

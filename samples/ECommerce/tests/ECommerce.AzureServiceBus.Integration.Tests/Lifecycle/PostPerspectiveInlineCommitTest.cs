@@ -1,7 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.Integration.Tests.Fixtures;
-using Medo;
 
 namespace ECommerce.Integration.Tests.Lifecycle;
 
@@ -43,7 +42,7 @@ public class PostPerspectiveInlineCommitTest {
 
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
-    var productId = ProductId.From(Uuid7.NewUuid7().ToGuid());
+    var productId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
     Console.WriteLine($"[TEST] Generated ProductId: {productId}");
 
     var command = new CreateProductCommand {

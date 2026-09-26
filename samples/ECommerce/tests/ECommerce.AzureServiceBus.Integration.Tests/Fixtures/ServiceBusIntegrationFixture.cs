@@ -8,7 +8,6 @@ using ECommerce.Contracts.Generated;
 using ECommerce.Integration.TestUtilities.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
-using Medo;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -48,7 +47,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   private readonly string _topicB = "topic-01";
   private readonly int _batchIndex;
   private bool _isInitialized;
-  private readonly Guid _testPollerInstanceId = Uuid7.NewUuid7().ToGuid();
+  private readonly Guid _testPollerInstanceId = Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value;
   private readonly ServiceBusClient _sharedServiceBusClient;  // Shared client for test operations
   private string? _fixtureDatabaseName;  // Unique database name for this fixture instance
   private string? _connectionString;  // Connection string pointing to the fixture's unique database
@@ -373,7 +372,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Uuid7.NewUuid7().ToGuid(), "InventoryWorker"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value, "InventoryWorker"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
@@ -575,7 +574,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Uuid7.NewUuid7().ToGuid(), "BFF.API"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value, "BFF.API"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();

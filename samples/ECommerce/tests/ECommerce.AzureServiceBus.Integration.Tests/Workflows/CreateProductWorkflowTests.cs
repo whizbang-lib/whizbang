@@ -1,7 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.Integration.Tests.Fixtures;
-using Medo;
 
 namespace ECommerce.Integration.Tests.Workflows;
 
@@ -17,12 +16,12 @@ public class CreateProductWorkflowTests {
   private ServiceBusIntegrationFixture? _fixture;
 
   // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
-  private static readonly ProductId _testProd1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdMulti1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdMulti2 = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdMulti3 = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdZeroStock = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdNoImage = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProd1 = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdMulti1 = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdMulti2 = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdMulti3 = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdZeroStock = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdNoImage = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]

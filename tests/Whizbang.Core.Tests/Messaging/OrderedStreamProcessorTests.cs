@@ -28,7 +28,7 @@ public class OrderedStreamProcessorTests {
     // Arrange
     var sut = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
     var streamId = _idProvider.NewGuid();
-    var processedOrder = new List<Medo.Uuid7>();
+    var processedOrder = new List<Guid>();
 
     // Create 5 messages with UUIDv7 temporal ordering
     var messages = new List<InboxWork> {
@@ -209,7 +209,7 @@ public class OrderedStreamProcessorTests {
     // Arrange
     var sut = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
     var streamId = _idProvider.NewGuid();
-    var processedOrder = new List<Medo.Uuid7>();
+    var processedOrder = new List<Guid>();
 
     // Create 5 messages with UUIDv7 temporal ordering
     var messages = new List<OutboxWork> {
@@ -414,7 +414,7 @@ public class OrderedStreamProcessorTests {
   public async Task ProcessInboxWorkAsync_WithNullStreamId_GroupsTogetherAsync() {
     // Arrange
     var sut = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
-    var processedOrder = new List<Medo.Uuid7>();
+    var processedOrder = new List<Guid>();
 
     // Create messages without stream IDs (null)
     var messages = new List<InboxWork> {
@@ -442,7 +442,7 @@ public class OrderedStreamProcessorTests {
   public async Task ProcessOutboxWorkAsync_WithNullStreamId_GroupsTogetherAsync() {
     // Arrange
     var sut = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
-    var processedOrder = new List<Medo.Uuid7>();
+    var processedOrder = new List<Guid>();
 
     // Create messages without stream IDs
     var messages = new List<OutboxWork> {

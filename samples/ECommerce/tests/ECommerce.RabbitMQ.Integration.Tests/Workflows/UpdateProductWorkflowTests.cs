@@ -2,7 +2,6 @@ using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.RabbitMQ.Integration.Tests.Fixtures;
-using Medo;
 using TUnit.Core;
 
 namespace ECommerce.RabbitMQ.Integration.Tests.Workflows;
@@ -20,12 +19,12 @@ public class UpdateProductWorkflowTests {
   private static RabbitMqIntegrationFixture? _fixture;
 
   // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
-  private static readonly ProductId _testProdUpdateName = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdUpdateAll = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdUpdatePrice = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdUpdateDescImg = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdMultiUpdate = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdUpdateNoInventory = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdUpdateName = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdUpdateAll = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdUpdatePrice = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdUpdateDescImg = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdMultiUpdate = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdUpdateNoInventory = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]

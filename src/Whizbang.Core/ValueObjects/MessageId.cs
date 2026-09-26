@@ -5,7 +5,7 @@ namespace Whizbang.Core.ValueObjects;
 /// <summary>
 /// Uniquely identifies a message within the system.
 /// Uses UUIDv7 (time-ordered, database-friendly) for optimal indexing performance.
-/// Uses Medo.Uuid7 for monotonic counter-based generation with guaranteed uniqueness.
+/// Uses the framework's UUIDv7 generator for monotonic counter-based generation with guaranteed uniqueness.
 /// </summary>
 /// <docs>fundamentals/messages/message-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/ValueObjects/IdentityValueObjectTests.cs</tests>

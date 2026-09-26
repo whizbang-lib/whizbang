@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Dapper;
-using Medo;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;

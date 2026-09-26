@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using Medo;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;

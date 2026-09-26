@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
-using Medo;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
@@ -309,19 +308,16 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
     MessageId? causationId = null;
     if ((root.TryGetProperty("ca", out var caElem) || root.TryGetProperty("CausationId", out caElem)) &&
         caElem.ValueKind != JsonValueKind.Null) {
-      var uuid7String = caElem.GetString()!;
-      var uuid7 = Uuid7.Parse(uuid7String, System.Globalization.CultureInfo.InvariantCulture);
-      causationId = MessageId.From(uuid7.ToGuid());
+      causationId = MessageId.From(Guid.Parse(caElem.GetString()!, System.Globalization.CultureInfo.InvariantCulture));
     }
 
     CorrelationId? correlationId = null;
     if ((root.TryGetProperty("co", out var coElem) || root.TryGetProperty("CorrelationId", out coElem)) &&
         coElem.ValueKind != JsonValueKind.Null) {
-      var uuid7String = coElem.GetString()!;
-      var uuid7 = Uuid7.Parse(uuid7String, System.Globalization.CultureInfo.InvariantCulture);
+      var correlation = Guid.Parse(coElem.GetString()!, System.Globalization.CultureInfo.InvariantCulture);
       // Deserialized from a persisted/transported hop — accept any 128-bit token (may be a client v4 or a
       // W3C trace-id), not just UUIDv7.
-      correlationId = CorrelationId.FromExternal(uuid7.ToGuid());
+      correlationId = CorrelationId.FromExternal(correlation);
     }
 
     string? causationType = null;
@@ -438,16 +434,14 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
       writer.WriteNumber("ty", (int)value.Type);
     }
 
-    // CausationId (only if not null) - serialize using UUID7 format directly
+    // CausationId (only if not null) - the standard hyphenated lowercase form
     if (value.CausationId is not null) {
-      var uuid7 = new Uuid7(value.CausationId.Value.Value);
-      writer.WriteString("ca", uuid7.ToString());
+      writer.WriteString("ca", value.CausationId.Value.Value.ToString("D", System.Globalization.CultureInfo.InvariantCulture));
     }
 
-    // CorrelationId (only if not null) - serialize using UUID7 format directly
+    // CorrelationId (only if not null) - the standard hyphenated lowercase form
     if (value.CorrelationId is not null) {
-      var uuid7 = new Uuid7(value.CorrelationId.Value.Value);
-      writer.WriteString("co", uuid7.ToString());
+      writer.WriteString("co", value.CorrelationId.Value.Value.ToString("D", System.Globalization.CultureInfo.InvariantCulture));
     }
 
     // CausationType (only if not null)

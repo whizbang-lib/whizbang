@@ -2,7 +2,6 @@ using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.RabbitMQ.Integration.Tests.Fixtures;
-using Medo;
 using TUnit.Core;
 
 namespace ECommerce.RabbitMQ.Integration.Tests.Workflows;
@@ -20,11 +19,11 @@ public class RestockInventoryWorkflowTests {
   private static RabbitMqIntegrationFixture? _fixture;
 
   // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
-  private static readonly ProductId _testProdRestock1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdMultiRestock = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdRestockZero = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdRestockZeroQty = ProductId.From(Uuid7.NewUuid7().ToGuid());
-  private static readonly ProductId _testProdLargeRestock = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdRestock1 = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdMultiRestock = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdRestockZero = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdRestockZeroQty = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdLargeRestock = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]

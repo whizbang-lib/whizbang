@@ -1,7 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.InMemory.Integration.Tests.Fixtures;
-using Medo;
 
 namespace ECommerce.InMemory.Integration.Tests.Workflows;
 
@@ -17,7 +16,7 @@ namespace ECommerce.InMemory.Integration.Tests.Workflows;
 [Timeout(120_000)]
 public class TagHookLifecycleTests {
   private InMemoryIntegrationFixture? _fixture;
-  private static readonly ProductId _testProductId = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code")]

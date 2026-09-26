@@ -18,7 +18,7 @@ public class TrackedGuidMonotonicityTests {
 
   /// <summary>
   /// 10,000 sequential calls must all be strictly monotonic. Anything less is a regression
-  /// in the underlying Medo.Uuid7 implementation.
+  /// in the framework's UUIDv7 generator.
   /// </summary>
   [Test]
   public async Task NewMedo_TenThousandSequentialCalls_AreStrictlyMonotonicAsync() {
