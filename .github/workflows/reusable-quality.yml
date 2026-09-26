@@ -144,29 +144,29 @@ jobs:
       # resolve a project under more than one platform concurrently — two writers on the same
       # deps.json, which fails as "the process cannot access the file".
       - name: Generate analysis solution
+        shell: pwsh
         run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import re
-          cfg = open('sonar.config').read()
-          m = re.search(r'^sonar\.exclusions=(.+)$', cfg, re.M)
-          pats = [p.strip() for p in m.group(1).split(',') if p.strip()]
-          dirs = [mm.group(1) for p in pats if (mm := re.match(r'\*\*/([^/*]+)/\*\*', p))]
-          sln = open('Whizbang.slnx').read()
-          kept, dropped = [], 0
-          for line in sln.splitlines(keepends=True):
-              pm = re.search(r'<Project Path="([^"]+)"', line)
-              if pm and any(re.search(rf'(^|/){re.escape(d)}/', pm.group(1)) for d in dirs):
-                  dropped += 1
-                  continue
-              kept.append(line)
-          out = ''.join(kept)
-          open('Whizbang.Analysis.slnx','w').write(out)
-          print(f"excluded dirs from sonar.config: {dirs}")
-          print(f"dropped {dropped} projects; analysing {out.count('<Project Path=')}")
-          assert '<Configurations>' in out, 'Configurations block must survive — see comment above'
-          assert out.count('<Project Path=') > 0, 'refusing to analyse an empty solution'
-          PY
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $cfg = Get-Content sonar.config -Raw
+          $m = [regex]::Match($cfg, '(?m)^sonar\.exclusions=(.+)$')
+          if (-not $m.Success) { throw 'sonar.exclusions not found in sonar.config' }
+          $pats = @($m.Groups[1].Value -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          $dirs = @($pats | ForEach-Object { $mm = [regex]::Match($_, '^\*\*/([^/*]+)/\*\*'); if ($mm.Success) { $mm.Groups[1].Value } })
+          $kept = [System.Text.StringBuilder]::new(); $dropped = 0
+          # Split keeping line endings, so the kept file is byte-for-byte the solution minus dropped lines.
+          foreach ($line in [regex]::Split((Get-Content Whizbang.slnx -Raw), '(?<=\n)')) {
+            $pm = [regex]::Match($line, '<Project Path="([^"]+)"')
+            if ($pm.Success -and ($dirs | Where-Object { $pm.Groups[1].Value -match "(^|/)$([regex]::Escape($_))/" })) { $dropped++; continue }
+            [void]$kept.Append($line)
+          }
+          $out = $kept.ToString()
+          [System.IO.File]::WriteAllText((Join-Path -Path $PWD -ChildPath 'Whizbang.Analysis.slnx'), $out)
+          $analysed = ([regex]::Matches($out, '<Project Path=')).Count
+          Write-Output "excluded dirs from sonar.config: $($dirs -join ', ')"
+          Write-Output "dropped $dropped projects; analysing $analysed"
+          if (-not $out.Contains('<Configurations>')) { throw 'Configurations block must survive (see comment above)' }
+          if ($analysed -eq 0) { throw 'refusing to analyse an empty solution' }
 
       - name: Build (analyzed)
         run: dotnet build Whizbang.Analysis.slnx --configuration Release

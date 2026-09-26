@@ -169,28 +169,30 @@ jobs:
 
       - name: Revert const conversions that break TUnit
         if: steps.verify.outcome == 'failure'
+        shell: pwsh
         env:
           PROJECT: ${{ inputs.project }}
         run: |
           # RCS1118 turns a local into a const, which trips TUnitAssertions0005 wherever that local is
           # then read by an assertion. It is statically detectable — the name appears in an Assert.That
           # call in the same file — so it needs no compilation to find.
-          python3 - <<'PY'
-          import re, subprocess, pathlib
-          changed = subprocess.run(["git","diff","--name-only"],capture_output=True,text=True).stdout.split()
-          n=0
-          for f in changed:
-              p=pathlib.Path(f)
-              if p.suffix!=".cs" or not p.exists(): continue
-              src=p.read_text(); lines=src.split("\n"); touched=False
-              for i,ln in enumerate(lines):
-                  m=re.match(r"^(\s*)const\s+\S+\s+(\w+)(\s*=.*)$", ln)
-                  if m and re.search(r"Assert\.That\(\s*"+re.escape(m.group(2))+r"\s*[,)]", src):
-                      lines[i]=f"{m.group(1)}var {m.group(2)}{m.group(3)}"; touched=True; n+=1
-              if touched: p.write_text("\n".join(lines))
-          print(f"reverted {n} const declarations")
-          PY
-          dotnet build "$PROJECT" -c Release --no-incremental -v q --nologo
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $n = 0
+          foreach ($f in @(git diff --name-only)) {
+            if ([IO.Path]::GetExtension($f) -ne '.cs' -or -not (Test-Path $f)) { continue }
+            $src = [IO.File]::ReadAllText($f); $lines = $src -split "\n"; $touched = $false
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              $m = [regex]::Match($lines[$i], '^(\s*)const\s+\S+\s+(\w+)(\s*=.*)$')
+              if ($m.Success -and [regex]::IsMatch($src, 'Assert\.That\(\s*' + [regex]::Escape($m.Groups[2].Value) + '\s*[,)]')) {
+                $lines[$i] = $m.Groups[1].Value + 'var ' + $m.Groups[2].Value + $m.Groups[3].Value; $touched = $true; $n++
+              }
+            }
+            if ($touched) { [IO.File]::WriteAllText($f, ($lines -join "`n")) }
+          }
+          Write-Output "reverted $n const declarations"
+          dotnet build $env:PROJECT -c Release --no-incremental -v q --nologo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Commit and push
         env:

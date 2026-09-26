@@ -29,7 +29,7 @@ runs:
           # Read SDK version from global.json to determine the correct feature band
           # This avoids installing a broken SDK from a newer feature band
           if [ -f "global.json" ]; then
-            SDK_VERSION=$(python3 -c "import json; print(json.load(open('global.json'))['sdk']['version'])" 2>/dev/null || echo "")
+            SDK_VERSION=$(jq -r '.sdk.version // empty' global.json 2>/dev/null || echo "")
           fi
 
           if [ -n "$SDK_VERSION" ]; then
