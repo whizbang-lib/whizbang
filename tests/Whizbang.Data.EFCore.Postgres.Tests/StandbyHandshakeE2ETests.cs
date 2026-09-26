@@ -35,7 +35,7 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
   private const string NEW_VERSION = "999.1.0";
 
   private sealed class FakePod : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "handshake-svc";
     public string HostName => "handshake-host";
     public int ProcessId => 1;

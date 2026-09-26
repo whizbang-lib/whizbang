@@ -72,7 +72,7 @@ public class ReceptorFiringLockInTests {
   }
 
   private static MessageEnvelope<TMessage> _envelope<TMessage>(TMessage payload) where TMessage : notnull => new() {
-    MessageId = MessageId.From(TrackedGuid.NewMedo()),
+    MessageId = MessageId.From(TrackedGuid.New()),
     Payload = payload,
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

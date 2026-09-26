@@ -206,7 +206,7 @@ public class SystemEventEmitterCoverageTests {
 
   [Test]
   public async Task EmitEventAuditedAsync_GeneratesNonEmptyIdAsync() {
-    // Arrange - Verifies TrackedGuid.NewMedo() generates a non-empty GUID for the audit event
+    // Arrange - Verifies TrackedGuid.New() generates a non-empty GUID for the audit event
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
     var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);

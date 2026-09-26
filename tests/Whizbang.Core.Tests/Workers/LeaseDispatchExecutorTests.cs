@@ -37,7 +37,7 @@ public class LeaseDispatchExecutorTests {
 
   private static LeaseHandle _newLease(FakeTimeProvider time, TimeSpan? leaseFromNow = null) =>
     new(
-      workId: (Guid)TrackedGuid.NewMedo(),
+      workId: (Guid)TrackedGuid.New(),
       category: WorkCategory.Inbox,
       deadline: time.GetUtcNow() + (leaseFromNow ?? TimeSpan.FromSeconds(60)),
       maxRenewals: 6,

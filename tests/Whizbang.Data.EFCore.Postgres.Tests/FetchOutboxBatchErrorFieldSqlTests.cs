@@ -36,9 +36,9 @@ public class FetchOutboxBatchErrorFieldSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
     var leaseExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
     const string realError = """
       System.InvalidOperationException: Could not open connection to 'appservice_db'
@@ -86,9 +86,9 @@ public class FetchOutboxBatchErrorFieldSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
     var leaseExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
 
     await using (var insertCmd = conn.CreateCommand()) {

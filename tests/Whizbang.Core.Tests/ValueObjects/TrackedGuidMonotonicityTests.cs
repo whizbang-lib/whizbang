@@ -12,7 +12,7 @@ namespace Whizbang.Core.Tests.ValueObjects;
 /// instances whose UUIDv7 lex order did NOT match real-time creation order — an id created
 /// earlier in real time sorted AFTER an id created later. UUIDv7 from a single
 /// producer should be lex-monotonic. These tests catch a regression in
-/// <c>TrackedGuid.NewMedo()</c>'s monotonicity guarantees.
+/// <c>TrackedGuid.New()</c>'s monotonicity guarantees.
 /// </summary>
 public class TrackedGuidMonotonicityTests {
 
@@ -21,10 +21,10 @@ public class TrackedGuidMonotonicityTests {
   /// in the framework's UUIDv7 generator.
   /// </summary>
   [Test]
-  public async Task NewMedo_TenThousandSequentialCalls_AreStrictlyMonotonicAsync() {
+  public async Task New_TenThousandSequentialCalls_AreStrictlyMonotonicAsync() {
     var ids = new Guid[10_000];
     for (var i = 0; i < ids.Length; i++) {
-      ids[i] = (Guid)TrackedGuid.NewMedo();
+      ids[i] = (Guid)TrackedGuid.New();
     }
 
     var inversions = new List<(int Index, Guid Prev, Guid Curr)>();
@@ -37,7 +37,7 @@ public class TrackedGuidMonotonicityTests {
     }
 
     await Assert.That(inversions).IsEmpty()
-      .Because($"Sequential TrackedGuid.NewMedo() must be strictly monotonic. Found {inversions.Count} inversions.");
+      .Because($"Sequential TrackedGuid.New() must be strictly monotonic. Found {inversions.Count} inversions.");
   }
 
   /// <summary>
@@ -45,17 +45,17 @@ public class TrackedGuidMonotonicityTests {
   /// 1. Within a single thread's sequence, IDs are strictly monotonic.
   /// 2. Across all threads, every ID is unique (no duplicates).
   /// 3. The IDs collected in a thread-safe queue (where Enqueue happens immediately after the
-  ///    locked NewMedo() return) form a strictly monotonic sequence in queue order.
+  ///    locked New() return) form a strictly monotonic sequence in queue order.
   ///
   /// <para>
   /// The third invariant is the strongest — it asserts that the lock + immediate enqueue
   /// pattern (which is what a consumer service's bulk-event receptor effectively does when emitting
   /// a list of events) produces lex-monotonic IDs in collection order. Without the lock,
-  /// concurrent NewMedo() calls produce ~16% inversions; with the lock, zero inversions.
+  /// concurrent New() calls produce ~16% inversions; with the lock, zero inversions.
   /// </para>
   /// </summary>
   [Test]
-  public async Task NewMedo_ParallelContention_PerThreadSequencesAreMonotonic_AndAllIdsAreUniqueAsync() {
+  public async Task New_ParallelContention_PerThreadSequencesAreMonotonic_AndAllIdsAreUniqueAsync() {
     const int taskCount = 16;
     const int idsPerTask = 1_000;
     var startGate = new SemaphoreSlim(0, taskCount);
@@ -68,7 +68,7 @@ public class TrackedGuidMonotonicityTests {
       tasks[localIndex] = Task.Run(async () => {
         await startGate.WaitAsync();
         for (var i = 0; i < idsPerTask; i++) {
-          perThreadIds[localIndex].Add((Guid)TrackedGuid.NewMedo());
+          perThreadIds[localIndex].Add((Guid)TrackedGuid.New());
         }
       });
     }
@@ -94,7 +94,7 @@ public class TrackedGuidMonotonicityTests {
   }
 
   /// <summary>
-  /// Lock-acquisition-order invariant: when NewMedo() and Enqueue happen as a coupled pair
+  /// Lock-acquisition-order invariant: when New() and Enqueue happen as a coupled pair
   /// inside an external lock, the queue contains IDs in strict monotonic order. This proves
   /// the underlying generator's lock holds: IDs are issued atomically and always greater
   /// than the previous one. Without TrackedGuid's lock, even with the external lock the
@@ -102,7 +102,7 @@ public class TrackedGuidMonotonicityTests {
   /// generator state — only Medo's internal lock does.
   /// </summary>
   [Test]
-  public async Task NewMedo_LockAcquisitionOrder_GlobalQueueIsMonotonicAsync() {
+  public async Task New_LockAcquisitionOrder_GlobalQueueIsMonotonicAsync() {
     const int taskCount = 16;
     const int idsPerTask = 500;
     var queue = new System.Collections.Concurrent.ConcurrentQueue<Guid>();
@@ -114,9 +114,9 @@ public class TrackedGuidMonotonicityTests {
       tasks[t] = Task.Run(async () => {
         await startGate.WaitAsync();
         for (var i = 0; i < idsPerTask; i++) {
-          // External lock pairs NewMedo+Enqueue so queue order = call return order.
+          // External lock pairs New+Enqueue so queue order = call return order.
           lock (externalLock) {
-            queue.Enqueue((Guid)TrackedGuid.NewMedo());
+            queue.Enqueue((Guid)TrackedGuid.New());
           }
         }
       });
@@ -134,7 +134,7 @@ public class TrackedGuidMonotonicityTests {
     }
 
     await Assert.That(inversions).IsEqualTo(0)
-      .Because($"With NewMedo() + Enqueue paired under an external lock, the global queue must be strictly monotonic. Found {inversions}/{ordered.Length - 1} inversions. RED here = TrackedGuid's internal lock is missing or broken.");
+      .Because($"With New() + Enqueue paired under an external lock, the global queue must be strictly monotonic. Found {inversions}/{ordered.Length - 1} inversions. RED here = TrackedGuid's internal lock is missing or broken.");
   }
 
   /// <summary>
@@ -143,11 +143,11 @@ public class TrackedGuidMonotonicityTests {
   /// MUST advance even when the ms timestamp doesn't.
   /// </summary>
   [Test]
-  public async Task NewMedo_ManyCallsWithinSameMillisecond_AreStrictlyMonotonicAsync() {
+  public async Task New_ManyCallsWithinSameMillisecond_AreStrictlyMonotonicAsync() {
     const int count = 5_000;
     var ids = new Guid[count];
     for (var i = 0; i < count; i++) {
-      ids[i] = (Guid)TrackedGuid.NewMedo();
+      ids[i] = (Guid)TrackedGuid.New();
     }
 
     // Group by ms timestamp (first 12 hex chars) and assert each group's IDs are monotonic.

@@ -30,7 +30,7 @@ public class CursorInversionDetectorTests {
     Payload = new TestEvent()
   };
 
-  private static Guid _uuidv7() => (Guid)TrackedGuid.NewMedo();
+  private static Guid _uuidv7() => (Guid)TrackedGuid.New();
 
   // --- tests ---
 
@@ -143,7 +143,7 @@ public class CursorInversionDetectorTests {
     EventId = eventId,
     EventType = "T",
     EventData = "{}",
-    EventWorkId = (Guid)TrackedGuid.NewMedo(),
+    EventWorkId = (Guid)TrackedGuid.New(),
     CommitSequence = commitSequence,
   };
 
@@ -188,8 +188,8 @@ public class CursorInversionDetectorTests {
     // perspective_events row yet. Same commit_sequence ≠ inversion — it's the SAME event,
     // idempotent re-drain. The runner template's filter handles it without a rewind.
     // Strict `<` semantics — observed in a production run on OrderRemoteWork.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var cursorEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var cursorEventId = (Guid)TrackedGuid.New();
     var sameEventPending = cursorEventId;
 
     var rawLookup = _lookup(_raw(streamId, sameEventPending, commitSequence: 287962));
@@ -207,9 +207,9 @@ public class CursorInversionDetectorTests {
   [Test]
   public async Task ResolveInversionAnchor_CommitSequenceCursorPresent_ActualCommitOrderViolation_ReturnsViolatorAsync() {
     // Real inversion via commit_sequence: pending event has lower commit_seq than cursor.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var cursorEventId = (Guid)TrackedGuid.NewMedo();
-    var pendingEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var cursorEventId = (Guid)TrackedGuid.New();
+    var pendingEventId = (Guid)TrackedGuid.New();
 
     var rawLookup = _lookup(_raw(streamId, pendingEventId, commitSequence: 50));
 
@@ -230,8 +230,8 @@ public class CursorInversionDetectorTests {
     // (local-sequence-only) can never see it, even though the event is origin-older than
     // everything already applied. Reconcile is therefore invisible to the rewind today; the
     // origin-aware follow-up makes the reconcile path SELF-DECLARE the rewind instead.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var cursorEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var cursorEventId = (Guid)TrackedGuid.New();
     var backfilledOriginalId = Guid.Parse("019e0000-0000-7000-8000-00000000000b");   // origin-era id
 
     var rawLookup = _lookup(_raw(streamId, backfilledOriginalId, commitSequence: 300));
@@ -253,9 +253,9 @@ public class CursorInversionDetectorTests {
     // An unstamped pending row (stamper lag) cannot be compared against a stamped cursor —
     // the commit-sequence detector skips it rather than guessing, and the event-id fallback
     // never runs when the cursor is stamped. No inversion, no false rewind.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var cursorEventId = (Guid)TrackedGuid.NewMedo();
-    var pendingEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var cursorEventId = (Guid)TrackedGuid.New();
+    var pendingEventId = (Guid)TrackedGuid.New();
 
     var rawLookup = _lookup(_raw(streamId, pendingEventId, commitSequence: null));
 
@@ -311,7 +311,7 @@ public class CursorInversionDetectorTests {
     // positives (UUIDv7 generation-vs-commit timing race). Skip the fallback entirely so we
     // don't trigger spurious rewinds. The runner template's idempotency filter handles
     // already-applied events safely at apply time.
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var older = _uuidv7();   // pending — lex-less than cursor
     await Task.Delay(2);
     var cursor = _uuidv7();
@@ -358,11 +358,11 @@ public class CursorInversionDetectorTests {
   [Test]
   public async Task PartitionByCooldown_AllCooled_AllInCooledListAsync() {
     var cache = new Whizbang.Core.Workers.RecentlyProcessedEventCache(_timeProvider());
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var e1 = (Guid)TrackedGuid.NewMedo();
-    var w1 = (Guid)TrackedGuid.NewMedo();
-    var e2 = (Guid)TrackedGuid.NewMedo();
-    var w2 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var e1 = (Guid)TrackedGuid.New();
+    var w1 = (Guid)TrackedGuid.New();
+    var e2 = (Guid)TrackedGuid.New();
+    var w2 = (Guid)TrackedGuid.New();
 
     cache.MarkProcessed(w1);
     cache.MarkProcessed(w2);
@@ -381,9 +381,9 @@ public class CursorInversionDetectorTests {
   [Test]
   public async Task PartitionByCooldown_NoneCooled_AllInFreshListAsync() {
     var cache = new Whizbang.Core.Workers.RecentlyProcessedEventCache(_timeProvider());
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var e1 = (Guid)TrackedGuid.NewMedo();
-    var e2 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var e1 = (Guid)TrackedGuid.New();
+    var e2 = (Guid)TrackedGuid.New();
 
     var (cooled, fresh) = PerspectiveWorker._partitionByCooldown(
       [_envelope(e1), _envelope(e2)],
@@ -402,10 +402,10 @@ public class CursorInversionDetectorTests {
     // DELETEd), e2 is the next batch's fresh event. Pre-26.15 cooldown returned false
     // (not all cooled) → inversion detector saw e1 as "pending ≤ cursor" → spurious rewind.
     var cache = new Whizbang.Core.Workers.RecentlyProcessedEventCache(_timeProvider());
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var e1 = (Guid)TrackedGuid.NewMedo();
-    var w1 = (Guid)TrackedGuid.NewMedo();
-    var e2 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var e1 = (Guid)TrackedGuid.New();
+    var w1 = (Guid)TrackedGuid.New();
+    var e2 = (Guid)TrackedGuid.New();
 
     cache.MarkProcessed(w1);
 
@@ -427,8 +427,8 @@ public class CursorInversionDetectorTests {
   [Test]
   public async Task PartitionByCooldown_NullCache_AllFreshAsync() {
     // When cooldown is disabled (null cache), everything must go through normal apply.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var e1 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var e1 = (Guid)TrackedGuid.New();
 
     var (cooled, fresh) = PerspectiveWorker._partitionByCooldown(
       [_envelope(e1)],
@@ -446,7 +446,7 @@ public class CursorInversionDetectorTests {
     // accidentally treat it as cooled. Default to fresh so apply runs (matches
     // _shouldSkipApplyDueToCooldown's `rawSeen` guard).
     var cache = new Whizbang.Core.Workers.RecentlyProcessedEventCache(_timeProvider());
-    var e1 = (Guid)TrackedGuid.NewMedo();
+    var e1 = (Guid)TrackedGuid.New();
 
     var (cooled, fresh) = PerspectiveWorker._partitionByCooldown(
       [_envelope(e1)],

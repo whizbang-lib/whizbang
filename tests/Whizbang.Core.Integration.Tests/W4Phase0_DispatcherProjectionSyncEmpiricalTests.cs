@@ -114,7 +114,7 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
 
     SyncDecisionContext? capturedContext = null;
     var command = new SeedTestCommand {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       Tag = "phase-0-empirical-probe",
     };
 
@@ -185,8 +185,8 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
     var scopedTracker = scope.ServiceProvider.GetRequiredService<IScopedEventTracker>();
 
     // Manually inject a tracked event so the wait's "no events" early-return is bypassed.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     scopedTracker.TrackEmittedEvent(streamId, typeof(SeedTestEvent), eventId);
 
     var dispatcher = scope.ServiceProvider.GetRequiredService<IDispatcher>();

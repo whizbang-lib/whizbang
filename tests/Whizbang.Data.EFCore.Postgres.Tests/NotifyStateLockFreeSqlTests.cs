@@ -32,8 +32,8 @@ public class NotifyStateLockFreeSqlTests : EFCoreTestBase {
   public async Task Doorbell_WhileAnotherTransactionHoldsTheTargetsNotifyState_DoesNotWaitAndStillRingsAsync() {
     await using var holder = await _openAsync();
     await using var prober = await _openAsync();
-    var target = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var target = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(holder, target);
     await _ownStreamAsync(holder, streamId, target);
     // The target's inbox doorbell state exists (a previous doorbell created it).
@@ -64,8 +64,8 @@ public class NotifyStateLockFreeSqlTests : EFCoreTestBase {
   public async Task Doorbell_WhileAnotherTransactionHoldsTheTargetsNotifyState_LeavesTheStateToTheHolderAsync() {
     await using var holder = await _openAsync();
     await using var prober = await _openAsync();
-    var target = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var target = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(holder, target);
     await _ownStreamAsync(holder, streamId, target);
     await _execAsync(holder,
@@ -98,8 +98,8 @@ public class NotifyStateLockFreeSqlTests : EFCoreTestBase {
     // open transactions must not queue on that uncommitted insert: the second rings and returns.
     await using var holder = await _openAsync();
     await using var prober = await _openAsync();
-    var target = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var target = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(holder, target);
     await _ownStreamAsync(holder, streamId, target);
 
@@ -131,8 +131,8 @@ public class NotifyStateLockFreeSqlTests : EFCoreTestBase {
     // The lock-free path must not cost the debounce its purpose: with the row free, a flood toward
     // a live target that is draining is still suppressed (the 137 contract, kept green here).
     await using var conn = await _openAsync();
-    var target = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var target = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, target);
     await _ownStreamAsync(conn, streamId, target);
     await _execAsync(conn,

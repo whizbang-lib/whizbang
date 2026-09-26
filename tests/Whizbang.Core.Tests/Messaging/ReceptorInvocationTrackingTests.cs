@@ -92,7 +92,7 @@ public class ReceptorInvocationTrackingTests {
   }
 
   private static MessageEnvelope<TestMessage> _envelope() => new() {
-    MessageId = MessageId.From(TrackedGuid.NewMedo()),
+    MessageId = MessageId.From(TrackedGuid.New()),
     Payload = new TestMessage("test"),
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

@@ -45,7 +45,7 @@ public class IntegrityReceptorsPriorityTests {
     var transport = new CaptureTransport();
     var sp = _checkpointProvider(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
     var receptor = new IntegrityCheckpointReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityCheckpointReceptor>.Instance);
-    var originId = TrackedGuid.NewMedo().Value;
+    var originId = TrackedGuid.New().Value;
 
     await receptor.HandleAsync(_checkpoint(originId, from: 10, to: 20, count: 4));
     await receptor.HandleAsync(_checkpoint(originId, from: 20, to: 20, count: 0, emptyBuckets: true));
@@ -62,7 +62,7 @@ public class IntegrityReceptorsPriorityTests {
     var transport = new CaptureTransport();
     var sp = _checkpointProvider(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
     var receptor = new IntegrityCheckpointReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityCheckpointReceptor>.Instance);
-    var originId = TrackedGuid.NewMedo().Value;
+    var originId = TrackedGuid.New().Value;
 
     using (PriorityContext.Enter(WorkPriority.INTERACTIVE)) {
       await receptor.HandleAsync(_checkpoint(originId, from: 10, to: 20, count: 4));
@@ -78,7 +78,7 @@ public class IntegrityReceptorsPriorityTests {
   [Test]
   public async Task ManifestRequestReceptor_EveryManifestChunkIsBackgroundAsync() {
     var coordinator = new AuditCoordinator {
-      OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 11, 21, 2), _digest(TrackedGuid.NewMedo().Value, 12, 22, 1), _digest(TrackedGuid.NewMedo().Value, 13, 23, 3)],
+      OwnDigests = [_digest(TrackedGuid.New().Value, 11, 21, 2), _digest(TrackedGuid.New().Value, 12, 22, 1), _digest(TrackedGuid.New().Value, 13, 23, 3)],
     };
     var transport = new CaptureTransport();
     var sp = _manifestProvider(coordinator, transport, new StreamIntegrityOptions { MaxDigestsPerManifest = 2, PublishReportEvents = true });
@@ -97,8 +97,8 @@ public class IntegrityReceptorsPriorityTests {
 
   [Test]
   public async Task ManifestReceptor_CursorAnswer_TheFollowUpRequestIsBackgroundAsync() {
-    var cursor = TrackedGuid.NewMedo().Value;
-    var stream = TrackedGuid.NewMedo().Value;
+    var cursor = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
     var coordinator = new AuditCoordinator { ReceivedDigests = [_digest(stream, 41, 42, 5)] };
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
@@ -193,7 +193,7 @@ public class IntegrityReceptorsPriorityTests {
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -207,7 +207,7 @@ public class IntegrityReceptorsPriorityTests {
 
   /// <summary>The members every coordinator fake here needs; the rest of the interface keeps its defaults.</summary>
   private abstract class CoordinatorBase : IWorkCoordinator {
-    public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) => Task.FromResult(LocalServiceId);
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
@@ -232,7 +232,7 @@ public class IntegrityReceptorsPriorityTests {
 
   /// <summary>Both sides of a manifest exchange: own digests when asked as an origin, received digests when comparing as a consumer.</summary>
   private sealed class AuditCoordinator : CoordinatorBase, IWorkCoordinator {
-    public Guid OriginId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid OriginId { get; } = TrackedGuid.New().Value;
     public IReadOnlyList<StreamDigest> OwnDigests { get; init; } = [];
     public IReadOnlyList<StreamDigest> ReceivedDigests { get; init; } = [];
     public IReadOnlyList<StreamDigest> ReceivedTypeDigests { get; init; } = [];

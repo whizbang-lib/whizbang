@@ -44,7 +44,7 @@ public class InboxDispatchWorkerGapTests {
   // ============================================================
 
   private sealed class FakeInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 7;
@@ -257,8 +257,8 @@ public class InboxDispatchWorkerGapTests {
   }
 
   private static InboxWork _makeWork(int attempts = 0, MessageProcessingStatus status = MessageProcessingStatus.Stored) {
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     return new InboxWork {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {

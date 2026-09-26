@@ -28,10 +28,10 @@ public class InboxSourceIdentityRoundtripSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var sourceServiceId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var localInstanceId = (Guid)TrackedGuid.NewMedo();
+    var sourceServiceId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var localInstanceId = (Guid)TrackedGuid.New();
 
     var messagesJson = $$"""
       [{
@@ -68,9 +68,9 @@ public class InboxSourceIdentityRoundtripSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var localInstanceId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var localInstanceId = (Guid)TrackedGuid.New();
 
     var messagesJson = $$"""
       [{

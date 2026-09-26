@@ -107,8 +107,8 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
   [Test]
   public async Task NullArguments_GuardedMethods_ThrowArgumentNullAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await Assert.That(await _throwsArgumentNullAsync(() => c.FetchOutboxBatchAsync(null!, instanceId))).IsTrue();
     await Assert.That(await _throwsArgumentNullAsync(() => c.FetchInboxBatchAsync(null!, instanceId))).IsTrue();
@@ -133,7 +133,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
   [Test]
   public async Task EmptyInputs_ShortCircuitPathsReturnDefaultsAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
 
     var outboxRows = await c.FetchOutboxBatchAsync([], instanceId);
     await Assert.That(outboxRows.Count).IsEqualTo(0);
@@ -160,7 +160,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
   [Test]
   public async Task RecordHeartbeatAsync_WithMetadata_PersistsMetadataJsonAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     using var doc = JsonDocument.Parse("{\"zone\":\"z1\"}");
 
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-meta", "host-meta", 5, doc.RootElement));
@@ -183,7 +183,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
       _jsonOptions,
       NullLogger<DapperWorkCoordinator>.Instance,
       gate: gate);
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
 
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-gate", "host-gate", 11));
 
@@ -196,8 +196,8 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     var due = await c.NotifyScheduledRetryDueAsync();
     await Assert.That(due).IsEqualTo(0);
 
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId)], partitionCount: 100);
 
     var renewed = await c.RenewLeasesAsync(WorkCategory.Outbox, [msgId], leaseSeconds: 120);
@@ -225,14 +225,14 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
       eventWorkIds: [],
       debugMode: false);
 
-    var inboxA = (Guid)TrackedGuid.NewMedo();
-    var inboxB = (Guid)TrackedGuid.NewMedo();
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
+    var inboxA = (Guid)TrackedGuid.New();
+    var inboxB = (Guid)TrackedGuid.New();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
     await c.StoreInboxMessagesAsync([_makeInbox(inboxA, streamA), _makeInbox(inboxB, streamB)], partitionCount: 100);
 
     await c.CommitHandlerResultAsync(new HandlerCommitRequest(
-      HandlerId: (Guid)TrackedGuid.NewMedo(),
+      HandlerId: (Guid)TrackedGuid.New(),
       InstanceId: instanceId,
       ServiceName: "svc-gate",
       HostName: "host-gate",
@@ -242,7 +242,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
 
     var batchResults = await c.CommitHandlerBatchAsync([
       new HandlerCommitRequest(
-        HandlerId: (Guid)TrackedGuid.NewMedo(),
+        HandlerId: (Guid)TrackedGuid.New(),
         InstanceId: instanceId,
         ServiceName: "svc-gate",
         HostName: "host-gate",
@@ -266,10 +266,10 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
   [Test]
   public async Task FlushCompletionsAsync_TwoFailureCategories_PersistsBothCategoriesAsync() {
     var c = _build();
-    var outboxId = (Guid)TrackedGuid.NewMedo();
-    var inboxId = (Guid)TrackedGuid.NewMedo();
-    var outboxStream = (Guid)TrackedGuid.NewMedo();
-    var inboxStream = (Guid)TrackedGuid.NewMedo();
+    var outboxId = (Guid)TrackedGuid.New();
+    var inboxId = (Guid)TrackedGuid.New();
+    var outboxStream = (Guid)TrackedGuid.New();
+    var inboxStream = (Guid)TrackedGuid.New();
 
     await c.StoreOutboxMessagesAsync([_makeOutbox(outboxId, outboxStream)], partitionCount: 100);
     await c.StoreInboxMessagesAsync([_makeInbox(inboxId, inboxStream)], partitionCount: 100);
@@ -307,10 +307,10 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
   [Test]
   public async Task ResolveSyncInquiriesAsync_TwoInquiries_ReturnsPerInquiryCountsAsync() {
     var c = _build();
-    var pendingStream = (Guid)TrackedGuid.NewMedo();
-    var emptyStream = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var pendingStream = (Guid)TrackedGuid.New();
+    var emptyStream = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     const string perspectiveName = "SyncPersp";
 
     await using var conn = new NpgsqlConnection(ConnectionString);
@@ -358,11 +358,11 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
   [Test]
   public async Task RecomputePartitionNumbersAsync_MismatchedRows_ReportsPerTableCountsAsync() {
     var c = _build();
-    var outboxId = (Guid)TrackedGuid.NewMedo();
-    var inboxId = (Guid)TrackedGuid.NewMedo();
-    var outboxStream = (Guid)TrackedGuid.NewMedo();
-    var inboxStream = (Guid)TrackedGuid.NewMedo();
-    var orphanStream = (Guid)TrackedGuid.NewMedo();
+    var outboxId = (Guid)TrackedGuid.New();
+    var inboxId = (Guid)TrackedGuid.New();
+    var outboxStream = (Guid)TrackedGuid.New();
+    var inboxStream = (Guid)TrackedGuid.New();
+    var orphanStream = (Guid)TrackedGuid.New();
 
     await c.StoreOutboxMessagesAsync([_makeOutbox(outboxId, outboxStream)], partitionCount: 100);
     await c.StoreInboxMessagesAsync([_makeInbox(inboxId, inboxStream)], partitionCount: 100);
@@ -392,8 +392,8 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
   [Test]
   public async Task FetchOutboxBatchAsync_NullStreamAndDestination_MapsNullColumnsAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     // StreamId null → wh_outbox.stream_id NULL and partition_number NULL —
     // Destination null → destination NULL. The row is fetched via the
@@ -428,8 +428,8 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
 
   [Test]
   public async Task WorkBatchRow_AllProperties_RoundTripAsync() {
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     var row = new WorkBatchRow {
       instance_rank = 1,

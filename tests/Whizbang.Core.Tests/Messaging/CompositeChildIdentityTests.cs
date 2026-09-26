@@ -74,8 +74,8 @@ public class CompositeChildIdentityTests {
 
   [Test]
   public async Task Derive_ChildrenOfConsecutiveComposites_SortInCompositeOrderAsync() {
-    var first = (Guid)TrackedGuid.NewMedo();
-    var second = (Guid)TrackedGuid.NewMedo();
+    var first = (Guid)TrackedGuid.New();
+    var second = (Guid)TrackedGuid.New();
 
     var lastChildOfFirst = CompositeChildIdentity.Derive(first, 99, TYPE);
     var firstChildOfSecond = CompositeChildIdentity.Derive(second, 0, TYPE);

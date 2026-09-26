@@ -35,7 +35,7 @@ public class ImmediateUnitOfWorkStrategy : IUnitOfWorkStrategy {
     }
 
     // Create new unit with time-ordered UUIDv7 ID
-    var unitId = ValueObjects.TrackedGuid.NewMedo();
+    var unitId = ValueObjects.TrackedGuid.New();
     var unit = new DispatchUnitOfWork {
       UnitId = unitId,
       Messages = [message],

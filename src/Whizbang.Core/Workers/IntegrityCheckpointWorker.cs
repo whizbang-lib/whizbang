@@ -212,7 +212,7 @@ public sealed partial class IntegrityCheckpointWorker(
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var envelope = new MessageEnvelope<IntegrityCheckpoint> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = checkpoint,
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityCheckpoint), instanceProvider, DateTimeOffset.UtcNow)

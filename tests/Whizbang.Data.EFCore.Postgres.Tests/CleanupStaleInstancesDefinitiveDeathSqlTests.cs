@@ -58,7 +58,7 @@ public class CleanupStaleInstancesDefinitiveDeathSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var deadInstance = (Guid)TrackedGuid.NewMedo();
+    var deadInstance = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, deadInstance, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
 
     // Hold the alive-lock for the dead instance from a SECOND connection, simulating
@@ -93,7 +93,7 @@ public class CleanupStaleInstancesDefinitiveDeathSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var staleButLiveInstance = (Guid)TrackedGuid.NewMedo();
+    var staleButLiveInstance = (Guid)TrackedGuid.New();
     // Heartbeat is 90 s old: past the 30 s stale cutoff but well before the 5 min
     // definitive cutoff.
     await _registerInstanceAsync(conn, staleButLiveInstance, lastHeartbeatOffset: TimeSpan.FromSeconds(-90));
@@ -122,7 +122,7 @@ public class CleanupStaleInstancesDefinitiveDeathSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var oldDeadInstance = (Guid)TrackedGuid.NewMedo();
+    var oldDeadInstance = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, oldDeadInstance, lastHeartbeatOffset: TimeSpan.FromMinutes(-30));
 
     await using var lockHolder = new NpgsqlConnection(ConnectionString);

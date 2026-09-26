@@ -253,7 +253,7 @@ public sealed partial class CoalesceShipWorker(
   public static CompositeEventBase BuildDefaultComposite(CoalesceFoldBatch batch) {
     ArgumentNullException.ThrowIfNull(batch);
     return new CoalescedEventsComposite {
-      StreamId = TrackedGuid.NewMedo(),
+      StreamId = TrackedGuid.New(),
       Atomicity = batch.Atomicity,
       InnerPayloads = [.. batch.Singles.Select(m => m.Envelope.Payload)],
       InnerTypeNames = [.. batch.Singles.Select(m => m.MessageType)],
@@ -294,7 +294,7 @@ public sealed partial class CoalesceShipWorker(
       int priority) {
     var envelope = new MessageEnvelope<CompositeEventBase> {
       Priority = priority,
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = composite,
       Hops = [
         new MessageHop {

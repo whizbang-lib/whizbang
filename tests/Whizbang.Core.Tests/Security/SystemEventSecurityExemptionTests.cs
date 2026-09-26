@@ -48,9 +48,9 @@ public class SystemEventSecurityExemptionTests {
     // EventAudited carries its own TenantId/UserId as payload data, so nothing is lost.
     var provider = _strictProvider();
     var envelope = _unscopedEnvelope(new EventAudited {
-      Id = TrackedGuid.NewMedo().Value,
+      Id = TrackedGuid.New().Value,
       OriginalEventType = "Contracts.SomethingHappened",
-      OriginalStreamId = TrackedGuid.NewMedo().Value.ToString(),
+      OriginalStreamId = TrackedGuid.New().Value.ToString(),
       OriginalStreamPosition = 0,
       OriginalBody = _emptyBody(),
       Timestamp = DateTimeOffset.UtcNow,
@@ -69,7 +69,7 @@ public class SystemEventSecurityExemptionTests {
     // a background flow gets the same never-dead-letter guarantee.
     var provider = _strictProvider();
     var envelope = _unscopedEnvelope(new CommandAudited {
-      Id = TrackedGuid.NewMedo().Value,
+      Id = TrackedGuid.New().Value,
       CommandType = "Contracts.DoSomethingCommand",
       CommandBody = _emptyBody(),
       Timestamp = DateTimeOffset.UtcNow,
@@ -86,7 +86,7 @@ public class SystemEventSecurityExemptionTests {
     // Lock the other direction: the exemption is EXPLICIT — an ordinary domain event with no
     // establishable principal keeps the strict SecurityContextRequiredException contract.
     var provider = _strictProvider();
-    var envelope = _unscopedEnvelope(new PlainDomainEvent { Sid = TrackedGuid.NewMedo().Value });
+    var envelope = _unscopedEnvelope(new PlainDomainEvent { Sid = TrackedGuid.New().Value });
 
     Exception? caught = null;
     try {

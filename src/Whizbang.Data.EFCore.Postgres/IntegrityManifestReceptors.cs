@@ -150,7 +150,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
       var chunk = digests.Skip(offset).Take(options.MaxDigestsPerManifest).ToList();
       var envelope = new MessageEnvelope<IntegrityManifest> {
         Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
-        MessageId = new MessageId(TrackedGuid.NewMedo()),
+        MessageId = new MessageId(TrackedGuid.New()),
         Payload = new IntegrityManifest {
           ManifestStreamId = originServiceId,
           OriginServiceId = originServiceId,
@@ -506,7 +506,7 @@ public sealed partial class IntegrityManifestReceptor(
       }
       reportsPublished++;
       await dispatcher.PublishAsync(new IntegrityDivergenceDetected {
-        ReportStreamId = TrackedGuid.NewMedo().Value,
+        ReportStreamId = TrackedGuid.New().Value,
         OriginServiceId = message.OriginServiceId,
         OriginServiceName = message.OriginServiceName,
         TenantScope = origin.TenantScope,
@@ -607,7 +607,7 @@ public sealed partial class IntegrityManifestReceptor(
     }
     var envelope = new MessageEnvelope<RequestIntegrityManifest> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestIntegrityManifest {
         RequesterService = requester,
         Topic = topic,
@@ -780,7 +780,7 @@ public sealed partial class IntegrityManifestReceptor(
     }
     var envelope = new MessageEnvelope<RequestIntegrityManifest> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestIntegrityManifest {
         RequesterService = requester,
         Topic = topic,
@@ -867,7 +867,7 @@ public sealed partial class IntegrityManifestReceptor(
 
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestRedeliveryCommand {
         TenantScope = tenantScope,
         EventTypes = [eventType],
@@ -920,7 +920,7 @@ public sealed partial class IntegrityManifestReceptor(
 
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = new RequestRedeliveryCommand {
         TenantScope = tenantScope,
         EventTypes = [eventType],

@@ -30,7 +30,7 @@ public class InstanceStateSqlTests : EFCoreTestBase {
   private async Task<Guid> _joinFleetAsync(CancellationToken ct) {
     await using var ctx = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(id, "state-svc", "state-host", 1), ct);
     return id;
   }
@@ -80,7 +80,7 @@ public class InstanceStateSqlTests : EFCoreTestBase {
 
     await using var record = conn.CreateCommand();
     record.CommandText = "SELECT record_instance_state(@id, 'Connecting', NULL)";
-    record.Parameters.AddWithValue("id", (Guid)TrackedGuid.NewMedo());
+    record.Parameters.AddWithValue("id", (Guid)TrackedGuid.New());
     var found = await record.ExecuteScalarAsync(cancellationToken);
 
     await Assert.That(found is false).IsTrue()

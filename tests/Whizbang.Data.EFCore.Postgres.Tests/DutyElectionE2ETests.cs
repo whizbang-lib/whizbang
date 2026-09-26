@@ -31,7 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class DutyElectionE2ETests : EFCoreTestBase {
 
   private sealed class Pod : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "duty-svc";
     public string HostName => "duty-host";
     public int ProcessId => 1;

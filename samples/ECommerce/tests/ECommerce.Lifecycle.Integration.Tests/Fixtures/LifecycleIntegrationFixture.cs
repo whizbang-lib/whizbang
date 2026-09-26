@@ -132,7 +132,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
 
     // Service instance provider
     builder.Services.AddSingleton<IServiceInstanceProvider>(
-      new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value, "LifecycleTest"));
+      new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "LifecycleTest"));
 
     // JSON serialization
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();

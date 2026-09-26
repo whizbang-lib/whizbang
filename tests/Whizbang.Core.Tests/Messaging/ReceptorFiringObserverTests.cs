@@ -103,7 +103,7 @@ public class ReceptorFiringObserverTests {
   );
 
   private static MessageEnvelope<TestMessage> _envelope() => new() {
-    MessageId = MessageId.From(TrackedGuid.NewMedo()),
+    MessageId = MessageId.From(TrackedGuid.New()),
     Payload = new TestMessage("t"),
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

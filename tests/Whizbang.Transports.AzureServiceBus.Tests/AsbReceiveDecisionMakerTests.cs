@@ -85,12 +85,12 @@ public class AsbReceiveDecisionMakerTests {
     var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
 
     var envelope = new MessageEnvelope<JsonElement> {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = JsonDocument.Parse("{}").RootElement,
       Hops = [new MessageHop {
         Type = HopType.Current,
         ServiceInstance = new ServiceInstanceInfo {
-          InstanceId = (Guid)TrackedGuid.NewMedo(),
+          InstanceId = (Guid)TrackedGuid.New(),
           ServiceName = "test",
           HostName = "test-host",
           ProcessId = 1,
@@ -221,12 +221,12 @@ public class AsbReceiveDecisionMakerTests {
       "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Commands.BigCommand, MyApp.Contracts]], Whizbang.Core";
 
     var envelope = new MessageEnvelope<BodyClaimEnvelopePayload> {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = new BodyClaimEnvelopePayload(claim, "application/json", originalEnvelopeType),
       Hops = [new MessageHop {
         Type = HopType.Current,
         ServiceInstance = new ServiceInstanceInfo {
-          InstanceId = (Guid)TrackedGuid.NewMedo(),
+          InstanceId = (Guid)TrackedGuid.New(),
           ServiceName = "test",
           HostName = "test-host",
           ProcessId = 1,
@@ -421,12 +421,12 @@ public class AsbReceiveDecisionMakerTests {
   }
 
   private static MessageEnvelope<JsonElement> _makeEnvelope() => new() {
-    MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+    MessageId = MessageId.From((Guid)TrackedGuid.New()),
     Payload = JsonDocument.Parse("{}").RootElement,
     Hops = [new MessageHop {
       Type = HopType.Current,
       ServiceInstance = new ServiceInstanceInfo {
-        InstanceId = (Guid)TrackedGuid.NewMedo(),
+        InstanceId = (Guid)TrackedGuid.New(),
         ServiceName = "test",
         HostName = "test-host",
         ProcessId = 1,
@@ -456,22 +456,22 @@ public class AsbReceiveDecisionMakerTests {
     var compositeTypeInfo = (JsonTypeInfo<MessageEnvelope<RedeliveryComposite>>)
       combinedOptions.GetTypeInfo(typeof(MessageEnvelope<RedeliveryComposite>));
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     using var innerDoc = JsonDocument.Parse("""{"Name":"restored-by-repair"}""");
     var envelope = new MessageEnvelope<RedeliveryComposite> {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = new RedeliveryComposite {
         StreamId = streamId,
         InnerPayloads = [innerDoc.RootElement.Clone()],
         InnerTypeNames = ["MyApp.Events.SomethingHappened, MyApp.Contracts"],
-        InnerEventIds = [(Guid)TrackedGuid.NewMedo()],
-        OriginServiceId = (Guid)TrackedGuid.NewMedo(),
+        InnerEventIds = [(Guid)TrackedGuid.New()],
+        OriginServiceId = (Guid)TrackedGuid.New(),
         InnerCommitSequences = [42L],
       },
       Hops = [new MessageHop {
         Type = HopType.Current,
         ServiceInstance = new ServiceInstanceInfo {
-          InstanceId = (Guid)TrackedGuid.NewMedo(),
+          InstanceId = (Guid)TrackedGuid.New(),
           ServiceName = "origin-service",
           HostName = "origin-host",
           ProcessId = 1,

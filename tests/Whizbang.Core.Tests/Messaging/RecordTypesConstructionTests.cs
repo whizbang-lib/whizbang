@@ -19,12 +19,12 @@ public class RecordTypesConstructionTests {
 
   [Test]
   public async Task OutboxRecord_FullInitialization_RoundTripsAllPropertiesAsync() {
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     var record = new OutboxRecord {
       MessageId = msgId,
       MessageType = "MyApp.Events.OrderCreated",
-      MessageData = new OutboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()), Payload = JsonDocument.Parse("{}").RootElement, Hops = [] },
+      MessageData = new OutboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.New()), Payload = JsonDocument.Parse("{}").RootElement, Hops = [] },
       Metadata = new EnvelopeMetadata { MessageId = MessageId.From(msgId), Hops = [] },
       Destination = "topic-a",
       Attempts = 2,
@@ -32,7 +32,7 @@ public class RecordTypesConstructionTests {
       CreatedAt = DateTimeOffset.UtcNow,
       PublishedAt = DateTime.UtcNow,
       ProcessedAt = DateTime.UtcNow,
-      InstanceId = (Guid)TrackedGuid.NewMedo(),
+      InstanceId = (Guid)TrackedGuid.New(),
       LeaseExpiry = DateTimeOffset.UtcNow.AddMinutes(5),
       StreamId = streamId,
       PartitionNumber = 42,
@@ -54,30 +54,30 @@ public class RecordTypesConstructionTests {
   [Test]
   public async Task OutboxRecord_FailureReason_DefaultsToUnknownAsync() {
     var record = new OutboxRecord {
-      MessageId = (Guid)TrackedGuid.NewMedo(),
+      MessageId = (Guid)TrackedGuid.New(),
       MessageType = "T",
-      MessageData = new OutboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()), Payload = JsonDocument.Parse("{}").RootElement, Hops = [] },
-      Metadata = new EnvelopeMetadata { MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()), Hops = [] },
+      MessageData = new OutboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.New()), Payload = JsonDocument.Parse("{}").RootElement, Hops = [] },
+      Metadata = new EnvelopeMetadata { MessageId = MessageId.From((Guid)TrackedGuid.New()), Hops = [] },
     };
     await Assert.That(record.FailureReason).IsEqualTo(MessageFailureReason.Unknown);
   }
 
   [Test]
   public async Task InboxRecord_FullInitialization_RoundTripsAllPropertiesAsync() {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     var record = new InboxRecord {
       MessageId = msgId,
       HandlerName = "OrderReceptor",
       MessageType = "MyApp.Events.OrderCreated",
-      MessageData = new InboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()), Payload = JsonDocument.Parse("{}").RootElement, Hops = [] },
+      MessageData = new InboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.New()), Payload = JsonDocument.Parse("{}").RootElement, Hops = [] },
       Metadata = new EnvelopeMetadata { MessageId = MessageId.From(msgId), Hops = [] },
       Attempts = 1,
       Error = "fail",
       ReceivedAt = DateTimeOffset.UtcNow,
       ProcessedAt = DateTime.UtcNow,
-      InstanceId = (Guid)TrackedGuid.NewMedo(),
+      InstanceId = (Guid)TrackedGuid.New(),
       LeaseExpiry = DateTimeOffset.UtcNow.AddMinutes(5),
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PartitionNumber = 7,
       StatusFlags = MessageProcessingStatus.Stored,
       FailureReason = MessageFailureReason.SerializationError,
@@ -92,8 +92,8 @@ public class RecordTypesConstructionTests {
 
   [Test]
   public async Task ActiveStreamRecord_FullInitialization_ExposesAllFieldsAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var instanceId = (Guid)TrackedGuid.New();
     var now = DateTime.UtcNow;
     var record = new ActiveStreamRecord {
       StreamId = streamId,
@@ -110,7 +110,7 @@ public class RecordTypesConstructionTests {
 
   [Test]
   public async Task MessageAssociationRecord_FullInitialization_ExposesAllFieldsAsync() {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     var record = new MessageAssociationRecord {
       Id = id,
       MessageType = "MyApp.Events.OrderCreated",
@@ -129,7 +129,7 @@ public class RecordTypesConstructionTests {
 
   [Test]
   public async Task MessageDeduplicationRecord_FullInitialization_ExposesAllFieldsAsync() {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     var seen = DateTimeOffset.UtcNow;
     var record = new MessageDeduplicationRecord {
       MessageId = msgId,
@@ -161,8 +161,8 @@ public class RecordTypesConstructionTests {
 
   [Test]
   public async Task EventStoreRecord_FullInitialization_RoundTripsAllPropertiesAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var aggregateId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var aggregateId = (Guid)TrackedGuid.New();
     var record = new EventStoreRecord {
       StreamId = streamId,
       AggregateId = aggregateId,
@@ -170,11 +170,11 @@ public class RecordTypesConstructionTests {
       Version = 3,
       EventType = "MyApp.Events.OrderCreated",
       EventData = JsonDocument.Parse("{\"k\":1}").RootElement,
-      Metadata = new EnvelopeMetadata { MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()), Hops = [] },
+      Metadata = new EnvelopeMetadata { MessageId = MessageId.From((Guid)TrackedGuid.New()), Hops = [] },
       Scope = null,
       CreatedAt = DateTime.UtcNow,
       CommitSequence = 1234,
-      OriginServiceId = (Guid)TrackedGuid.NewMedo(),
+      OriginServiceId = (Guid)TrackedGuid.New(),
       OriginCommitSequence = 555,
     };
     await Assert.That(record.StreamId).IsEqualTo(streamId);
@@ -188,7 +188,7 @@ public class RecordTypesConstructionTests {
 
   [Test]
   public async Task ServiceInstanceRecord_FullInitialization_RoundTripsAllPropertiesAsync() {
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     var record = new ServiceInstanceRecord {
       InstanceId = instanceId,
       ServiceName = "InventoryWorker",
@@ -206,7 +206,7 @@ public class RecordTypesConstructionTests {
 
   [Test]
   public async Task ProcessingUnitOfWork_FullInitialization_ExposesAllFieldsAsync() {
-    var unitId = (Guid)TrackedGuid.NewMedo();
+    var unitId = (Guid)TrackedGuid.New();
     var uow = new ProcessingUnitOfWork {
       UnitId = unitId,
       WorkItems = [new object(), new object()],
@@ -245,9 +245,9 @@ public class RecordTypesConstructionTests {
 
   [Test]
   public async Task ReceptorProcessingRecord_FullInitialization_RoundTripsAllPropertiesAsync() {
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
     var record = new ReceptorProcessingRecord {
-      Id = (Guid)TrackedGuid.NewMedo(),
+      Id = (Guid)TrackedGuid.New(),
       EventId = eventId,
       ReceptorName = "OrderReceptor",
       Status = ReceptorProcessingStatus.Processing,

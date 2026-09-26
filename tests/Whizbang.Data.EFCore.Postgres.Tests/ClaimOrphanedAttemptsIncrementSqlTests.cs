@@ -51,9 +51,9 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _insertInboxRowAsync(conn, msgId, streamId, instanceId: null, leaseExpiry: null, attempts: 0);
 
@@ -74,10 +74,10 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var otherId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var otherId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _registerInstanceAsync(conn, otherId);  // alive, holds the lease
     // Other instance holds a still-valid lease — claim_orphaned should NOT touch this row.
@@ -99,10 +99,10 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var deadInstance = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var deadInstance = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _registerInstanceAsync(conn, deadInstance, lastHeartbeatOffset: TimeSpan.FromHours(-1));
     // attempts=1 reflects the prior holder's attempt that already counted.
@@ -125,9 +125,9 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _insertInboxRowAsync(conn, msgId, streamId, instanceId: meId,
       leaseExpiry: DateTimeOffset.UtcNow.AddSeconds(-10), attempts: 1);
@@ -146,9 +146,9 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _insertInboxRowAsync(conn, msgId, streamId, instanceId: meId,
       leaseExpiry: DateTimeOffset.UtcNow.AddSeconds(-10), attempts: 3);
@@ -171,9 +171,9 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     // Row claimed (so attempts=1, instance_id set, lease valid). Now simulate a failure landing.
     await _insertInboxRowAsync(conn, msgId, streamId, instanceId: meId,
@@ -203,9 +203,9 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _insertOutboxRowAsync(conn, msgId, streamId, instanceId: null, leaseExpiry: null, attempts: 0);
 
@@ -223,10 +223,10 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var deadInstance = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var deadInstance = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _registerInstanceAsync(conn, deadInstance, lastHeartbeatOffset: TimeSpan.FromHours(-1));
     await _insertOutboxRowAsync(conn, msgId, streamId, instanceId: deadInstance,
@@ -246,9 +246,9 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _insertOutboxRowAsync(conn, msgId, streamId, instanceId: meId,
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5), attempts: 1);
@@ -276,10 +276,10 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _insertPerspectiveEventAsync(conn, workId, streamId, "Projection.Test", eventId,
       instanceId: null, leaseExpiry: null, attempts: 0);
@@ -298,11 +298,11 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var deadInstance = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var deadInstance = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _registerInstanceAsync(conn, deadInstance, lastHeartbeatOffset: TimeSpan.FromHours(-1));
     await _insertPerspectiveEventAsync(conn, workId, streamId, "Projection.Test", eventId,
@@ -322,10 +322,10 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
     await _insertPerspectiveEventAsync(conn, workId, streamId, "Projection.Test", eventId,
       instanceId: meId, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5), attempts: 1);

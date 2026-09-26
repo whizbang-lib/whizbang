@@ -30,7 +30,7 @@ public class CrossPodLostUpdateTests : EFCoreTestBase {
 
   [Test]
   public async Task ConcurrentApplyFromTwoInstances_FresherApplyMustNotBeLost() {
-    var streamId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    var streamId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     const string table = "action_test";
 
     // Two independent "pods": each its own DbContext + store over the SAME database. They share no
@@ -51,7 +51,7 @@ public class CrossPodLostUpdateTests : EFCoreTestBase {
     var completed = new ActionTestModel { Id = streamId, Name = "Completed", Value = 2 };
     var metaCompleted = new PerspectiveMetadata {
       EventType = "SagaItemCompletedEvent",
-      EventId = ((Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo()).ToString("D"),
+      EventId = ((Guid)Whizbang.Core.ValueObjects.TrackedGuid.New()).ToString("D"),
       Timestamp = DateTime.UtcNow,
       CommitSequence = 841062,
     };
@@ -60,7 +60,7 @@ public class CrossPodLostUpdateTests : EFCoreTestBase {
     var running = new ActionTestModel { Id = streamId, Name = "Running", Value = 1 };
     var metaRunning = new PerspectiveMetadata {
       EventType = "SagaItemStartedEvent",
-      EventId = ((Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo()).ToString("D"),
+      EventId = ((Guid)Whizbang.Core.ValueObjects.TrackedGuid.New()).ToString("D"),
       Timestamp = DateTime.UtcNow,
       CommitSequence = 841014,
     };

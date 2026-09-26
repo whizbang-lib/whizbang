@@ -51,7 +51,7 @@ public class SchemaBootstrapPhaseTests {
 
   /// <summary>An instance identity, as a starting pod would present one.</summary>
   private sealed class Instance : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "bootstrap-svc";
     public string HostName => "bootstrap-host";
     public int ProcessId => 4242;

@@ -43,7 +43,7 @@ public class OutstandingBudgetChurnFeedbackTests {
   private const int DRAIN_PER_CYCLE = 500;
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = TrackedGuid.New();
     public string ServiceName => "test";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -91,7 +91,7 @@ public class OutstandingBudgetChurnFeedbackTests {
       // from this, it would never see the outstanding total reported below.
       for (var i = 0; i < request.MaxStreams; i++) {
         inbox.Add(new InboxWork {
-          MessageId = TrackedGuid.NewMedo().Value,
+          MessageId = TrackedGuid.New().Value,
           MessageType = "TestEvent",
           Envelope = null!,
           Attempts = 1,

@@ -118,10 +118,10 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   [Test]
   public async Task ClaimWorkAsync_OwnedPerspectiveEvents_ReturnsPerspectiveStreamIdsAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     // claim_work requires a registered live caller (calculate_instance_rank raises otherwise).
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-claim", "host-claim", 1));
@@ -148,9 +148,9 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   [Test]
   public async Task ClaimWorkAsync_OwnedOutboxWork_ThrowsNotImplementedAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-claim-o", "host-claim-o", 1));
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId)], partitionCount: 100);
@@ -174,9 +174,9 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   [Test]
   public async Task ClaimWorkAsync_OwnedInboxWork_ThrowsNotImplementedAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
 
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-claim-i", "host-claim-i", 1));
     // isEvent: false keeps claim_work's inbox emit-chain guard out of the picture —
@@ -204,11 +204,11 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   [Test]
   public async Task GetStreamEventsAsync_StreamOwnedByLiveInstance_LeavesRowUnclaimedAsync() {
     var c = _build();
-    var callerId = (Guid)TrackedGuid.NewMedo();
-    var ownerId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var callerId = (Guid)TrackedGuid.New();
+    var ownerId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -233,11 +233,11 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   [Test]
   public async Task GetStreamEventsAsync_StreamOwnedByDeadInstance_ClaimsAndReturnsRowAsync() {
     var c = _build();
-    var callerId = (Guid)TrackedGuid.NewMedo();
-    var deadOwnerId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var callerId = (Guid)TrackedGuid.New();
+    var deadOwnerId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -262,11 +262,11 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   [Test]
   public async Task GetStreamEventsAsync_RowLeasedToOtherInstanceUnexpired_ReturnsEmptyAsync() {
     var c = _build();
-    var callerId = (Guid)TrackedGuid.NewMedo();
-    var holderId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var callerId = (Guid)TrackedGuid.New();
+    var holderId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -288,11 +288,11 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   [Test]
   public async Task GetStreamEventsAsync_ExpiredLeaseOnUnownedStream_ReclaimsAndBumpsAttemptsAsync() {
     var c = _build();
-    var callerId = (Guid)TrackedGuid.NewMedo();
-    var previousHolderId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var callerId = (Guid)TrackedGuid.New();
+    var previousHolderId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -318,11 +318,11 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   [Test]
   public async Task CompletePerspectiveEventsAsync_ProductionMode_DeletesRowsAsync() {
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventA = (Guid)TrackedGuid.NewMedo();
-    var eventB = (Guid)TrackedGuid.NewMedo();
-    var workA = (Guid)TrackedGuid.NewMedo();
-    var workB = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventA = (Guid)TrackedGuid.New();
+    var eventB = (Guid)TrackedGuid.New();
+    var workA = (Guid)TrackedGuid.New();
+    var workB = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -344,16 +344,16 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   [Test]
   public async Task CompletePerspectiveEventsAsync_DebugMode_RetainsRowsStampedProcessedAsync() {
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await _seedEventStoreRowAsync(conn, eventId, streamId, version: 1, commitSequence: 3L);
     await _seedPerspectiveEventAsync(
       conn, workId, streamId, "DebugPerspective", eventId,
-      (Guid)TrackedGuid.NewMedo(), DateTimeOffset.UtcNow.AddMinutes(5), attempts: 1);
+      (Guid)TrackedGuid.New(), DateTimeOffset.UtcNow.AddMinutes(5), attempts: 1);
 
     var affected = await c.CompletePerspectiveEventsAsync([workId], debugMode: true);
 
@@ -373,9 +373,9 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   [Test]
   public async Task CompletePerspectiveAsync_EventWorkIdsOnly_DeletesWorkRowsAsync() {
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();

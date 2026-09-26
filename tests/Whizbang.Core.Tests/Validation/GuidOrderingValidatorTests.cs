@@ -27,7 +27,7 @@ public class GuidOrderingValidatorTests {
     var options = new WhizbangOptions();
     var logger = new TestLogger();
     var validator = new GuidOrderingValidator(options, logger);
-    var trackedGuid = TrackedGuid.NewMedo(); // v7 GUID
+    var trackedGuid = TrackedGuid.New(); // v7 GUID
 
     // Act
     validator.ValidateForTimeOrdering(trackedGuid, "TestContext");

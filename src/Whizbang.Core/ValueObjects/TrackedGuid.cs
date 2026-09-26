@@ -26,13 +26,14 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
 
   /// <summary>
   /// Gets whether this Guid has sub-millisecond precision.
-  /// Only true for ids from <see cref="NewMedo"/>; Microsoft's CreateVersion7() has millisecond precision only.
+  /// True for ids from <see cref="New"/> and for detected Medo.Uuid7 ids, which both carry a monotonic counter;
+  /// Microsoft's CreateVersion7() has millisecond precision only.
   /// </summary>
-  public bool SubMillisecondPrecision => (Metadata & GuidMetadatas.SourceMedo) != 0;
+  public bool SubMillisecondPrecision => (Metadata & (GuidMetadatas.SourceWhizbang | GuidMetadatas.SourceMedo)) != 0;
 
   /// <summary>
   /// Gets whether this TrackedGuid has authoritative metadata from creation.
-  /// True when created via NewMedo(), NewMicrosoftV7(), or NewRandom() - we know exactly how it was generated.
+  /// True when created via New(), NewMicrosoftV7(), or NewRandom() - we know exactly how it was generated.
   /// False when loaded from external sources (FromExternal, Parse, implicit conversion) where metadata is inferred.
   /// </summary>
   /// <remarks>
@@ -48,7 +49,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   /// </remarks>
   /// <example>
   /// <code>
-  /// var fresh = TrackedGuid.NewMedo();
+  /// var fresh = TrackedGuid.New();
   /// Console.WriteLine(fresh.IsTracking);           // true
   /// Console.WriteLine(fresh.SubMillisecondPrecision); // true (authoritative)
   ///
@@ -57,7 +58,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   /// Console.WriteLine(loaded.SubMillisecondPrecision); // false (unknown, not authoritative)
   /// </code>
   /// </example>
-  public bool IsTracking => (Metadata & (GuidMetadatas.SourceMedo | GuidMetadatas.SourceMicrosoft)) != 0;
+  public bool IsTracking => (Metadata & (GuidMetadatas.SourceWhizbang | GuidMetadatas.SourceMedo | GuidMetadatas.SourceMicrosoft)) != 0;
 
   /// <summary>
   /// Extracts the timestamp from a UUIDv7.
@@ -79,14 +80,12 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   /// <remarks>
   /// Every id sorts after every id issued before it in this process, across threads: the generator issues under
   /// one lock and orders ids within a millisecond by a monotonic counter (see <see cref="Uuid7Generator"/>).
-  /// The name is historical: ids used to come from the Medo.Uuid7 package. They now come from the framework's own
-  /// generator, which issues ids of the same RFC 9562 shape.
   /// </remarks>
-  public static TrackedGuid NewMedo() => new(Uuid7Generator.Shared.NewGuid(), GuidMetadataExtensions.MEDO_V7);
+  public static TrackedGuid New() => new(Uuid7Generator.Shared.NewGuid(), GuidMetadataExtensions.WHIZBANG_V7);
 
   /// <summary>
   /// Creates a new UUIDv7 using Microsoft's Guid.CreateVersion7().
-  /// Note: This only has millisecond precision. Prefer NewMedo() for better precision.
+  /// Note: This only has millisecond precision. Prefer New() for better precision.
   /// </summary>
 #pragma warning disable WHIZ056 // TrackedGuid wraps Guid.CreateVersion7() intentionally
   public static TrackedGuid NewMicrosoftV7() =>
@@ -95,7 +94,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
 
   /// <summary>
   /// Creates a new random UUIDv4 using Guid.NewGuid().
-  /// Note: v4 is not time-ordered. Prefer NewMedo() for time-ordered IDs.
+  /// Note: v4 is not time-ordered. Prefer New() for time-ordered IDs.
   /// </summary>
 #pragma warning disable WHIZ055 // TrackedGuid wraps Guid.NewGuid() intentionally
   public static TrackedGuid NewRandom() =>

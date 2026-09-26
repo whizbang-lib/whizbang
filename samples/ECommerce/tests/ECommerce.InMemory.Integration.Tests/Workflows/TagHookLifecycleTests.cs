@@ -16,7 +16,7 @@ namespace ECommerce.InMemory.Integration.Tests.Workflows;
 [Timeout(120_000)]
 public class TagHookLifecycleTests {
   private InMemoryIntegrationFixture? _fixture;
-  private static readonly ProductId _testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code")]

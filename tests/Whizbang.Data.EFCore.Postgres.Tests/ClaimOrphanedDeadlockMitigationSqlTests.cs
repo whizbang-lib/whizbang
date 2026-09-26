@@ -61,9 +61,9 @@ public class ClaimOrphanedDeadlockMitigationSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
 
     // Pre-existing wh_active_streams row owned by me with a live lease — the REFRESH
@@ -94,9 +94,9 @@ public class ClaimOrphanedDeadlockMitigationSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
 
     // Pre-existing row with NULL owner — REFRESH skips it (no live lease for me),
@@ -117,9 +117,9 @@ public class ClaimOrphanedDeadlockMitigationSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
 
     // No wh_active_streams row at all. REFRESH finds nothing to update; PIN path
@@ -143,11 +143,11 @@ public class ClaimOrphanedDeadlockMitigationSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var ownedStream = (Guid)TrackedGuid.NewMedo();
-    var unownedStream = (Guid)TrackedGuid.NewMedo();
-    var ownedMsg = (Guid)TrackedGuid.NewMedo();
-    var unownedMsg = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var ownedStream = (Guid)TrackedGuid.New();
+    var unownedStream = (Guid)TrackedGuid.New();
+    var ownedMsg = (Guid)TrackedGuid.New();
+    var unownedMsg = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
 
     // Stream A: already owned by me with live lease → REFRESH path
@@ -184,9 +184,9 @@ public class ClaimOrphanedDeadlockMitigationSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
 
     var earlyTime = DateTimeOffset.UtcNow.AddMinutes(-10);
@@ -208,10 +208,10 @@ public class ClaimOrphanedDeadlockMitigationSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
 
     var earlyTime = DateTimeOffset.UtcNow.AddMinutes(-10);

@@ -1867,7 +1867,7 @@ public partial class PerspectiveWorker(
       if (raw.Failures > maxAttempts.Value) {
         try {
           await _deadLetterStore.MoveAsync(
-            deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+            deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
             sourceTable: DeadLetterSourceTable.PERSPECTIVE_EVENTS,
             sourceId: raw.EventWorkId,
             failureReason: Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded,

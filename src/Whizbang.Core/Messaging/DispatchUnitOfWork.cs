@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 public class DispatchUnitOfWork {
   /// <summary>
   /// Unique time-ordered identifier for this unit (UUIDv7).
-  /// Generated via TrackedGuid.NewMedo() for chronological ordering.
+  /// Generated via TrackedGuid.New() for chronological ordering.
   /// </summary>
   public Guid UnitId { get; init; }
 

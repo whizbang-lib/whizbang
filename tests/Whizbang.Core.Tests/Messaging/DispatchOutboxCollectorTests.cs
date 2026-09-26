@@ -56,7 +56,7 @@ public class DispatchOutboxCollectorTests {
   }
 
   private static OutboxMessage _outbox(string id) => new() {
-    MessageId = (Guid)TrackedGuid.NewMedo(),
+    MessageId = (Guid)TrackedGuid.New(),
     Envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse($"{{\"id\":\"{id}\"}}").RootElement,

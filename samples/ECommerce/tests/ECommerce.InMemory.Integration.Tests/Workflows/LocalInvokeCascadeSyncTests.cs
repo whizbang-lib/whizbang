@@ -24,7 +24,7 @@ namespace ECommerce.InMemory.Integration.Tests.Workflows;
 public class LocalInvokeCascadeSyncTests {
   private InMemoryIntegrationFixture? _fixture;
 
-  private static readonly ProductId _testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code")]
@@ -92,7 +92,7 @@ public class LocalInvokeCascadeSyncTests {
   public async Task LocalInvokeAsync_UnregisteredPerspective_ReturnsNoPendingEventsAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
-    var productId = ProductId.From(TrackedGuid.NewMedo());
+    var productId = ProductId.From(TrackedGuid.New());
     var command = new CreateProductCommand {
       ProductId = productId,
       Name = "Unregistered Perspective Test",

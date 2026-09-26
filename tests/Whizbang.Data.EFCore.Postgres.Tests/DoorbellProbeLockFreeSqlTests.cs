@@ -33,8 +33,8 @@ public class DoorbellProbeLockFreeSqlTests : EFCoreTestBase {
   public async Task InboxStore_WhileTheStreamsLastPendingRowIsBeingCompleted_DoesNotWaitAsync() {
     await using var holder = await _openAsync();
     await using var prober = await _openAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var first = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var first = (Guid)TrackedGuid.New();
     await _storeInboxAsync(holder, first, streamId);
 
     // A commit batch completing the stream's only pending row, still uncommitted.
@@ -42,7 +42,7 @@ public class DoorbellProbeLockFreeSqlTests : EFCoreTestBase {
     await _execAsync(holder, "UPDATE wh_inbox_state SET processed_at = NOW() WHERE message_id = @m", ("m", first), tx);
 
     await _setStatementTimeoutAsync(prober);
-    var second = (Guid)TrackedGuid.NewMedo();
+    var second = (Guid)TrackedGuid.New();
     await _storeInboxAsync(prober, second, streamId);   // must not wait on the held row
 
     await Assert.That(await _existsAsync(prober, "wh_inbox", "message_id", second)).IsTrue();
@@ -53,9 +53,9 @@ public class DoorbellProbeLockFreeSqlTests : EFCoreTestBase {
   public async Task OutboxStore_WhileTheStreamsLastPendingRowIsBeingCompleted_DoesNotWaitAsync() {
     await using var holder = await _openAsync();
     await using var prober = await _openAsync();
-    var instance = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var first = (Guid)TrackedGuid.NewMedo();
+    var instance = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var first = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(holder, instance);
     await _storeOutboxAsync(holder, instance, first, streamId);
 
@@ -63,7 +63,7 @@ public class DoorbellProbeLockFreeSqlTests : EFCoreTestBase {
     await _execAsync(holder, "UPDATE wh_outbox SET processed_at = NOW() WHERE message_id = @m", ("m", first), tx);
 
     await _setStatementTimeoutAsync(prober);
-    var second = (Guid)TrackedGuid.NewMedo();
+    var second = (Guid)TrackedGuid.New();
     await _storeOutboxAsync(prober, instance, second, streamId);
 
     await Assert.That(await _existsAsync(prober, "wh_outbox", "message_id", second)).IsTrue();
@@ -74,11 +74,11 @@ public class DoorbellProbeLockFreeSqlTests : EFCoreTestBase {
   public async Task ClaimTick_WhileItsNotifyStateRowsAreHeld_DoesNotWaitAsync() {
     await using var holder = await _openAsync();
     await using var claimer = await _openAsync();
-    var instance = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instance = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(holder, instance);
     // Pending inbox work so the tick claims something and reaches its watermark stamp.
-    await _storeInboxAsync(holder, (Guid)TrackedGuid.NewMedo(), streamId);
+    await _storeInboxAsync(holder, (Guid)TrackedGuid.New(), streamId);
     // The watermark rows exist and another session holds them (the store's debounce does exactly this).
     await _execAsync(holder,
       "INSERT INTO wh_notify_state (instance_id, payload_kind, last_work_at) VALUES (@i,'inbox',NOW()),(@i,'outbox',NOW()),(@i,'perspective',NOW()) ON CONFLICT DO NOTHING",
@@ -102,10 +102,10 @@ public class DoorbellProbeLockFreeSqlTests : EFCoreTestBase {
     // completion holding a row it wanted to lease made the whole tick wait.
     await using var holder = await _openAsync();
     await using var claimer = await _openAsync();
-    var instance = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var instance = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(holder, instance);
     await _seedPendingPerspectiveRowAsync(holder, streamId, eventId, workId);
 

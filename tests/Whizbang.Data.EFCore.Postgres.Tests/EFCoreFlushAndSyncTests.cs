@@ -30,8 +30,8 @@ public class EFCoreFlushAndSyncTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var outboxMsgId = TrackedGuid.NewMedo();
-    var perspectiveWorkId = TrackedGuid.NewMedo();
+    var outboxMsgId = TrackedGuid.New();
+    var perspectiveWorkId = TrackedGuid.New();
 
     await using (var insOutbox = conn.CreateCommand()) {
       insOutbox.CommandText = @"
@@ -39,7 +39,7 @@ public class EFCoreFlushAndSyncTests : EFCoreTestBase {
           (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number)
         VALUES (@msg, 'test-topic', 'TestEvent', '{}', '{}', 1, 0, NOW(), @stream, 0)";
       insOutbox.Parameters.AddWithValue("msg", (Guid)outboxMsgId);
-      insOutbox.Parameters.AddWithValue("stream", (Guid)TrackedGuid.NewMedo());
+      insOutbox.Parameters.AddWithValue("stream", (Guid)TrackedGuid.New());
       await insOutbox.ExecuteNonQueryAsync();
     }
     await using (var insPersp = conn.CreateCommand()) {
@@ -48,8 +48,8 @@ public class EFCoreFlushAndSyncTests : EFCoreTestBase {
           (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at)
         VALUES (@work, @stream, 'TestPerspective', @eid, 0, 0, NOW())";
       insPersp.Parameters.AddWithValue("work", (Guid)perspectiveWorkId);
-      insPersp.Parameters.AddWithValue("stream", (Guid)TrackedGuid.NewMedo());
-      insPersp.Parameters.AddWithValue("eid", (Guid)TrackedGuid.NewMedo());
+      insPersp.Parameters.AddWithValue("stream", (Guid)TrackedGuid.New());
+      insPersp.Parameters.AddWithValue("eid", (Guid)TrackedGuid.New());
       await insPersp.ExecuteNonQueryAsync();
     }
 
@@ -79,9 +79,9 @@ public class EFCoreFlushAndSyncTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var streamId = TrackedGuid.NewMedo();
-    var processedEventId = TrackedGuid.NewMedo();
-    var pendingEventId = TrackedGuid.NewMedo();
+    var streamId = TrackedGuid.New();
+    var processedEventId = TrackedGuid.New();
+    var pendingEventId = TrackedGuid.New();
     const string perspectiveName = "TestPerspective";
 
     await using (var ins = conn.CreateCommand()) {

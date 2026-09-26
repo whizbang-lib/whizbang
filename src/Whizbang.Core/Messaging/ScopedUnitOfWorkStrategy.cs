@@ -30,7 +30,7 @@ public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy {
 
     // Create unit on first message
     _currentUnit ??= new DispatchUnitOfWork {
-      UnitId = ValueObjects.TrackedGuid.NewMedo(),
+      UnitId = ValueObjects.TrackedGuid.New(),
       Messages = [],
       CreatedAt = DateTimeOffset.UtcNow,
       LifecycleStages = []

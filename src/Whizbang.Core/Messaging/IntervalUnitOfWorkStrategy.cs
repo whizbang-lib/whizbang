@@ -50,7 +50,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
       // Create new accumulating unit if none exists
       if (_currentUnit == null) {
         _currentUnit = new DispatchUnitOfWork {
-          UnitId = ValueObjects.TrackedGuid.NewMedo(),
+          UnitId = ValueObjects.TrackedGuid.New(),
           Messages = [],
           CreatedAt = DateTimeOffset.UtcNow,
           LifecycleStages = []

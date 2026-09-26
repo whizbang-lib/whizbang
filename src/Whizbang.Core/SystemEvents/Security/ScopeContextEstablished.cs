@@ -22,7 +22,7 @@ public sealed record ScopeContextEstablished : ISystemEvent {
   /// Unique identifier for this event.
   /// </summary>
   [StreamId]
-  public Guid Id { get; init; } = TrackedGuid.NewMedo();
+  public Guid Id { get; init; } = TrackedGuid.New();
 
   /// <summary>
   /// The established scope.

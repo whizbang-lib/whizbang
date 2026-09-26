@@ -113,7 +113,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -172,7 +172,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
   }
 
   private static MessageEnvelope<DropGateTestEvent> _makeEnvelope() {
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
     return new MessageEnvelope<DropGateTestEvent> {
       MessageId = MessageId.From(msgId),
       Payload = new DropGateTestEvent("hi"),

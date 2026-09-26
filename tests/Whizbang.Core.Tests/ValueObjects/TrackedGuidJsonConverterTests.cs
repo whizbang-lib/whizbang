@@ -40,7 +40,7 @@ public class TrackedGuidJsonConverterTests {
   [Test]
   public async Task Write_WithMedoTrackedGuid_SerializesValueNotMetadataAsync() {
     // Arrange
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
     var expectedGuid = tracked.Value;
 
     // Act
@@ -138,7 +138,7 @@ public class TrackedGuidJsonConverterTests {
   [Test]
   public async Task RoundTrip_SerializeAndDeserialize_PreservesGuidValueAsync() {
     // Arrange
-    var original = TrackedGuid.NewMedo();
+    var original = TrackedGuid.New();
 
     // Act
     var json = JsonSerializer.Serialize(original, _options);
@@ -151,15 +151,15 @@ public class TrackedGuidJsonConverterTests {
   [Test]
   public async Task RoundTrip_MetadataIsLost_AfterDeserializationAsync() {
     // Arrange - start with Medo metadata
-    var original = TrackedGuid.NewMedo();
-    await Assert.That((original.Metadata & GuidMetadatas.SourceMedo) != 0).IsTrue();
+    var original = TrackedGuid.New();
+    await Assert.That((original.Metadata & GuidMetadatas.SourceWhizbang) != 0).IsTrue();
 
     // Act
     var json = JsonSerializer.Serialize(original, _options);
     var deserialized = JsonSerializer.Deserialize<TrackedGuid>(json, _options);
 
     // Assert - after deserialization, source is External (not Medo)
-    await Assert.That((deserialized.Metadata & GuidMetadatas.SourceMedo) != 0).IsFalse();
+    await Assert.That((deserialized.Metadata & GuidMetadatas.SourceWhizbang) != 0).IsFalse();
     await Assert.That((deserialized.Metadata & GuidMetadatas.SourceExternal) != 0).IsTrue();
   }
 
@@ -170,7 +170,7 @@ public class TrackedGuidJsonConverterTests {
   [Test]
   public async Task Write_InObjectProperty_SerializesAsUuidStringNotObjectAsync() {
     // Arrange
-    var dto = new TestDto { Id = TrackedGuid.NewMedo(), Name = "test" };
+    var dto = new TestDto { Id = TrackedGuid.New(), Name = "test" };
 
     // Act
     var json = JsonSerializer.Serialize(dto, _options);
@@ -185,7 +185,7 @@ public class TrackedGuidJsonConverterTests {
   [Test]
   public async Task RoundTrip_ObjectWithTrackedGuid_PreservesGuidValueAsync() {
     // Arrange
-    var original = new TestDto { Id = TrackedGuid.NewMedo(), Name = "test" };
+    var original = new TestDto { Id = TrackedGuid.New(), Name = "test" };
 
     // Act
     var json = JsonSerializer.Serialize(original, _options);

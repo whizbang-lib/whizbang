@@ -27,7 +27,7 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, string fingerprint, string messageType,
       string envelope = "{\"p\":1}", int status = HELD, Guid? sourceId = null,
       string offset = "-1 hour") {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
       INSERT INTO wh_dead_letters
@@ -37,7 +37,7 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
       VALUES (@id, 'wh_inbox', @src, @mt, @env::jsonb, 5, 3,
               NOW() + @off::interval, @st, 'seed/1', @fp, 1)";
     ins.Parameters.AddWithValue("id", id);
-    ins.Parameters.AddWithValue("src", sourceId ?? (Guid)TrackedGuid.NewMedo());
+    ins.Parameters.AddWithValue("src", sourceId ?? (Guid)TrackedGuid.New());
     ins.Parameters.AddWithValue("mt", messageType);
     ins.Parameters.AddWithValue("env", envelope);
     ins.Parameters.AddWithValue("st", status);
@@ -168,8 +168,8 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
     var fp = Guid.NewGuid().ToString("N")[..16];
-    var srcA = (Guid)TrackedGuid.NewMedo();
-    var srcB = (Guid)TrackedGuid.NewMedo();
+    var srcA = (Guid)TrackedGuid.New();
+    var srcB = (Guid)TrackedGuid.New();
     await _seedHeldAsync(conn, fp, "T.A", sourceId: srcA);
     await _seedHeldAsync(conn, fp, "T.B", sourceId: srcB);
     var svc = _svc(ctx);
@@ -242,7 +242,7 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
     var fp = Guid.NewGuid().ToString("N")[..16];
-    var src = (Guid)TrackedGuid.NewMedo();
+    var src = (Guid)TrackedGuid.New();
     await _seedHeldAsync(conn, fp, "T.A", sourceId: src);
     // The message sits AT the observation bound — without a reset, its first probe
     // redelivery would re-cross the bound and instantly requarantine: auto-failed probe.

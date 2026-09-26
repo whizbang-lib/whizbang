@@ -861,8 +861,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   public async Task DrainMode_TwoPerspectivesForSameEvent_BothCalledExactlyOnceAsync() {
     // Symmetry contract: both perspectives must receive the SAME event in their
     // RunWithEventsAsync call — exactly once, with the same event ID.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
 
     var registrations = new List<PerspectiveRegistrationInfo> {
       new("PerspectiveAlpha", "global::Test.PerspectiveAlpha", "global::Test.ModelAlpha",
@@ -905,8 +905,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     // multiple completion strategies route through different channels (Instant via
     // coordinator.ReportPerspective*; coalesced via PerspectiveCompletionFlushWorker), but
     // the LifecycleCoordinator state is the canonical signal source for the gate.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
 
     var registrations = new List<PerspectiveRegistrationInfo> {
       new("PerspectiveAlpha", "global::Test.PerspectiveAlpha", "global::Test.ModelAlpha",
@@ -938,8 +938,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     // fires after only ONE perspective, the tag pushes BEFORE the second perspective's row
     // commits, and the frontend's HTTP refetch returns blank data for that perspective's
     // slice of the model. Lock: PostAllPerspectivesInline count == 1 per event, after BOTH.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
 
     var registrations = new List<PerspectiveRegistrationInfo> {
       new("PerspectiveAlpha", "global::Test.PerspectiveAlpha", "global::Test.ModelAlpha",
@@ -972,10 +972,10 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     // Multi-stream extension: per-event WhenAll must scope to that event — firing
     // PostAllPerspectives once per (stream, event) tuple. Catches a regression where the
     // gate state leaks across streams.
-    var stream1 = (Guid)TrackedGuid.NewMedo();
-    var stream2 = (Guid)TrackedGuid.NewMedo();
-    var event1 = (Guid)TrackedGuid.NewMedo();
-    var event2 = (Guid)TrackedGuid.NewMedo();
+    var stream1 = (Guid)TrackedGuid.New();
+    var stream2 = (Guid)TrackedGuid.New();
+    var event1 = (Guid)TrackedGuid.New();
+    var event2 = (Guid)TrackedGuid.New();
 
     var registrations = new List<PerspectiveRegistrationInfo> {
       new("PerspectiveAlpha", "global::Test.PerspectiveAlpha", "global::Test.ModelAlpha",

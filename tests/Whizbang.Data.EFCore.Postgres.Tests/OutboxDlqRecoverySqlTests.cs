@@ -74,13 +74,13 @@ public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
   }
 
   private static async Task<Guid> _moveToDlqAsync(NpgsqlConnection conn, Guid messageId, string generation) {
-    var deadLetterId = (Guid)TrackedGuid.NewMedo();
+    var deadLetterId = (Guid)TrackedGuid.New();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT move_to_dead_letters(@dlq, 'wh_outbox', @msg, 99, @err, @inst, @gen)";
     cmd.Parameters.AddWithValue("dlq", deadLetterId);
     cmd.Parameters.AddWithValue("msg", messageId);
     cmd.Parameters.AddWithValue("err", _stack);
-    cmd.Parameters.AddWithValue("inst", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("inst", (Guid)TrackedGuid.New());
     cmd.Parameters.AddWithValue("gen", generation);
     await cmd.ExecuteScalarAsync();
     return deadLetterId;
@@ -125,8 +125,8 @@ public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
   [Test]
   public async Task RecoverDeadLetter_OutboxSource_ReturnsToOutboxAsync() {
     await using var conn = await _openAsync();
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedOutboxAsync(conn, messageId, streamId);
 
     var deadLetterId = await _moveToDlqAsync(conn, messageId, generation: "test-gen-1");
@@ -155,8 +155,8 @@ public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
   [Test]
   public async Task RecoverDeadLetter_OutboxSource_PreservesEventDataAsync() {
     await using var conn = await _openAsync();
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedOutboxAsync(conn, messageId, streamId);
 
     var deadLetterId = await _moveToDlqAsync(conn, messageId, generation: "test-gen-1");
@@ -176,8 +176,8 @@ public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
   [Test]
   public async Task RecoverDeadLetter_OutboxSource_SecondCallIsIdempotentAsync() {
     await using var conn = await _openAsync();
-    var messageId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedOutboxAsync(conn, messageId, streamId);
 
     var deadLetterId = await _moveToDlqAsync(conn, messageId, generation: "test-gen-1");

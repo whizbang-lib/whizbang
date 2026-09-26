@@ -78,7 +78,7 @@ public class DispatcherSecurityBuilderPublishOnceTests {
     var dispatcher = _dispatcher();
 
     var won = await dispatcher.AsSystem().ForTenant("tenant-a")
-      .PublishOnceAsync("sweep:1", new SecuredOnceEvent((Guid)TrackedGuid.NewMedo()));
+      .PublishOnceAsync("sweep:1", new SecuredOnceEvent((Guid)TrackedGuid.New()));
 
     await Assert.That(won).IsTrue();
     await Assert.That(_fired).IsEqualTo(1);
@@ -91,8 +91,8 @@ public class DispatcherSecurityBuilderPublishOnceTests {
   public async Task SameKey_SecondAttempt_PublishesNothingAsync() {
     var dispatcher = _dispatcher();
 
-    var first = await dispatcher.AsSystem().ForTenant("tenant-a").PublishOnceAsync("sweep:2", new SecuredOnceEvent((Guid)TrackedGuid.NewMedo()));
-    var second = await dispatcher.AsSystem().ForTenant("tenant-a").PublishOnceAsync("sweep:2", new SecuredOnceEvent((Guid)TrackedGuid.NewMedo()));
+    var first = await dispatcher.AsSystem().ForTenant("tenant-a").PublishOnceAsync("sweep:2", new SecuredOnceEvent((Guid)TrackedGuid.New()));
+    var second = await dispatcher.AsSystem().ForTenant("tenant-a").PublishOnceAsync("sweep:2", new SecuredOnceEvent((Guid)TrackedGuid.New()));
 
     await Assert.That(first).IsTrue();
     await Assert.That(second).IsFalse();
@@ -105,7 +105,7 @@ public class DispatcherSecurityBuilderPublishOnceTests {
     var dispatcher = _dispatcher();
     ScopeContextAccessor.CurrentContext = null;
 
-    await dispatcher.AsSystem().ForTenant("tenant-a").PublishOnceAsync("sweep:3", new SecuredOnceEvent((Guid)TrackedGuid.NewMedo()));
+    await dispatcher.AsSystem().ForTenant("tenant-a").PublishOnceAsync("sweep:3", new SecuredOnceEvent((Guid)TrackedGuid.New()));
 
     await Assert.That(ScopeContextAccessor.CurrentContext).IsNull()
       .Because("the explicit context is for this publish only; leaking it would run the worker's next item as that tenant");

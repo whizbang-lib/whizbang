@@ -78,7 +78,7 @@ public class ServiceBusConsumerSourceIdentityTests {
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "consumer-svc";
     public string HostName => "consumer-host";
     public int ProcessId => 1;
@@ -100,7 +100,7 @@ public class ServiceBusConsumerSourceIdentityTests {
 
   [Test]
   public async Task HandleMessage_StoresTheProducersServiceIdAndCommitSequence_FromTheEnvelopeAsync() {
-    var producer = (Guid)TrackedGuid.NewMedo();
+    var producer = (Guid)TrackedGuid.New();
     var transport = new CapturingTransport();
     var strategy = new RecordingStrategy();
     var services = new ServiceCollection();

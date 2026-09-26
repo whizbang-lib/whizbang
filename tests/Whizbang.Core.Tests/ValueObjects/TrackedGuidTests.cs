@@ -17,6 +17,7 @@ public class TrackedGuidTests {
   [Arguments(GuidMetadatas.Version4, 0)]
   [Arguments(GuidMetadatas.Version7, 1)]
   [Arguments(GuidMetadatas.SourceMedo, 2)]
+  [Arguments(GuidMetadatas.SourceWhizbang, 14)]
   [Arguments(GuidMetadatas.SourceMicrosoft, 3)]
   [Arguments(GuidMetadatas.SourceParsed, 4)]
   [Arguments(GuidMetadatas.SourceExternal, 5)]
@@ -37,34 +38,34 @@ public class TrackedGuidTests {
   }
 
   // ========================================
-  // TrackedGuid.NewMedo() Tests
+  // TrackedGuid.New() Tests
   // ========================================
 
   [Test]
-  public async Task TrackedGuid_NewMedo_IsTimeOrdered_ReturnsTrueAsync() {
+  public async Task TrackedGuid_New_IsTimeOrdered_ReturnsTrueAsync() {
     // Act
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
 
     // Assert
     await Assert.That(tracked.IsTimeOrdered).IsTrue();
   }
 
   [Test]
-  public async Task TrackedGuid_NewMedo_SubMillisecondPrecision_ReturnsTrueAsync() {
+  public async Task TrackedGuid_New_SubMillisecondPrecision_ReturnsTrueAsync() {
     // Act
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
 
     // Assert
     await Assert.That(tracked.SubMillisecondPrecision).IsTrue();
   }
 
   [Test]
-  public async Task TrackedGuid_NewMedo_Timestamp_ReturnsRecentTimeAsync() {
+  public async Task TrackedGuid_New_Timestamp_ReturnsRecentTimeAsync() {
     // Arrange
     var before = DateTimeOffset.UtcNow.AddSeconds(-1);
 
     // Act
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
     var after = DateTimeOffset.UtcNow.AddSeconds(1);
 
     // Assert
@@ -73,28 +74,29 @@ public class TrackedGuidTests {
   }
 
   [Test]
-  public async Task TrackedGuid_NewMedo_Version_Returns7Async() {
+  public async Task TrackedGuid_New_Version_Returns7Async() {
     // Act
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
 
     // Assert - the underlying Guid should have version 7
     await Assert.That(tracked.Value.Version).IsEqualTo(7);
   }
 
   [Test]
-  public async Task TrackedGuid_NewMedo_HasSourceMedoMetadataAsync() {
+  public async Task TrackedGuid_New_HasSourceWhizbangMetadataAsync() {
     // Act
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
 
     // Assert
-    await Assert.That((tracked.Metadata & GuidMetadatas.SourceMedo) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceWhizbang) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceMedo) != 0).IsFalse();
     await Assert.That((tracked.Metadata & GuidMetadatas.Version7) != 0).IsTrue();
   }
 
   [Test]
-  public async Task TrackedGuid_NewMedo_MultipleIds_AreUniqueAsync() {
+  public async Task TrackedGuid_New_MultipleIds_AreUniqueAsync() {
     // Act
-    var ids = Enumerable.Range(0, 100).Select(_ => TrackedGuid.NewMedo()).ToList();
+    var ids = Enumerable.Range(0, 100).Select(_ => TrackedGuid.New()).ToList();
 
     // Assert
     var distinctCount = ids.Select(t => t.Value).Distinct().Count();
@@ -102,9 +104,9 @@ public class TrackedGuidTests {
   }
 
   [Test]
-  public async Task TrackedGuid_NewMedo_MultipleIds_AreTimeOrderedAsync() {
+  public async Task TrackedGuid_New_MultipleIds_AreTimeOrderedAsync() {
     // Act - Generate several IDs rapidly
-    var ids = Enumerable.Range(0, 10).Select(_ => TrackedGuid.NewMedo()).ToList();
+    var ids = Enumerable.Range(0, 10).Select(_ => TrackedGuid.New()).ToList();
 
     // Assert - Each subsequent ID should be >= previous when compared
     for (int i = 1; i < ids.Count; i++) {
@@ -307,7 +309,7 @@ public class TrackedGuidTests {
   [Test]
   public async Task TrackedGuid_ImplicitToGuid_ReturnsUnderlyingValueAsync() {
     // Arrange
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
     var expectedGuid = tracked.Value;
 
     // Act
@@ -364,8 +366,8 @@ public class TrackedGuidTests {
   [Test]
   public async Task TrackedGuid_Equals_WithDifferentGuid_ReturnsFalseAsync() {
     // Arrange
-    var tracked1 = TrackedGuid.NewMedo();
-    var tracked2 = TrackedGuid.NewMedo();
+    var tracked1 = TrackedGuid.New();
+    var tracked2 = TrackedGuid.New();
 
     // Act & Assert
     await Assert.That(tracked1.Equals(tracked2)).IsFalse();
@@ -402,9 +404,9 @@ public class TrackedGuidTests {
   [Test]
   public async Task TrackedGuid_CompareTo_OrdersChronologicallyAsync() {
     // Arrange - Create IDs with small delay to ensure different timestamps
-    var earlier = TrackedGuid.NewMedo();
+    var earlier = TrackedGuid.New();
     await Task.Delay(10); // Ensure different timestamp
-    var later = TrackedGuid.NewMedo();
+    var later = TrackedGuid.New();
 
     // Act & Assert
     await Assert.That(earlier.CompareTo(later)).IsLessThan(0);
@@ -415,9 +417,9 @@ public class TrackedGuidTests {
   [Test]
   public async Task TrackedGuid_ComparisonOperators_WorkCorrectlyAsync() {
     // Arrange
-    var earlier = TrackedGuid.NewMedo();
+    var earlier = TrackedGuid.New();
     await Task.Delay(10);
-    var later = TrackedGuid.NewMedo();
+    var later = TrackedGuid.New();
 
     // Act & Assert
     await Assert.That(earlier < later).IsTrue();
@@ -433,7 +435,7 @@ public class TrackedGuidTests {
   [Test]
   public async Task TrackedGuid_ToString_ReturnsGuidStringAsync() {
     // Arrange
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
 
     // Act
     var stringValue = tracked.ToString();
@@ -449,7 +451,7 @@ public class TrackedGuidTests {
   [Test]
   public async Task TrackedGuid_IsTracking_OnlyAuthoritativeSourcesReturnTrueAsync() {
     // Arrange & Act - Create via different methods
-    var medo = TrackedGuid.NewMedo();
+    var medo = TrackedGuid.New();
     var microsoftV7 = TrackedGuid.NewMicrosoftV7();
     var random = TrackedGuid.NewRandom();
     var external = TrackedGuid.FromExternal(Guid.CreateVersion7());
@@ -522,6 +524,7 @@ public class TrackedGuidTests {
   [Arguments(GuidMetadatas.Version4 | GuidMetadatas.SourceMicrosoft)]
   [Arguments(GuidMetadatas.Version7 | GuidMetadatas.SourceMicrosoft)]
   [Arguments(GuidMetadatas.Version7 | GuidMetadatas.SourceMedo)]
+  [Arguments(GuidMetadatas.Version7 | GuidMetadatas.SourceWhizbang)]
   [Arguments(GuidMetadatas.Version7 | GuidMetadatas.SourceMarten)]
   [Arguments(GuidMetadatas.Version7 | GuidMetadatas.SourceUuidNext)]
   public async Task TrackedGuid_FromIntercepted_WithVariousMetadata_PreservesMetadataAsync(
@@ -628,5 +631,25 @@ public class TrackedGuidTests {
     // Assert
     await Assert.That((tracked.Metadata & GuidMetadatas.SourceUuidNext) != 0).IsTrue();
     await Assert.That(tracked.IsTimeOrdered).IsTrue();
+  }
+
+  [Test]
+  public async Task TrackedGuid_DetectedMedoId_HasSubMillisecondPrecisionAndIsTrackingAsync() {
+    // A consumer calling the Medo.Uuid7 package directly is detected by interception and keeps that source. The
+    // library carries a monotonic counter, so its ids are sub-millisecond precise like the framework's own.
+    var detected = TrackedGuid.FromIntercepted(TrackedGuid.New().Value, GuidMetadatas.Version7 | GuidMetadatas.SourceMedo);
+
+    await Assert.That(detected.SubMillisecondPrecision).IsTrue();
+    await Assert.That(detected.IsTracking).IsTrue();
+    await Assert.That((detected.Metadata & GuidMetadatas.SourceWhizbang) != 0).IsFalse();
+  }
+
+  [Test]
+  public async Task TrackedGuid_New_IsTaggedAsTheFrameworksOwnSourceAsync() {
+    var id = TrackedGuid.New();
+
+    await Assert.That(id.Metadata).IsEqualTo(GuidMetadatas.Version7 | GuidMetadatas.SourceWhizbang);
+    await Assert.That(id.SubMillisecondPrecision).IsTrue();
+    await Assert.That(id.IsTracking).IsTrue();
   }
 }

@@ -39,7 +39,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private readonly string _topicB = "inventory";
   private readonly int _batchIndex;
   private bool _isInitialized;
-  private readonly Guid _testPollerInstanceId = Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value;
+  private readonly Guid _testPollerInstanceId = Whizbang.Core.ValueObjects.TrackedGuid.New().Value;
   private readonly ServiceBusClient _sharedServiceBusClient;  // Shared client for test operations
 
   // Per-test resources (created during InitializeAsync)
@@ -328,7 +328,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value, "InventoryWorker"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "InventoryWorker"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
@@ -474,7 +474,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value, "BFF.API"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "BFF.API"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();

@@ -68,10 +68,10 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
   }
 
   private static async Task<Guid> _moveToDlqAsync(NpgsqlConnection conn, string sourceTable, Guid sourceId) {
-    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
     await _execAsync(conn,
       "SELECT move_to_dead_letters(@dlq, @tbl, @src, @reason, @err, @inst, @gen)",
-      ("dlq", dlqId), ("tbl", sourceTable), ("src", sourceId), ("reason", 5), ("err", "test"), ("inst", (Guid)TrackedGuid.NewMedo()), ("gen", "v0.502"));
+      ("dlq", dlqId), ("tbl", sourceTable), ("src", sourceId), ("reason", 5), ("err", "test"), ("inst", (Guid)TrackedGuid.New()), ("gen", "v0.502"));
     return dlqId;
   }
 
@@ -120,11 +120,11 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
   public async Task RecoverDeadLetter_OutboxRow_ReentersAsBackgroundAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     await _execAsync(conn, @"
       INSERT INTO wh_outbox (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number, priority)
       VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{}', '{}', 1, 11, NOW(), @stream, 0, 50)",
-      ("msg", messageId), ("stream", (Guid)TrackedGuid.NewMedo()));
+      ("msg", messageId), ("stream", (Guid)TrackedGuid.New()));
     var dlqId = await _moveToDlqAsync(conn, "wh_outbox", messageId);
 
     await Assert.That(await _recoverAsync(conn, dlqId)).IsTrue();
@@ -137,7 +137,7 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
   public async Task RecoverDeadLetter_InboxRow_ReentersAsBackgroundAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     await _execAsync(conn, @"
       WITH m AS (
         INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id, priority)
@@ -146,7 +146,7 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
       )
       INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number)
       SELECT message_id, stream_id, received_at, priority, is_event, 1, 11, 0 FROM m",
-      ("msg", messageId), ("stream", (Guid)TrackedGuid.NewMedo()));
+      ("msg", messageId), ("stream", (Guid)TrackedGuid.New()));
     var dlqId = await _moveToDlqAsync(conn, "wh_inbox", messageId);
 
     await Assert.That(await _recoverAsync(conn, dlqId)).IsTrue();
@@ -158,11 +158,11 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
   public async Task RecoverDeadLetter_PerspectiveRow_ReentersAsBackgroundAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     await _execAsync(conn, @"
       INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at, priority)
       VALUES (@work, @stream, 'TestPerspective', @event, 0, 1, 11, NOW(), 50)",
-      ("work", workId), ("stream", (Guid)TrackedGuid.NewMedo()), ("event", (Guid)TrackedGuid.NewMedo()));
+      ("work", workId), ("stream", (Guid)TrackedGuid.New()), ("event", (Guid)TrackedGuid.New()));
     var dlqId = await _moveToDlqAsync(conn, "wh_perspective_events", workId);
 
     await Assert.That(await _recoverAsync(conn, dlqId)).IsTrue();
@@ -175,10 +175,10 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
   public async Task RecoverDeadLetter_BrokerRow_ReentersAsBackgroundAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _build(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     _ = await coordinator.ImportBrokerDeadLetterAsync(new BrokerDeadLetterImport(
       MessageId: messageId,
-      StreamId: (Guid)TrackedGuid.NewMedo(),
+      StreamId: (Guid)TrackedGuid.New(),
       MessageType: "Whizbang.Core.Observability.MessageEnvelope`1[[Test.X, Test]], Whizbang.Core",
       Destination: "inbox/test-service-inbox",
       EnvelopeJson: """{"v":1,"p":{"Name":"restored"}}""",

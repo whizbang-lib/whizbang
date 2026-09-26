@@ -47,15 +47,15 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
     await transport.InitializeAsync();
 
     var checkpoint = new IntegrityCheckpoint {
-      CheckpointStreamId = TrackedGuid.NewMedo().Value,
-      OriginServiceId = TrackedGuid.NewMedo().Value,
+      CheckpointStreamId = TrackedGuid.New().Value,
+      OriginServiceId = TrackedGuid.New().Value,
       OriginServiceName = "origin-svc",
       FromCommitSequence = 1,
       ToCommitSequence = 2,
       Buckets = [],
     };
     var envelope = new MessageEnvelope<IntegrityCheckpoint> {
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = checkpoint,
       Hops = [],
       DispatchContext = new MessageDispatchContext {
@@ -109,13 +109,13 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
     _disposables.Add(transport);
     await transport.InitializeAsync();
 
-    var sessionId = TrackedGuid.NewMedo().Value;
+    var sessionId = TrackedGuid.New().Value;
     var serializer = new EnvelopeSerializer(jsonOptions);
     MessageEnvelope<IntegrityCheckpoint> _mk() => new() {
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = new IntegrityCheckpoint {
         CheckpointStreamId = sessionId,
-        OriginServiceId = TrackedGuid.NewMedo().Value,
+        OriginServiceId = TrackedGuid.New().Value,
         OriginServiceName = "origin-svc",
         FromCommitSequence = 1,
         ToCommitSequence = 1,
@@ -170,10 +170,10 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
     await transport.InitializeAsync();
 
     var envelope = new MessageEnvelope<IntegrityCheckpoint> {
-      MessageId = new MessageId(TrackedGuid.NewMedo()),
+      MessageId = new MessageId(TrackedGuid.New()),
       Payload = new IntegrityCheckpoint {
-        CheckpointStreamId = TrackedGuid.NewMedo().Value,
-        OriginServiceId = TrackedGuid.NewMedo().Value,
+        CheckpointStreamId = TrackedGuid.New().Value,
+        OriginServiceId = TrackedGuid.New().Value,
         OriginServiceName = "origin-svc",
         FromCommitSequence = 1,
         ToCommitSequence = 1,

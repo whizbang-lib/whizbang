@@ -36,7 +36,7 @@ public class TrackedGuidCoverageTests {
   [Test]
   public async Task Equals_WithNonTrackedGuidObject_ReturnsFalseAsync() {
     // Arrange
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
 
     // Act & Assert
     await Assert.That(tracked.Equals((object)"not-a-tracked-guid")).IsFalse();

@@ -50,7 +50,7 @@ public class ColdBootJourneyE2ETests {
   private sealed class ProbeModel;
 
   private sealed class Pod : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "coldboot-svc";
     public string HostName => "coldboot-host";
     public int ProcessId => 1;

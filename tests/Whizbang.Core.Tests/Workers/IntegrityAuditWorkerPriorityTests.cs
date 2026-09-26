@@ -30,7 +30,7 @@ public class IntegrityAuditWorkerPriorityTests {
   [Test]
   public async Task LocalGaps_TheReportAndTheRebuild_AreDispatchedInsideABackgroundHandlingAsync() {
     var coordinator = new AuditCoordinator {
-      Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
+      Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.New().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
     };
     var dispatcher = new CaptureDispatcher();
     var worker = _buildWorker(coordinator, dispatcher, new CaptureTransport(),
@@ -51,7 +51,7 @@ public class IntegrityAuditWorkerPriorityTests {
   [Test]
   public async Task KnownOrigins_TheManifestRequestIsBackgroundAsync() {
     var tracker = new IntegrityGapTracker();
-    var origin = TrackedGuid.NewMedo().Value;
+    var origin = TrackedGuid.New().Value;
     tracker.RecordCheckpoint(origin, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var transport = new CaptureTransport();
     var worker = _buildWorker(new AuditCoordinator(), new CaptureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
@@ -101,7 +101,7 @@ public class IntegrityAuditWorkerPriorityTests {
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
     public int ProcessId => 1;

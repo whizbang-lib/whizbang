@@ -45,8 +45,8 @@ public class NotifyKindAndPayloadSqlTests : EFCoreTestBase {
   public async Task NotifyInstanceOwners_KindAndPayloadAreIndependent_PayloadReachesTheWire_KindKeysTheStateAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _ownStreamAsync(conn, streamId, owner);
     const string kind = "utest-kind-longer-than-twenty-characters";
     const string payload = "utest-payload-longer-than-twenty-characters";
@@ -70,8 +70,8 @@ public class NotifyKindAndPayloadSqlTests : EFCoreTestBase {
     // qualified type name.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _ownStreamAsync(conn, streamId, owner);
     const string wireName = "ConsumerService.Signals.ProjectionCoverageGapDetected";
 
@@ -90,7 +90,7 @@ public class NotifyKindAndPayloadSqlTests : EFCoreTestBase {
     // three-argument form, instead of failing later on the key column.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT notify_instance_owners(@payload, ARRAY[@sid]::uuid[])";
@@ -106,8 +106,8 @@ public class NotifyKindAndPayloadSqlTests : EFCoreTestBase {
   public async Task NotifyInstanceOwners_DoorbellForm_PayloadIsTheKindAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var owner = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var owner = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _ownStreamAsync(conn, streamId, owner);
 
     var received = await _captureNotificationsAsync(conn, [owner], async () => {

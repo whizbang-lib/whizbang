@@ -138,8 +138,8 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var connection = await _openConnectionAsync(dbContext);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(
       connection, eventId, streamId, "Whizbang.Tests.OrphanEvent",
       eventData: "{\"answer\":42}", scope: "{\"t\":\"tenant-a\"}");
@@ -175,8 +175,8 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var connection = await _openConnectionAsync(dbContext);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(connection, eventId, streamId, "Whizbang.Tests.OrphanEvent");
     await _insertCursorAsync(connection, streamId, "P.One", eventId, status: 1);
     // PostLifecycle already fired for this event — durable marker present.
@@ -197,8 +197,8 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var connection = await _openConnectionAsync(dbContext);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(connection, eventId, streamId, "Whizbang.Tests.OrphanEvent");
     // Only one of the two expected perspectives has caught up — not orphaned yet.
     await _insertCursorAsync(connection, streamId, "P.One", eventId, status: 1);
@@ -221,12 +221,12 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var connection = await _openConnectionAsync(dbContext);
 
-    var s1 = (Guid)TrackedGuid.NewMedo();
-    var s2 = (Guid)TrackedGuid.NewMedo();
-    var s3 = (Guid)TrackedGuid.NewMedo();
-    var e1 = (Guid)TrackedGuid.NewMedo();
-    var e2 = (Guid)TrackedGuid.NewMedo();
-    var e3 = (Guid)TrackedGuid.NewMedo();
+    var s1 = (Guid)TrackedGuid.New();
+    var s2 = (Guid)TrackedGuid.New();
+    var s3 = (Guid)TrackedGuid.New();
+    var e1 = (Guid)TrackedGuid.New();
+    var e2 = (Guid)TrackedGuid.New();
+    var e3 = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(connection, e1, s1, "Whizbang.Tests.OrphanEvent");
     await _insertEventStoreRowAsync(connection, e2, s2, "Whizbang.Tests.OtherOrphanEvent");
     await _insertEventStoreRowAsync(connection, e3, s3, "Whizbang.Tests.OrphanEvent");
@@ -256,8 +256,8 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     var connection = await _openConnectionAsync(dbContext);
 
     // A fully-qualifying orphan exists, but the request maps don't ask about it.
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(connection, eventId, streamId, "Whizbang.Tests.OrphanEvent");
     await _insertCursorAsync(connection, streamId, "P.One", eventId, status: 1);
 
@@ -330,15 +330,15 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var connection = await _openConnectionAsync(dbContext);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(connection, eventId, streamId, "T");
 
     // status 33 = Completed(1) | RewindRequired(32); status 32 = RewindRequired alone.
     await _insertCursorAsync(connection, streamId, "A.First", eventId, status: 33, rewindTriggerEventId: eventId);
     await _insertCursorAsync(connection, streamId, "B.Second", lastEventId: null, status: 32);
     // Unflagged cursor on another stream must not appear.
-    await _insertCursorAsync(connection, (Guid)TrackedGuid.NewMedo(), "C.Third", lastEventId: null, status: 1);
+    await _insertCursorAsync(connection, (Guid)TrackedGuid.New(), "C.Third", lastEventId: null, status: 1);
 
     var coordinator = _createCoordinator(dbContext);
     var cursors = await coordinator.GetCursorsRequiringRewindAsync();
@@ -368,9 +368,9 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     var connection = await _openConnectionAsync(dbContext);
 
     // Statuses without bit 5: Completed(1), Failed(2), and a higher non-rewind bit (16).
-    await _insertCursorAsync(connection, (Guid)TrackedGuid.NewMedo(), "P.One", lastEventId: null, status: 1);
-    await _insertCursorAsync(connection, (Guid)TrackedGuid.NewMedo(), "P.Two", lastEventId: null, status: 2);
-    await _insertCursorAsync(connection, (Guid)TrackedGuid.NewMedo(), "P.Three", lastEventId: null, status: 16);
+    await _insertCursorAsync(connection, (Guid)TrackedGuid.New(), "P.One", lastEventId: null, status: 1);
+    await _insertCursorAsync(connection, (Guid)TrackedGuid.New(), "P.Two", lastEventId: null, status: 2);
+    await _insertCursorAsync(connection, (Guid)TrackedGuid.New(), "P.Three", lastEventId: null, status: 16);
 
     var coordinator = _createCoordinator(dbContext);
     var cursors = await coordinator.GetCursorsRequiringRewindAsync();

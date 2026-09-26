@@ -197,7 +197,7 @@ public class PriorityOnTheWireEndToEndTests {
     await consumer.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     // 4. Drain: the real outbox drain worker publishing through the real transport publish strategy.
-    var coordinator = new PipelineCoordinator { LocalServiceId = (Guid)TrackedGuid.NewMedo() };
+    var coordinator = new PipelineCoordinator { LocalServiceId = (Guid)TrackedGuid.New() };
     coordinator.OutboxRowsByStream[streamId] = [outboxRow];
     var workerServices = new ServiceCollection();
     workerServices.TryAddWhizbangDefaults();
@@ -339,7 +339,7 @@ public class PriorityOnTheWireEndToEndTests {
   #region Workers' surroundings
 
   private sealed class InstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "wire-priority-svc";
     public string HostName => "wire-priority-host";
     public int ProcessId => 1;

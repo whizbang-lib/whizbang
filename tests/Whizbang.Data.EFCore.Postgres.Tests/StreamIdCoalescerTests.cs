@@ -57,7 +57,7 @@ public class StreamIdCoalescerTests {
   /// </summary>
   [Test]
   public async Task Coalesce_OutboxRowWithEmptyStreamId_FallsBackToWorkIdAndWarnsAsync() {
-    Guid workId = TrackedGuid.NewMedo();
+    Guid workId = TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       new() {
         Source = "outbox",
@@ -85,7 +85,7 @@ public class StreamIdCoalescerTests {
   /// </summary>
   [Test]
   public async Task Coalesce_InboxRowWithEmptyStreamId_FallsBackToWorkIdAndWarnsAsync() {
-    Guid workId = TrackedGuid.NewMedo();
+    Guid workId = TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       new() {
         Source = "inbox",
@@ -111,7 +111,7 @@ public class StreamIdCoalescerTests {
   /// </summary>
   [Test]
   public async Task Coalesce_PerspectiveRowWithEmptyStreamId_FallsBackToWorkIdAndWarnsAsync() {
-    Guid workId = TrackedGuid.NewMedo();
+    Guid workId = TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       new() {
         Source = "perspective_stream",
@@ -137,8 +137,8 @@ public class StreamIdCoalescerTests {
   /// </summary>
   [Test]
   public async Task Coalesce_NormalRows_NoWarningsAsync() {
-    Guid workId = TrackedGuid.NewMedo();
-    Guid streamId = TrackedGuid.NewMedo();
+    Guid workId = TrackedGuid.New();
+    Guid streamId = TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       new() {
         Source = "outbox",
@@ -162,7 +162,7 @@ public class StreamIdCoalescerTests {
   /// </summary>
   [Test]
   public async Task Coalesce_NullStreamId_FallsBackToWorkIdSilentlyAsync() {
-    Guid workId = TrackedGuid.NewMedo();
+    Guid workId = TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       new() {
         Source = "outbox",
@@ -210,8 +210,8 @@ public class StreamIdCoalescerTests {
   /// </summary>
   [Test]
   public async Task Coalesce_UnknownSource_ProducesEmptyListsAsync() {
-    Guid workId = TrackedGuid.NewMedo();
-    Guid streamId = TrackedGuid.NewMedo();
+    Guid workId = TrackedGuid.New();
+    Guid streamId = TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       new() { Source = "receptor", WorkId = workId, StreamId = streamId },
       new() { Source = "unknown_future_source", WorkId = workId, StreamId = streamId },
@@ -233,7 +233,7 @@ public class StreamIdCoalescerTests {
   /// </summary>
   [Test]
   public async Task Coalesce_NullLogger_DoesNotThrowAsync() {
-    Guid workId = TrackedGuid.NewMedo();
+    Guid workId = TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       new() { Source = "outbox", WorkId = workId, StreamId = Guid.Empty },
     };
@@ -250,9 +250,9 @@ public class StreamIdCoalescerTests {
   /// </summary>
   [Test]
   public async Task Coalesce_MultipleEmptyStreamRows_OneWarningEachAsync() {
-    Guid workId1 = TrackedGuid.NewMedo();
-    Guid workId2 = TrackedGuid.NewMedo();
-    Guid workId3 = TrackedGuid.NewMedo();
+    Guid workId1 = TrackedGuid.New();
+    Guid workId2 = TrackedGuid.New();
+    Guid workId3 = TrackedGuid.New();
     var rows = new List<WorkBatchRow> {
       new() { Source = "outbox", WorkId = workId1, StreamId = Guid.Empty },
       new() { Source = "outbox", WorkId = workId2, StreamId = Guid.Empty },

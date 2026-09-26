@@ -76,9 +76,9 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   public async Task GetEventsBetweenAsync_WellFormedRows_BuildsEnvelopesInOrderAsync() {
     // Arrange - two rows with full metadata (message_id + hops, no dc)
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId1 = (Guid)TrackedGuid.NewMedo();
-    var messageId2 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId1 = (Guid)TrackedGuid.New();
+    var messageId2 = (Guid)TrackedGuid.New();
     var hopsJson = _serializeHops([_createHop()]);
 
     await _seedRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "first"), _metadataJson(messageId1, hopsJson));
@@ -104,8 +104,8 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   public async Task GetEventsBetweenAsync_EventDataJsonNull_ThrowsFailedToDeserializeAsync() {
     // Arrange - event_data holds the JSON literal null, so Deserialize returns null
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    await _seedRowAsync(streamId, _testEventType(), "null", _metadataJson((Guid)TrackedGuid.NewMedo()));
+    var streamId = (Guid)TrackedGuid.New();
+    await _seedRowAsync(streamId, _testEventType(), "null", _metadataJson((Guid)TrackedGuid.New()));
 
     // Act
     InvalidOperationException? caught = null;
@@ -128,10 +128,10 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   public async Task GetEventsBetweenPolymorphicAsync_UnknownEventType_SkipsRowAsync() {
     // Arrange - one resolvable row and one row whose type is not in the lookup
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var knownMessageId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var knownMessageId = (Guid)TrackedGuid.New();
     await _seedRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "known"), _metadataJson(knownMessageId));
-    await _seedRowAsync(streamId, "Some.Unknown.EventType, Nowhere", _eventDataJson(streamId, "unknown"), _metadataJson((Guid)TrackedGuid.NewMedo()));
+    await _seedRowAsync(streamId, "Some.Unknown.EventType, Nowhere", _eventDataJson(streamId, "unknown"), _metadataJson((Guid)TrackedGuid.New()));
 
     // Act
     var events = await store.GetEventsBetweenPolymorphicAsync(
@@ -149,8 +149,8 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   public async Task GetEventsBetweenPolymorphicAsync_EventDataJsonNull_ThrowsFailedToDeserializeAsync() {
     // Arrange - resolvable type but event_data is the JSON literal null
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    await _seedRowAsync(streamId, _testEventType(), "null", _metadataJson((Guid)TrackedGuid.NewMedo()));
+    var streamId = (Guid)TrackedGuid.New();
+    await _seedRowAsync(streamId, _testEventType(), "null", _metadataJson((Guid)TrackedGuid.New()));
 
     // Act
     InvalidOperationException? caught = null;
@@ -174,7 +174,7 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   public async Task GetEventsBetweenAsync_MetadataJsonNull_ThrowsFailedToDeserializeMetadataAsync() {
     // Arrange - metadata column holds the JSON literal null
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "payload"), "null");
 
     // Act
@@ -194,7 +194,7 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   public async Task GetEventsBetweenAsync_MetadataMissingMessageId_ThrowsAsync() {
     // Arrange - valid JSON object but no message_id key
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "payload"), "{}");
 
     // Act
@@ -219,8 +219,8 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
     // event on every retry until it parked. A hop is synthesized so the persisted scope survives
     // the round trip.
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
     await _seedRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "hopless"),
       _metadataJson(messageId), """{"t":"tenant-x"}""");
@@ -245,8 +245,8 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
     // Arrange - "hops": null exercises the Deserialize-returns-null ?? [] arm —
     // scope column is SQL NULL, covering the scope-absent early return
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
     await _seedRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "null-hops"), _metadataJson(messageId, "null"));
 
     // Act
@@ -261,7 +261,7 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   public async Task GetEventsBetweenAsync_DispatchContextInMetadata_RestoresStoredContextAsync() {
     // Arrange - metadata carries a "dc" entry distinct from the fallback context
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var dcJson = _serializeDispatchContext(new MessageDispatchContext {
       Mode = DispatchModes.Local,
       Source = MessageSource.Local,
@@ -269,7 +269,7 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
     });
     await _seedRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "with-dc"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([_createHop()]), dcJson));
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([_createHop()]), dcJson));
 
     // Act
     var events = await store.GetEventsBetweenAsync<TestEvent>(streamId, afterEventId: null, upToEventId: Guid.Empty);
@@ -285,10 +285,10 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   public async Task GetEventsBetweenAsync_DispatchContextJsonNull_FallsBackToDefaultContextAsync() {
     // Arrange - "dc": null deserializes to null, exercising the as-null fallback arm
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "null-dc"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([_createHop()]), "null"));
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([_createHop()]), "null"));
 
     // Act
     var events = await store.GetEventsBetweenAsync<TestEvent>(streamId, afterEventId: null, upToEventId: Guid.Empty);
@@ -308,10 +308,10 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   public async Task GetEventsBetweenAsync_ScopeShortKeys_RestoresScopeOnFirstHopAsync() {
     // Arrange - PerspectiveScope short-key format (t/u/c/o)
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "scoped"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([_createHop()])),
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([_createHop()])),
       """{"t":"tenant-1","u":"user-1","c":"customer-1","o":"org-1"}""");
 
     // Act
@@ -331,10 +331,10 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   public async Task GetEventsBetweenAsync_ScopeLegacyLongKeys_RestoresTenantAndUserAsync() {
     // Arrange - legacy snake_case scope keys
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "legacy-scope"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([_createHop()])),
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([_createHop()])),
       """{"tenant_id":"tenant-legacy","user_id":"user-legacy"}""");
 
     // Act
@@ -354,10 +354,10 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   public async Task GetEventsBetweenAsync_ScopeAllNullValues_LeavesHopScopeNullAsync() {
     // Arrange - all keys present but JSON null, so no PerspectiveScope is built
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "empty-scope"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([_createHop()])),
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([_createHop()])),
       """{"t":null,"u":null,"c":null,"o":null}""");
 
     // Act
@@ -374,10 +374,10 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
     // Arrange - scope column holds the JSON literal null; the scope dictionary
     // deserializes to null and restoration is silently skipped
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "null-scope"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([_createHop()])),
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([_createHop()])),
       "null");
 
     // Act
@@ -393,13 +393,13 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
     // Arrange - the serialized hop already carries a scope delta; the scope column
     // holds a DIFFERENT tenant that must NOT replace it
     var store = await _createStoreAsync();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var scopedHop = _createHop() with {
       Scope = ScopeDelta.FromPerspectiveScope(new PerspectiveScope { TenantId = "original-tenant" })
     };
     await _seedRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "pre-scoped"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([scopedHop])),
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([scopedHop])),
       """{"t":"column-tenant"}""");
 
     // Act
@@ -422,11 +422,11 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
     var store = await _createStoreAsync();
     var streamEvents = new List<StreamEventData> {
       new() {
-        StreamId = (Guid)TrackedGuid.NewMedo(),
-        EventId = (Guid)TrackedGuid.NewMedo(),
+        StreamId = (Guid)TrackedGuid.New(),
+        EventId = (Guid)TrackedGuid.New(),
         EventType = _testEventType(),
         EventData = "{}",
-        EventWorkId = (Guid)TrackedGuid.NewMedo()
+        EventWorkId = (Guid)TrackedGuid.New()
       }
     };
 
@@ -487,7 +487,7 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
       @"INSERT INTO three_col_events (event_id, stream_id, event_type, event_data, metadata, scope)
         VALUES (@EventId, @StreamId, @EventType, @EventData, @Metadata, @Scope)",
       new {
-        EventId = (Guid)TrackedGuid.NewMedo(),
+        EventId = (Guid)TrackedGuid.New(),
         StreamId = streamId,
         EventType = eventType,
         EventData = eventDataJson,
@@ -529,7 +529,7 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
       Type = HopType.Current,
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "DapperEventStoreBaseTests",
-        InstanceId = (Guid)TrackedGuid.NewMedo(),
+        InstanceId = (Guid)TrackedGuid.New(),
         HostName = "test-host",
         ProcessId = 12345
       }

@@ -19,11 +19,11 @@ public class RestockInventoryWorkflowTests {
   private static RabbitMqIntegrationFixture? _fixture;
 
   // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
-  private static readonly ProductId _testProdRestock1 = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
-  private static readonly ProductId _testProdMultiRestock = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
-  private static readonly ProductId _testProdRestockZero = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
-  private static readonly ProductId _testProdRestockZeroQty = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
-  private static readonly ProductId _testProdLargeRestock = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+  private static readonly ProductId _testProdRestock1 = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
+  private static readonly ProductId _testProdMultiRestock = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
+  private static readonly ProductId _testProdRestockZero = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
+  private static readonly ProductId _testProdRestockZeroQty = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
+  private static readonly ProductId _testProdLargeRestock = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]

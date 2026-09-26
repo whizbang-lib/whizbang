@@ -38,10 +38,10 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     // The two-target fence and the slide-on-suppress are preserved.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var suppressed = (Guid)TrackedGuid.NewMedo();
-    var control = (Guid)TrackedGuid.NewMedo();
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
+    var suppressed = (Guid)TrackedGuid.New();
+    var control = (Guid)TrackedGuid.New();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, suppressed, TimeSpan.Zero);
     await _registerInstanceAsync(conn, control, TimeSpan.Zero);
     await _ownStreamAsync(conn, streamA, suppressed);
@@ -71,8 +71,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
   public async Task StaleWatermark_Fires_WithoutArmingSuppressionAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _ownStreamAsync(conn, stream, inst);
     // no watermark row at all — first store after idle
@@ -106,8 +106,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     // that arms the linger.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _ownStreamAsync(conn, stream, inst);
 
@@ -133,8 +133,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
   public async Task DeadInstance_FreshWatermark_StillFiresAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var dead = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var dead = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, dead, TimeSpan.FromMinutes(-5));  // past heartbeat window
     await _ownStreamAsync(conn, stream, dead);
     await _setWatermarkAsync(conn, dead, ageSeconds: 1);
@@ -155,8 +155,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
       set.CommandText = "UPDATE wh_settings SET setting_value = '0' WHERE setting_key = 'notify_debounce_seconds'";
       await set.ExecuteNonQueryAsync();
     }
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _ownStreamAsync(conn, stream, inst);
     await _setWatermarkAsync(conn, inst, ageSeconds: 1);
@@ -185,14 +185,14 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
   public async Task ClaimWork_FindingWork_StampsTheWatermarkAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await using (var cmd = conn.CreateCommand()) {
       cmd.CommandText = @"INSERT INTO wh_outbox
                           (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, instance_id, lease_expiry, stream_id, partition_number)
                           VALUES (@msg, 'topic', 'T', '{}', '{}', 1, 0, NOW(), @inst, NOW() + INTERVAL '5 minutes', @sid, 0)";
-      cmd.Parameters.AddWithValue("msg", (Guid)TrackedGuid.NewMedo());
+      cmd.Parameters.AddWithValue("msg", (Guid)TrackedGuid.New());
       cmd.Parameters.AddWithValue("inst", inst);
       cmd.Parameters.AddWithValue("sid", stream);
       await cmd.ExecuteNonQueryAsync();
@@ -214,9 +214,9 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     // it is a lie that lets the debounce suppress the fence-clearing stamp's make-up ring.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     // Fence-held event: in wh_event_store with commit_sequence NULL (not yet stamped).
     await _insertEventStoreRowAsync(conn, eventId, stream, commitSequenceNull: true);
@@ -240,9 +240,9 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     // protection the debounce provides depends on a busy drainer keeping its watermark fresh).
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _insertEventStoreRowAsync(conn, eventId, stream, commitSequenceNull: false);
     await _insertPerspectiveEventAsync(conn, stream, eventId, inst);
@@ -258,7 +258,7 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
   public async Task ClaimWork_Empty_DoesNotStampAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
 
     await _claimAsync(conn, inst);
@@ -275,8 +275,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
   public async Task FreshWatermark_OfAnotherKind_DoesNotSuppressAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _ownStreamAsync(conn, stream, inst);
     await _setWatermarkAsync(conn, inst, ageSeconds: 1, kind: "outbox");  // fresh, WRONG kind
@@ -300,8 +300,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     // sustained flood, not mere recent draining: one doorbell is not a storm.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _ownStreamAsync(conn, stream, inst);
     await _setWatermarkAsync(conn, inst, ageSeconds: 2);   // fresh: drained 2s ago, linger active
@@ -323,8 +323,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     // this doorbell (primed at 4, arriving 30ms after the last — inside the 100ms rapid gap).
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _ownStreamAsync(conn, stream, inst);
     await _primeRowAsync(conn, inst, "inbox", lastWorkAgeSeconds: 2, lastAttemptMsAgo: 30, rapidRun: 4);
@@ -349,8 +349,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     // found-work watermark — only claim_work owns last_work_at.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _ownStreamAsync(conn, stream, inst);
     await _primeRowAsync(conn, inst, "inbox", lastWorkAgeSeconds: 2, lastAttemptMsAgo: 5000, rapidRun: 10);
@@ -375,8 +375,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     // of rapid_run or watermark freshness. Preserves 130's off-switch semantics adaptively.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _ownStreamAsync(conn, stream, inst);
     await _setSettingAsync(conn, "notify_debounce_seconds", "0");
@@ -399,8 +399,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     // cannot suppress a later doorbell — a NULL watermark can never satisfy the freshness gate.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var inst = (Guid)TrackedGuid.NewMedo();
-    var stream = (Guid)TrackedGuid.NewMedo();
+    var inst = (Guid)TrackedGuid.New();
+    var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _ownStreamAsync(conn, stream, inst);
     // No prior row and no claim_work arming: the controller must create the row on the fire.

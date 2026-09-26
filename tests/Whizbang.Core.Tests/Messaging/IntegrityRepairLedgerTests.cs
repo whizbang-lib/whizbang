@@ -23,7 +23,7 @@ public class IntegrityRepairLedgerTests {
   private const int MAX_ATTEMPTS = 3;
 
   private static IntegrityRepairLedger.DivergenceKey _key(Guid? origin = null, Guid? stream = null) => new(
-    origin ?? TrackedGuid.NewMedo().Value, "tenant-a", "Contracts.TypeX", stream ?? TrackedGuid.NewMedo().Value);
+    origin ?? TrackedGuid.New().Value, "tenant-a", "Contracts.TypeX", stream ?? TrackedGuid.New().Value);
 
   [Test]
   public async Task FirstSighting_ReportsAndRepairsAsync() {

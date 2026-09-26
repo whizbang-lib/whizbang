@@ -170,7 +170,7 @@ public class TransportConsumerWorkerDirectedTargetTests {
   /// so accepted messages genuinely reach storage and the assertions discriminate.</summary>
   private static MessageEnvelope<JsonElement> _createEnvelope() {
     return new MessageEnvelope<JsonElement> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = JsonSerializer.SerializeToElement(new FakeDirectedEvent()),
       Hops = [
         new MessageHop {

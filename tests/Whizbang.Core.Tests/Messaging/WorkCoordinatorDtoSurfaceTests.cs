@@ -28,7 +28,7 @@ public class WorkCoordinatorDtoSurfaceTests {
 
   [Test]
   public async Task MessageCompletion_StatusGetter_ReturnsInitializedFlagsAsync() {
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var completion = new MessageCompletion {
       MessageId = messageId,
       Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored
@@ -41,7 +41,7 @@ public class WorkCoordinatorDtoSurfaceTests {
   [Test]
   public async Task MessageFailure_CompletedStatusGetter_ReturnsInitializedFlagsAsync() {
     var failure = new MessageFailure {
-      MessageId = (Guid)TrackedGuid.NewMedo(),
+      MessageId = (Guid)TrackedGuid.New(),
       CompletedStatus = MessageProcessingStatus.Stored,
       Error = "boom"
     };
@@ -56,11 +56,11 @@ public class WorkCoordinatorDtoSurfaceTests {
 
   [Test]
   public async Task OutboxWork_OptionalProperties_RoundTripAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     using var doc = JsonDocument.Parse("7");
     var metadata = new Dictionary<string, JsonElement> { ["outbox_completions_processed"] = doc.RootElement.Clone() };
     var work = new OutboxWork {
-      MessageId = (Guid)TrackedGuid.NewMedo(),
+      MessageId = (Guid)TrackedGuid.New(),
       Destination = "orders-topic",
       Envelope = _createJsonEnvelope(),
       EnvelopeType = "EnvType, TestAssembly",
@@ -87,10 +87,10 @@ public class WorkCoordinatorDtoSurfaceTests {
     using var doc = JsonDocument.Parse("9");
     var metadata = new Dictionary<string, JsonElement> { ["inbox_completions_processed"] = doc.RootElement.Clone() };
     var work = new InboxWork {
-      MessageId = (Guid)TrackedGuid.NewMedo(),
+      MessageId = (Guid)TrackedGuid.New(),
       Envelope = _createJsonEnvelope(),
       MessageType = "MsgType, TestAssembly",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PartitionNumber = 23,
       Attempts = 2,
       Status = MessageProcessingStatus.Stored,
@@ -108,11 +108,11 @@ public class WorkCoordinatorDtoSurfaceTests {
 
   [Test]
   public async Task PerspectiveCursorCompletion_ProcessedEventIds_DefaultsEmptyAndRoundTripsAsync() {
-    var processedId = (Guid)TrackedGuid.NewMedo();
+    var processedId = (Guid)TrackedGuid.New();
     var withDefaults = new PerspectiveCursorCompletion {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PerspectiveName = "OrderPerspective",
-      LastEventId = (Guid)TrackedGuid.NewMedo(),
+      LastEventId = (Guid)TrackedGuid.New(),
       Status = PerspectiveProcessingStatus.Completed
     };
     var withIds = withDefaults with { ProcessedEventIds = [processedId], EventsProcessed = 1 };
@@ -125,9 +125,9 @@ public class WorkCoordinatorDtoSurfaceTests {
 
   [Test]
   public async Task PerspectiveCursorFailure_AllProperties_RoundTripAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var lastEventId = (Guid)TrackedGuid.NewMedo();
-    var processedId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var lastEventId = (Guid)TrackedGuid.New();
+    var processedId = (Guid)TrackedGuid.New();
     var failure = new PerspectiveCursorFailure {
       StreamId = streamId,
       PerspectiveName = "OrderPerspective",
@@ -148,12 +148,12 @@ public class WorkCoordinatorDtoSurfaceTests {
 
   [Test]
   public async Task PerspectiveWork_AllProperties_RoundTripAsync() {
-    var lastProcessed = (Guid)TrackedGuid.NewMedo();
+    var lastProcessed = (Guid)TrackedGuid.New();
     using var doc = JsonDocument.Parse("3");
     var metadata = new Dictionary<string, JsonElement> { ["perspective_completions_processed"] = doc.RootElement.Clone() };
     var work = new PerspectiveWork {
-      WorkId = (Guid)TrackedGuid.NewMedo(),
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      WorkId = (Guid)TrackedGuid.New(),
+      StreamId = (Guid)TrackedGuid.New(),
       PerspectiveName = "OrderPerspective",
       LastProcessedEventId = lastProcessed,
       Status = PerspectiveProcessingStatus.CatchingUp,
@@ -173,13 +173,13 @@ public class WorkCoordinatorDtoSurfaceTests {
   [Test]
   public async Task StreamEventData_AllProperties_RoundTripAsync() {
     var data = new StreamEventData {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
-      EventId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
+      EventId = (Guid)TrackedGuid.New(),
       EventType = "MyApp.Events.OrderCreated, MyApp",
       EventData = "{\"total\":10}",
       Metadata = "{\"MessageId\":\"m\"}",
       Scope = "{\"TenantId\":\"t\"}",
-      EventWorkId = (Guid)TrackedGuid.NewMedo(),
+      EventWorkId = (Guid)TrackedGuid.New(),
       PerspectiveName = "OrderPerspective",
       CommitSequence = 42,
       Attempts = 2
@@ -200,10 +200,10 @@ public class WorkCoordinatorDtoSurfaceTests {
 
   [Test]
   public async Task OutboxBatchRow_AllProperties_RoundTripAsync() {
-    var originServiceId = (Guid)TrackedGuid.NewMedo();
+    var originServiceId = (Guid)TrackedGuid.New();
     var row = new OutboxBatchRow {
-      MessageId = (Guid)TrackedGuid.NewMedo(),
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      MessageId = (Guid)TrackedGuid.New(),
+      StreamId = (Guid)TrackedGuid.New(),
       Destination = "orders-topic",
       MessageType = "MsgType, TestAssembly",
       EnvelopeType = "EnvType, TestAssembly",
@@ -232,8 +232,8 @@ public class WorkCoordinatorDtoSurfaceTests {
   [Test]
   public async Task InboxBatchRow_AllProperties_RoundTripAsync() {
     var row = new InboxBatchRow {
-      MessageId = (Guid)TrackedGuid.NewMedo(),
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      MessageId = (Guid)TrackedGuid.New(),
+      StreamId = (Guid)TrackedGuid.New(),
       HandlerName = "ServiceBusConsumer",
       MessageType = "MsgType, TestAssembly",
       EventData = "{\"e\":1}",
@@ -259,7 +259,7 @@ public class WorkCoordinatorDtoSurfaceTests {
 
   [Test]
   public async Task PurgedOrphanInboxRow_RecordSemantics_EqualityDeconstructToStringAsync() {
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     var row = new PurgedOrphanInboxRow(messageId, "MsgType, TestAssembly", "OrderReceptor");
     var same = new PurgedOrphanInboxRow(messageId, "MsgType, TestAssembly", "OrderReceptor");
     var different = row with { HandlerName = "OtherReceptor" };
@@ -298,9 +298,9 @@ public class WorkCoordinatorDtoSurfaceTests {
 
   [Test]
   public async Task RewindCursorInfo_RecordSemantics_EqualityDeconstructToStringAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var lastEventId = (Guid)TrackedGuid.NewMedo();
-    var triggerEventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var lastEventId = (Guid)TrackedGuid.New();
+    var triggerEventId = (Guid)TrackedGuid.New();
     var info = new RewindCursorInfo(streamId, "OrderPerspective", lastEventId, triggerEventId);
     var same = new RewindCursorInfo(streamId, "OrderPerspective", lastEventId, triggerEventId);
     var different = info with { LastEventId = null };
@@ -320,12 +320,12 @@ public class WorkCoordinatorDtoSurfaceTests {
 
   [Test]
   public async Task OrphanedLifecycleEvent_RecordSemantics_EqualityAndDeconstructAsync() {
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     var envelope = _createJsonEnvelope();
     var orphan = new OrphanedLifecycleEvent(eventId, streamId, envelope);
     var same = new OrphanedLifecycleEvent(eventId, streamId, envelope);
-    var different = orphan with { EventId = (Guid)TrackedGuid.NewMedo() };
+    var different = orphan with { EventId = (Guid)TrackedGuid.New() };
     var (deconstructedEventId, deconstructedStreamId, deconstructedEnvelope) = orphan;
 
     await Assert.That(orphan).IsEqualTo(same);
@@ -338,8 +338,8 @@ public class WorkCoordinatorDtoSurfaceTests {
 
   [Test]
   public async Task PendingPerspectiveEvent_RecordSemantics_DefaultsEqualityToStringAsync() {
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     var pending = new PendingPerspectiveEvent(workId, eventId);
     var same = new PendingPerspectiveEvent(workId, eventId);
     var stamped = pending with { CommitSequence = 77 };
@@ -363,7 +363,7 @@ public class WorkCoordinatorDtoSurfaceTests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope() {
     using var doc = JsonDocument.Parse("{}");
     return new MessageEnvelope<JsonElement> {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = doc.RootElement.Clone(),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

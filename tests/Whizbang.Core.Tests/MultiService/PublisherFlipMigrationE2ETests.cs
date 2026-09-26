@@ -88,7 +88,7 @@ namespace Whizbang.Core.Tests.MultiService {
     private static async Task _publishProbeAsync(
         MultiServiceHarness harness, string topic, string marker, Guid? messageId = null) {
       var envelope = new MessageEnvelope<WbFlip.Orders.Commands.FlipProbe> {
-        MessageId = messageId is { } id ? MessageId.From(id) : new MessageId(TrackedGuid.NewMedo()),
+        MessageId = messageId is { } id ? MessageId.From(id) : new MessageId(TrackedGuid.New()),
         Payload = new WbFlip.Orders.Commands.FlipProbe(marker),
         Hops = [
           new MessageHop {

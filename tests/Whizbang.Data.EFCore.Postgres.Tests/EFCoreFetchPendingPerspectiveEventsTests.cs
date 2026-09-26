@@ -28,9 +28,9 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
     var coord = Coord(dbContext);
 
     var result = await coord.FetchPendingPerspectiveEventsAsync(
-      streamId: (Guid)TrackedGuid.NewMedo(),
+      streamId: (Guid)TrackedGuid.New(),
       perspectiveName: "Empty",
-      instanceId: (Guid)TrackedGuid.NewMedo());
+      instanceId: (Guid)TrackedGuid.New());
 
     await Assert.That(result.Count).IsEqualTo(0);
   }
@@ -44,11 +44,11 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
 
     await using (var ins = conn.CreateCommand()) {
       ins.CommandText = @"
@@ -113,11 +113,11 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     const long stampedCommitSequence = 234500L;
 
     await using (var ins = conn.CreateCommand()) {
@@ -178,11 +178,11 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
-    var workId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
     const long stampedCommitSequence = 571800L;
 
     await using (var ins = conn.CreateCommand()) {
@@ -247,8 +247,8 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
 
     await using (var ins = conn.CreateCommand()) {
       ins.CommandText = """

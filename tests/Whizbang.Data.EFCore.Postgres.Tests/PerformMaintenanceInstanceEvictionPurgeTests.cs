@@ -25,7 +25,7 @@ public class PerformMaintenanceInstanceEvictionPurgeTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var oldInstance = (Guid)TrackedGuid.NewMedo();
+    var oldInstance = (Guid)TrackedGuid.New();
     await _insertTombstoneAsync(conn, oldInstance, evictedAtOffset: TimeSpan.FromHours(-25));
 
     var affected = await _runMaintenanceTaskAsync(conn, "purge_instance_evictions");
@@ -40,11 +40,11 @@ public class PerformMaintenanceInstanceEvictionPurgeTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var recentInstance = (Guid)TrackedGuid.NewMedo();
+    var recentInstance = (Guid)TrackedGuid.New();
     await _insertTombstoneAsync(conn, recentInstance, evictedAtOffset: TimeSpan.FromHours(-1));
     // Control: an old tombstone alongside the recent one. If the purge task were a no-op, BOTH
     // would survive and this test would pass for the wrong reason — the control rules that out.
-    var oldInstance = (Guid)TrackedGuid.NewMedo();
+    var oldInstance = (Guid)TrackedGuid.New();
     await _insertTombstoneAsync(conn, oldInstance, evictedAtOffset: TimeSpan.FromHours(-25));
 
     await _runMaintenanceTaskAsync(conn, "purge_instance_evictions");

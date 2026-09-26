@@ -18,7 +18,7 @@ public sealed class LifecycleStageAwaiter<TMessage> : IAwaiterIdentity, IDisposa
   private readonly TaskCompletionSource<TMessage> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+  public Guid AwaiterId { get; } = TrackedGuid.New();
 
   private readonly IReceptorRegistry _registry;
   private readonly LifecycleStage _stage;

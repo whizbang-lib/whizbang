@@ -42,7 +42,7 @@ public class ApplyStackQuerySqlTests : EFCoreTestBase {
         "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at) " +
         "VALUES (@event_id, @stream_id, @stream_id, 'TestAggregate', @event_type, " +
         "        CASE WHEN @scope IS NULL THEN NULL ELSE @scope::jsonb END, @version, @created_at)";
-      cmd.Parameters.AddWithValue("event_id", (Guid)TrackedGuid.NewMedo());
+      cmd.Parameters.AddWithValue("event_id", (Guid)TrackedGuid.New());
       cmd.Parameters.AddWithValue("stream_id", streamId);
       cmd.Parameters.AddWithValue("event_type", eventTypes[version - 1]);
       cmd.Parameters.Add(new NpgsqlParameter("scope", NpgsqlTypes.NpgsqlDbType.Text) {

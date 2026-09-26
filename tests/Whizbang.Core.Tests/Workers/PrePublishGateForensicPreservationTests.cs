@@ -80,7 +80,7 @@ public class PrePublishGateForensicPreservationTests {
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -180,8 +180,8 @@ public class PrePublishGateForensicPreservationTests {
   /// </summary>
   [Test]
   public async Task PrePublishGate_ControlPlaneRow_IsDroppedNotStoredAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId, attempts: 11, rowError: "transport unavailable",
       messageType: TypeNameFormatter.Format(typeof(IntegrityDivergenceDetected)))];
@@ -260,8 +260,8 @@ public class PrePublishGateForensicPreservationTests {
          at Whizbang.Core.Workers.OutboxDrainWorker.PublishBulkAsync()
       """;
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId, attempts: 11, rowError: realStack)];
 
@@ -325,8 +325,8 @@ public class PrePublishGateForensicPreservationTests {
   /// </summary>
   [Test]
   public async Task PrePublishGate_RowErrorIsNull_FallsBackToMetaMessageAsync() {
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId, attempts: 11, rowError: null)];
 

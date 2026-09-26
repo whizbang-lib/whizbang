@@ -36,9 +36,9 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
   public async Task ReleaseUnprocessed_RefundsTheClaimAttemptAndClearsTheLeaseAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = TrackedGuid.NewMedo().Value;
-    var streamId = TrackedGuid.NewMedo().Value;
-    var instance = TrackedGuid.NewMedo().Value;
+    var messageId = TrackedGuid.New().Value;
+    var streamId = TrackedGuid.New().Value;
+    var instance = TrackedGuid.New().Value;
 
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 0);
     await _claimOrphanedInboxAsync(conn, instance);
@@ -68,15 +68,15 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
   public async Task ConsumerVanishesWithoutReleasing_StillPaysTheAttemptAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = TrackedGuid.NewMedo().Value;
-    var streamId = TrackedGuid.NewMedo().Value;
+    var messageId = TrackedGuid.New().Value;
+    var streamId = TrackedGuid.New().Value;
 
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 0);
 
     // Two claim cycles with NO release between them — the process died each time.
-    await _claimOrphanedInboxAsync(conn, TrackedGuid.NewMedo().Value);
+    await _claimOrphanedInboxAsync(conn, TrackedGuid.New().Value);
     await _expireLeaseAsync(conn, messageId);
-    await _claimOrphanedInboxAsync(conn, TrackedGuid.NewMedo().Value);
+    await _claimOrphanedInboxAsync(conn, TrackedGuid.New().Value);
 
     var (Attempts, _, _) = await _readInboxRowAsync(conn, messageId);
     await Assert.That(Attempts).IsEqualTo(2)
@@ -93,14 +93,14 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
   public async Task RepeatedOverClaim_DoesNotAccumulateAttemptsOnUntouchedRowsAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var untouched = TrackedGuid.NewMedo().Value;
-    var streamId = TrackedGuid.NewMedo().Value;
+    var untouched = TrackedGuid.New().Value;
+    var streamId = TrackedGuid.New().Value;
 
     await _insertInboxRowAsync(conn, untouched, streamId, attempts: 0);
 
     // Five cycles of "claim it, never get to it, hand it back".
     for (var cycle = 0; cycle < 5; cycle++) {
-      var instance = TrackedGuid.NewMedo().Value;
+      var instance = TrackedGuid.New().Value;
       await _claimOrphanedInboxAsync(conn, instance);
       await _releaseUnprocessedAsync(conn, instance, [untouched]);
     }
@@ -115,9 +115,9 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
   public async Task ReleaseUnprocessed_NeverDrivesAttemptsNegativeAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = TrackedGuid.NewMedo().Value;
-    var streamId = TrackedGuid.NewMedo().Value;
-    var instance = TrackedGuid.NewMedo().Value;
+    var messageId = TrackedGuid.New().Value;
+    var streamId = TrackedGuid.New().Value;
+    var instance = TrackedGuid.New().Value;
 
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 0);
     await _claimOrphanedInboxAsync(conn, instance);
@@ -139,10 +139,10 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
   public async Task ReleaseUnprocessed_DoesNotTouchAnotherInstancesClaimAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = TrackedGuid.NewMedo().Value;
-    var streamId = TrackedGuid.NewMedo().Value;
-    var owner = TrackedGuid.NewMedo().Value;
-    var stranger = TrackedGuid.NewMedo().Value;
+    var messageId = TrackedGuid.New().Value;
+    var streamId = TrackedGuid.New().Value;
+    var owner = TrackedGuid.New().Value;
+    var stranger = TrackedGuid.New().Value;
 
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 0);
     await _claimOrphanedInboxAsync(conn, owner);
@@ -168,9 +168,9 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
   public async Task Coordinator_ReleaseUnprocessedInbox_RefundsThroughTheRealCallPathAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
-    var messageId = TrackedGuid.NewMedo().Value;
-    var streamId = TrackedGuid.NewMedo().Value;
-    var instance = TrackedGuid.NewMedo().Value;
+    var messageId = TrackedGuid.New().Value;
+    var streamId = TrackedGuid.New().Value;
+    var instance = TrackedGuid.New().Value;
 
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 0);
     await _claimOrphanedInboxAsync(conn, instance);
@@ -192,7 +192,7 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
 
-    var released = await coordinator.ReleaseUnprocessedInboxAsync(TrackedGuid.NewMedo().Value, []);
+    var released = await coordinator.ReleaseUnprocessedInboxAsync(TrackedGuid.New().Value, []);
 
     await Assert.That(released).IsEqualTo(0)
       .Because("an empty hand-back must not open a connection or issue a statement — the shutdown "

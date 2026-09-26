@@ -29,7 +29,7 @@ public class EFCorePerspectiveReplayReaderTests : EFCoreTestBase {
     var list = new List<MessageEnvelope<IEvent>>(count);
     for (var i = 0; i < count; i++) {
       var envelope = new MessageEnvelope<ActionTestCreatedEvent> {
-        MessageId = MessageId.From(TrackedGuid.NewMedo()),
+        MessageId = MessageId.From(TrackedGuid.New()),
         Payload = new ActionTestCreatedEvent { StreamId = streamId, Name = $"evt-{i}", Value = i },
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

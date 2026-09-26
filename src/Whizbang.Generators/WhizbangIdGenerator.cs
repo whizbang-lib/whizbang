@@ -536,9 +536,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("  }");
     sb.AppendLine();
 
-    // New factory method using TrackedGuid.NewMedo() - generates new UUIDv7 with tracking
+    // New factory method using TrackedGuid.New() - generates new UUIDv7 with tracking
     sb.AppendLine("  /// <summary>Creates a new instance with sub-millisecond precision from the framework's UUIDv7 generator. Preserves tracking metadata.</summary>");
-    sb.AppendLine($"  public static {id.TypeName} New() => new(TrackedGuid.NewMedo());");
+    sb.AppendLine($"  public static {id.TypeName} New() => new(TrackedGuid.New());");
     sb.AppendLine();
 
     // Equality members - compare Guid values directly

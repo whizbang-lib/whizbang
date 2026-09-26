@@ -78,7 +78,7 @@ public class ConsumerPriorityClassificationTests {
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "consumer-svc";
     public string HostName => "consumer-host";
     public int ProcessId => 1;

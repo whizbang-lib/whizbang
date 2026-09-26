@@ -23,7 +23,7 @@ public readonly struct WhizbangId : IWhizbangId, IEquatable<WhizbangId>, ICompar
   /// Creates a new WhizbangId using the framework's UUIDv7 generator with sub-millisecond precision.
   /// This is the preferred method for generating new IDs.
   /// </summary>
-  public static WhizbangId New() => new(TrackedGuid.NewMedo());
+  public static WhizbangId New() => new(TrackedGuid.New());
 
   /// <summary>
   /// Creates a WhizbangId from a TrackedGuid.

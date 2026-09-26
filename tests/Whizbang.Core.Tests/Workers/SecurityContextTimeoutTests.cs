@@ -94,7 +94,7 @@ public class SecurityContextTimeoutTests {
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.New();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -193,7 +193,7 @@ public class SecurityContextTimeoutTests {
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },
       MessageType = "Whizbang.Core.Tests.TestFixture.TestMessage, TestAsm",
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = (Guid)TrackedGuid.New(),
       PartitionNumber = 1,
       Attempts = 1,
       Status = MessageProcessingStatus.Stored,
@@ -239,7 +239,7 @@ public class SecurityContextTimeoutTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await channel.WriteAsync(_inboxWork((Guid)TrackedGuid.NewMedo()), cts.Token);
+    await channel.WriteAsync(_inboxWork((Guid)TrackedGuid.New()), cts.Token);
 
     var captured = await failure.FirstFailure.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -290,7 +290,7 @@ public class SecurityContextTimeoutTests {
         SecurityContextTimeoutSeconds = 1,
       })).Value));
 
-    var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
+    var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 
     // Drive the internal bulk publish path with our row. The worker should call
     // EstablishFullContextAsync (hanging provider blocks), the timeout should

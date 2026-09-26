@@ -97,7 +97,7 @@ public class PerspectiveWorkerNoPerspectivesParkTests {
   // ============================================================================
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     public string ServiceName => "no-perspectives-host";
     public string HostName => "test-host";
     public int ProcessId => 1;

@@ -53,8 +53,8 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(conn, eventId, streamId, version: 1);
 
     var stamped = await _stampAsync(conn, batchSize: 1000);
@@ -70,8 +70,8 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(conn, eventId, streamId, version: 1);
 
     var first = await _stampAsync(conn, batchSize: 1000);
@@ -93,10 +93,10 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var event1 = (Guid)TrackedGuid.NewMedo();
-    var event2 = (Guid)TrackedGuid.NewMedo();
-    var event3 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var event1 = (Guid)TrackedGuid.New();
+    var event2 = (Guid)TrackedGuid.New();
+    var event3 = (Guid)TrackedGuid.New();
 
     // Sequential inserts → sequential xmins → must stamp in same order.
     await _insertEventStoreRowAsync(conn, event1, streamId, version: 1);
@@ -119,9 +119,9 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     for (var i = 1; i <= 5; i++) {
-      await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: i);
+      await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.New(), streamId, version: i);
     }
 
     var first = await _stampAsync(conn, batchSize: 2);
@@ -147,9 +147,9 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     // This is the invariant that fixes the 2-second commit-order delta from that production run.
     var dataSource = NpgsqlDataSource.Create(ConnectionString);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var r1 = (Guid)TrackedGuid.NewMedo();
-    var r2 = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var r1 = (Guid)TrackedGuid.New();
+    var r2 = (Guid)TrackedGuid.New();
 
     await using var connT1 = await dataSource.OpenConnectionAsync();
     await using var connT2 = await dataSource.OpenConnectionAsync();
@@ -193,11 +193,11 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     // Each row gets exactly one commit_sequence. Total stamps = total rows.
     var dataSource = NpgsqlDataSource.Create(ConnectionString);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const int N = 20;
     for (var i = 1; i <= N; i++) {
       await using var conn = await dataSource.OpenConnectionAsync();
-      await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: i);
+      await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.New(), streamId, version: i);
     }
 
     // Run three stampers concurrently. SKIP LOCKED guarantees they don't double-stamp.
@@ -241,15 +241,15 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
     // The representative fenced scenario: the stream is already PINNED to its owner (the
     // commit-time doorbell claimed it before the fence lifted), so the post-stamp notify
     // routes through notify_instance_owners Step 1 to the owning instance's channel.
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _pinStreamAsync(conn, streamId, instanceId);
-    await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: 1);
+    await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.New(), streamId, version: 1);
 
     var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
       var stamped = await _stampAsync(conn, batchSize: 10, notifyOwners: true);
@@ -276,12 +276,12 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _pinStreamAsync(conn, streamId, instanceId);
-    await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: 1);
+    await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.New(), streamId, version: 1);
 
     var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
       var stamped = await _stampAsync(conn, batchSize: 10);
@@ -305,12 +305,12 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _pinStreamAsync(conn, streamId, instanceId);
-    await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: 1);
+    await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.New(), streamId, version: 1);
 
     // A fresh found-work watermark: this instance's claim just found perspective work, so it
     // is draining (or lingering) and will discover the stamped row by polling.
@@ -337,7 +337,7 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
     var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {

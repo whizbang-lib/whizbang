@@ -24,7 +24,7 @@ public class EmissionIdentityTests {
 
   [Test]
   public async Task Derive_SameInputs_ReturnsSameIdAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
 
     var first = EmissionIdentity.Derive(source, SERVICE, HANDLER, TYPE, ordinal: 0);
     var second = EmissionIdentity.Derive(source, SERVICE, HANDLER, TYPE, ordinal: 0);
@@ -35,7 +35,7 @@ public class EmissionIdentityTests {
 
   [Test]
   public async Task Derive_DifferentOrdinal_ReturnsDifferentIdAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
 
     var zeroth = EmissionIdentity.Derive(source, SERVICE, HANDLER, TYPE, ordinal: 0);
     var first = EmissionIdentity.Derive(source, SERVICE, HANDLER, TYPE, ordinal: 1);
@@ -46,7 +46,7 @@ public class EmissionIdentityTests {
 
   [Test]
   public async Task Derive_DifferentHandler_ReturnsDifferentIdAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
 
     var a = EmissionIdentity.Derive(source, SERVICE, "FirstHandler", TYPE, ordinal: 0);
     var b = EmissionIdentity.Derive(source, SERVICE, "SecondHandler", TYPE, ordinal: 0);
@@ -57,7 +57,7 @@ public class EmissionIdentityTests {
 
   [Test]
   public async Task Derive_NullHandlerVersusNamedHandler_ReturnsDifferentIdAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
 
     var unnamed = EmissionIdentity.Derive(source, SERVICE, handlerName: null, TYPE, ordinal: 0);
     var named = EmissionIdentity.Derive(source, SERVICE, HANDLER, TYPE, ordinal: 0);
@@ -67,7 +67,7 @@ public class EmissionIdentityTests {
 
   [Test]
   public async Task Derive_DifferentService_ReturnsDifferentIdAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
 
     var a = EmissionIdentity.Derive(source, "orders", HANDLER, TYPE, ordinal: 0);
     var b = EmissionIdentity.Derive(source, "billing", HANDLER, TYPE, ordinal: 0);
@@ -78,7 +78,7 @@ public class EmissionIdentityTests {
 
   [Test]
   public async Task Derive_DifferentEmittedType_ReturnsDifferentIdAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
 
     var a = EmissionIdentity.Derive(source, SERVICE, HANDLER, "Contracts.Orders.OrderPlaced", ordinal: 0);
     var b = EmissionIdentity.Derive(source, SERVICE, HANDLER, "Contracts.Orders.OrderPriced", ordinal: 0);
@@ -88,15 +88,15 @@ public class EmissionIdentityTests {
 
   [Test]
   public async Task Derive_DifferentSource_ReturnsDifferentIdAsync() {
-    var a = EmissionIdentity.Derive((Guid)TrackedGuid.NewMedo(), SERVICE, HANDLER, TYPE, ordinal: 0);
-    var b = EmissionIdentity.Derive((Guid)TrackedGuid.NewMedo(), SERVICE, HANDLER, TYPE, ordinal: 0);
+    var a = EmissionIdentity.Derive((Guid)TrackedGuid.New(), SERVICE, HANDLER, TYPE, ordinal: 0);
+    var b = EmissionIdentity.Derive((Guid)TrackedGuid.New(), SERVICE, HANDLER, TYPE, ordinal: 0);
 
     await Assert.That(b).IsNotEqualTo(a);
   }
 
   [Test]
   public async Task Derive_ResultIsVersion7ShapedWithRfcVariantAsync() {
-    var derived = EmissionIdentity.Derive((Guid)TrackedGuid.NewMedo(), SERVICE, HANDLER, TYPE, ordinal: 3);
+    var derived = EmissionIdentity.Derive((Guid)TrackedGuid.New(), SERVICE, HANDLER, TYPE, ordinal: 3);
 
     await Assert.That(derived.Version).IsEqualTo(7)
       .Because("the framework's id value objects accept only time-ordered v7 ids; a derived id must pass the same gate as a minted one");
@@ -107,7 +107,7 @@ public class EmissionIdentityTests {
 
   [Test]
   public async Task Derive_ResultIsAcceptedByTheMessageIdValueObjectAsync() {
-    var derived = EmissionIdentity.Derive((Guid)TrackedGuid.NewMedo(), SERVICE, HANDLER, TYPE, ordinal: 0);
+    var derived = EmissionIdentity.Derive((Guid)TrackedGuid.New(), SERVICE, HANDLER, TYPE, ordinal: 0);
 
     var messageId = MessageId.From(derived);
 
@@ -116,7 +116,7 @@ public class EmissionIdentityTests {
 
   [Test]
   public async Task Derive_InheritsFirst80BitsOfSourceAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
     var derived = EmissionIdentity.Derive(source, SERVICE, HANDLER, TYPE, ordinal: 0);
 
     var sourceBytes = source.ToByteArray(bigEndian: true);
@@ -128,7 +128,7 @@ public class EmissionIdentityTests {
 
   [Test]
   public async Task Derive_TwoOrdinals_ShareThePrefixAndDifferInTheHashAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
     var a = EmissionIdentity.Derive(source, SERVICE, HANDLER, TYPE, ordinal: 0).ToByteArray(bigEndian: true);
     var b = EmissionIdentity.Derive(source, SERVICE, HANDLER, TYPE, ordinal: 1).ToByteArray(bigEndian: true);
 
@@ -141,7 +141,7 @@ public class EmissionIdentityTests {
     // Two commands sent back to back on one stream, usually inside one millisecond: the event of the first must be
     // versioned before the event of the second, and versions follow event id order.
     const int count = 5_000;
-    var commands = Enumerable.Range(0, count).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var commands = Enumerable.Range(0, count).Select(_ => (Guid)TrackedGuid.New()).ToArray();
     int outOfOrder = 0;
 
     for (int i = 1; i < count; i++) {
@@ -158,7 +158,7 @@ public class EmissionIdentityTests {
   [Test]
   public async Task Derive_EmissionsOfOneHandling_SortInEmissionOrderAsync() {
     // A handler that returns several events for one stream: they must apply in the order it returned them.
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
     var ids = Enumerable.Range(0, 50)
       .Select(ordinal => EmissionIdentity.Derive(source, SERVICE, HANDLER, ordinal % 2 == 0 ? "Contracts.B" : "Contracts.A", ordinal))
       .ToArray();
@@ -177,19 +177,19 @@ public class EmissionIdentityTests {
 
   [Test]
   public async Task Derive_NegativeOrdinal_ThrowsAsync() {
-    await Assert.That(() => EmissionIdentity.Derive((Guid)TrackedGuid.NewMedo(), SERVICE, HANDLER, TYPE, ordinal: -1))
+    await Assert.That(() => EmissionIdentity.Derive((Guid)TrackedGuid.New(), SERVICE, HANDLER, TYPE, ordinal: -1))
       .Throws<ArgumentOutOfRangeException>();
   }
 
   [Test]
   public async Task Derive_NullServiceName_ThrowsAsync() {
-    await Assert.That(() => EmissionIdentity.Derive((Guid)TrackedGuid.NewMedo(), null!, HANDLER, TYPE, ordinal: 0))
+    await Assert.That(() => EmissionIdentity.Derive((Guid)TrackedGuid.New(), null!, HANDLER, TYPE, ordinal: 0))
       .Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task Derive_NullEmittedTypeName_ThrowsAsync() {
-    await Assert.That(() => EmissionIdentity.Derive((Guid)TrackedGuid.NewMedo(), SERVICE, HANDLER, null!, ordinal: 0))
+    await Assert.That(() => EmissionIdentity.Derive((Guid)TrackedGuid.New(), SERVICE, HANDLER, null!, ordinal: 0))
       .Throws<ArgumentNullException>();
   }
 

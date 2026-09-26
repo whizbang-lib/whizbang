@@ -4,12 +4,12 @@ namespace Whizbang.Migrate.Tests.Transformers;
 
 /// <summary>
 /// Tests for the GuidToTrackedGuidTransformer that converts Guid.NewGuid()/Guid.CreateVersion7()
-/// to TrackedGuid.NewMedo() calls for UUIDv7 with sub-millisecond precision.
+/// to TrackedGuid.New() calls for UUIDv7 with sub-millisecond precision.
 /// </summary>
 /// <tests>Whizbang.Migrate/Transformers/GuidToTrackedGuidTransformer.cs:*</tests>
 public class GuidToTrackedGuidTransformerTests {
   [Test]
-  public async Task TransformAsync_GuidNewGuid_TransformsToTrackedGuidNewMedoAsync() {
+  public async Task TransformAsync_GuidNewGuid_TransformsToTrackedGuidNewAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
     const string sourceCode = """
@@ -26,13 +26,13 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     await Assert.That(result.TransformedCode).DoesNotContain("Guid.NewGuid()");
     await Assert.That(result.Changes.Any(c => c.ChangeType == ChangeType.MethodCallReplacement)).IsTrue();
   }
 
   [Test]
-  public async Task TransformAsync_GuidCreateVersion7_TransformsToTrackedGuidNewMedoAsync() {
+  public async Task TransformAsync_GuidCreateVersion7_TransformsToTrackedGuidNewAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
     const string sourceCode = """
@@ -49,13 +49,13 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     await Assert.That(result.TransformedCode).DoesNotContain("Guid.CreateVersion7()");
     await Assert.That(result.Changes.Any(c => c.ChangeType == ChangeType.MethodCallReplacement)).IsTrue();
   }
 
   [Test]
-  public async Task TransformAsync_SystemGuidNewGuid_TransformsToTrackedGuidNewMedoAsync() {
+  public async Task TransformAsync_SystemGuidNewGuid_TransformsToTrackedGuidNewAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
     const string sourceCode = """
@@ -70,12 +70,12 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     await Assert.That(result.TransformedCode).DoesNotContain("System.Guid.NewGuid()");
   }
 
   [Test]
-  public async Task TransformAsync_SystemGuidCreateVersion7_TransformsToTrackedGuidNewMedoAsync() {
+  public async Task TransformAsync_SystemGuidCreateVersion7_TransformsToTrackedGuidNewAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
     const string sourceCode = """
@@ -90,7 +90,7 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     await Assert.That(result.TransformedCode).DoesNotContain("System.Guid.CreateVersion7()");
   }
 
@@ -186,8 +186,8 @@ public class GuidToTrackedGuidTransformerTests {
     // Assert
     await Assert.That(result.TransformedCode).DoesNotContain("Guid.NewGuid()");
     await Assert.That(result.TransformedCode).DoesNotContain("Guid.CreateVersion7()");
-    // Should have two TrackedGuid.NewMedo() calls
-    var count = result.TransformedCode.Split("TrackedGuid.NewMedo()").Length - 1;
+    // Should have two TrackedGuid.New() calls
+    var count = result.TransformedCode.Split("TrackedGuid.New()").Length - 1;
     await Assert.That(count).IsEqualTo(2);
   }
 
@@ -207,7 +207,7 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "Order.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     await Assert.That(result.TransformedCode).DoesNotContain("Guid.NewGuid()");
   }
 
@@ -231,7 +231,7 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "Order.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     await Assert.That(result.TransformedCode).DoesNotContain("Guid.NewGuid()");
   }
 
@@ -352,7 +352,7 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     await Assert.That(result.TransformedCode).DoesNotContain("Guid.NewGuid()");
   }
 
@@ -383,7 +383,7 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     await Assert.That(result.TransformedCode).DoesNotContain("Guid.NewGuid()");
     await Assert.That(result.Changes.Any(c =>
         c.ChangeType == ChangeType.MethodCallReplacement)).IsTrue();
@@ -424,7 +424,7 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     await Assert.That(result.TransformedCode).DoesNotContain("CombGuidIdGeneration.NewGuid()");
     await Assert.That(result.TransformedCode).DoesNotContain("using Marten.Schema.Identity;");
     await Assert.That(result.Changes.Any(c =>
@@ -466,7 +466,7 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "Service.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     await Assert.That(result.TransformedCode).DoesNotContain("CombGuidIdGeneration.NewGuid()");
   }
 
@@ -496,7 +496,7 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     // Should warn about the default check pattern
     await Assert.That(result.Warnings.Any(w =>
         w.Contains("default") ||
@@ -541,7 +541,7 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     // Should warn about retry pattern potentially being unnecessary with TrackedGuid
     await Assert.That(result.Warnings.Any(w =>
         w.Contains("retry") ||
@@ -555,7 +555,7 @@ public class GuidToTrackedGuidTransformerTests {
     // Arrange - G04: the `while`-loop variant of the collision-retry detector uses a narrower
     // keyword set than the `for`-loop variant above ("duplicate key", "collision", "retry" only
     // -- no "Retry", "attempt", or "Attempt"). A developer's hand-rolled while-based retry loop
-    // is exactly as pointless under TrackedGuid.NewMedo() as the for-loop kind, so leaving this
+    // is exactly as pointless under TrackedGuid.New() as the for-loop kind, so leaving this
     // branch unexercised risked it silently drifting apart from its sibling and going unwarned.
     var transformer = new GuidToTrackedGuidTransformer();
     const string sourceCode = """
@@ -592,7 +592,7 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     // The warning must name the line of the developer's loop and spell out *why* the retry logic
     // is now pointless -- a bare "found something" warning would not tell the developer which
     // loop to look at or what to do about it.
@@ -601,7 +601,7 @@ public class GuidToTrackedGuidTransformerTests {
         w.Contains("collision-free") &&
         w.Contains("retry logic typically unnecessary")))
       .IsTrue()
-      .Because("the warning has to point at the specific while loop and explain that TrackedGuid.NewMedo() already makes its retry logic unnecessary, not merely announce that some warning fired");
+      .Because("the warning has to point at the specific while loop and explain that TrackedGuid.New() already makes its retry logic unnecessary, not merely announce that some warning fired");
   }
 
   [Test]
@@ -624,8 +624,8 @@ public class GuidToTrackedGuidTransformerTests {
 
     // Assert
     await Assert.That(result.TransformedCode).DoesNotContain("CombGuidIdGeneration.NewGuid()");
-    // Should have three TrackedGuid.NewMedo() calls
-    var count = result.TransformedCode.Split("TrackedGuid.NewMedo()").Length - 1;
+    // Should have three TrackedGuid.New() calls
+    var count = result.TransformedCode.Split("TrackedGuid.New()").Length - 1;
     await Assert.That(count).IsEqualTo(3);
   }
 
@@ -649,7 +649,7 @@ public class GuidToTrackedGuidTransformerTests {
     var result = await transformer.TransformAsync(sourceCode, "Service.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.New()");
     await Assert.That(result.TransformedCode).DoesNotContain("using Marten.Schema.Identity;");
     await Assert.That(result.Changes.Any(c =>
         c.ChangeType == ChangeType.UsingRemoved &&

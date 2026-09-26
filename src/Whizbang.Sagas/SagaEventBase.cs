@@ -26,7 +26,7 @@ namespace Whizbang.Sagas;
 public class SagaEventBase : IEvent {
 
   /// <summary>Globally unique id for this event instance. Defaults to a UUIDv7 (sortable, time-prefixed).</summary>
-  public Guid MessageId { get; set; } = TrackedGuid.NewMedo();
+  public Guid MessageId { get; set; } = TrackedGuid.New();
 
   /// <summary>Wall-clock instant the event was constructed.</summary>
   public DateTimeOffset OccurredAt { get; set; } = DateTimeOffset.UtcNow;

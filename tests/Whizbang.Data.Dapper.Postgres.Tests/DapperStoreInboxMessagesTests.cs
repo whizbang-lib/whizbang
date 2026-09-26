@@ -68,8 +68,8 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
   [Test]
   public async Task SingleMessage_StoresInboxAndDedupAsync() {
     var coordinator = _buildCoordinator();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await coordinator.StoreInboxMessagesAsync([_makeInbox(msgId, streamId)], partitionCount: 100);
 
@@ -84,8 +84,8 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
   [Test]
   public async Task DuplicateMessageId_SecondCallNoOpsAsync() {
     var coordinator = _buildCoordinator();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     var msg = _makeInbox(msgId, streamId);
 
     await coordinator.StoreInboxMessagesAsync([msg], partitionCount: 100);
@@ -101,11 +101,11 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
   [Test]
   public async Task BatchOf25Messages_AllStoredViaSingleDriverCallAsync() {
     var coordinator = _buildCoordinator();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var ids = new Guid[25];
     var messages = new InboxMessage[25];
     for (var i = 0; i < 25; i++) {
-      ids[i] = (Guid)TrackedGuid.NewMedo();
+      ids[i] = (Guid)TrackedGuid.New();
       messages[i] = _makeInbox(ids[i], streamId);
     }
 
@@ -125,8 +125,8 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
     // wrong casing) would silently set is_event to false and break the event store
     // backfill path.
     var coordinator = _buildCoordinator();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await coordinator.StoreInboxMessagesAsync([_makeInbox(msgId, streamId)], partitionCount: 100);
 
@@ -156,8 +156,8 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
   [Test]
   public async Task WithObservations_StoresTheMessageAsync() {
     var coordinator = _buildCoordinator();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await coordinator.StoreInboxMessagesWithObservationsAsync(
       [_makeInbox(msgId, streamId)], partitionCount: 100);
@@ -174,8 +174,8 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
   [Test]
   public async Task WithObservations_FirstDelivery_ReportsNoRedeliveryAsync() {
     var coordinator = _buildCoordinator();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     var observations = await coordinator.StoreInboxMessagesWithObservationsAsync(
       [_makeInbox(msgId, streamId)], partitionCount: 100);
@@ -190,8 +190,8 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
     // The point of the overload: offering the same message twice has to be distinguishable
     // from two distinct messages, or a consumer cannot tell a broker redelivery from new work.
     var coordinator = _buildCoordinator();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
 
     await coordinator.StoreInboxMessagesWithObservationsAsync(
       [_makeInbox(msgId, streamId)], partitionCount: 100);
@@ -214,8 +214,8 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
     var messages = new InboxMessage[5];
     var ids = new Guid[5];
     for (var i = 0; i < 5; i++) {
-      ids[i] = (Guid)TrackedGuid.NewMedo();
-      messages[i] = _makeInbox(ids[i], (Guid)TrackedGuid.NewMedo());
+      ids[i] = (Guid)TrackedGuid.New();
+      messages[i] = _makeInbox(ids[i], (Guid)TrackedGuid.New());
     }
 
     await coordinator.StoreInboxMessagesWithObservationsAsync(messages, partitionCount: 100);

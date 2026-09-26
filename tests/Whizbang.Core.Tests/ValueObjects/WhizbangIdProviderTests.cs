@@ -76,7 +76,7 @@ public class WhizbangIdProviderTests {
     await Assert.That(result.SubMillisecondPrecision).IsTrue();
     await Assert.That(result.IsTracking).IsTrue();
     await Assert.That((result.Metadata & GuidMetadatas.Version7) != 0).IsTrue();
-    await Assert.That((result.Metadata & GuidMetadatas.SourceMedo) != 0).IsTrue();
+    await Assert.That((result.Metadata & GuidMetadatas.SourceWhizbang) != 0).IsTrue();
   }
 
   [Test]

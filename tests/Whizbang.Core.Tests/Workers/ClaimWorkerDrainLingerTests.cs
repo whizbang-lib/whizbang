@@ -30,7 +30,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class ClaimWorkerDrainLingerTests {
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo();
+    public Guid InstanceId { get; } = TrackedGuid.New();
     public string ServiceName => "test";
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -72,7 +72,7 @@ public class ClaimWorkerDrainLingerTests {
         OutboxWork = [],
         InboxWork = [],
         PerspectiveWork = [],
-        OutboxStreamIds = WorkOnCalls.Contains(call) ? [TrackedGuid.NewMedo()] : [],
+        OutboxStreamIds = WorkOnCalls.Contains(call) ? [TrackedGuid.New()] : [],
       });
     }
 

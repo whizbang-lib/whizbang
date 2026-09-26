@@ -15,7 +15,7 @@ public class WhizbangIdTests {
   // ========================================
 
   [Test]
-  public async Task WhizbangId_New_UsesTrackedGuidNewMedoAsync() {
+  public async Task WhizbangId_New_UsesTrackedGuidNewAsync() {
     // Act
     var id = WhizbangId.New();
 
@@ -53,7 +53,7 @@ public class WhizbangIdTests {
   [Test]
   public async Task WhizbangId_From_WithTrackedGuid_PreservesMetadataAsync() {
     // Arrange
-    var tracked = TrackedGuid.NewMedo();
+    var tracked = TrackedGuid.New();
 
     // Act
     var id = WhizbangId.From(tracked);

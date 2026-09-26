@@ -203,12 +203,12 @@ public class EFCoreCommitHandlerTests : EFCoreTestBase {
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
       await ins.ExecuteNonQueryAsync();
     }
-    var streamId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
+    var streamId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     HandlerCommitRequest req(Guid inboxId, string destination) => new(
       HandlerId: Guid.NewGuid(), InstanceId: instanceId, ServiceName: "test", HostName: "test-host",
       ProcessId: 1, PartitionCount: 10000,
       InboxCompletion: new HandlerInboxCompletion(inboxId, Status: 4),
-      NewOutboxMessages: [CreateTestOutboxMessage((Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(), destination, streamId)]);
+      NewOutboxMessages: [CreateTestOutboxMessage((Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), destination, streamId)]);
 
     var results = await coordinator.CommitHandlerBatchAsync(
       [req(inboxIds[0], "ok-topic"), req(inboxIds[1], "boom-topic")]);

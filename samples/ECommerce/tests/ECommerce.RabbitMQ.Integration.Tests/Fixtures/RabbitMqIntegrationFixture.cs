@@ -398,7 +398,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     // Register service instance provider (unique instance ID per test)
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp =>
-      new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value, "InventoryWorker"));
+      new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "InventoryWorker"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
@@ -567,7 +567,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     // Register service instance provider (unique instance ID per test)
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp =>
-      new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value, "BFF.API"));
+      new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "BFF.API"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();

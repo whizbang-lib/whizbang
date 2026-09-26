@@ -143,8 +143,8 @@ public class OutboxPublishWorkerCoverageTests {
   }
 
   private static OutboxWork _makeWork(Guid? id = null) {
-    var msgId = id ?? (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = id ?? (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     return new OutboxWork {
       MessageId = msgId,
       Destination = "test-topic",

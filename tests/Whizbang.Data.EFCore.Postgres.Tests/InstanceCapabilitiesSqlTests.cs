@@ -48,7 +48,7 @@ public class InstanceCapabilitiesSqlTests : EFCoreTestBase {
   public async Task RecordCapability_ForALiveInstance_RecordsTheHoldingWithAcquiredAtAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _heartbeatAsync(ctx, instanceId, cancellationToken);
     await using var conn = await _openAsync(cancellationToken);
 
@@ -78,7 +78,7 @@ public class InstanceCapabilitiesSqlTests : EFCoreTestBase {
   public async Task RecordCapability_ForAnEvictedInstance_IsRefused_TheFenceReachesExclusiveWorkAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _heartbeatAsync(ctx, instanceId, cancellationToken);
     await using var conn = await _openAsync(cancellationToken);
 
@@ -104,7 +104,7 @@ public class InstanceCapabilitiesSqlTests : EFCoreTestBase {
   [Timeout(60000)]
   public async Task ReleaseCapability_RemovesTheHoldingAsync(CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _heartbeatAsync(ctx, instanceId, cancellationToken);
     await using var conn = await _openAsync(cancellationToken);
 
@@ -122,7 +122,7 @@ public class InstanceCapabilitiesSqlTests : EFCoreTestBase {
   public async Task ReapingAnInstance_CascadesItsHoldings_NoSeparateReaperNeededAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
     await _heartbeatAsync(ctx, instanceId, cancellationToken);
     await using var conn = await _openAsync(cancellationToken);
     await _scalarAsync<bool>(conn, "SELECT record_capability(@id, 'migrator')", ("id", instanceId));

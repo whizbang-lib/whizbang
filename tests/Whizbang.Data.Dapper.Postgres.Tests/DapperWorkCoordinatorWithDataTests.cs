@@ -38,7 +38,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   private static ServiceInstanceInfo _makeServiceInstance() {
     return new ServiceInstanceInfo {
       ServiceName = "test-svc",
-      InstanceId = (Guid)TrackedGuid.NewMedo(),
+      InstanceId = (Guid)TrackedGuid.New(),
       HostName = "test-host",
       ProcessId = 4242,
     };
@@ -147,10 +147,10 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task GetStreamEventsAsync_SeededClaimableEvent_MapsAllFieldsAndClaimsRowAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -192,13 +192,13 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task ClaimAndFetchPendingPerspectiveEventsAsync_UnclaimedStampedRows_ClaimsAndReturnsOrderedRowsAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "DrainPerspective";
-    var eventA = (Guid)TrackedGuid.NewMedo();
-    var eventB = (Guid)TrackedGuid.NewMedo();
-    var workA = (Guid)TrackedGuid.NewMedo();
-    var workB = (Guid)TrackedGuid.NewMedo();
+    var eventA = (Guid)TrackedGuid.New();
+    var eventB = (Guid)TrackedGuid.New();
+    var workA = (Guid)TrackedGuid.New();
+    var workB = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -235,11 +235,11 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task ClaimAndFetchPendingPerspectiveEventsAsync_UnstampedRow_ReturnsEmptyAndLeavesRowUnclaimedAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "UnstampedPerspective";
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -266,10 +266,10 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task FetchOutboxBatchAsync_PopulatedRows_MapsAllColumnsAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgA = (Guid)TrackedGuid.NewMedo();
-    var msgB = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgA = (Guid)TrackedGuid.New();
+    var msgB = (Guid)TrackedGuid.New();
     var hops = _makeHops(streamId);
 
     await c.StoreOutboxMessagesAsync(
@@ -321,9 +321,9 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task FetchOutboxBatchAsync_ReturnsTheRowsPriorityAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId, _makeHops(streamId), priority: 250)], partitionCount: 100);
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -340,9 +340,9 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task FetchInboxBatchAsync_ReturnsTheRowsPriorityAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     await c.StoreInboxMessagesAsync([_makeInbox(msgId, streamId, _makeHops(streamId), priority: 250)], partitionCount: 100);
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -359,9 +359,9 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task FetchInboxBatchAsync_PopulatedRow_MapsAllColumnsAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     var hops = _makeHops(streamId);
 
     await c.StoreInboxMessagesAsync([_makeInbox(msgId, streamId, hops)], partitionCount: 100);
@@ -403,10 +403,10 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task ReportPerspectiveFailureAsync_ExistingCursor_PersistsFailureAndMarksProcessedEventsAsync() {
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "FailingPerspective";
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -452,10 +452,10 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task ReportPerspectiveCompletionAsync_ExistingCursor_AdvancesCursorAndClearsErrorAsync() {
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "CompletingPerspective";
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -497,8 +497,8 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task StoreOutboxMessagesAsync_RichEnvelope_RoundTripsHopsScopeAndMetadataAsync() {
     var c = _build();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     var hops = _makeHops(streamId);
 
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId, hops)], partitionCount: 100);
@@ -555,8 +555,8 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task ReportFailuresAsync_OutboxFailure_PersistsErrorAndReleasesLeaseAsync() {
     var c = _build();
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId, _makeHops(streamId))], partitionCount: 100);
 
     await c.ReportFailuresAsync(WorkCategory.Outbox, [
@@ -591,13 +591,13 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task FlushCompletionsAsync_CompletionsCursorsAndFailures_AppliesAllCategoriesAsync() {
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgCompleted = (Guid)TrackedGuid.NewMedo();
-    var msgFailed = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgCompleted = (Guid)TrackedGuid.New();
+    var msgFailed = (Guid)TrackedGuid.New();
     var hops = _makeHops(streamId);
     const string perspectiveName = "FlushPerspective";
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
 
     await c.StoreOutboxMessagesAsync(
       [_makeOutbox(msgCompleted, streamId, hops), _makeOutbox(msgFailed, streamId, hops)],
@@ -660,19 +660,19 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task CommitHandlerResultAsync_CompletionWithEmittedMessages_AppliesAtomicBundleAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var handledStream = (Guid)TrackedGuid.NewMedo();
-    var handledInboxId = (Guid)TrackedGuid.NewMedo();
-    var emittedOutboxId = (Guid)TrackedGuid.NewMedo();
-    var emittedOutboxStream = (Guid)TrackedGuid.NewMedo();
-    var emittedInboxId = (Guid)TrackedGuid.NewMedo();
-    var emittedInboxStream = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var handledStream = (Guid)TrackedGuid.New();
+    var handledInboxId = (Guid)TrackedGuid.New();
+    var emittedOutboxId = (Guid)TrackedGuid.New();
+    var emittedOutboxStream = (Guid)TrackedGuid.New();
+    var emittedInboxId = (Guid)TrackedGuid.New();
+    var emittedInboxStream = (Guid)TrackedGuid.New();
 
     await c.StoreInboxMessagesAsync(
       [_makeInbox(handledInboxId, handledStream, _makeHops(handledStream))], partitionCount: 100);
 
     await c.CommitHandlerResultAsync(new HandlerCommitRequest(
-      HandlerId: (Guid)TrackedGuid.NewMedo(),
+      HandlerId: (Guid)TrackedGuid.New(),
       InstanceId: instanceId,
       ServiceName: "svc-h",
       HostName: "host-h",
@@ -700,13 +700,13 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task CommitHandlerBatchAsync_TwoRequests_ReturnsSuccessPerHandlerAsync() {
     var c = _build();
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
-    var inboxA = (Guid)TrackedGuid.NewMedo();
-    var inboxB = (Guid)TrackedGuid.NewMedo();
-    var handlerA = (Guid)TrackedGuid.NewMedo();
-    var handlerB = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
+    var inboxA = (Guid)TrackedGuid.New();
+    var inboxB = (Guid)TrackedGuid.New();
+    var handlerA = (Guid)TrackedGuid.New();
+    var handlerB = (Guid)TrackedGuid.New();
 
     await c.StoreInboxMessagesAsync(
       [_makeInbox(inboxA, streamA, _makeHops(streamA)), _makeInbox(inboxB, streamB, _makeHops(streamB))],
@@ -742,10 +742,10 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task PurgeOrphanInboxAsync_OrphanRow_DeletesAndReturnsMappedRowAsync() {
     var c = _build();
-    var handledStream = (Guid)TrackedGuid.NewMedo();
-    var orphanStream = (Guid)TrackedGuid.NewMedo();
-    var handledId = (Guid)TrackedGuid.NewMedo();
-    var orphanId = (Guid)TrackedGuid.NewMedo();
+    var handledStream = (Guid)TrackedGuid.New();
+    var orphanStream = (Guid)TrackedGuid.New();
+    var handledId = (Guid)TrackedGuid.New();
+    var orphanId = (Guid)TrackedGuid.New();
 
     await c.StoreInboxMessagesAsync([
       _makeInbox(handledId, handledStream, _makeHops(handledStream), messageType: "Test.Handled, Test"),
@@ -798,7 +798,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
       INSERT INTO wh_inbox_state
         (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number, scheduled_for)
       SELECT message_id, stream_id, received_at, priority, is_event, 0, 1, 0, NOW() - INTERVAL '1 minute' FROM m",
-      new { mid = (Guid)TrackedGuid.NewMedo(), sid = (Guid)TrackedGuid.NewMedo() });
+      new { mid = (Guid)TrackedGuid.New(), sid = (Guid)TrackedGuid.New() });
 
     var n = await c.NotifyScheduledRetryDueAsync();
 
@@ -811,9 +811,9 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task FetchEventsByIdsAsync_SeededEvents_MapsAllFieldsAsync() {
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var eventA = (Guid)TrackedGuid.NewMedo();
-    var eventB = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventA = (Guid)TrackedGuid.New();
+    var eventB = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -846,10 +846,10 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   [Test]
   public async Task GetPerspectiveCursorAsync_SeededCursor_MapsAllFieldsAsync() {
     var c = _build();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "CursorPerspective";
-    var lastEventId = (Guid)TrackedGuid.NewMedo();
-    var rewindTriggerId = (Guid)TrackedGuid.NewMedo();
+    var lastEventId = (Guid)TrackedGuid.New();
+    var rewindTriggerId = (Guid)TrackedGuid.New();
 
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();

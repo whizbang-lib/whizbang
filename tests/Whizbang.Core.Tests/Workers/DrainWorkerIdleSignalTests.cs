@@ -48,8 +48,8 @@ public class DrainWorkerIdleSignalTests {
   [Test]
   public async Task OutboxDrainWorker_FiresStartedThenIdle_AroundEachBatchAsync() {
     var coord = new StubCoordinator();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     coord.OutboxRowsByStream[streamId] = [_outboxRow(msgId, streamId)];
 
     var publish = new StubPublisher();
@@ -83,10 +83,10 @@ public class DrainWorkerIdleSignalTests {
     // — idempotent _setIdleState protects fixture handlers that only want to know
     // "is the worker between batches" not "how many transitions happened".
     var coord = new StubCoordinator();
-    var s1 = (Guid)TrackedGuid.NewMedo();
-    var s2 = (Guid)TrackedGuid.NewMedo();
-    coord.OutboxRowsByStream[s1] = [_outboxRow((Guid)TrackedGuid.NewMedo(), s1)];
-    coord.OutboxRowsByStream[s2] = [_outboxRow((Guid)TrackedGuid.NewMedo(), s2)];
+    var s1 = (Guid)TrackedGuid.New();
+    var s2 = (Guid)TrackedGuid.New();
+    coord.OutboxRowsByStream[s1] = [_outboxRow((Guid)TrackedGuid.New(), s1)];
+    coord.OutboxRowsByStream[s2] = [_outboxRow((Guid)TrackedGuid.New(), s2)];
 
     var publish = new StubPublisher();
     var worker = _buildOutboxDrainWorker(out var drainChannel, out var completion,
@@ -126,8 +126,8 @@ public class DrainWorkerIdleSignalTests {
   [Test]
   public async Task InboxDrainWorker_StartsIdle_AndFiresStartedThenIdle_AroundEachBatchAsync() {
     var coord = new StubCoordinator();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
     coord.InboxRowsByStream[streamId] = [_inboxRow(msgId, streamId)];
 
     var worker = _buildInboxDrainWorker(out var drainChannel, out var inboxWriter, coord: coord);

@@ -95,7 +95,7 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
     var store = new EFCoreClaimedEmissionStore(schemaScoped);
 
     var key = $"schema-scoped:{Guid.NewGuid():N}";
-    var claimed = await store.TryClaimAsync(key, TrackedGuid.NewMedo().Value, CancellationToken.None);
+    var claimed = await store.TryClaimAsync(key, TrackedGuid.New().Value, CancellationToken.None);
 
     await Assert.That(claimed).IsTrue()
       .Because("the model says where the table is; a store that trusts search_path instead "
@@ -134,8 +134,8 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
     var store2 = new EFCoreClaimedEmissionStore(ctx2);
 
     var key = $"test:{Guid.NewGuid():N}";
-    var evt1 = TrackedGuid.NewMedo();
-    var evt2 = TrackedGuid.NewMedo();
+    var evt1 = TrackedGuid.New();
+    var evt2 = TrackedGuid.New();
 
     var results = await Task.WhenAll(
       store1.TryClaimAsync(key, evt1, CancellationToken.None),
@@ -158,8 +158,8 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
     var store = new EFCoreClaimedEmissionStore(ctx);
 
     var key = $"test:{Guid.NewGuid():N}";
-    var first = await store.TryClaimAsync(key, TrackedGuid.NewMedo(), CancellationToken.None);
-    var second = await store.TryClaimAsync(key, TrackedGuid.NewMedo(), CancellationToken.None);
+    var first = await store.TryClaimAsync(key, TrackedGuid.New(), CancellationToken.None);
+    var second = await store.TryClaimAsync(key, TrackedGuid.New(), CancellationToken.None);
 
     await Assert.That(first).IsTrue();
     await Assert.That(second).IsFalse()
@@ -176,8 +176,8 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
     var keyA = $"test:{Guid.NewGuid():N}:A";
     var keyB = $"test:{Guid.NewGuid():N}:B";
 
-    var a = await store.TryClaimAsync(keyA, TrackedGuid.NewMedo(), CancellationToken.None);
-    var b = await store.TryClaimAsync(keyB, TrackedGuid.NewMedo(), CancellationToken.None);
+    var a = await store.TryClaimAsync(keyA, TrackedGuid.New(), CancellationToken.None);
+    var b = await store.TryClaimAsync(keyB, TrackedGuid.New(), CancellationToken.None);
 
     await Assert.That(a).IsTrue();
     await Assert.That(b).IsTrue()
@@ -192,7 +192,7 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
     var store = new EFCoreClaimedEmissionStore(ctx);
 
     var key = $"test:{Guid.NewGuid():N}";
-    var winnerEventId = TrackedGuid.NewMedo();
+    var winnerEventId = TrackedGuid.New();
 
     var taken = await store.TryClaimAsync(key, winnerEventId, CancellationToken.None);
     await Assert.That(taken).IsTrue();
@@ -221,7 +221,7 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
     var store = new EFCoreClaimedEmissionStore(ctx);
 
     var key = $"test:{Guid.NewGuid():N}";
-    var taken = await store.TryClaimAsync(key, TrackedGuid.NewMedo(), CancellationToken.None);
+    var taken = await store.TryClaimAsync(key, TrackedGuid.New(), CancellationToken.None);
     await Assert.That(taken).IsTrue();
 
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();

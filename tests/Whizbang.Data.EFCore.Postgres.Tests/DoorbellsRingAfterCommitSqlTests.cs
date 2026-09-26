@@ -88,8 +88,8 @@ public class DoorbellsRingAfterCommitSqlTests : EFCoreTestBase {
   [Test]
   public async Task Doorbell_InsideAHotTransaction_QueuesInsteadOfNotifyingAsync() {
     await using var hot = await _openAsync();
-    var target = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var target = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(hot, target);
     await _ownStreamAsync(hot, streamId, target);
 
@@ -111,8 +111,8 @@ public class DoorbellsRingAfterCommitSqlTests : EFCoreTestBase {
   public async Task HotStore_DoesNotTakeTheNotifySerializationLockAsync() {
     await using var hot = await _openAsync();
     await using var observer = await _openAsync();
-    var target = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var target = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(hot, target);
     await _ownStreamAsync(hot, streamId, target);
     var pid = (int)await _scalarAsync(hot, "SELECT pg_backend_pid()");
@@ -138,7 +138,7 @@ public class DoorbellsRingAfterCommitSqlTests : EFCoreTestBase {
   public async Task RingDoorbells_DeliversQueuedRingsAndCoalescesDuplicatesAsync() {
     await using var ringer = await _openAsync();
     await using var listener = await _openAsync();
-    var target = (Guid)TrackedGuid.NewMedo();
+    var target = (Guid)TrackedGuid.New();
     var channel = $"wh_work_i_{target}";
 
     // Three identical doorbells and one different payload queued by earlier (committed) hot transactions.
@@ -164,7 +164,7 @@ public class DoorbellsRingAfterCommitSqlTests : EFCoreTestBase {
     await using var a = await _openAsync();
     await using var b = await _openAsync();
     await using var listener = await _openAsync();
-    var target = (Guid)TrackedGuid.NewMedo();
+    var target = (Guid)TrackedGuid.New();
     var channel = $"wh_work_i_{target}";
     await _execAsync(a, "SELECT _queue_doorbell(@c, 'inbox')", ("c", channel));
 

@@ -8,6 +8,7 @@ namespace Whizbang.Core.ValueObjects;
 /// <tests>tests/Whizbang.Core.Tests/ValueObjects/GuidMetadataTests.cs:GuidMetadata_None_HasValueZeroAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/ValueObjects/GuidMetadataTests.cs:GuidMetadata_Version7_IsBit1Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/ValueObjects/GuidMetadataTests.cs:GuidMetadata_SourceMedo_IsBit2Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/ValueObjects/GuidMetadataTests.cs:GuidMetadata_SourceWhizbang_IsBit14Async</tests>
 [Flags]
 public enum GuidMetadatas : ushort {
   /// <summary>No metadata set.</summary>
@@ -27,7 +28,7 @@ public enum GuidMetadatas : ushort {
   // Creation Source (bits 2-5)
   // ========================================
 
-  /// <summary>Created via TrackedGuid.NewMedo() (the framework's UUIDv7 generator) - has sub-millisecond precision.</summary>
+  /// <summary>Created via the Medo.Uuid7 library (detected by interception) - has sub-millisecond precision.</summary>
   SourceMedo = 1 << 2,
 
   /// <summary>Created via Microsoft's Guid.NewGuid() or Guid.CreateVersion7() - millisecond precision only.</summary>
@@ -69,14 +70,21 @@ public enum GuidMetadatas : ushort {
   SourceGuidOne = 1 << 12,
 
   /// <summary>Created via UUID (Taiizor) library.</summary>
-  SourceTaiizor = 1 << 13
+  SourceTaiizor = 1 << 13,
+
+  // ========================================
+  // Framework Source (bit 14)
+  // ========================================
+
+  /// <summary>Created via TrackedGuid.New(), the framework's own UUIDv7 generator - has sub-millisecond precision.</summary>
+  SourceWhizbang = 1 << 14
 }
 
 /// <summary>
 /// Internal helper constants for common metadata combinations.
 /// </summary>
 internal static class GuidMetadataExtensions {
-  internal const GuidMetadatas MEDO_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceMedo;
+  internal const GuidMetadatas WHIZBANG_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceWhizbang;
   internal const GuidMetadatas MICROSOFT_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceMicrosoft;
   internal const GuidMetadatas MICROSOFT_V4 = GuidMetadatas.Version4 | GuidMetadatas.SourceMicrosoft;
   internal const GuidMetadatas EXTERNAL_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceExternal;

@@ -84,12 +84,12 @@ public sealed class DapperSqliteEventStoreCoverageTests : IDisposable {
     // payload shape ordered after a type it does not know about.
     var eventStore = _createLegacyFormatEventStore();
     var streamId = Guid.NewGuid();
-    // TrackedGuid.NewMedo(), not Guid.NewGuid() or Guid.CreateVersion7(): unlike the
+    // TrackedGuid.New(), not Guid.NewGuid() or Guid.CreateVersion7(): unlike the
     // fromEventId-skip and missing-Payload tests, TestEvent (the second candidate) actually
     // matches here, so this row's MessageId is fully deserialized through the legacy converter
     // -- and that path round-trips the id through TrackedGuid, which is what the working
     // legacy-format tests in DapperSqliteEventStoreDeepPathTests seed with.
-    var rowEventId = (Guid)TrackedGuid.NewMedo();
+    var rowEventId = (Guid)TrackedGuid.New();
     var envelopeJson = $$$"""{"MessageId":{"Value":"{{{rowEventId}}}"},"Payload":{"StreamId":"{{{streamId}}}","Payload":"continues-past-unregistered"}}""";
     await _seedRawEnvelopeRowAsync(streamId, 0, envelopeJson);
 
@@ -176,11 +176,11 @@ public sealed class DapperSqliteEventStoreCoverageTests : IDisposable {
       new ExcludingTypeInfoResolver(options.TypeInfoResolver!, typeof(List<MessageHop>)));
     var eventStore = _createEventStore(options);
     var streamId = Guid.NewGuid();
-    // TrackedGuid.NewMedo(): this test needs MessageId to deserialize successfully (via the
+    // TrackedGuid.New(): this test needs MessageId to deserialize successfully (via the
     // legacy converter) so the read reaches _deserializeHops at all. A row whose MessageId does
     // not survive that round trip is dropped before the hops branch is ever reached, which reads
     // as "hops broke the event" when it did not.
-    var rowEventId = (Guid)TrackedGuid.NewMedo();
+    var rowEventId = (Guid)TrackedGuid.New();
     var envelopeJson = $$$"""{"MessageId":{"Value":"{{{rowEventId}}}"},"Payload":{"StreamId":"{{{streamId}}}","Payload":"hops-unresolvable"},"Hops":[]}""";
     await _seedRawEnvelopeRowAsync(streamId, 0, envelopeJson);
 

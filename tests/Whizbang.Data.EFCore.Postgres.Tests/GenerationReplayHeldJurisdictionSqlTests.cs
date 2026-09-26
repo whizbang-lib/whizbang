@@ -21,7 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class GenerationReplayHeldJurisdictionSqlTests : EFCoreTestBase {
 
   private static async Task<Guid> _seedAsync(NpgsqlConnection conn, int status) {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
       INSERT INTO wh_dead_letters
@@ -29,7 +29,7 @@ public class GenerationReplayHeldJurisdictionSqlTests : EFCoreTestBase {
          attempts_when_dlq, recovery_status, generation, retried_on_generations)
       VALUES (@id, 'wh_inbox', @src, 'T.A', '{}'::jsonb, 5, 3, @st, 'old/1', '{}')";
     ins.Parameters.AddWithValue("id", id);
-    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.NewMedo());
+    ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.New());
     ins.Parameters.AddWithValue("st", status);
     await ins.ExecuteNonQueryAsync();
     return id;

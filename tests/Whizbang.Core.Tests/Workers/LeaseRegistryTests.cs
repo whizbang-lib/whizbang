@@ -33,7 +33,7 @@ public class LeaseRegistryTests {
   public async Task Register_ThenTryGet_ReturnsHandleAsync() {
     var time = _provider();
     var registry = new LeaseRegistry();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     using var lease = _newHandle(time, WorkCategory.Inbox, workId);
 
     registry.Register(lease);
@@ -48,7 +48,7 @@ public class LeaseRegistryTests {
   public async Task TryGet_NotRegistered_ReturnsFalseAsync() {
     var registry = new LeaseRegistry();
 
-    var found = registry.TryGet(WorkCategory.Inbox, (Guid)TrackedGuid.NewMedo(), out var resolved);
+    var found = registry.TryGet(WorkCategory.Inbox, (Guid)TrackedGuid.New(), out var resolved);
 
     await Assert.That(found).IsFalse();
     await Assert.That(resolved).IsNull();
@@ -58,7 +58,7 @@ public class LeaseRegistryTests {
   public async Task Dispose_RemovesHandleFromRegistryAsync() {
     var time = _provider();
     var registry = new LeaseRegistry();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     var lease = _newHandle(time, WorkCategory.Inbox, workId);
     registry.Register(lease);
 
@@ -73,7 +73,7 @@ public class LeaseRegistryTests {
   public async Task DifferentCategories_SameWorkId_AreIndependentAsync() {
     var time = _provider();
     var registry = new LeaseRegistry();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     using var inboxLease = _newHandle(time, WorkCategory.Inbox, workId);
     using var perspectiveLease = _newHandle(time, WorkCategory.PerspectiveEvent, workId);
 
@@ -90,7 +90,7 @@ public class LeaseRegistryTests {
   public async Task Register_DuplicateKey_ThrowsAsync() {
     var time = _provider();
     var registry = new LeaseRegistry();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
     using var first = _newHandle(time, WorkCategory.Inbox, workId);
     using var second = _newHandle(time, WorkCategory.Inbox, workId);
     registry.Register(first);
@@ -105,9 +105,9 @@ public class LeaseRegistryTests {
   public async Task Count_ReflectsRegisteredHandlesAsync() {
     var time = _provider();
     var registry = new LeaseRegistry();
-    var l1 = _newHandle(time, WorkCategory.Inbox, (Guid)TrackedGuid.NewMedo());
-    var l2 = _newHandle(time, WorkCategory.Inbox, (Guid)TrackedGuid.NewMedo());
-    var l3 = _newHandle(time, WorkCategory.Outbox, (Guid)TrackedGuid.NewMedo());
+    var l1 = _newHandle(time, WorkCategory.Inbox, (Guid)TrackedGuid.New());
+    var l2 = _newHandle(time, WorkCategory.Inbox, (Guid)TrackedGuid.New());
+    var l3 = _newHandle(time, WorkCategory.Outbox, (Guid)TrackedGuid.New());
 
     registry.Register(l1);
     registry.Register(l2);

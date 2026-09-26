@@ -339,7 +339,7 @@ public class IntegrityCheckpointReceptorTests {
     public required CaptureDispatcher Dispatcher { get; init; }
     public required CaptureTransport Transport { get; init; }
     public required IntegrityCheckpointReceptor Receptor { get; init; }
-    public Guid OriginId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid OriginId { get; } = TrackedGuid.New().Value;
   }
 
   [Test]
@@ -501,7 +501,7 @@ public class IntegrityCheckpointReceptorTests {
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
-    public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid InstanceId { get; } = TrackedGuid.New().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
     public int ProcessId => 1;
@@ -514,7 +514,7 @@ public class IntegrityCheckpointReceptorTests {
   }
 
   private sealed class VerifyCoordinator : IWorkCoordinator {
-    public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
+    public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
     public Func<(Guid Origin, long From, long To), IReadOnlyList<CheckpointBucket>> Counts { get; set; } = _ => [];
     public ServiceBacklog? Backlog { get; set; }
 

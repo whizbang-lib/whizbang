@@ -114,9 +114,9 @@ public class DeadLetterOperatorEndpointsTests {
   [Test]
   public async Task GetDue_ReturnsEntriesAsJsonAsync() {
     var entry = new DeadLetterEntry(
-      DeadLetterId: (Guid)TrackedGuid.NewMedo(),
+      DeadLetterId: (Guid)TrackedGuid.New(),
       SourceTable: DeadLetterSourceTable.INBOX,
-      SourceId: (Guid)TrackedGuid.NewMedo(),
+      SourceId: (Guid)TrackedGuid.New(),
       StreamId: null,
       MessageType: "TestMessage",
       FailureReason: MessageFailureReason.Throttled,
@@ -155,7 +155,7 @@ public class DeadLetterOperatorEndpointsTests {
 
   [Test]
   public async Task PostRetry_SchedulesIdForImmediateAttemptAsync() {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     var svc = new FakeRecoveryService();
     using var host = _buildHost(svc);
     await host.StartAsync();
@@ -171,7 +171,7 @@ public class DeadLetterOperatorEndpointsTests {
 
   [Test]
   public async Task PostHold_MarksHoldForReviewAsync() {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     var svc = new FakeRecoveryService();
     using var host = _buildHost(svc);
     await host.StartAsync();
@@ -185,7 +185,7 @@ public class DeadLetterOperatorEndpointsTests {
 
   [Test]
   public async Task PostGiveUp_MarksPermanentlyFailedAsync() {
-    var id = (Guid)TrackedGuid.NewMedo();
+    var id = (Guid)TrackedGuid.New();
     var svc = new FakeRecoveryService();
     using var host = _buildHost(svc);
     await host.StartAsync();

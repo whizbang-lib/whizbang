@@ -37,12 +37,12 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
     var store = _newStore(ctx);
 
     await Assert.That(async () => await store.MoveAsync(
-        deadLetterId: (Guid)TrackedGuid.NewMedo(),
+        deadLetterId: (Guid)TrackedGuid.New(),
         sourceTable: null!,
-        sourceId: (Guid)TrackedGuid.NewMedo(),
+        sourceId: (Guid)TrackedGuid.New(),
         failureReason: MessageFailureReason.MaxAttemptsExceeded,
         errorText: "err",
-        instanceId: (Guid)TrackedGuid.NewMedo(),
+        instanceId: (Guid)TrackedGuid.New(),
         generation: "v0.502"))
       .Throws<ArgumentException>();
   }
@@ -53,12 +53,12 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
     var store = _newStore(ctx);
 
     await Assert.That(async () => await store.MoveAsync(
-        deadLetterId: (Guid)TrackedGuid.NewMedo(),
+        deadLetterId: (Guid)TrackedGuid.New(),
         sourceTable: "",
-        sourceId: (Guid)TrackedGuid.NewMedo(),
+        sourceId: (Guid)TrackedGuid.New(),
         failureReason: MessageFailureReason.MaxAttemptsExceeded,
         errorText: "err",
-        instanceId: (Guid)TrackedGuid.NewMedo(),
+        instanceId: (Guid)TrackedGuid.New(),
         generation: "v0.502"))
       .Throws<ArgumentException>();
   }
@@ -69,12 +69,12 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
     var store = _newStore(ctx);
 
     await Assert.That(async () => await store.MoveAsync(
-        deadLetterId: (Guid)TrackedGuid.NewMedo(),
+        deadLetterId: (Guid)TrackedGuid.New(),
         sourceTable: DeadLetterSourceTable.OUTBOX,
-        sourceId: (Guid)TrackedGuid.NewMedo(),
+        sourceId: (Guid)TrackedGuid.New(),
         failureReason: MessageFailureReason.MaxAttemptsExceeded,
         errorText: "err",
-        instanceId: (Guid)TrackedGuid.NewMedo(),
+        instanceId: (Guid)TrackedGuid.New(),
         generation: null!))
       .Throws<ArgumentException>();
   }
@@ -85,12 +85,12 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
     var store = _newStore(ctx);
 
     await Assert.That(async () => await store.MoveAsync(
-        deadLetterId: (Guid)TrackedGuid.NewMedo(),
+        deadLetterId: (Guid)TrackedGuid.New(),
         sourceTable: DeadLetterSourceTable.OUTBOX,
-        sourceId: (Guid)TrackedGuid.NewMedo(),
+        sourceId: (Guid)TrackedGuid.New(),
         failureReason: MessageFailureReason.MaxAttemptsExceeded,
         errorText: "err",
-        instanceId: (Guid)TrackedGuid.NewMedo(),
+        instanceId: (Guid)TrackedGuid.New(),
         generation: ""))
       .Throws<ArgumentException>();
   }
@@ -102,17 +102,17 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var store = _newStore(ctx);
     var conn = await _openAsync(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     await _insertOutboxRowAsync(conn, messageId);
 
-    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
     var result = await store.MoveAsync(
       deadLetterId: dlqId,
       sourceTable: DeadLetterSourceTable.OUTBOX,
       sourceId: messageId,
       failureReason: MessageFailureReason.Throttled,
       errorText: "throttle exhausted",
-      instanceId: (Guid)TrackedGuid.NewMedo(),
+      instanceId: (Guid)TrackedGuid.New(),
       generation: "v0.502-test");
 
     await Assert.That(result).IsEqualTo(dlqId)
@@ -132,12 +132,12 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
 
     // Try to move a row that never existed — idempotency path.
     var result = await store.MoveAsync(
-      deadLetterId: (Guid)TrackedGuid.NewMedo(),
+      deadLetterId: (Guid)TrackedGuid.New(),
       sourceTable: DeadLetterSourceTable.OUTBOX,
-      sourceId: (Guid)TrackedGuid.NewMedo(),  // never inserted
+      sourceId: (Guid)TrackedGuid.New(),  // never inserted
       failureReason: MessageFailureReason.MaxAttemptsExceeded,
       errorText: "ghost",
-      instanceId: (Guid)TrackedGuid.NewMedo(),
+      instanceId: (Guid)TrackedGuid.New(),
       generation: "v0.502");
 
     await Assert.That(result).IsNull()
@@ -151,17 +151,17 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var store = _newStore(ctx);
     var conn = await _openAsync(ctx);
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.New();
     await _insertOutboxRowAsync(conn, messageId);
 
-    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var dlqId = (Guid)TrackedGuid.New();
     var result = await store.MoveAsync(
       deadLetterId: dlqId,
       sourceTable: DeadLetterSourceTable.OUTBOX,
       sourceId: messageId,
       failureReason: MessageFailureReason.Throttled,
       errorText: null,
-      instanceId: (Guid)TrackedGuid.NewMedo(),
+      instanceId: (Guid)TrackedGuid.New(),
       generation: "v0.502-nullerr");
 
     await Assert.That(result).IsEqualTo(dlqId);
@@ -188,7 +188,7 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
          created_at, stream_id, partition_number)
       VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{}', '{}', 1, 11, NOW(), @stream, 0)";
     cmd.Parameters.AddWithValue("msg", messageId);
-    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.NewMedo());
+    cmd.Parameters.AddWithValue("stream", (Guid)TrackedGuid.New());
     await cmd.ExecuteNonQueryAsync();
   }
 

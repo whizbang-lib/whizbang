@@ -38,7 +38,7 @@ public class EFCoreWorkCoordinatorServiceIdTests : EFCoreTestBase {
 
   [Test]
   public async Task GetLocalServiceIdAsync_SchemaScopedDbContext_ReadsTheIdFromTheModelSchemaAsync() {
-    var expected = (Guid)TrackedGuid.NewMedo();
+    var expected = (Guid)TrackedGuid.New();
 
     await using (var setup = CreateDbContext()) {
       var conn = (NpgsqlConnection)setup.Database.GetDbConnection();

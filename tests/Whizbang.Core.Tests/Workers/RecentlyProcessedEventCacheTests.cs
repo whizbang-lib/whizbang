@@ -25,7 +25,7 @@ public class RecentlyProcessedEventCacheTests {
   public async Task WasRecentlyProcessed_NeverSeen_ReturnsFalseAsync() {
     var cache = new RecentlyProcessedEventCache(_fakeProvider(out _));
 
-    var seen = cache.WasRecentlyProcessed((Guid)TrackedGuid.NewMedo());
+    var seen = cache.WasRecentlyProcessed((Guid)TrackedGuid.New());
 
     await Assert.That(seen).IsFalse();
   }
@@ -33,7 +33,7 @@ public class RecentlyProcessedEventCacheTests {
   [Test]
   public async Task MarkProcessed_ThenWasRecentlyProcessed_WithinTtl_ReturnsTrueAsync() {
     var cache = new RecentlyProcessedEventCache(_fakeProvider(out _));
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
 
     cache.MarkProcessed(workId);
 
@@ -44,7 +44,7 @@ public class RecentlyProcessedEventCacheTests {
   public async Task MarkProcessed_PastTtl_AfterSweep_ReturnsFalseAsync() {
     var provider = _fakeProvider(out var fake);
     var cache = new RecentlyProcessedEventCache(provider, ttl: TimeSpan.FromMinutes(5));
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
 
     cache.MarkProcessed(workId);
     fake.Advance(TimeSpan.FromMinutes(6));
@@ -58,7 +58,7 @@ public class RecentlyProcessedEventCacheTests {
     // Lazy expiry — even without explicit sweep, lookups past TTL must return false.
     var provider = _fakeProvider(out var fake);
     var cache = new RecentlyProcessedEventCache(provider, ttl: TimeSpan.FromMinutes(5));
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
 
     cache.MarkProcessed(workId);
     fake.Advance(TimeSpan.FromMinutes(6));
@@ -69,7 +69,7 @@ public class RecentlyProcessedEventCacheTests {
   [Test]
   public async Task MarkProcessed_BatchOfIds_AllSubsequentReturnsTrueAsync() {
     var cache = new RecentlyProcessedEventCache(_fakeProvider(out _));
-    var workIds = Enumerable.Range(0, 50).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var workIds = Enumerable.Range(0, 50).Select(_ => (Guid)TrackedGuid.New()).ToArray();
 
     cache.MarkProcessed(workIds);
 
@@ -82,11 +82,11 @@ public class RecentlyProcessedEventCacheTests {
   public async Task SweepExpired_RemovesExpiredEntries_KeepsLiveAsync() {
     var provider = _fakeProvider(out var fake);
     var cache = new RecentlyProcessedEventCache(provider, ttl: TimeSpan.FromMinutes(5));
-    var oldId = (Guid)TrackedGuid.NewMedo();
+    var oldId = (Guid)TrackedGuid.New();
     cache.MarkProcessed(oldId);
 
     fake.Advance(TimeSpan.FromMinutes(4)); // still alive
-    var youngId = (Guid)TrackedGuid.NewMedo();
+    var youngId = (Guid)TrackedGuid.New();
     cache.MarkProcessed(youngId);
 
     fake.Advance(TimeSpan.FromMinutes(2)); // oldId now expired (6 min total), youngId still alive (2 min total)
@@ -107,7 +107,7 @@ public class RecentlyProcessedEventCacheTests {
     // Insert 100 ids at distinct times so eviction order is deterministic.
     var ids = new Guid[110];
     for (var i = 0; i < ids.Length; i++) {
-      ids[i] = (Guid)TrackedGuid.NewMedo();
+      ids[i] = (Guid)TrackedGuid.New();
       cache.MarkProcessed(ids[i]);
       fake.Advance(TimeSpan.FromMilliseconds(10));
     }
@@ -139,9 +139,9 @@ public class RecentlyProcessedEventCacheTests {
 
     await Assert.That(cache.Count).IsEqualTo(0);
 
-    cache.MarkProcessed((Guid)TrackedGuid.NewMedo());
-    cache.MarkProcessed((Guid)TrackedGuid.NewMedo());
-    cache.MarkProcessed((Guid)TrackedGuid.NewMedo());
+    cache.MarkProcessed((Guid)TrackedGuid.New());
+    cache.MarkProcessed((Guid)TrackedGuid.New());
+    cache.MarkProcessed((Guid)TrackedGuid.New());
     await Assert.That(cache.Count).IsEqualTo(3);
 
     fake.Advance(TimeSpan.FromMinutes(6));
@@ -153,7 +153,7 @@ public class RecentlyProcessedEventCacheTests {
   public async Task MarkProcessed_SameIdTwice_RefreshesExpiryAsync() {
     var provider = _fakeProvider(out var fake);
     var cache = new RecentlyProcessedEventCache(provider, ttl: TimeSpan.FromMinutes(5));
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.New();
 
     cache.MarkProcessed(workId);
     fake.Advance(TimeSpan.FromMinutes(4));

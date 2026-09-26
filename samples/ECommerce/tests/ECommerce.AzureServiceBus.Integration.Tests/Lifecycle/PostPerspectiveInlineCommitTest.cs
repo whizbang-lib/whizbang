@@ -42,7 +42,7 @@ public class PostPerspectiveInlineCommitTest {
 
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
-    var productId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value);
+    var productId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
     Console.WriteLine($"[TEST] Generated ProductId: {productId}");
 
     var command = new CreateProductCommand {

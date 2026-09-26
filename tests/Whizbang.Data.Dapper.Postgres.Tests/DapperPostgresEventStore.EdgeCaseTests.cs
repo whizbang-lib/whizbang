@@ -42,7 +42,7 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   public async Task AppendAsync_MessageOverload_StoresEventWithMinimalEnvelopeAsync() {
     // Arrange
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var message = new TestEvent { StreamId = streamId, Payload = "minimal-envelope" };
 
     // Act - the raw-message overload synthesizes the envelope internally
@@ -69,7 +69,7 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   public async Task AppendAsync_MessageOverload_WithNullMessage_ThrowsAsync() {
     // Arrange
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
 
     // Act & Assert - the cast selects the raw-message overload
     await Assert.That(() => store.AppendAsync(streamId, (TestEvent)null!))
@@ -85,8 +85,8 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     // Arrange - a row whose event_type resolves to no candidate type; unlike the
     // base/EFCore read paths this store must throw, not skip
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    await _seedEventRowAsync(streamId, "Some.Ghost.EventType, Ghost", _eventDataJson(streamId, "ghost"), _metadataJson((Guid)TrackedGuid.NewMedo()));
+    var streamId = (Guid)TrackedGuid.New();
+    await _seedEventRowAsync(streamId, "Some.Ghost.EventType, Ghost", _eventDataJson(streamId, "ghost"), _metadataJson((Guid)TrackedGuid.New()));
 
     // Act
     InvalidOperationException? caught = null;
@@ -106,8 +106,8 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   public async Task ReadPolymorphicAsync_EventDataJsonNull_ThrowsFailedToDeserializeAsync() {
     // Arrange - resolvable type, but event_data is the JSON literal null
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    await _seedEventRowAsync(streamId, _testEventType(), "null", _metadataJson((Guid)TrackedGuid.NewMedo()));
+    var streamId = (Guid)TrackedGuid.New();
+    await _seedEventRowAsync(streamId, _testEventType(), "null", _metadataJson((Guid)TrackedGuid.New()));
 
     // Act
     InvalidOperationException? caught = null;
@@ -127,15 +127,15 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     // Arrange - ServiceInstanceInfo has JSON metadata registered but is not an IEvent,
     // so deserialization succeeds and the envelope builder must reject it
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var serviceInstance = new ServiceInstanceInfo {
       ServiceName = "not-an-event",
-      InstanceId = (Guid)TrackedGuid.NewMedo(),
+      InstanceId = (Guid)TrackedGuid.New(),
       HostName = "test-host",
       ProcessId = 4242
     };
     var payloadJson = JsonSerializer.Serialize(serviceInstance, _jsonOptions.GetTypeInfo(typeof(ServiceInstanceInfo)));
-    await _seedEventRowAsync(streamId, TypeNameFormatter.Format(typeof(ServiceInstanceInfo)), payloadJson, _metadataJson((Guid)TrackedGuid.NewMedo()));
+    await _seedEventRowAsync(streamId, TypeNameFormatter.Format(typeof(ServiceInstanceInfo)), payloadJson, _metadataJson((Guid)TrackedGuid.New()));
 
     // Act
     InvalidOperationException? caught = null;
@@ -155,8 +155,8 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     // Arrange - UnregisteredPayload resolves from the type map but has no JsonTypeInfo
     // in any registered JsonSerializerContext, so event-data deserialization must fail
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    await _seedEventRowAsync(streamId, TypeNameFormatter.Format(typeof(UnregisteredPayload)), "{}", _metadataJson((Guid)TrackedGuid.NewMedo()));
+    var streamId = (Guid)TrackedGuid.New();
+    await _seedEventRowAsync(streamId, TypeNameFormatter.Format(typeof(UnregisteredPayload)), "{}", _metadataJson((Guid)TrackedGuid.New()));
 
     // Act & Assert - fails at JsonTypeInfo resolution for the unregistered type
     await Assert.That(async () => await _readPolymorphicAsync(store, streamId, [typeof(UnregisteredPayload)]))
@@ -167,7 +167,7 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   public async Task ReadPolymorphicAsync_MetadataJsonNull_ThrowsFailedToDeserializeMetadataAsync() {
     // Arrange - metadata column holds the JSON literal null
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "payload"), "null");
 
     // Act
@@ -187,7 +187,7 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   public async Task ReadPolymorphicAsync_MetadataMissingMessageId_ThrowsAsync() {
     // Arrange - valid JSON object but no message_id key
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "payload"), "{}");
 
     // Act
@@ -222,8 +222,8 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     // Synthesizing a hop invents no authority: the sibling test below, where scope is SQL NULL,
     // still yields empty hops.
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
-    var messageId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
+    var messageId = (Guid)TrackedGuid.New();
     await _seedEventRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "hopless"),
       _metadataJson(messageId), """{"t":"tenant-x"}""");
@@ -248,10 +248,10 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     // Arrange - "hops": null exercises the Deserialize-returns-null ?? [] arm —
     // scope is SQL NULL, covering the scope-absent early return
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedEventRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "null-hops"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), "null"));
+      _metadataJson((Guid)TrackedGuid.New(), "null"));
 
     // Act
     var events = await _readPolymorphicAsync(store, streamId, [typeof(TestEvent)]);
@@ -269,10 +269,10 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   public async Task ReadPolymorphicAsync_ScopeShortKeys_RestoresScopeOnFirstHopAsync() {
     // Arrange - PerspectiveScope short-key format (t/u/c/o)
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedEventRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "scoped"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([_createHop()])),
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([_createHop()])),
       """{"t":"tenant-1","u":"user-1","c":"customer-1","o":"org-1"}""");
 
     // Act
@@ -292,10 +292,10 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   public async Task ReadPolymorphicAsync_ScopeLegacyLongKeys_RestoresTenantAndUserAsync() {
     // Arrange - legacy snake_case scope keys
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedEventRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "legacy-scope"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([_createHop()])),
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([_createHop()])),
       """{"tenant_id":"tenant-legacy","user_id":"user-legacy"}""");
 
     // Act
@@ -315,10 +315,10 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   public async Task ReadPolymorphicAsync_ScopeAllNullValues_LeavesHopScopeNullAsync() {
     // Arrange - all scope keys present but JSON null, so no scope is applied
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedEventRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "empty-scope"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([_createHop()])),
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([_createHop()])),
       """{"t":null,"u":null,"c":null,"o":null}""");
 
     // Act
@@ -335,10 +335,10 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     // Arrange - scope column holds the JSON literal null; the scope dictionary
     // deserializes to null and restoration is silently skipped
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     await _seedEventRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "null-scope"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([_createHop()])),
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([_createHop()])),
       "null");
 
     // Act
@@ -354,13 +354,13 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     // Arrange - the serialized hop already carries a scope delta; the scope column
     // holds a DIFFERENT tenant that must NOT replace it
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var scopedHop = _createHop() with {
       Scope = ScopeDelta.FromPerspectiveScope(new PerspectiveScope { TenantId = "original-tenant" })
     };
     await _seedEventRowAsync(
       streamId, _testEventType(), _eventDataJson(streamId, "pre-scoped"),
-      _metadataJson((Guid)TrackedGuid.NewMedo(), _serializeHops([scopedHop])),
+      _metadataJson((Guid)TrackedGuid.New(), _serializeHops([scopedHop])),
       """{"t":"column-tenant"}""");
 
     // Act
@@ -381,7 +381,7 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   public async Task GetEventsBetweenAsync_AfterEventIdWithOpenUpperBound_ReturnsOnlyLaterEventsAsync() {
     // Arrange - MessageId.New() is monotonic UUIDv7, so append order == event_id order
     var store = _createStore();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.New();
     var envelope1 = _createEnvelope(streamId, "event-1");
     var envelope2 = _createEnvelope(streamId, "event-2");
     var envelope3 = _createEnvelope(streamId, "event-3");
@@ -462,7 +462,7 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@EventId, @EventData::jsonb, @Metadata::jsonb)",
       new {
-        EventId = (Guid)TrackedGuid.NewMedo(),
+        EventId = (Guid)TrackedGuid.New(),
         StreamId = streamId,
         AggregateId = streamId,
         AggregateType = eventType,
@@ -512,7 +512,7 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
       Type = HopType.Current,
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "DapperPostgresEventStoreEdgeCaseTests",
-        InstanceId = (Guid)TrackedGuid.NewMedo(),
+        InstanceId = (Guid)TrackedGuid.New(),
         HostName = "test-host",
         ProcessId = 12345
       }

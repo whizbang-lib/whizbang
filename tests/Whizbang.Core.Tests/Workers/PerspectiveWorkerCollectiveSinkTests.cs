@@ -33,8 +33,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
   [Test]
   public async Task CollectiveSink_DispatchesEventOnceAndSkipsRunner_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
     var dispatcher = new RecordingDispatcher();
     var runner = new TrackingRunner();
@@ -73,8 +73,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
     // The dispatcher reports 3 apply batches; the worker must renew the sink work item's lease on
     // EACH report — without renewal, an apply spanning many batches outlives its lease and the
     // (idempotent) work is redelivered, re-running the full batched UPDATE for nothing.
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-lease") };
     var dispatcher = new BatchReportingDispatcher(batches: 3);
     var leaseChannel = new Whizbang.Testing.Workers.CapturingLeaseRenewalChannel();
@@ -114,8 +114,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
     // sink must therefore create + register a handle for each leased sink work row before
     // dispatching, as OutboxPublishWorker does for outbox work; otherwise a multi-batch collective
     // apply enqueues renewals that never reach RenewLeasesAsync and the DB lease still expires.
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-lease-real") };
     var dispatcher = new GatedBatchReportingDispatcher();
     var sinkWork = _sinkWork(streamId);
@@ -176,8 +176,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
     // batch N+1 and spam a warning per remaining batch. Eight acked batches must therefore produce
     // eight renewals through the REAL worker + registry — the default cap of six fails batch 7.
     const int BATCHES = 8;
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-lease-uncapped") };
     var sinkWork = _sinkWork(streamId);
 
@@ -240,9 +240,9 @@ public class PerspectiveWorkerCollectiveSinkTests {
     // envelope and re-runs the entire batched UPDATE. Observed live as same-second full-count
     // or 0-row re-applies. The sink must consult the processed-event cache exactly like the
     // per-event path's duplicate filter and skip the re-dispatch (notifying the dedup observer).
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
-    var workId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var workId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-echo") };
     var dispatcher = new RecordingDispatcher();
     var observer = new SinkDedupObserver();
@@ -297,8 +297,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
   /// </summary>
   [Test]
   public async Task CollectiveSink_ViaDrainPath_DispatchesEventOnceAndSkipsRunner_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
     var dispatcher = new RecordingDispatcher();
     var runner = new TrackingRunner();
@@ -346,8 +346,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
   /// </summary>
   [Test]
   public async Task CollectiveSink_SuccessfulDispatch_CompletesSinkWorkRowByEventWorkId_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var sinkWork = _sinkWork(streamId);
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
     var dispatcher = new RecordingDispatcher();
@@ -385,9 +385,9 @@ public class PerspectiveWorkerCollectiveSinkTests {
   /// </summary>
   [Test]
   public async Task CollectiveSink_ViaDrainPath_CompletesSinkWorkRowByEventWorkId_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
-    var workId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var workId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
     var dispatcher = new RecordingDispatcher();
     var envelope = _envelope(eventId, collectiveEvent);
@@ -427,8 +427,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
   /// </summary>
   [Test]
   public async Task CollectiveSink_SuccessfulDispatch_FiresPostAllPerspectivesLifecycle_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
     var dispatcher = new RecordingDispatcher();
     var invoker = new CapturingReceptorInvoker();
@@ -462,8 +462,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
   /// </summary>
   [Test]
   public async Task CollectiveSink_DispatchThrows_DoesNotFirePostAllPerspectives_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
     var dispatcher = new ThrowingDispatcher();
     var invoker = new CapturingReceptorInvoker();
@@ -499,8 +499,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
   /// </summary>
   [Test]
   public async Task CollectiveSink_PostApplyReceptorThrows_DoesNotCrashWorker_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var sinkWork = _sinkWork(streamId);
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
     var dispatcher = new RecordingDispatcher();
@@ -535,12 +535,12 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
   [Test]
   public async Task CollectiveSink_NoDispatcherRegistered_SkipsTheRunnerAndReturns_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
     var runner = new TrackingRunner();
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       [_sinkWork(streamId)],
-      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(TrackedGuid.NewMedo().Value, new TestCollectiveEvent { Scope = new TenantCollectiveScope("t") })] } },
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(TrackedGuid.New().Value, new TestCollectiveEvent { Scope = new TenantCollectiveScope("t") })] } },
       registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: null); // not configured
 
@@ -559,7 +559,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
   [Test]
   public async Task CollectiveSink_NoCollectiveEventOnStream_NoDispatch_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
     var sinkWork = _sinkWork(streamId);
     var dispatcher = new RecordingDispatcher();
     using var cts = new CancellationTokenSource();
@@ -591,8 +591,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
     // A failing collective apply (e.g. an EF "does not represent a valid property to be set" on a polymorphic
     // model) must NOT propagate out of the sink: if it does, the perspective batch re-throws and trips
     // BackgroundServiceExceptionBehavior=StopHost, crash-looping the whole service on one poison event.
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
     var dispatcher = new ThrowingDispatcher();
     var envelope = _envelope(eventId, collectiveEvent);
@@ -640,9 +640,9 @@ public class PerspectiveWorkerCollectiveSinkTests {
     // sink row is a normal perspective-event row, so the drain path's pre-apply dead-letter filter
     // (FilterDeadLetteredAsync) already covers it — this test locks that in: an over-max sink row is
     // dead-lettered (sourceTable=wh_perspective_events) and the dispatcher is never invoked.
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
-    var workId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var workId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
     var dispatcher = new ThrowingDispatcher();
     var deadLetters = new RecordingDeadLetterStore();
@@ -684,8 +684,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
   public async Task CollectiveSink_Meters_CountAReceivedAndAppliedCollective_Async() {
     // A collective disappears into the sink once applied; without a meter nothing shows how many a consumer
     // received or applied (#738).
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
     var dispatcher = new RecordingDispatcher();
     using var factory = new Whizbang.Core.Tests.Observability.TestMeterFactory();
@@ -716,7 +716,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
   [Test]
   public async Task CollectiveSink_Meters_CountALeasedSinkRowWithNoEventAsSkipped_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
     var sinkWork = _sinkWork(streamId);
     var dispatcher = new RecordingDispatcher();
     using var factory = new Whizbang.Core.Tests.Observability.TestMeterFactory();

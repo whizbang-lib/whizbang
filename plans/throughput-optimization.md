@@ -298,7 +298,7 @@ Per `feedback_lock_invariants_in_tests`: every new option (Gate's auto-derived d
 
 Per `feedback_tdd_coverage_docs`: ALL slices — 100% coverage, AOT compatible, update docs repo, link docs/tests/code via `<docs>` and `<tests>` tags.
 
-Per `feedback_use_trackedguid`: any new GUID generation in tests uses `TrackedGuid.NewMedo()`.
+Per `feedback_use_trackedguid`: any new GUID generation in tests uses `TrackedGuid.New()`.
 
 Per `feedback_no_parallel_builds`: agents (if used) MUST NOT run builds/format/tests; do that once after all agents complete.
 

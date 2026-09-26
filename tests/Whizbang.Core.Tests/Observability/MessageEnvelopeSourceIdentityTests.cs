@@ -49,7 +49,7 @@ public class MessageEnvelopeSourceIdentityTests {
   public async Task Envelope_AcceptsExplicitSourceIdentityViaInitAsync() {
     var serviceId = Guid.NewGuid();
     var env = new MessageEnvelope<string> {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = "hi",
       Hops = [_anchorHop()],
       DispatchContext = _defaultDispatch(),
@@ -70,7 +70,7 @@ public class MessageEnvelopeSourceIdentityTests {
     var serviceId = Guid.NewGuid();
     var causedBy = Guid.NewGuid();
     var env = new MessageEnvelope<string> {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = "hi",
       Hops = [_anchorHop()],
       DispatchContext = _defaultDispatch(),
@@ -94,7 +94,7 @@ public class MessageEnvelopeSourceIdentityTests {
     // Locks the wire format. Long keys would bloat every envelope; we use the same
     // short-key convention as MessageId ("id"), Payload ("p"), Hops ("h"), etc.
     var env = new MessageEnvelope<string> {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = "hi",
       Hops = [_anchorHop()],
       DispatchContext = _defaultDispatch(),
@@ -142,7 +142,7 @@ public class MessageEnvelopeSourceIdentityTests {
 
   private static MessageEnvelope<T> _newEnvelope<T>(T payload) {
     return new MessageEnvelope<T> {
-      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
       Payload = payload,
       Hops = [_anchorHop()],
       DispatchContext = _defaultDispatch(),

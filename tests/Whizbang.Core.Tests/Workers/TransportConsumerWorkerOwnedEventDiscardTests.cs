@@ -288,7 +288,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   private static MessageEnvelope<FakeOwnedEvent> _createEventEnvelope(string sourceServiceName) {
     return new MessageEnvelope<FakeOwnedEvent> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = new FakeOwnedEvent(),
       Hops = [
         new MessageHop {
@@ -315,7 +315,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   private static MessageEnvelope<FakeOwnedCommand> _createCommandEnvelope(string sourceServiceName) {
     return new MessageEnvelope<FakeOwnedCommand> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      MessageId = MessageId.From(TrackedGuid.New()),
       Payload = new FakeOwnedCommand(),
       Hops = [
         new MessageHop {

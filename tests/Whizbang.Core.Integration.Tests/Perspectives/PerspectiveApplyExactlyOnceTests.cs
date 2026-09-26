@@ -73,8 +73,8 @@ public class PerspectiveApplyExactlyOnceTests {
     // PerspectiveStreamIds (drain path) AND PerspectiveWork (standard path). This mirrors the
     // production condition we're investigating: an incoming batch that carries leased events
     // via drain mode plus a legacy per-event queue row for the same perspective.
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     const string perspectiveName = "Test.DoubleDispatchPerspective";
     var runner = new PathTrackingRunner(Status: PerspectiveProcessingStatus.Completed, AdvanceToEventId: eventId);
 
@@ -167,8 +167,8 @@ public class PerspectiveApplyExactlyOnceTests {
     // perspective_events rows joined to the same event_store row). Both rows carry the same
     // EventId but different EventWorkIds, and DeserializeStreamEvents maps each back to an
     // envelope with the same MessageId.
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     const string perspectiveName = "Test.DedupePerspective";
     var runner = new PathTrackingRunner(Status: PerspectiveProcessingStatus.Completed, AdvanceToEventId: eventId);
 
@@ -243,10 +243,10 @@ public class PerspectiveApplyExactlyOnceTests {
   /// </summary>
   [Test]
   public async Task DrainMode_MixedMultiplicityBurst_ApplyFiresExactlyOncePerEvent_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventIdA = TrackedGuid.NewMedo().Value;
-    var eventIdB = TrackedGuid.NewMedo().Value;
-    var eventIdC = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventIdA = TrackedGuid.New().Value;
+    var eventIdB = TrackedGuid.New().Value;
+    var eventIdC = TrackedGuid.New().Value;
     const string perspectiveName = "Test.MixedMultiplicityPerspective";
     var runner = new PathTrackingRunner(Status: PerspectiveProcessingStatus.Completed, AdvanceToEventId: eventIdC);
 
@@ -330,8 +330,8 @@ public class PerspectiveApplyExactlyOnceTests {
   /// </remarks>
   [Test]
   public async Task DrainMode_TwoConsumersSameStreamPerspective_AffinityGateSerializes_AppliesOnceAsync() {
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     const string perspectiveName = "Test.AffinityGatePerspective";
     var runner = new BlockingDrainRunner();
 
@@ -456,8 +456,8 @@ public class PerspectiveApplyExactlyOnceTests {
   /// </summary>
   [Test]
   public async Task CollectiveSink_DispatchesEventOnceAndSkipsRunner_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
 
     var sinkWork = new PerspectiveWork {
@@ -519,8 +519,8 @@ public class PerspectiveApplyExactlyOnceTests {
   /// </summary>
   [Test]
   public async Task CollectiveSink_ViaDrainPath_DispatchesEventOnceAndSkipsRunner_Async() {
-    var streamId = TrackedGuid.NewMedo().Value;
-    var eventId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
     var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
 
     // DRAIN path: the sink stream arrives as a PerspectiveStreamId, exactly as claim_work emits it.

@@ -29,7 +29,7 @@ public class DerivedIdentityTests {
 
   [Test]
   public async Task FromCanonical_KeepsTheSourcesFirst80BitsAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
 
     var derived = DerivedIdentity.FromCanonical(source, 0, "canonical");
 
@@ -39,7 +39,7 @@ public class DerivedIdentityTests {
 
   [Test]
   public async Task FromCanonical_PutsTheOrdinalInBits80To91Async() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
 
     await Assert.That(_ordinalField(DerivedIdentity.FromCanonical(source, 0, "c"))).IsEqualTo(0);
     await Assert.That(_ordinalField(DerivedIdentity.FromCanonical(source, 1, "c"))).IsEqualTo(1);
@@ -48,7 +48,7 @@ public class DerivedIdentityTests {
 
   [Test]
   public async Task FromCanonical_OrdinalPastTheField_SaturatesAndStaysUniqueAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
 
     var atLimit = DerivedIdentity.FromCanonical(source, 4095, "c|4095");
     var past = DerivedIdentity.FromCanonical(source, 5000, "c|5000");
@@ -61,14 +61,14 @@ public class DerivedIdentityTests {
 
   [Test]
   public async Task FromCanonical_SameInputs_SameIdAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
 
     await Assert.That(DerivedIdentity.FromCanonical(source, 3, "c")).IsEqualTo(DerivedIdentity.FromCanonical(source, 3, "c"));
   }
 
   [Test]
   public async Task FromCanonical_DifferentCanonical_SameOrdinal_DifferOnlyAfterTheOrdinalAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
 
     var a = _bytes(DerivedIdentity.FromCanonical(source, 2, "handler-a"));
     var b = _bytes(DerivedIdentity.FromCanonical(source, 2, "handler-b"));
@@ -92,7 +92,7 @@ public class DerivedIdentityTests {
     // Consecutive ids from the generator, most of them inside one millisecond: exactly the case where only the
     // counter orders them. Whatever the canonical string, the derived ids must sort the way the sources do.
     const int count = 10_000;
-    var sources = Enumerable.Range(0, count).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var sources = Enumerable.Range(0, count).Select(_ => (Guid)TrackedGuid.New()).ToArray();
     int outOfOrder = 0;
 
     for (int i = 1; i < count; i++) {
@@ -108,7 +108,7 @@ public class DerivedIdentityTests {
 
   [Test]
   public async Task FromCanonical_OneSource_DerivedIdsSortInOrdinalOrderAsync() {
-    var source = (Guid)TrackedGuid.NewMedo();
+    var source = (Guid)TrackedGuid.New();
     int outOfOrder = 0;
     var previous = DerivedIdentity.FromCanonical(source, 0, "c|0");
 
@@ -126,8 +126,8 @@ public class DerivedIdentityTests {
   [Test]
   public async Task FromCanonical_EveryIdOfAnEarlierSource_SortsBeforeEveryIdOfALaterOneAsync() {
     // A handling that emits several events must not interleave with the next handling's events.
-    var first = (Guid)TrackedGuid.NewMedo();
-    var second = (Guid)TrackedGuid.NewMedo();
+    var first = (Guid)TrackedGuid.New();
+    var second = (Guid)TrackedGuid.New();
 
     var lastOfFirst = DerivedIdentity.FromCanonical(first, 4095, "c");
     var firstOfSecond = DerivedIdentity.FromCanonical(second, 0, "c");

@@ -71,7 +71,7 @@ public sealed class PgScheduleManager(
         p_catch_up_lookback_ms => @lookback,
         p_authority_principal_id => @authority, p_authority_claims => @claims)";
     cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) {
-      Value = definition.ScheduleId ?? TrackedGuid.NewMedo().Value
+      Value = definition.ScheduleId ?? TrackedGuid.New().Value
     });
     cmd.Parameters.Add(new NpgsqlParameter("key", NpgsqlDbType.Text) { Value = (object?)definition.Key ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("stream", NpgsqlDbType.Uuid) { Value = definition.StreamId });

@@ -32,7 +32,7 @@ public class EmptyStreamIdGuardTests {
   /// </summary>
   [Test]
   public async Task ThrowIfEmpty_EmptyStreamIdUnderReject_ThrowsAsync() {
-    Guid messageId = TrackedGuid.NewMedo();
+    Guid messageId = TrackedGuid.New();
     var messageType = "Consumer.Contracts.Auth.RemoveUserCommand, Consumer.Contracts";
 
     var ex = await Assert.That(() => EmptyStreamIdGuard.ThrowIfEmpty(messageId, messageType, Guid.Empty, EmptyStreamIdPolicy.Reject)).ThrowsExactly<EmptyStreamIdException>();
@@ -61,7 +61,7 @@ public class EmptyStreamIdGuardTests {
   /// </summary>
   [Test]
   public async Task ThrowIfEmpty_RealStreamIdUnderReject_DoesNotThrowAsync() {
-    await Assert.That(() => EmptyStreamIdGuard.ThrowIfEmpty(Guid.NewGuid(), "Sample.Type", TrackedGuid.NewMedo(), EmptyStreamIdPolicy.Reject)).ThrowsNothing()
+    await Assert.That(() => EmptyStreamIdGuard.ThrowIfEmpty(Guid.NewGuid(), "Sample.Type", TrackedGuid.New(), EmptyStreamIdPolicy.Reject)).ThrowsNothing()
       .Because("The guard only fires on Guid.Empty — real UUIDs pass through.");
   }
 

@@ -41,21 +41,21 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, instanceId);
 
     // UUIDv7 is time-ordered, so creating in temporal order produces lex-ordered ids.
-    var event1 = (Guid)TrackedGuid.NewMedo();
+    var event1 = (Guid)TrackedGuid.New();
     await Task.Delay(2);
-    var event2 = (Guid)TrackedGuid.NewMedo();
+    var event2 = (Guid)TrackedGuid.New();
     await Task.Delay(2);
-    var event3 = (Guid)TrackedGuid.NewMedo();
+    var event3 = (Guid)TrackedGuid.New();
 
-    var workId1 = (Guid)TrackedGuid.NewMedo();
-    var workId2 = (Guid)TrackedGuid.NewMedo();
-    var workId3 = (Guid)TrackedGuid.NewMedo();
+    var workId1 = (Guid)TrackedGuid.New();
+    var workId2 = (Guid)TrackedGuid.New();
+    var workId3 = (Guid)TrackedGuid.New();
 
     // Insert in reverse order to prove sorting by event_id, not insert order.
     await _insertPerspectiveEventAsync(connection, workId3, streamId, perspectiveName, event3, instanceId);
@@ -81,17 +81,17 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var meId = (Guid)TrackedGuid.NewMedo();
-    var otherId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var meId = (Guid)TrackedGuid.New();
+    var otherId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, meId);
     await _registerInstanceAsync(connection, otherId);
 
-    var mineEvent = (Guid)TrackedGuid.NewMedo();
-    var theirEvent = (Guid)TrackedGuid.NewMedo();
-    var mineWork = (Guid)TrackedGuid.NewMedo();
-    var theirWork = (Guid)TrackedGuid.NewMedo();
+    var mineEvent = (Guid)TrackedGuid.New();
+    var theirEvent = (Guid)TrackedGuid.New();
+    var mineWork = (Guid)TrackedGuid.New();
+    var theirWork = (Guid)TrackedGuid.New();
     await _insertPerspectiveEventAsync(connection, mineWork, streamId, perspectiveName, mineEvent, meId);
     await _insertPerspectiveEventAsync(connection, theirWork, streamId, perspectiveName, theirEvent, otherId);
 
@@ -109,15 +109,15 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, instanceId);
 
-    var pendingEvent = (Guid)TrackedGuid.NewMedo();
-    var doneEvent = (Guid)TrackedGuid.NewMedo();
-    var pendingWork = (Guid)TrackedGuid.NewMedo();
-    var doneWork = (Guid)TrackedGuid.NewMedo();
+    var pendingEvent = (Guid)TrackedGuid.New();
+    var doneEvent = (Guid)TrackedGuid.New();
+    var pendingWork = (Guid)TrackedGuid.New();
+    var doneWork = (Guid)TrackedGuid.New();
     await _insertPerspectiveEventAsync(connection, pendingWork, streamId, perspectiveName, pendingEvent, instanceId);
     await _insertPerspectiveEventAsync(connection, doneWork, streamId, perspectiveName, doneEvent, instanceId, processedAt: DateTimeOffset.UtcNow);
 
@@ -135,14 +135,14 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(connection, instanceId);
 
-    var event1 = (Guid)TrackedGuid.NewMedo();
-    var event2 = (Guid)TrackedGuid.NewMedo();
-    await _insertPerspectiveEventAsync(connection, (Guid)TrackedGuid.NewMedo(), streamId, "Projection.A", event1, instanceId);
-    await _insertPerspectiveEventAsync(connection, (Guid)TrackedGuid.NewMedo(), streamId, "Projection.B", event2, instanceId);
+    var event1 = (Guid)TrackedGuid.New();
+    var event2 = (Guid)TrackedGuid.New();
+    await _insertPerspectiveEventAsync(connection, (Guid)TrackedGuid.New(), streamId, "Projection.A", event1, instanceId);
+    await _insertPerspectiveEventAsync(connection, (Guid)TrackedGuid.New(), streamId, "Projection.B", event2, instanceId);
 
     var fetchedA = await _fetchAsync(connection, streamId, "Projection.A", instanceId);
     var fetchedB = await _fetchAsync(connection, streamId, "Projection.B", instanceId);
@@ -161,16 +161,16 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamA = (Guid)TrackedGuid.NewMedo();
-    var streamB = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamA = (Guid)TrackedGuid.New();
+    var streamB = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, instanceId);
 
-    var eventA = (Guid)TrackedGuid.NewMedo();
-    var eventB = (Guid)TrackedGuid.NewMedo();
-    await _insertPerspectiveEventAsync(connection, (Guid)TrackedGuid.NewMedo(), streamA, perspectiveName, eventA, instanceId);
-    await _insertPerspectiveEventAsync(connection, (Guid)TrackedGuid.NewMedo(), streamB, perspectiveName, eventB, instanceId);
+    var eventA = (Guid)TrackedGuid.New();
+    var eventB = (Guid)TrackedGuid.New();
+    await _insertPerspectiveEventAsync(connection, (Guid)TrackedGuid.New(), streamA, perspectiveName, eventA, instanceId);
+    await _insertPerspectiveEventAsync(connection, (Guid)TrackedGuid.New(), streamB, perspectiveName, eventB, instanceId);
 
     var fetched = await _fetchAsync(connection, streamA, perspectiveName, instanceId);
 
@@ -191,13 +191,13 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(conn, instanceId);
 
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     await _insertPerspectiveEventAsync(conn, workId, streamId, perspectiveName, eventId, instanceId);
 
     var beforeLease = await _readLeaseExpiryAsync(conn, workId);
@@ -238,13 +238,13 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(conn, instanceId);
 
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     await _ensureBackingEventStoreRowAsync(conn, eventId, streamId);
     // Insert with EXPIRED lease (already past).
     await using (var ins = conn.CreateCommand()) {
@@ -308,15 +308,15 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, instanceId);
 
-    var stampedEventId = (Guid)TrackedGuid.NewMedo();
-    var unstampedEventId = (Guid)TrackedGuid.NewMedo();
-    var stampedWorkId = (Guid)TrackedGuid.NewMedo();
-    var unstampedWorkId = (Guid)TrackedGuid.NewMedo();
+    var stampedEventId = (Guid)TrackedGuid.New();
+    var unstampedEventId = (Guid)TrackedGuid.New();
+    var stampedWorkId = (Guid)TrackedGuid.New();
+    var unstampedWorkId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(connection, stampedEventId, streamId, commitSequence: 100L);
     await _insertEventStoreRowUnstampedAsync(connection, unstampedEventId, streamId);
     await _insertPerspectiveEventAsync(connection, stampedWorkId, streamId, perspectiveName, stampedEventId, instanceId);
@@ -339,15 +339,15 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, instanceId);
 
-    var stampedEventId = (Guid)TrackedGuid.NewMedo();
-    var unstampedEventId = (Guid)TrackedGuid.NewMedo();
-    var stampedWorkId = (Guid)TrackedGuid.NewMedo();
-    var unstampedWorkId = (Guid)TrackedGuid.NewMedo();
+    var stampedEventId = (Guid)TrackedGuid.New();
+    var unstampedEventId = (Guid)TrackedGuid.New();
+    var stampedWorkId = (Guid)TrackedGuid.New();
+    var unstampedWorkId = (Guid)TrackedGuid.New();
     await _insertEventStoreRowAsync(connection, stampedEventId, streamId, commitSequence: 200L);
     await _insertEventStoreRowUnstampedAsync(connection, unstampedEventId, streamId);
     // Unowned so the atomic claim path would have eligible work to lease.
@@ -386,13 +386,13 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, instanceId);
 
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     const long stampedCommitSequence = 234500L;
     await _insertEventStoreRowAsync(connection, eventId, streamId, stampedCommitSequence);
     await _insertPerspectiveEventAsync(connection, workId, streamId, perspectiveName, eventId, instanceId);
@@ -421,12 +421,12 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(connection, instanceId);
 
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     // Insert wh_perspective_events ONLY — bypass the helper to skip backing row creation.
     await using (var ins = connection.CreateCommand()) {
       ins.CommandText = @"
@@ -458,13 +458,13 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, instanceId);
 
-    var eventId = (Guid)TrackedGuid.NewMedo();
-    var workId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
     const long stampedCommitSequence = 571800L;
     await _insertEventStoreRowAsync(connection, eventId, streamId, stampedCommitSequence);
     // Unowned so the atomic variant claims it before returning.
@@ -484,8 +484,8 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var instanceId = (Guid)TrackedGuid.NewMedo();
-    var streamId = (Guid)TrackedGuid.NewMedo();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(connection, instanceId);
 
     var fetched = await _fetchAsync(connection, streamId, "Projection.Empty", instanceId);
