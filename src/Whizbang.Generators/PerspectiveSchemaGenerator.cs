@@ -450,6 +450,17 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         perspectiveSqlBuilder.AppendLine(lengthConstraintsSql);
       }
 
+      // Fill each physical column from the document for rows written before it existed. Post-table DDL, so
+      // a column-copy migration runs it against the swapped-in table; idempotent, so a re-apply finds
+      // nothing to do. The same statements the EF Core schema emits, so both drivers agree.
+      var isSplit = perspective.StorageMode == GeneratorFieldStorageMode.Split;
+      foreach (var field in perspective.PhysicalFields) {
+        var backfill = PhysicalColumnSql.Backfill(perspective.TableName, field with { IsSplit = isSplit });
+        if (backfill is not null) {
+          perspectiveSqlBuilder.AppendLine(backfill);
+        }
+      }
+
       // Collect per-perspective entry
       perspectiveEntries.Add((perspective.ClassName, perspectiveSqlBuilder.ToString()));
 
