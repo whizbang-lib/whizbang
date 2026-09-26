@@ -16,15 +16,14 @@ namespace Whizbang.Core.Messaging;
 /// duplicate into a counted no-op.
 /// </para>
 /// <para>
-/// <strong>Layout (UUIDv7-shaped, derived entropy):</strong> bytes 0..5 are the first 48 bits of the
-/// source message id (its UUIDv7 millisecond timestamp when the source is a framework id), so derived ids
-/// stay time-local to their source and keep index locality; byte 6 carries the version nibble 7 over the
-/// top four bits of the hash; byte 8 carries the RFC variant over the top two bits of the hash; every
-/// remaining bit (74 in all) is SHA-256 over the UTF-8 canonical string
-/// <c>whizbang.emission.v1\n{source}\n{service}\n{handler}\n{emittedType}\n{ordinal}</c>. RFC 9562 lets
-/// a v7 id fill its non-timestamp bits with any implementation-chosen data; deriving them from the handling
-/// is what makes the id repeatable. The version stays 7 so every consumer that requires time-ordered ids
-/// (the framework's id value objects among them) accepts a derived id exactly like a minted one.
+/// <strong>Layout:</strong> the shared derived layout (see <see cref="DerivedIdentity"/>): the source message
+/// id's first 80 bits (its millisecond and monotonic counter), then the emission's ordinal, then SHA-256 over the
+/// UTF-8 canonical string <c>whizbang.emission.v2\n{source}\n{service}\n{handler}\n{emittedType}\n{ordinal}</c>.
+/// Derived ids therefore sort in the order of the handlings they came from, and a handling's emissions sort in
+/// the order it produced them, which is the order events on one stream are versioned and applied in. RFC 9562 lets
+/// a v7 id fill its non-timestamp bits with implementation-chosen data; deriving them from the handling is what
+/// makes the id repeatable, and the version stays 7 so every consumer that requires time-ordered ids accepts a
+/// derived id exactly like a minted one.
 /// </para>
 /// <para>
 /// The five inputs are the ones that make an emission unique within a fleet: the source message
@@ -36,7 +35,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/EmissionIdentityTests.cs</tests>
 public static class EmissionIdentity {
-  private const string PREFIX = "whizbang.emission.v1";
+  private const string PREFIX = "whizbang.emission.v2";
 
   /// <summary>
   /// Derives a deterministic event id for the <paramref name="ordinal"/>th emission of
@@ -67,7 +66,7 @@ public static class EmissionIdentity {
       emittedTypeName, "\n",
       ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
-    return DerivedIdentity.FromCanonical(sourceMessageId, canonical);
+    return DerivedIdentity.FromCanonical(sourceMessageId, ordinal, canonical);
   }
 }
 

@@ -14,8 +14,9 @@ namespace Whizbang.Core.Messaging;
 /// from the composite the repeat is a no-op at the primary key.
 /// </para>
 /// <para>
-/// Same layout as <see cref="EmissionIdentity"/> (UUIDv7-shaped, time prefix inherited from the composite
-/// id, the remaining bits from SHA-256 over <c>whizbang.composite-child.v1\n{composite}\n{ordinal}\n{type}</c>).
+/// Same layout as <see cref="EmissionIdentity"/> (see <see cref="DerivedIdentity"/>): the composite id's first 80
+/// bits, then the child's ordinal, then SHA-256 over <c>whizbang.composite-child.v2\n{composite}\n{ordinal}\n{type}</c>,
+/// so children sort in the order the composite lists them and after every child of an earlier composite.
 /// The ordinal is the child's position in the composite as the producer packed it, never its position in
 /// the set a given consumer keeps, so two consumers of one composite derive the same id for the same child.
 /// A composite that carries its children's original ids (<see cref="Whizbang.Core.Minting.IIdentityPreservingComposite"/>)
@@ -25,7 +26,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/messaging/composite-events#deterministic-child-ids</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityTests.cs</tests>
 public static class CompositeChildIdentity {
-  private const string PREFIX = "whizbang.composite-child.v1";
+  private const string PREFIX = "whizbang.composite-child.v2";
 
   /// <summary>Derives the child id for the <paramref name="ordinal"/>th inner event of <paramref name="compositeMessageId"/>.</summary>
   /// <param name="compositeMessageId">The composite row's message id. Must not be empty.</param>
@@ -48,6 +49,6 @@ public static class CompositeChildIdentity {
       ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture), "\n",
       childTypeName);
 
-    return DerivedIdentity.FromCanonical(compositeMessageId, canonical);
+    return DerivedIdentity.FromCanonical(compositeMessageId, ordinal, canonical);
   }
 }

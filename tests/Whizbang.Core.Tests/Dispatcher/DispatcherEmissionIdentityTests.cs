@@ -195,9 +195,52 @@ public class DispatcherEmissionIdentityTests {
     var eventId = dispatcher.OutboxCascades[0].EventId!.Value;
     await Assert.That(eventId.Version).IsEqualTo(7)
       .Because("downstream id value objects accept only v7; a derived id must pass where a minted one passes");
-    var prefixMatches = eventId.ToByteArray(bigEndian: true).AsSpan(0, 6).SequenceEqual(sourceMessageId.ToByteArray(bigEndian: true).AsSpan(0, 6));
+    var prefixMatches = eventId.ToByteArray(bigEndian: true).AsSpan(0, 10).SequenceEqual(sourceMessageId.ToByteArray(bigEndian: true).AsSpan(0, 10));
     await Assert.That(prefixMatches).IsTrue()
-      .Because("derived ids inherit the source's millisecond prefix so they index next to the message that caused them");
+      .Because("derived ids inherit the source's millisecond and counter, so they sort and index next to the message that caused them");
+  }
+
+  private static int _compareBigEndian(Guid a, Guid b) =>
+    a.ToByteArray(bigEndian: true).AsSpan().SequenceCompareTo(b.ToByteArray(bigEndian: true));
+
+  [Test]
+  public async Task CascadeMessageAsync_BackToBackHandlingsOnOneStream_EventIdsFollowHandlingOrderAsync() {
+    // Two commands sent one after the other on one stream, most pairs inside one millisecond. The event store
+    // versions a stream's events in event id order, so the first command's event must carry the smaller id.
+    await using var sp = _buildProvider();
+    var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    const int pairs = 2_000;
+
+    for (int i = 0; i < pairs; i++) {
+      var createCommand = (Guid)TrackedGuid.NewMedo();
+      var addCommand = (Guid)TrackedGuid.NewMedo();
+      await dispatcher.CascadeMessageAsync(new ProbeEvent(streamId), _handlingEnvelope(createCommand, "CreateHandler"), DispatchModes.Outbox);
+      await dispatcher.CascadeMessageAsync(new OtherProbeEvent(streamId), _handlingEnvelope(addCommand, "AddHandler"), DispatchModes.Outbox);
+    }
+
+    var ids = dispatcher.OutboxCascades.ConvertAll(c => c.EventId!.Value);
+    var outOfOrder = Enumerable.Range(1, ids.Count - 1).Count(i => _compareBigEndian(ids[i], ids[i - 1]) <= 0);
+    await Assert.That(outOfOrder).IsEqualTo(0)
+      .Because("an event derived from a later command must sort after an event derived from an earlier one");
+  }
+
+  [Test]
+  public async Task CascadeMessageAsync_SeveralEmissionsOfOneHandling_EventIdsFollowEmissionOrderAsync() {
+    await using var sp = _buildProvider();
+    var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
+    var handling = _handlingEnvelope((Guid)TrackedGuid.NewMedo(), "Handler");
+    var streamId = (Guid)TrackedGuid.NewMedo();
+
+    for (int i = 0; i < 20; i++) {
+      IMessage emitted = i % 2 == 0 ? new OtherProbeEvent(streamId) : new ProbeEvent(streamId);
+      await dispatcher.CascadeMessageAsync(emitted, handling, DispatchModes.Outbox);
+    }
+
+    var ids = dispatcher.OutboxCascades.ConvertAll(c => c.EventId!.Value);
+    var outOfOrder = Enumerable.Range(1, ids.Count - 1).Count(i => _compareBigEndian(ids[i], ids[i - 1]) <= 0);
+    await Assert.That(outOfOrder).IsEqualTo(0)
+      .Because("a handler's emissions on one stream must apply in the order it produced them");
   }
 
   [Test]

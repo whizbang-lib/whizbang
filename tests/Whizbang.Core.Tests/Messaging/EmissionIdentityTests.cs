@@ -11,7 +11,8 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <summary>
 /// A retry is not a republish: the id of an event a handler emits must be a function of the handling,
 /// so a redelivered inbox row re-derives the same ids and the store's primary keys absorb the copy.
-/// These tests pin the derivation (which inputs matter, which do not) and the UUIDv8 layout.
+/// These tests pin the derivation (which inputs matter, which do not), the layout, and that derived ids sort
+/// in the order of the handlings and emissions they came from.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Messaging/EmissionIdentity.cs</code-under-test>
 [Category("Core")]
@@ -114,15 +115,15 @@ public class EmissionIdentityTests {
   }
 
   [Test]
-  public async Task Derive_InheritsFirst48BitsOfSourceAsync() {
+  public async Task Derive_InheritsFirst80BitsOfSourceAsync() {
     var source = (Guid)TrackedGuid.NewMedo();
     var derived = EmissionIdentity.Derive(source, SERVICE, HANDLER, TYPE, ordinal: 0);
 
     var sourceBytes = source.ToByteArray(bigEndian: true);
     var derivedBytes = derived.ToByteArray(bigEndian: true);
 
-    await Assert.That(derivedBytes.AsSpan(0, 6).SequenceEqual(sourceBytes.AsSpan(0, 6))).IsTrue()
-      .Because("the derived id keeps its source's millisecond prefix so it stays time-local in indexes");
+    await Assert.That(derivedBytes.AsSpan(0, 10).SequenceEqual(sourceBytes.AsSpan(0, 10))).IsTrue()
+      .Because("the derived id keeps its source's millisecond and monotonic counter, so it sorts where its source sorts");
   }
 
   [Test]
@@ -133,6 +134,38 @@ public class EmissionIdentityTests {
 
     await Assert.That(a.AsSpan(0, 6).SequenceEqual(b.AsSpan(0, 6))).IsTrue();
     await Assert.That(a.AsSpan(6).SequenceEqual(b.AsSpan(6))).IsFalse();
+  }
+
+  [Test]
+  public async Task Derive_EventsOfConsecutiveCommands_SortInCommandOrderAsync() {
+    // Two commands sent back to back on one stream, usually inside one millisecond: the event of the first must be
+    // versioned before the event of the second, and versions follow event id order.
+    const int count = 5_000;
+    var commands = Enumerable.Range(0, count).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    int outOfOrder = 0;
+
+    for (int i = 1; i < count; i++) {
+      var earlier = EmissionIdentity.Derive(commands[i - 1], SERVICE, "CreateHandler", "Contracts.Created", ordinal: 0);
+      var later = EmissionIdentity.Derive(commands[i], SERVICE, "AddFieldHandler", "Contracts.FieldAdded", ordinal: 0);
+      if (later.ToByteArray(bigEndian: true).AsSpan().SequenceCompareTo(earlier.ToByteArray(bigEndian: true)) <= 0) {
+        outOfOrder++;
+      }
+    }
+
+    await Assert.That(outOfOrder).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task Derive_EmissionsOfOneHandling_SortInEmissionOrderAsync() {
+    // A handler that returns several events for one stream: they must apply in the order it returned them.
+    var source = (Guid)TrackedGuid.NewMedo();
+    var ids = Enumerable.Range(0, 50)
+      .Select(ordinal => EmissionIdentity.Derive(source, SERVICE, HANDLER, ordinal % 2 == 0 ? "Contracts.B" : "Contracts.A", ordinal))
+      .ToArray();
+
+    var sorted = ids.OrderBy(id => id.ToString("N"), StringComparer.Ordinal).ToArray();
+
+    await Assert.That(sorted.SequenceEqual(ids)).IsTrue();
   }
 
   [Test]

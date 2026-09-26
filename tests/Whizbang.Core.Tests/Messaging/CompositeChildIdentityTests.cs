@@ -2,6 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -53,12 +54,33 @@ public class CompositeChildIdentityTests {
     var source = _composite.ToByteArray(bigEndian: true);
     var version = bytes[6] >> 4;
     var variant = bytes[8] >> 6;
-    var sameTimePrefix = bytes.AsSpan(0, 6).SequenceEqual(source.AsSpan(0, 6));
+    var sameTimePrefix = bytes.AsSpan(0, 10).SequenceEqual(source.AsSpan(0, 10));
 
     await Assert.That(version).IsEqualTo(7).Because("consumers that require time-ordered ids accept a derived id like a minted one");
     await Assert.That(variant).IsEqualTo(0b10).Because("RFC 9562 variant");
     await Assert.That(sameTimePrefix).IsTrue()
-      .Because("the child stays time-local to its composite so index locality is kept");
+      .Because("the child keeps its composite's millisecond and counter, so it sorts where its composite sorts");
+  }
+
+  [Test]
+  public async Task Derive_ChildrenSortInTheirOrderWithinTheCompositeAsync() {
+    // Children of one composite that land on one stream must apply in the order the composite lists them.
+    var ids = Enumerable.Range(0, 100).Select(i => CompositeChildIdentity.Derive(_composite, i, i % 3 == 0 ? "Z.Type" : TYPE)).ToArray();
+
+    var sorted = ids.OrderBy(id => id.ToString("N"), StringComparer.Ordinal).ToArray();
+
+    await Assert.That(sorted.SequenceEqual(ids)).IsTrue();
+  }
+
+  [Test]
+  public async Task Derive_ChildrenOfConsecutiveComposites_SortInCompositeOrderAsync() {
+    var first = (Guid)TrackedGuid.NewMedo();
+    var second = (Guid)TrackedGuid.NewMedo();
+
+    var lastChildOfFirst = CompositeChildIdentity.Derive(first, 99, TYPE);
+    var firstChildOfSecond = CompositeChildIdentity.Derive(second, 0, TYPE);
+
+    await Assert.That(string.CompareOrdinal(firstChildOfSecond.ToString("N"), lastChildOfFirst.ToString("N"))).IsGreaterThan(0);
   }
 
   [Test]
