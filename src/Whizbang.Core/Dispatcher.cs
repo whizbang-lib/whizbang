@@ -807,7 +807,7 @@ public abstract partial class Dispatcher(
       var invoker = _lookupReceptorInvoker<object>(message, messageType);
 
       if (invoker == null) {
-        return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options.Priority, options.MaxPayloadBytes);
+        return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options);
       }
 
       var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
@@ -1004,7 +1004,7 @@ public abstract partial class Dispatcher(
       var invoker = _lookupReceptorInvoker<object>(message, messageType);
 
       if (invoker == null) {
-        return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options.Priority, options.MaxPayloadBytes);
+        return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options);
       }
 
       var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
@@ -3368,7 +3368,7 @@ public abstract partial class Dispatcher(
       // Capture the establishing context synchronously (see the other overload) so a detached/worker emit's
       // child inherits identity+scope from the hop rather than fabricating a fresh root across the boundary.
       var establishingEnvelope = _captureAmbientSourceEnvelope();
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, scheduledFor: options.ScheduledFor, priority: options.Priority, maxPayloadBytes: options.MaxPayloadBytes);
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, options: options);
 
       // ScheduledFor must gate the in-process local-receptor invocation the same way it gates
       // the outbox-pickup query. Without this branch the local receptor fires inline despite the
@@ -3668,7 +3668,10 @@ public abstract partial class Dispatcher(
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
   /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
-  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false, DateTimeOffset? scheduledFor = null, int priority = Whizbang.Core.Priority.WorkPriority.UNDECLARED, long? maxPayloadBytes = null) {
+  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false, DispatchOptions? options = null) {
+    // The caller's schedule, declared priority and payload limit, when it dispatched with options.
+    var scheduledFor = options?.ScheduledFor;
+    var priority = options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED;
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var eventTypeName = eventType.Name;
@@ -3733,7 +3736,7 @@ public abstract partial class Dispatcher(
       // Create envelope with hop and serialize to outbox message
       var envelope = _createOutboxEnvelopeWithHop(eventData, eventType, messageId, sourceEnvelope, destination);
       _stampExplicitPriority(envelope, priority);   // an explicit number on the options is the caller's declaration
-      envelope.PayloadLimitOverride = maxPayloadBytes;
+      envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
 
       // Serialize, queue, and flush
       await _serializeQueueAndFlushAsync(envelope, eventData!, eventType, destination, messageId, strategy, scheduledFor);
@@ -4351,8 +4354,7 @@ public abstract partial class Dispatcher(
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber,
-    int priority = Whizbang.Core.Priority.WorkPriority.UNDECLARED,
-    long? maxPayloadBytes = null
+    DispatchOptions? options = null
   ) where TMessage : notnull {
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
@@ -4378,8 +4380,8 @@ public abstract partial class Dispatcher(
 
       // Create envelope with hop for observability - generic version preserves type!
       var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
-      _stampExplicitPriority(envelope, priority);
-      envelope.PayloadLimitOverride = maxPayloadBytes;
+      _stampExplicitPriority(envelope, options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED);
+      envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
 
       // Start dispatch activity to serve as parent for handler traces (on receiving end)
       // The activity context will be propagated through the outbox message
@@ -4438,8 +4440,7 @@ public abstract partial class Dispatcher(
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber,
-    int priority = Whizbang.Core.Priority.WorkPriority.UNDECLARED,
-    long? maxPayloadBytes = null
+    DispatchOptions? options = null
   ) {
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
@@ -4467,8 +4468,8 @@ public abstract partial class Dispatcher(
       // WARN: This creates MessageEnvelope<object> - type information is lost
       // For AOT compatibility, use the generic overload SendToOutboxViaScopeAsync<TMessage>
       var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
-      _stampExplicitPriority(envelope, priority);
-      envelope.PayloadLimitOverride = maxPayloadBytes;
+      _stampExplicitPriority(envelope, options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED);
+      envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
 
       // Start dispatch activity to serve as parent for handler traces (on receiving end)
       // The activity context will be propagated through the outbox message

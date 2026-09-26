@@ -180,7 +180,7 @@ public class StrandedSagaSweepTests {
     repo.LastActivity = old.AddMinutes(30);
     await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
 
-    var keys = emitter.Once.Select(o => o.ClaimKey).ToList();
+    var keys = emitter.Once.ConvertAll(o => o.ClaimKey);
     await Assert.That(keys[0]).IsEqualTo(keys[1])
       .Because("every instance and every restart sweeping the same stopped saga must arrive at one emission");
     await Assert.That(keys[2]).IsNotEqualTo(keys[0])

@@ -304,7 +304,7 @@ public class MessagePayloadLimitsTests {
     var limits = MessagePayloadLimits.Resolve(new ServiceCollection().BuildServiceProvider());
 
     await Assert.That(() => limits.Enforce(_payload(4 * 1024 * 1024), typeof(PlainMessage), _messageId, null)).ThrowsNothing();
-    await Assert.That(() => limits.Enforce(_payload(5 * 1024 * 1024 + 1), typeof(PlainMessage), _messageId, null))
+    await Assert.That(() => limits.Enforce(_payload((5 * 1024 * 1024) + 1), typeof(PlainMessage), _messageId, null))
       .Throws<MessagePayloadTooLargeException>()
       .Because("a host that never registered the limit still gets the 5 MiB default");
   }
@@ -342,7 +342,7 @@ public class MessagePayloadLimitsTests {
     // resolves the limits at construction, so a throw here broke every dispatcher built that way.
     var limits = MessagePayloadLimits.Resolve(new EmptyProvider());
 
-    await Assert.That(() => limits.Enforce(_payload(5 * 1024 * 1024 + 1), typeof(PlainMessage), _messageId, null))
+    await Assert.That(() => limits.Enforce(_payload((5 * 1024 * 1024) + 1), typeof(PlainMessage), _messageId, null))
       .Throws<MessagePayloadTooLargeException>();
   }
 }

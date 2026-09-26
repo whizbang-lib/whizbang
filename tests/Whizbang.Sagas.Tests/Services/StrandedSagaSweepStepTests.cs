@@ -46,7 +46,7 @@ public class StrandedSagaSweepStepTests {
     await step.RunAsync(services, CancellationToken.None);
 
     await Assert.That(participant.Answer).IsNotNull();
-    await Assert.That(participant.Answer!).IsEquivalentTo([waiting]);
+    await Assert.That(participant.Answer).IsEquivalentTo([waiting]);
     await Assert.That(coordinator.AskedStreams.Single()).IsEquivalentTo([waiting, stopped]);
     await Assert.That(coordinator.AskedTypes.Single()).IsEquivalentTo([_tickTypeName])
       .Because("only a watchdog tick is a wake; any other message on the saga's stream is not");

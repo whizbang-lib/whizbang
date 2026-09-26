@@ -89,8 +89,8 @@ public class IdleBandHeldRowReOfferTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("age", ageMinutes);
     cmd.Parameters.AddWithValue(nameof(priority), priority);
     cmd.Parameters.AddWithValue(nameof(attempts), attempts);
-    cmd.Parameters.Add(new NpgsqlParameter("heldBy", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)heldBy ?? DBNull.Value });
-    cmd.Parameters.Add(new NpgsqlParameter("error", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)error ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(heldBy), NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)heldBy ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(error), NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)error ?? DBNull.Value });
     await cmd.ExecuteNonQueryAsync();
     return (messageId, streamId);
   }
@@ -173,11 +173,10 @@ public class IdleBandHeldRowReOfferTests : EFCoreTestBase {
       conn, WorkPriority.IDLE, attempts: 0, ageMinutes: 1, error: null, heldBy: null);
 
     var offered = await _claimBusyAsync(conn, instance);
-    var state = await _stateAsync(conn, messageId, instance);
+    var (held, attempts) = await _stateAsync(conn, messageId, instance);
 
-    var held = state.HeldLive;
     await Assert.That(offered.Contains(streamId)).IsEqualTo(held)
-      .Because($"held={held}, attempts={state.Attempts}: a row the claim leases, and charges an attempt, must be "
+      .Because($"held={held}, attempts={attempts}: a row the claim leases, and charges an attempt, must be "
         + "handed to the drain on the same poll; a leased row that is not re-offered is never fetched, never "
         + "dispatched, and is charged again when its lease lapses");
   }
@@ -216,10 +215,10 @@ public class IdleBandHeldRowReOfferTests : EFCoreTestBase {
       await _lapseLeaseAsync(conn, messageId);
     }
 
-    var final = await _stateAsync(conn, messageId, instance);
+    var (_, finalAttempts) = await _stateAsync(conn, messageId, instance);
     await Assert.That(offeredCycles).IsEqualTo(cycles)
       .Because($"the claim re-leased this row on every cycle (attempts climbed from {maxInboxAttempts + 1} to "
-        + $"{final.Attempts}), so every cycle must hand its stream to the drain; a row leased and never offered "
+        + $"{finalAttempts}), so every cycle must hand its stream to the drain; a row leased and never offered "
         + "never reaches the dispatcher's attempt ceiling and is re-leased for ever");
     await Assert.That(fetchedPastCeiling).IsEqualTo(cycles)
       .Because("the drain's fetch must return the row with its attempts past the ceiling, which is the input "

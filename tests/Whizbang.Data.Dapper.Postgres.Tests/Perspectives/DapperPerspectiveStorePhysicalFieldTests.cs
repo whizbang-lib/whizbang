@@ -33,11 +33,11 @@ public class DapperPerspectiveStorePhysicalFieldTests : PostgresTestBase {
   public async Task CreateTableAsync() {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
-    await using var cmd = new NpgsqlCommand($"""
-      DROP TABLE IF EXISTS {TABLE_NAME};
-      CREATE TABLE {TABLE_NAME} (
-        id UUID PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL DEFAULT '{"{}"}'::jsonb,
-        scope JSONB NOT NULL DEFAULT '{"{}"}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    await using var cmd = new NpgsqlCommand($$"""
+      DROP TABLE IF EXISTS {{TABLE_NAME}};
+      CREATE TABLE {{TABLE_NAME}} (
+        id UUID PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        scope JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), version INT NOT NULL DEFAULT 1,
         name TEXT, amount DECIMAL, placed_at TIMESTAMPTZ, tier TEXT, location POINT, owner_id UUID);
       """, conn);
@@ -65,7 +65,7 @@ public class DapperPerspectiveStorePhysicalFieldTests : PostgresTestBase {
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand(
       $"SELECT name, amount, placed_at, tier, location::text, owner_id, metadata ->> 'EventType' FROM {TABLE_NAME} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
     async Task<T?> field<T>(int ordinal) => await reader.IsDBNullAsync(ordinal) ? default : await reader.GetFieldValueAsync<T>(ordinal);

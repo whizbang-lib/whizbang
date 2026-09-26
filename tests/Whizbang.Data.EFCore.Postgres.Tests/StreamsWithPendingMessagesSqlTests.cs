@@ -32,9 +32,9 @@ public class StreamsWithPendingMessagesSqlTests : EFCoreTestBase {
       VALUES (@id, 'topic', @type, 'TestEnvelope', '{}', '{}', 1, 0, NOW(), @stream, 0,
               @scheduled::timestamptz, @processed::timestamptz)";
     cmd.Parameters.AddWithValue("id", (Guid)TrackedGuid.NewMedo());
-    cmd.Parameters.AddWithValue("type", type);
-    cmd.Parameters.AddWithValue("stream", stream);
-    cmd.Parameters.AddWithValue("scheduled", scheduled ? DateTime.UtcNow.AddHours(1) : DBNull.Value);
+    cmd.Parameters.AddWithValue(nameof(type), type);
+    cmd.Parameters.AddWithValue(nameof(stream), stream);
+    cmd.Parameters.AddWithValue(nameof(scheduled), scheduled ? DateTime.UtcNow.AddHours(1) : DBNull.Value);
     cmd.Parameters.AddWithValue("processed", published ? DateTime.UtcNow : DBNull.Value);
     await cmd.ExecuteNonQueryAsync();
   }
@@ -53,8 +53,8 @@ public class StreamsWithPendingMessagesSqlTests : EFCoreTestBase {
              0, @inst::uuid, @lease::timestamptz, NULL::text, 0, @processed::timestamptz
       FROM m";
     cmd.Parameters.AddWithValue("id", (Guid)TrackedGuid.NewMedo());
-    cmd.Parameters.AddWithValue("type", type);
-    cmd.Parameters.AddWithValue("stream", stream);
+    cmd.Parameters.AddWithValue(nameof(type), type);
+    cmd.Parameters.AddWithValue(nameof(stream), stream);
     cmd.Parameters.AddWithValue("inst", leased ? (Guid)TrackedGuid.NewMedo() : DBNull.Value);
     cmd.Parameters.AddWithValue("lease", leased ? DateTime.UtcNow.AddMinutes(5) : DBNull.Value);
     cmd.Parameters.AddWithValue("processed", finished ? DateTime.UtcNow : DBNull.Value);
@@ -91,7 +91,7 @@ public class StreamsWithPendingMessagesSqlTests : EFCoreTestBase {
     var result = await _askAsync([unpublished, scheduled, beingHandled, unclaimedInbox, wrapped, published, handled, otherType]);
 
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!).IsEquivalentTo([unpublished, scheduled, beingHandled, unclaimedInbox, wrapped])
+    await Assert.That(result).IsEquivalentTo([unpublished, scheduled, beingHandled, unclaimedInbox, wrapped])
       .Because("a wake is coming while the tick is unpublished, scheduled for later, waiting in the inbox or being handled, in any stored form; a published or handled tick, or another message type, is no wake");
   }
 
@@ -105,7 +105,7 @@ public class StreamsWithPendingMessagesSqlTests : EFCoreTestBase {
 
     var result = await _askAsync([asked]);
 
-    await Assert.That(result!).IsEmpty();
+    await Assert.That(result).IsEmpty();
   }
 
   [Test]
@@ -113,6 +113,6 @@ public class StreamsWithPendingMessagesSqlTests : EFCoreTestBase {
     var result = await _askAsync([]);
 
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!).IsEmpty();
+    await Assert.That(result).IsEmpty();
   }
 }

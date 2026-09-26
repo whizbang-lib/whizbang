@@ -183,8 +183,8 @@ public class PhysicalColumnBackfillIntegrationTests : IAsyncDisposable {
     Ratio = 0.1 + seed,
     Weight = 2.5f * seed,
     // Microsecond precision: what a timestamp holds, and what the stored form keeps.
-    At = new DateTime(2026, 9, 25, 13, 45, 7, DateTimeKind.Utc).AddTicks(1234560 + seed * 10),
-    AtOffset = new DateTimeOffset(2025, 1, 2, 3, 4, 5, TimeSpan.Zero).AddTicks(9876540 + seed * 10),
+    At = new DateTime(2026, 9, 25, 13, 45, 7, DateTimeKind.Utc).AddTicks(1234560 + (seed * 10)),
+    AtOffset = new DateTimeOffset(2025, 1, 2, 3, 4, 5, TimeSpan.Zero).AddTicks(9876540 + (seed * 10)),
     Day = new DateOnly(1969, 12, 31).AddDays(seed),
     Clock = new TimeOnly(23, 59, 58).Add(TimeSpan.FromTicks(123450)),
     Maybe = maybe,

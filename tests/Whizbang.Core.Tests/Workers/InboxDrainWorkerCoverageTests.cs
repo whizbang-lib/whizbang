@@ -253,7 +253,7 @@ public partial class InboxDrainWorkerCoverageTests {
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
-    await Assert.That(inbox.Written.Select(w => w.MessageId).ToList()).IsEquivalentTo([poisonMsg, goodMsg])
+    await Assert.That(inbox.Written.ConvertAll(w => w.MessageId)).IsEquivalentTo([poisonMsg, goodMsg])
       .Because("the row past its ceiling must reach the dispatcher, which dead-letters it; the drain deferring it "
              + "is what left such rows leased, re-claimed and never retired");
     await Assert.That(inbox.Written[0].MessageId).IsEqualTo(poisonMsg).Because("stream order is preserved");
