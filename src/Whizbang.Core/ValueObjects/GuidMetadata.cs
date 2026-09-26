@@ -84,7 +84,6 @@ public enum GuidMetadatas : ushort {
 /// Internal helper constants for common metadata combinations.
 /// </summary>
 internal static class GuidMetadataExtensions {
-  internal const GuidMetadatas WHIZBANG_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceWhizbang;
   internal const GuidMetadatas MICROSOFT_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceMicrosoft;
   internal const GuidMetadatas MICROSOFT_V4 = GuidMetadatas.Version4 | GuidMetadatas.SourceMicrosoft;
   internal const GuidMetadatas EXTERNAL_V7 = GuidMetadatas.Version7 | GuidMetadatas.SourceExternal;

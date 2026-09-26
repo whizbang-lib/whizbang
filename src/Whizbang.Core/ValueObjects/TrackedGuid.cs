@@ -81,7 +81,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   /// Every id sorts after every id issued before it in this process, across threads: the generator issues under
   /// one lock and orders ids within a millisecond by a monotonic counter (see <see cref="Uuid7Generator"/>).
   /// </remarks>
-  public static TrackedGuid New() => new(Uuid7Generator.Shared.NewGuid(), GuidMetadataExtensions.WHIZBANG_V7);
+  public static TrackedGuid New() => new(Uuid7Generator.Shared.NewGuid(), GuidMetadatas.Version7 | GuidMetadatas.SourceWhizbang);
 
   /// <summary>
   /// Creates a new UUIDv7 using Microsoft's Guid.CreateVersion7().

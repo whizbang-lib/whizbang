@@ -48,7 +48,7 @@ public class Uuid7GeneratorTests {
     }
   }
 
-  private static byte[] _repeat(byte value, int count) => Enumerable.Repeat(value, count).ToArray();
+  private static byte[] _repeat(byte value, int count) => [.. Enumerable.Repeat(value, count)];
 
   private static (Uuid7Generator Generator, ManualClock Clock, ConstantRandom Random) _create(byte randomByte = 0x00, long start = T0) {
     var clock = new ManualClock(start);
