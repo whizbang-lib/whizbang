@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <a href="https://codecov.io/gh/whizbang-lib/whizbang"><img src="https://codecov.io/gh/whizbang-lib/whizbang/graphs/sunburst.svg?token=F1AZXLI2MM" alt="Codecov Sunburst" width="200"></a>
+  <a href="https://codecov.io/gh/whizbang-lib/whizbang"><img src="https://codecov.io/gh/whizbang-lib/whizbang/graphs/tree.svg?token=F1AZXLI2MM" alt="Codecov coverage grid" width="200"></a>
 </p>
 
 ---
