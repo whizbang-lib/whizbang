@@ -31,7 +31,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// Body-offload (claim-check) receive-side coverage for <see cref="TransportConsumerWorker"/>:
 /// <list type="bullet">
 /// <item><description>Claim envelope rehydrate → original envelope stored in the inbox</description></item>
-/// <item><description>Rehydrate dead-letter (unknown provider) → message dropped + failure metric</description></item>
+/// <item><description>Rehydrate dead-letter (unknown provider) → dead-letter custody + failure metric</description></item>
 /// <item><description>ActiveCleanup=true → body deleted AFTER the inbox insert commits</description></item>
 /// <item><description>ActiveCleanup delete failure / missing store → inbox insert unaffected (provider TTL backstop)</description></item>
 /// <item><description>Non-claim pass-through when JsonSerializerOptions is registered in DI</description></item>
@@ -135,7 +135,7 @@ public class TransportConsumerWorkerBodyOffloadTests {
   // ============================================================
 
   [Test]
-  public async Task BatchHandler_ClaimEnvelope_UnknownProvider_DropsMessageAndRecordsFailureAsync() {
+  public async Task BatchHandler_ClaimEnvelope_UnknownProvider_DeadLettersMessageAndRecordsFailureAsync() {
     using var meterFactory = new TestMeterFactory();
     var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
     using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
@@ -165,7 +165,9 @@ public class TransportConsumerWorkerBodyOffloadTests {
     await transport.DeliverBatchAsync([new TransportMessage(claimEnvelope, originalTypeName)]);
 
     await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0)
-      .Because("A claim whose provider is unknown MUST be dropped (dead-letter path) — storing it without its body would poison downstream processing.");
+      .Because("A claim whose provider is unknown MUST NOT be stored — storing it without its body would poison downstream processing.");
+    await Assert.That(coordinator.DeadLetterImports.Count).IsEqualTo(1)
+      .Because("It must not be silently dropped either: the claim is given dead-letter custody so the body can still be located and the message replayed (#915).");
     // Passive counter: the untagged series always reports (at zero); the series that counted the
     // drop is the one that proves the path ran.
     var failed = metricHelper.GetByName("whizbang.transport.inbox.messages_failed")

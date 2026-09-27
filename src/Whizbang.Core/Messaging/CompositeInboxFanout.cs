@@ -109,6 +109,7 @@ public static partial class CompositeInboxFanout {
   /// detail + count summary) so a partially-lost fan-out is diagnosable rather than silent.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Independent_LogsTheDroppedChildAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs:TryExpand_AtomicCompositeWithUnresolvedInner_ExpandsResolvableChildrenAsync</tests>
   /// <param name="composite">The composite payload, or null when the row is not a composite.</param>
   /// <param name="source">The composite's own inbox envelope.</param>
   /// <param name="scope">The dispatch scope (serializer, catalog, resolvers, logging).</param>
@@ -171,6 +172,7 @@ public static partial class CompositeInboxFanout {
     var count = 0;
     var droppedCount = 0;
     var unsubscribed = 0;
+    var unresolved = 0;
 
     foreach (var inner in inners) {
       count++;
@@ -216,6 +218,14 @@ public static partial class CompositeInboxFanout {
         droppedCount++;
         continue;
       }
+      if (inner is UnresolvedMessage) {
+        // An inner event whose type this service could not resolve when it read the composite (#915).
+        // A type this service cannot name is one no consumer here can handle, so it is an unsubscribed
+        // child, not a failed one — under Atomic too, or every composite mixing in event types this
+        // consumer does not reference would dead-letter. Counted, and logged once per composite below.
+        unresolved++;
+        continue;
+      }
       try {
         // The ordinal is the child's position in the composite as the producer packed it (count - 1), never
         // its position in the kept set, so two consumers of one composite derive the same id for one child
@@ -248,6 +258,9 @@ public static partial class CompositeInboxFanout {
     if (droppedCount > 0) {
       LogDroppedSummary(logger, compositeTypeName, droppedCount);
     }
+    if (unresolved > 0) {
+      LogUnresolvedInnerSkipped(logger, compositeTypeName, unresolved);
+    }
 
     if (identityIds is not null && identityIds.Count != count) {
       return new FanoutResult(
@@ -262,7 +275,7 @@ public static partial class CompositeInboxFanout {
         compositeTypeName);
     }
 
-    return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName, unsubscribed);
+    return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName, unsubscribed + unresolved);
   }
 
   /// <summary>
@@ -561,4 +574,10 @@ public static partial class CompositeInboxFanout {
     Message = "Composite '{Composite}' dropped {DroppedCount} inner event(s) under independent atomicity; see the first-drop detail logged above."
   )]
   private static partial void LogDroppedSummary(ILogger logger, string composite, int droppedCount);
+
+  [LoggerMessage(
+    Level = LogLevel.Information,
+    Message = "Composite '{Composite}' carried {UnresolvedCount} inner event(s) whose type this service could not resolve; they were skipped, as no consumer here can exist for a type it cannot name. If this service does handle one of them, its JSON metadata is missing from the service's context."
+  )]
+  private static partial void LogUnresolvedInnerSkipped(ILogger logger, string composite, int unresolvedCount);
 }

@@ -240,16 +240,92 @@ public class AzureServiceBusTransportBatchPipelineTests {
   }
 
   // ========================================
+  // A FAILED BATCH IS NEVER SETTLED AS CONSUMED (#921)
+  // ========================================
+
+  /// <summary>
+  /// The consumer reports a failed batch by throwing <see cref="TransportBatchFailedException"/>.
+  /// The non-session path used to hand the throw back to the collector, which re-queued the batch
+  /// in memory: no delivery was counted, so the broker's max delivery count never bounded it. It
+  /// now abandons each message at once, so the broker redelivers and counts the attempt.
+  /// </summary>
+  [Test]
+  public async Task NonSessionBatch_HandlerReportsBatchFailed_AbandonsNeverCompletesAsync() {
+    var (transport, client) = _createTransport(enableSessions: false);
+    await transport.SubscribeBatchAsync(
+      (_, _) => throw new TransportBatchFailedException(1, new InvalidOperationException("inbox store failed")),
+      _destination(),
+      _sizeOnlyBatchOptions());
+    var receiver = new RecordingTransportReceiver();
+
+    await client.LastProcessor!.RaiseMessageAsync(
+      AsbTransportTestData.MessageArgs(AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope()), receiver));
+    await receiver.NotCompletedSignal.Task;
+
+    await Assert.That(receiver.Abandoned).Count().IsEqualTo(1)
+      .Because("the broker must redeliver a batch the consumer failed to store, and count the attempt");
+    await Assert.That(receiver.Completed).IsEmpty()
+      .Because("completing a message whose batch failed is exactly how failed batches were lost");
+    await Assert.That(receiver.DeadLettered).IsEmpty();
+  }
+
+  /// <summary>
+  /// A message whose batch keeps failing is bounded by the broker's delivery count: at the limit it is
+  /// dead-lettered at the broker, where the transport dead-letter drain gives it durable custody.
+  /// </summary>
+  [Test]
+  public async Task NonSessionBatch_HandlerFailsAtMaxDeliveryCount_DeadLettersNeverCompletesAsync() {
+    var (transport, client) = _createTransport(enableSessions: false, maxDeliveryAttempts: 3);
+    await transport.SubscribeBatchAsync(
+      (_, _) => throw new TransportBatchFailedException(1, new InvalidOperationException("still failing")),
+      _destination(),
+      _sizeOnlyBatchOptions());
+    var receiver = new RecordingTransportReceiver();
+
+    await client.LastProcessor!.RaiseMessageAsync(AsbTransportTestData.MessageArgs(
+      AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope(), deliveryCount: 3), receiver));
+    await receiver.NotCompletedSignal.Task;
+
+    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1);
+    await Assert.That(receiver.Completed).IsEmpty();
+    await Assert.That(receiver.Abandoned).IsEmpty();
+  }
+
+  /// <summary>
+  /// A database statement timeout surfaces as a cancellation. Wrapped in the typed batch-failed signal
+  /// it must still be treated as a failed message (abandoned), never mistaken for shutdown and never
+  /// completed.
+  /// </summary>
+  [Test]
+  public async Task SessionBatch_HandlerReportsBatchFailedFromACancellation_AbandonsNeverCompletesAsync() {
+    var (transport, client) = _createTransport(enableSessions: true);
+    await transport.SubscribeBatchAsync(
+      (_, _) => throw new TransportBatchFailedException(1, new OperationCanceledException("statement timeout")),
+      _destination(),
+      new TransportBatchOptions());
+    var receiver = new RecordingTransportSessionReceiver();
+
+    await client.LastSessionProcessor!.RaiseSessionMessageAsync(AsbTransportTestData.SessionArgs(
+      AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope(), deliveryCount: 1), receiver));
+
+    await Assert.That(receiver.Abandoned).Count().IsEqualTo(1);
+    await Assert.That(receiver.Completed).IsEmpty()
+      .Because("session mode completes after the handler returns, so a failure must reach it as a throw");
+  }
+
+  // ========================================
   // HELPERS
   // ========================================
 
   private static (AzureServiceBusTransport Transport, RaisableServiceBusClient Client) _createTransport(
     bool enableSessions,
-    RecordingTransportLogger? logger = null) {
+    RecordingTransportLogger? logger = null,
+    int maxDeliveryAttempts = 10) {
     var client = new RaisableServiceBusClient();
     var options = new AzureServiceBusOptions {
       AutoProvisionInfrastructure = false,
-      EnableSessions = enableSessions
+      EnableSessions = enableSessions,
+      MaxDeliveryAttempts = maxDeliveryAttempts
     };
     var transport = new AzureServiceBusTransport(
       client,

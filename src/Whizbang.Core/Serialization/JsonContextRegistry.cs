@@ -420,6 +420,12 @@ public static class JsonContextRegistry {
   private static readonly ConcurrentDictionary<(Type baseType, int optionsHash), JsonTypeInfo> _resolverPolymorphicCache = new();
 
   /// <summary>
+  /// The top-level (envelope payload) counterpart of <see cref="_resolverPolymorphicCache"/>: the same
+  /// lazy typeinfos, minus the <see cref="UnresolvedMessage"/> fallback for an unresolvable element.
+  /// </summary>
+  private static readonly ConcurrentDictionary<(Type baseType, int optionsHash), JsonTypeInfo> _strictResolverPolymorphicCache = new();
+
+  /// <summary>
   /// Registers a derived type for polymorphic serialization.
   /// Called from [ModuleInitializer] methods in each assembly to register concrete types
   /// that implement IEvent, ICommand, or IMessage interfaces.
@@ -628,7 +634,12 @@ public static class JsonContextRegistry {
   /// Gets (cached) the lazy, cycle-safe polymorphic typeinfo for a registered base interface, or null
   /// if nothing is registered for it.
   /// </summary>
-  private static JsonTypeInfo? _getLazyPolymorphicTypeInfo<TBase>(JsonSerializerOptions options)
+  /// <param name="options">The options the typeinfo binds to.</param>
+  /// <param name="strict">True for a TOP-LEVEL payload (an envelope's), where an element whose type
+  /// cannot be resolved must still fail loudly: the payload names the message itself, and a stand-in
+  /// there would be a message nobody could handle. False for a NESTED member, where an unresolvable
+  /// <c>IMessage</c> element reads as <see cref="UnresolvedMessage"/> (#915).</param>
+  private static JsonTypeInfo? _getLazyPolymorphicTypeInfo<TBase>(JsonSerializerOptions options, bool strict = false)
     where TBase : notnull {
     if (!_derivedTypes.TryGetValue(typeof(TBase), out var bag) || bag.IsEmpty) {
       return null;
@@ -637,11 +648,30 @@ public static class JsonContextRegistry {
     // them (the cache is hash-keyed, and a dead scratch entry is at best waste, at worst a hash
     // collision handing a future options a typeinfo bound to a disposed sibling).
     if (_inTrialConfigure) {
-      return _createPolymorphicTypeInfoLazy<TBase>(options, bag);
+      return _createPolymorphicTypeInfoLazy<TBase>(options, bag, strict);
     }
     var cacheKey = (typeof(TBase), options.GetHashCode());
-    return _resolverPolymorphicCache.GetOrAdd(cacheKey, _ => _createPolymorphicTypeInfoLazy<TBase>(options, bag));
+    var cache = strict ? _strictResolverPolymorphicCache : _resolverPolymorphicCache;
+    return cache.GetOrAdd(cacheKey, _ => _createPolymorphicTypeInfoLazy<TBase>(options, bag, strict));
   }
+
+  /// <summary>
+  /// The object creator an unresolvable nested element falls back to: a <see cref="UnresolvedMessage"/>
+  /// for <see cref="IMessage"/>, the base a composite's inner list is declared as, and nothing for the
+  /// narrower bases, whose members name a specific kind of message and keep failing loudly.
+  /// </summary>
+  /// <remarks>
+  /// STJ reads an element whose discriminator names no registered derived type as the base type
+  /// (<see cref="JsonUnknownDerivedTypeHandling.FallBackToNearestAncestor"/>). An interface has no
+  /// constructor, so without a creator that read throws for the WHOLE containing message.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs:Deserialize_InnerDiscriminatorUnresolvable_KeepsResolvableInnerEventsAsync</tests>
+  private static Func<TBase>? _unresolvedElementCreator<TBase>(bool strict) where TBase : notnull =>
+    !strict && typeof(TBase) == typeof(global::Whizbang.Core.IMessage)
+      ? (Func<TBase>)(object)_createUnresolvedMessage
+      : null;
+
+  private static readonly Func<global::Whizbang.Core.IMessage> _createUnresolvedMessage = static () => new UnresolvedMessage();
 
   /// <summary>
   /// Gets the cycle-safe LAZY polymorphic typeinfo for a base interface, bound to the GIVEN options.
@@ -700,7 +730,8 @@ public static class JsonContextRegistry {
   public static JsonTypeInfo<MessageEnvelope<TBase>>? GetLazyPolymorphicEnvelopeTypeInfo<TBase>(JsonSerializerOptions options)
     where TBase : class {
     ArgumentNullException.ThrowIfNull(options);
-    var payloadTypeInfo = (JsonTypeInfo<TBase>?)_getLazyPolymorphicTypeInfo<TBase>(options);
+    // Strict: the payload names the message itself, so an unknown one must not become a stand-in.
+    var payloadTypeInfo = (JsonTypeInfo<TBase>?)_getLazyPolymorphicTypeInfo<TBase>(options, strict: true);
     if (payloadTypeInfo is null) {
       return null;
     }
@@ -724,10 +755,11 @@ public static class JsonContextRegistry {
   /// </summary>
   private static JsonTypeInfo<TBase> _createPolymorphicTypeInfoLazy<TBase>(
     JsonSerializerOptions options,
-    ConcurrentBag<(Type derivedType, string discriminator)> derivedTypes)
+    ConcurrentBag<(Type derivedType, string discriminator)> derivedTypes,
+    bool strict)
     where TBase : notnull {
     var objectInfo = new JsonObjectInfoValues<TBase> {
-      ObjectCreator = null,
+      ObjectCreator = _unresolvedElementCreator<TBase>(strict),
       ObjectWithParameterizedConstructorCreator = null,
       PropertyMetadataInitializer = _ => [],
       SerializeHandler = null

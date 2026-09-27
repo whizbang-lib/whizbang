@@ -8,11 +8,14 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// The guard itself: a failed batch must be contained, and a real shutdown must still propagate.
+/// The guard itself: a failed batch must reach the transport as a failure it can settle on
+/// (abandon, never complete), in a form that cannot be mistaken for a shutdown; and a real shutdown
+/// must still propagate.
 /// </summary>
 /// <remarks>
-/// The classifier decides; this proves the decision is acted on. Testing the classifier alone would
-/// leave the actual containment — the thing that keeps the process alive — unexercised.
+/// The classifier decides; this proves the decision is acted on. The guard once swallowed a failed
+/// batch outright, and every transport completes a message whose handler returns, so each "abandoned"
+/// batch was in fact settled as consumed and lost (#921).
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/TransportBatchGuard.cs</code-under-test>
 [Category("Workers")]
@@ -33,18 +36,25 @@ public class TransportBatchGuardTests {
         severity: "ERROR", invariantSeverity: "ERROR", sqlState: "57014"));
 
   [Test]
-  public async Task AStatementTimeoutDoesNotEscapeAsync() {
+  public async Task AStatementTimeoutFailsTheBatchAsATypedSignalNotACancellationAsync() {
     var logger = new CapturingLogger();
     using var cts = new CancellationTokenSource();   // NOT canceled
+    var timeout = _statementTimeout();
 
     Exception? escaped = null;
     try {
-      await TransportBatchGuard.RunAsync(_ => throw _statementTimeout(), 50, logger, cts.Token, cts.Token);
+      await TransportBatchGuard.RunAsync(_ => throw timeout, 50, logger, cts.Token, cts.Token);
     } catch (Exception ex) { escaped = ex; }
 
-    await Assert.That(escaped).IsNull()
-      .Because("this exact exception escaping ExecuteAsync is what stopped a host gracefully with "
-             + "exit 0 and no error log — containing it here is the entire fix");
+    await Assert.That(escaped).IsTypeOf<TransportBatchFailedException>()
+      .Because("the transport settles on whether the handler threw: a swallowed failure is completed "
+             + "and lost (#921), so the failure must reach it");
+    await Assert.That(escaped is OperationCanceledException).IsFalse()
+      .Because("the database reports a statement timeout as a cancellation; passed on raw, it reads as "
+             + "a shutdown to every 'when not canceled' filter between here and the host, which is the "
+             + "exact confusion that once stopped a host with exit 0 and no error log");
+    await Assert.That(escaped!.InnerException).IsSameReferenceAs(timeout);
+    await Assert.That(((TransportBatchFailedException)escaped).BatchCount).IsEqualTo(50);
     await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Error)).IsTrue()
       .Because("swallowing without logging would trade a silent death for a silent data stall");
     await Assert.That(logger.Entries.Any(e => e.Message.Contains("57014", StringComparison.Ordinal))).IsTrue()
@@ -53,7 +63,7 @@ public class TransportBatchGuardTests {
   }
 
   [Test]
-  public async Task AnOrdinaryFaultDoesNotEscapeEitherAsync() {
+  public async Task AnOrdinaryFaultFailsTheBatchTooAsync() {
     var logger = new CapturingLogger();
     using var cts = new CancellationTokenSource();
 
@@ -63,11 +73,14 @@ public class TransportBatchGuardTests {
         _ => throw new InvalidOperationException("connection reset"), 12, logger, cts.Token, cts.Token);
     } catch (Exception ex) { escaped = ex; }
 
-    await Assert.That(escaped).IsNull();
+    await Assert.That(escaped).IsTypeOf<TransportBatchFailedException>();
+    await Assert.That(escaped!.InnerException).IsTypeOf<InvalidOperationException>();
     await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Error)).IsEqualTo(1);
     await Assert.That(logger.Entries[0].Message.Contains("12", StringComparison.Ordinal)).IsTrue()
       .Because("the batch size tells an operator whether this was one stray message or a systemic "
              + "failure of a full batch");
+    await Assert.That(logger.Entries[0].Message.Contains("not settled as consumed", StringComparison.Ordinal)).IsTrue()
+      .Because("the log must say what actually happens to the messages");
   }
 
   [Test]
@@ -82,9 +95,9 @@ public class TransportBatchGuardTests {
         _ => throw new OperationCanceledException(cts.Token), 5, logger, cts.Token, cts.Token);
     } catch (Exception ex) { escaped = ex; }
 
-    await Assert.That(escaped).IsNotNull()
-      .Because("a genuine stop must unwind promptly — containing it would trade a silent-death bug "
-             + "for a shutdown that hangs, which is not an improvement");
+    await Assert.That(escaped).IsTypeOf<OperationCanceledException>()
+      .Because("a genuine stop must unwind promptly and as itself — containing or re-typing it would "
+             + "trade a silent-death bug for a shutdown that hangs, which is not an improvement");
   }
 
   [Test]
@@ -114,6 +127,12 @@ public class TransportBatchGuardTests {
     await Assert.That(nullLogger).IsTypeOf<ArgumentNullException>();
   }
 
+  [Test]
+  public async Task TheSignalRequiresItsCauseAsync() {
+    await Assert.That(() => new TransportBatchFailedException(1, null!)).Throws<ArgumentNullException>()
+      .Because("a failed-batch signal with no cause would give an operator nothing to diagnose");
+  }
+
   // ---------- the two tokens are NOT interchangeable ----------
 
   [Test]
@@ -137,7 +156,7 @@ public class TransportBatchGuardTests {
         _ => throw _statementTimeout(), 40, logger, batchToken.Token, hostToken.Token);
     } catch (Exception ex) { escaped = ex; }
 
-    await Assert.That(escaped).IsNull()
+    await Assert.That(escaped).IsTypeOf<TransportBatchFailedException>()
       .Because("the HOST is alive, so this is one failed batch — classifying against the batch "
              + "token would call it a shutdown and take the process down");
     await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Error)).IsTrue();

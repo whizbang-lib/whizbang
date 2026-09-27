@@ -30,7 +30,14 @@ internal class NoOpWorkCoordinator : IWorkCoordinator {
       SyncInquiryResults = null
     });
 
+  /// <summary>When set, the next inbox store throws it (once) — a store failure such as a statement timeout.</summary>
+  public Exception? FailNextInboxStore { get; set; }
+
   public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
+    if (FailNextInboxStore is { } failure) {
+      FailNextInboxStore = null;
+      throw failure;
+    }
     StoreInboxCallCount++;
     StoreInboxBatchSizes.Add(messages.Length);
     StoredInboxCount += messages.Length;
@@ -70,4 +77,21 @@ internal class NoOpWorkCoordinator : IWorkCoordinator {
 
   public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
     Task.FromResult<PerspectiveCursorInfo?>(null);
+
+  /// <summary>Every message given dead-letter custody via <see cref="ImportBrokerDeadLetterAsync"/>.</summary>
+  public List<Whizbang.Core.Transports.BrokerDeadLetterImport> DeadLetterImports { get; } = [];
+
+  /// <summary>When true, custody is refused the way a coordinator without dead-letter support refuses it.</summary>
+  public bool RefuseDeadLetterImports { get; init; }
+
+  public Task<bool> ImportBrokerDeadLetterAsync(
+      Whizbang.Core.Transports.BrokerDeadLetterImport import, CancellationToken cancellationToken = default) {
+    if (RefuseDeadLetterImports) {
+      throw new NotSupportedException("This coordinator does not support dead-letter custody.");
+    }
+    lock (DeadLetterImports) {
+      DeadLetterImports.Add(import);
+    }
+    return Task.FromResult(true);
+  }
 }

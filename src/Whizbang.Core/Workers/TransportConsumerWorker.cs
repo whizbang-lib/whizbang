@@ -44,6 +44,7 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs</tests>
 public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
@@ -406,7 +407,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       _transport,
       state.Destination,
-      async (batch, ct) => await _handleBatchWithoutKillingTheHostAsync(batch, ct, cancellationToken),
+      async (batch, ct) => await _handleBatchWithoutKillingTheHostAsync(batch, state.Destination, ct, cancellationToken),
       _transportBatchOptions,
       state,
       _resilienceOptions,
@@ -485,24 +486,28 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:MixedBatch_DroppedTypesFilteredBeforeBulkInsertAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchProcessing_CreatesExactlyOneScopePerBatchAsync</tests>
   /// <summary>
-  /// Runs the batch handler so that a failed batch costs one batch, never the process.
+  /// Runs the batch handler so that a failed batch costs one batch, never the process, and is
+  /// reported to the transport as failed (<see cref="TransportBatchFailedException"/>) so it is
+  /// abandoned for redelivery rather than completed (#921).
   /// </summary>
   /// <remarks>
   /// Delegates to <see cref="TransportBatchGuard"/> so the containment behavior is testable on its
   /// own — the guard is the part that must be proven, and proving it should not require standing up
   /// a whole worker with a transport and a database behind it.
   /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBatchFailureTests.cs</tests>
   private Task _handleBatchWithoutKillingTheHostAsync(
       IReadOnlyList<TransportMessage> messages,
+      TransportDestination destination,
       CancellationToken batchToken,
       CancellationToken hostStoppingToken)
     => TransportBatchGuard.RunAsync(
-         ct => _handleMessageBatchAsync(messages, ct),
+         ct => _handleMessageBatchAsync(messages, destination, ct),
          messages.Count, _logger, batchToken, hostStoppingToken);
 
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One received batch decides per message whether it is a control-class non-durable receive, whether it maps to an inbox row, and whether it carries a cleanup claim, then runs poison detection over what survived and releases the claims. The per-message decisions determine what the batch-level steps operate on.")]
   private async Task _handleMessageBatchAsync(
-      IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken) {
+      IReadOnlyList<TransportMessage> messages, TransportDestination destination, CancellationToken cancellationToken) {
     if (messages.Count == 0) {
       return;
     }
@@ -522,6 +527,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // Active-cleanup claims accumulated by the rehydrator; fired post-commit
     // so a failed inbox INSERT doesn't leave bodies stranded in the store.
     List<Whizbang.Core.Offloads.MessageBodyClaim>? pendingCleanupClaims = null;
+    // Messages that could neither become an inbox row nor be given dead-letter custody (#915). The
+    // batch fails once the rest are stored, so none of them is ever reported to the transport as handled.
+    List<Guid>? uncustodied = null;
     foreach (var msg in messages) {
       // Slice 3 of pump-then-process.md (Half A): drop messages whose inner type has NO
       // consumer on this service BEFORE serialization runs. Mirror of the gate added to
@@ -573,7 +581,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         continue;
       }
 
-      var (inboxMessage, cleanupClaim) = await _tryBuildInboxMessageFromTransportAsync(msg, scope.ServiceProvider, cancellationToken);
+      var (inboxMessage, cleanupClaim, unstorable) = await _tryBuildInboxMessageFromTransportAsync(msg, scope.ServiceProvider, cancellationToken);
+      if (unstorable is not null
+          && !await _giveDeadLetterCustodyAsync(workCoordinator, unstorable, destination, cancellationToken)) {
+        uncustodied ??= [];
+        uncustodied.Add(unstorable.MessageId);
+      }
       if (inboxMessage is not null) {
         // Composites are stored as ordinary inbox rows — fan-out moved to the dispatch seam
         // (InboxDispatchWorker, inside the durable retry/DLQ envelope), per Phase A of
@@ -589,14 +602,31 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       }
     }
 
-    if (inboxMessages.Count == 0) {
-      return;
+    _filterInboxMessagesByKnownEventTypes(inboxMessages);
+    if (inboxMessages.Count > 0) {
+      await _storeInboxBatchAsync(inboxMessages, pendingCleanupClaims, scope.ServiceProvider, workCoordinator, cancellationToken);
     }
 
-    _filterInboxMessagesByKnownEventTypes(inboxMessages);
-    if (inboxMessages.Count == 0) {
-      return;  // All messages filtered — nothing to store
+    if (uncustodied is not null) {
+      // Thrown only AFTER the storable messages are committed, so their redelivery is a duplicate the
+      // inbox absorbs. What the transport does with a failed batch is its own settlement decision.
+      throw new InvalidOperationException(
+        $"{uncustodied.Count} message(s) could neither be stored in the inbox nor given dead-letter custody "
+        + $"({string.Join(", ", uncustodied)}); failing the batch rather than reporting them handled.");
     }
+    // Handler returns → transport ACKs all N messages → next batch starts collecting
+  }
+
+  /// <summary>
+  /// Stores the batch's inbox rows in one insert, quarantines poison redeliveries, signals the
+  /// publisher and fires any active body-offload cleanup once the insert has committed.
+  /// </summary>
+  private async Task _storeInboxBatchAsync(
+      List<InboxMessage> inboxMessages,
+      List<Whizbang.Core.Offloads.MessageBodyClaim>? pendingCleanupClaims,
+      IServiceProvider scopedProvider,
+      IWorkCoordinator workCoordinator,
+      CancellationToken cancellationToken) {
 
     // Direct INSERT into wh_inbox — bypasses process_work_batch entirely.
     // Event storage + perspective creation happens on next tick via self-healing
@@ -613,7 +643,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // first-enqueue timestamp — on a session-enabled entity the broker's delivery counter never
     // rises under connection-death lock loss, so MaxDeliveryCount is structurally unreachable.
     // Without a detector nothing changes: same call, same shape, same behavior as before.
-    var poisonDetector = scope.ServiceProvider.GetService<Routing.IPoisonMessageDetector>();
+    var poisonDetector = scopedProvider.GetService<Routing.IPoisonMessageDetector>();
     if (poisonDetector is null) {
       await workCoordinator.StoreInboxMessagesAsync(
         [.. inboxMessages],
@@ -625,7 +655,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         partitionCount: _partitionCount,
         cancellationToken: cancellationToken);
       await _quarantinePoisonRedeliveriesAsync(
-        observations, poisonDetector, scope.ServiceProvider, cancellationToken);
+        observations, poisonDetector, scopedProvider, cancellationToken);
     }
     _metrics?.InboxMessagesProcessed.Add(inboxMessages.Count);
 
@@ -645,7 +675,75 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     if (pendingCleanupClaims is { Count: > 0 }) {
       _ = _fireActiveCleanupAsync(pendingCleanupClaims, cancellationToken);
     }
-    // Handler returns → transport ACKs all N messages → next batch starts collecting
+  }
+
+  /// <summary>
+  /// A received message that cannot become an inbox row, with everything a dead-letter record needs:
+  /// its wire id and envelope type, the body to replay it from, and why it failed.
+  /// </summary>
+  private sealed record UnstorableMessage(
+    Guid MessageId, string? EnvelopeType, string EnvelopeJson, MessageFailureReason Reason, string? Description);
+
+  /// <summary>
+  /// Gives an unstorable message durable custody in the dead-letter store through the same entry the
+  /// broker dead-letter drain uses (<see cref="IWorkCoordinator.ImportBrokerDeadLetterAsync"/>): the
+  /// raw body is stored verbatim, the import is idempotent on the wire message id, and recovery
+  /// re-emits the row through the inbox once the consumer is fixed (#915).
+  /// </summary>
+  /// <returns>True when the message is in custody (created now or already held); false when custody
+  /// could not be given, in which case the caller must not let the transport treat it as handled.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_MessageDeadLetteredWithBody_NeighborsStillStoredAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:CustodyUnavailable_BatchFailsAfterStoringNeighborsAsync</tests>
+  private async Task<bool> _giveDeadLetterCustodyAsync(
+      IWorkCoordinator workCoordinator, UnstorableMessage message, TransportDestination destination,
+      CancellationToken cancellationToken) {
+    var destinationName = destination.RoutingKey is null
+      ? destination.Address
+      : $"{destination.Address}/{destination.RoutingKey}";
+    try {
+      await workCoordinator.ImportBrokerDeadLetterAsync(
+        new BrokerDeadLetterImport(
+          MessageId: message.MessageId,
+          StreamId: null,
+          MessageType: message.EnvelopeType,
+          Destination: destinationName,
+          EnvelopeJson: message.EnvelopeJson,
+          BrokerReason: message.Reason.ToString(),
+          BrokerDescription: message.Description,
+          EnqueuedAt: null,
+          DeliveryCount: null),
+        cancellationToken).ConfigureAwait(false);
+      LogUnstorableDeadLettered(_logger, message.MessageId, message.EnvelopeType, message.Reason, destinationName, message.Description);
+      return true;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogUnstorableCustodyFailed(_logger, ex, message.MessageId, message.EnvelopeType, message.Reason);
+      return false;
+    }
+  }
+
+  /// <summary>
+  /// The body a dead-letter record for <paramref name="envelope"/> holds when the transport handed over
+  /// no raw bytes: the envelope serialized against every context registered NOW, which includes any
+  /// assembly whose contexts registered after this service's own options were built. When even that
+  /// cannot serialize it, a minimal descriptor keeps the record identifiable (id, type, reason).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_PayloadNoContextKnows_DeadLetteredWithDescriptorAsync</tests>
+  private static string _custodyBody(IMessageEnvelope envelope, string? envelopeType, string? description) {
+    try {
+      var options = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+      return JsonSerializer.Serialize(envelope, options.GetTypeInfo(envelope.GetType()));
+    } catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or JsonException) {
+      using var buffer = new MemoryStream();
+      using (var writer = new Utf8JsonWriter(buffer)) {
+        writer.WriteStartObject();
+        writer.WriteString("MessageId", envelope.MessageId.Value);
+        writer.WriteString("EnvelopeType", envelopeType);
+        writer.WriteBoolean("BodyUnavailable", true);
+        writer.WriteString("Reason", $"{description}. The body could not be serialized either: {ex.Message}");
+        writer.WriteEndObject();
+      }
+      return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+    }
   }
 
   /// <summary>
@@ -715,13 +813,16 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <summary>
   /// Runs owned-domain echo discard, body-offload claim rehydrate (when the
   /// wire message was a claim envelope), OTEL activity, timestamp population,
-  /// and envelope serialization for a single transport message. Returns null
-  /// when the message should be dropped (echo, claim rehydrate failure, or
-  /// serialize failure — all logged + metric already recorded).
+  /// and envelope serialization for a single transport message. Returns no inbox
+  /// row when the message is discarded (echo, foreign target). A claim rehydrate
+  /// failure or a serialize failure also yields no row, but returns an
+  /// <see cref="UnstorableMessage"/> carrying the body so the batch handler gives
+  /// it dead-letter custody — never a silent skip (#915). Logs and the failure
+  /// metric are recorded here either way.
   /// </summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
-  private async Task<(InboxMessage? InboxMessage, Whizbang.Core.Offloads.MessageBodyClaim? PendingCleanupClaim)>
+  private async Task<(InboxMessage? InboxMessage, Whizbang.Core.Offloads.MessageBodyClaim? PendingCleanupClaim, UnstorableMessage? Unstorable)>
       _tryBuildInboxMessageFromTransportAsync(
       TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
     var envelopeType = msg.EnvelopeType;
@@ -731,11 +832,11 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
     if (_shouldDiscardForeignTarget(envelope, messageType, messageTypeTag)) {
-      return (null, null);
+      return (null, null, null);
     }
 
     if (_shouldDiscardOwnedEcho(envelope, envelopeType, messageType, messageTypeTag)) {
-      return (null, null);
+      return (null, null, null);
     }
 
     // Body-offload claim rehydrate: when the transport handed us a claim
@@ -750,10 +851,15 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         envelope, envelopeType, jsonOptions, scopedProvider, cancellationToken);
       if (rehydrate.IsDeadLetter) {
         _logger.LogError(
-          "Body-offload claim rehydrate failed for message {MessageId}: {Reason} — {Description}; dropping",
+          "Body-offload claim rehydrate failed for message {MessageId}: {Reason} — {Description}; dead-lettering",
           envelope.MessageId, rehydrate.FailureReason, rehydrate.FailureDescription);
         _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
-        return (null, null);
+        // The downloaded original body when the failure came after download; otherwise the claim,
+        // which still locates the body in its store.
+        return (null, null, new UnstorableMessage(
+          envelope.MessageId.Value, envelopeType,
+          rehydrate.RawBody ?? _custodyBody(envelope, envelopeType, rehydrate.FailureDescription),
+          rehydrate.FailureReason, rehydrate.FailureDescription));
       }
       envelope = rehydrate.Envelope!;
       envelopeType = rehydrate.EnvelopeType;
@@ -770,12 +876,18 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       _populateDeliveredAtTimestamp(envelope, envelopeType);
       var inboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
-      return (inboxMessage, cleanupClaim);
+      return (inboxMessage, cleanupClaim, null);
     } catch (Exception ex) {
-      _logger.LogError(ex, "Failed to serialize message {MessageId} for inbox — skipping", envelope.MessageId);
+      // Never a silent skip (#915): a message that cannot become an inbox row is dead-lettered with
+      // its body by the batch handler; the reflective serializer call wraps the real cause.
+      _logger.LogError(ex, "Failed to serialize message {MessageId} for inbox — dead-lettering", envelope.MessageId);
       _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-      return (null, null);
+      var cause = ex.GetBaseException();
+      var description = $"{cause.GetType().Name}: {cause.Message}";
+      return (null, null, new UnstorableMessage(
+        envelope.MessageId.Value, envelopeType, _custodyBody(envelope, envelopeType, description),
+        MessageFailureReason.SerializationError, description));
     } finally {
       inboxActivity?.Dispose();
     }
@@ -1225,6 +1337,26 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     Message = "Directed message discarded: {MessageType} targeted at {Target} — this service is {ServiceName}"
   )]
   private static partial void LogForeignTargetDiscarded(ILogger logger, string messageType, string target, string serviceName);
+
+  /// <summary>Logs that a message which could not become an inbox row was given dead-letter custody.</summary>
+  /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_MessageDeadLetteredWithBody_NeighborsStillStoredAsync</tests>
+  [LoggerMessage(
+    Level = LogLevel.Error,
+    Message = "Message {MessageId} ({EnvelopeType}) could not be stored in the inbox and was dead-lettered with its body from {Destination}: {Reason} — {Description}. It can be replayed through dead-letter recovery once the cause is fixed."
+  )]
+  private static partial void LogUnstorableDeadLettered(
+    ILogger logger, Guid messageId, string? envelopeType, MessageFailureReason reason, string destination, string? description);
+
+  /// <summary>Logs that an unstorable message could not be given dead-letter custody either, so its batch fails.</summary>
+  /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:CustodyUnavailable_BatchFailsAfterStoringNeighborsAsync</tests>
+  [LoggerMessage(
+    Level = LogLevel.Critical,
+    Message = "Message {MessageId} ({EnvelopeType}) could not be stored in the inbox ({Reason}) and dead-letter custody failed too; its batch is failed so the message is not reported handled."
+  )]
+  private static partial void LogUnstorableCustodyFailed(
+    ILogger logger, Exception exception, Guid messageId, string? envelopeType, MessageFailureReason reason);
 
   /// <summary>
   /// Checks if the message originated from this service (self-echo).
