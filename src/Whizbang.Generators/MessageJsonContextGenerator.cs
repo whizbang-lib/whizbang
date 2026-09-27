@@ -182,7 +182,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     context.RegisterSourceOutput(
         messagesWithReferencedComposites,
         static (ctx, all) => {
-          var data = all.Left;
+          var (data, referencedComposites) = all;
           // Merge message types (nullable-filtered) with perspective event types (non-nullable)
           var messages = data.Left.Left.Left.Left!.Where(static m => m is not null).Select(static m => m!).ToImmutableArray();
           // Saga events lead: _generateWhizbangJsonContext dedupes by fully qualified name keeping the
@@ -192,7 +192,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           var combined = data.Right.Select(static e => e.Type).ToImmutableArray()
               .AddRange(messages)
               .AddRange(data.Left.Left.Left.Right)
-              .AddRange(all.Right);
+              .AddRange(referencedComposites);
           var sagaInheritance = data.Right.SelectMany(static e => e.Inheritance).ToImmutableArray();
           _generateWhizbangJsonContext(ctx, combined, data.Left.Left.Right, data.Left.Right, sagaInheritance);
         }

@@ -235,8 +235,12 @@ public class MessageJsonContextReferencedCompositeTests {
     var compilation = CSharpCompilation.Create(
         assemblyName: "PlainLibrary",
         syntaxTrees: [CSharpSyntaxTree.ParseText(source)],
+        // The test host's trusted assemblies include Whizbang itself; leave it out, or the
+        // compilation references the framework and the "no framework" branch is never reached.
         references: trusted.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-          .Where(File.Exists).Select(path => MetadataReference.CreateFromFile(path)),
+          .Where(File.Exists)
+          .Where(path => !Path.GetFileName(path).StartsWith("Whizbang.", StringComparison.Ordinal))
+          .Select(path => MetadataReference.CreateFromFile(path)),
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
     var result = CSharpGeneratorDriver.Create(new MessageJsonContextGenerator()).RunGenerators(compilation).GetRunResult();

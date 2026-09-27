@@ -294,9 +294,9 @@ public class StrandedSagaSweepTests {
     await Assert.That(repo.Reads).IsEquivalentTo([
       new ScopedRead(nameof(ISagaItemRepository.GetLastActivityAsync), sagaId, TENANT),
       new ScopedRead(nameof(ISagaItemRepository.GetAggregateForSagaAsync), sagaId, TENANT)]);
-    var publish = dispatcher.PublishOnceCalls.Single();
-    await Assert.That(publish.Scope?.TenantId).IsEqualTo(TENANT);
-    await Assert.That(((SagaCompletionWatchdogTickEvent)publish.Event!).StreamId).IsEqualTo(sagaId);
+    var (_, publishedEvent, publishedScope) = dispatcher.PublishOnceCalls.Single();
+    await Assert.That(publishedScope?.TenantId).IsEqualTo(TENANT);
+    await Assert.That(((SagaCompletionWatchdogTickEvent)publishedEvent!).StreamId).IsEqualTo(sagaId);
     await Assert.That(Whizbang.Core.Security.ScopeContextAccessor.CurrentContext).IsNull()
       .Because("the tenant is established for the saga's work only, never left on the worker");
   }
