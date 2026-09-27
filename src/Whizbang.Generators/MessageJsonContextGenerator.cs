@@ -50,6 +50,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
   private const string I_COMPOSITE_EVENT = "Whizbang.Core.Minting.ICompositeEvent";
+  private const string WHIZBANG_CORE_ASSEMBLY = "Whizbang.Core";
   private const string JSON_IGNORE_ATTRIBUTE = "System.Text.Json.Serialization.JsonIgnoreAttribute";
 
   // The two halves of the emitted RegisterTypeName call; the alias arguments between them
@@ -112,16 +113,29 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractMessageTypeInfo(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Discover event types from perspective interfaces (IPerspectiveFor<TModel, TEvent1, TEvent2, ...>).
-    // These are often in referenced assemblies (e.g., a consumer's Contracts assembly) that the
-    // syntactic predicate can't see. But perspective classes in this assembly reference them as type arguments,
-    // which semantic analysis resolves. Required for drain mode's DeserializeStreamEvents.
+    // Discover the message types this assembly CONSUMES that live in referenced assemblies: event
+    // types from perspective interfaces (IPerspectiveFor<TModel, TEvent1, TEvent2, ...>) and message
+    // types from receptor interfaces (IReceptor<TMessage>, ISyncReceptor<TMessage>, ...). These are
+    // often in a shared contracts assembly that the syntactic predicate can't see, but classes in this
+    // assembly name them as type arguments, which semantic analysis resolves. Perspective events are
+    // required for drain mode's DeserializeStreamEvents; handled message types must be resolvable by
+    // this assembly's own context because a composite's inner list is polymorphic IMessage (#915).
     var perspectiveEventTypes = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) =>
             node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => _extractPerspectiveEventTypes(ctx, ct)
+        transform: static (ctx, ct) => _extractConsumedMessageTypes(ctx, ct)
     ).Where(static info => !info.IsDefaultOrEmpty)
      .SelectMany(static (arr, _) => arr);
+
+    // Composites declared in referenced assemblies (#915). A consumer that handles only a composite's
+    // inner events never names the composite, yet it receives the composite on the wire and stores it
+    // as an ordinary inbox row before fanning it out at dispatch, so its own context must carry the
+    // composite's metadata. The contract assembly's own context cannot be relied on: its module
+    // initializer runs only when code in that assembly first runs, which can be after this service's
+    // JSON options were built. Which inner types a composite carries is not knowable at compile time,
+    // so every concrete public composite in a referenced assembly that builds on Whizbang is included.
+    var referencedComposites = context.CompilationProvider
+        .Select(static (compilation, ct) => _discoverReferencedComposites(compilation, ct));
 
     // Rename platform (P1): read the committed .whizbang/pinned-type-ledger.json (AdditionalFiles) and flatten it
     // into former-name → current-name aliases. Empty when no ledger is present, so the feature is opt-in per project.
@@ -162,11 +176,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var messagesWithCompilation = allDiscoveredTypes.Combine(context.CompilationProvider);
     var messagesWithLedger = messagesWithCompilation.Combine(renameAliases);
     var messagesWithSagaEvents = messagesWithLedger.Combine(allSagaEventTypes);
+    var messagesWithReferencedComposites = messagesWithSagaEvents.Combine(referencedComposites);
 
     // Generate WhizbangJsonContext from collected message types
     context.RegisterSourceOutput(
-        messagesWithSagaEvents,
-        static (ctx, data) => {
+        messagesWithReferencedComposites,
+        static (ctx, all) => {
+          var data = all.Left;
           // Merge message types (nullable-filtered) with perspective event types (non-nullable)
           var messages = data.Left.Left.Left.Left!.Where(static m => m is not null).Select(static m => m!).ToImmutableArray();
           // Saga events lead: _generateWhizbangJsonContext dedupes by fully qualified name keeping the
@@ -175,7 +191,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           // property-less duplicate that wins and silently drops every property from the wire.
           var combined = data.Right.Select(static e => e.Type).ToImmutableArray()
               .AddRange(messages)
-              .AddRange(data.Left.Left.Left.Right);
+              .AddRange(data.Left.Left.Left.Right)
+              .AddRange(all.Right);
           var sagaInheritance = data.Right.SelectMany(static e => e.Inheritance).ToImmutableArray();
           _generateWhizbangJsonContext(ctx, combined, data.Left.Left.Right, data.Left.Right, sagaInheritance);
         }
@@ -518,46 +535,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       return perspectiveModelInfo;
     }
 
-    var fullyQualifiedName = TypeNameUtilities.FullyQualified(typeSymbol);
-    var clrTypeName = _getClrTypeName(typeSymbol);
-    var simpleName = typeSymbol.Name;
-
-    // Extract property information for JSON serialization, including inherited properties
-    // Use custom format that includes nullability annotations to avoid CS8619/CS8603 warnings
-    var properties = _getAllPropertiesIncludingInherited(typeSymbol)
-        .Select(p => new PropertyInfo(
-            Name: p.Name,
-#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
-            Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
-#pragma warning restore RS0030
-            IsValueType: _isValueType(p.Type),
-            IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
-            CanWrite: p.SetMethod != null
-        ))
-        .ToArray();
-
-    // Detect if type has a parameterized constructor matching all writable properties
-    // This is true for records with primary constructors like: record MyRecord(string Prop1, int Prop2)
-    // This is false for records with required properties like: record MyRecord { public required string Prop1 { get; init; } }
-    // Computed properties (CanWrite = false) are excluded from constructor matching
-    var writableProperties = properties.Where(p => p.CanWrite).ToArray();
-    bool hasParameterizedConstructor = typeSymbol.Constructors.Any(c =>
-        c.DeclaredAccessibility == Accessibility.Public &&
-        c.Parameters.Length == writableProperties.Length &&
-        c.Parameters.All(p => writableProperties.Any(prop =>
-            prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
-
-    return new JsonMessageTypeInfo(
-        FullyQualifiedName: fullyQualifiedName,
-        ClrTypeName: clrTypeName,
-        SimpleName: simpleName,
-        IsCommand: isCommand,
-        IsEvent: isEvent,
-        IsSerializable: isSerializable,
-        IsComposite: isComposite,
-        Properties: properties,
-        HasParameterizedConstructor: hasParameterizedConstructor
-    );
+    return _buildMessageTypeInfo(typeSymbol, isCommand, isEvent, isSerializable, isComposite);
   }
 
   /// <summary>
@@ -3109,19 +3087,33 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts event types (TEvent1, TEvent2, ...) from perspective interfaces on a class.
-  /// Returns JsonMessageTypeInfo for each event type so drain mode's DeserializeStreamEvents
-  /// can deserialize them via the source-generated JSON context.
+  /// The message types a class in this assembly consumes: the event types (TEvent1, TEvent2, ...) of
+  /// its perspective interfaces, and the message types of its receptor interfaces that are declared in
+  /// a referenced assembly. Returns a <see cref="JsonMessageTypeInfo"/> for each so the source-generated
+  /// JSON context can (de)serialize them — drain mode's DeserializeStreamEvents needs the perspective
+  /// events, and a composite's polymorphic inner list needs every inner event this assembly handles.
   /// </summary>
-  private static ImmutableArray<JsonMessageTypeInfo> _extractPerspectiveEventTypes(
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextReferencedCompositeTests.cs:Generator_ReceptorForReferencedEvent_RegistersInnerEventAsMessageAsync</tests>
+  private static ImmutableArray<JsonMessageTypeInfo> _extractConsumedMessageTypes(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-    if (context.SemanticModel.GetDeclaredSymbol(context.Node, ct) is not INamedTypeSymbol typeSymbol || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+    if (context.SemanticModel.GetDeclaredSymbol(context.Node, ct) is not INamedTypeSymbol typeSymbol) {
       return [];
     }
 
     var results = ImmutableArray.CreateBuilder<JsonMessageTypeInfo>();
+    if (typeSymbol.DeclaredAccessibility == Accessibility.Public) {
+      _addPerspectiveEventTypes(typeSymbol, results);
+    }
+    // A receptor may be internal; the message type it names is what must be reachable.
+    _addReferencedReceptorMessageTypes(typeSymbol, results);
 
+    return results.Count > 0 ? results.ToImmutable() : [];
+  }
+
+  /// <summary>Adds the event types (index 1 onward) of every perspective interface the type implements.</summary>
+  private static void _addPerspectiveEventTypes(
+      INamedTypeSymbol typeSymbol, ImmutableArray<JsonMessageTypeInfo>.Builder results) {
     foreach (var iface in typeSymbol.AllInterfaces) {
       var originalDef = TypeNameUtilities.Display(iface.OriginalDefinition);
       if (!_isPerspectiveInterfaceDefinition(originalDef)) {
@@ -3138,44 +3130,170 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           continue;
         }
 
-        var fullyQualifiedName = TypeNameUtilities.FullyQualified(eventType);
-        var clrTypeName = _getClrTypeName(eventType);
-        var simpleName = eventType.Name;
-
-        var properties = _getAllPropertiesIncludingInherited(eventType)
-            .Select(p => new PropertyInfo(
-                Name: p.Name,
-#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
-                Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
-#pragma warning restore RS0030
-                IsValueType: _isValueType(p.Type),
-                IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
-                CanWrite: p.SetMethod != null
-            ))
-            .ToArray();
-
-        var writableProperties = properties.Where(p => p.CanWrite).ToArray();
-        bool hasParameterizedConstructor = eventType.Constructors.Any(c =>
-            c.DeclaredAccessibility == Accessibility.Public &&
-            c.Parameters.Length == writableProperties.Length &&
-            c.Parameters.All(p => writableProperties.Any(prop =>
-                prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
-
-        results.Add(new JsonMessageTypeInfo(
-            FullyQualifiedName: fullyQualifiedName,
-            ClrTypeName: clrTypeName,
-            SimpleName: simpleName,
-            IsCommand: false,
-            IsEvent: true,
-            IsSerializable: false,
-            IsComposite: false,
-            Properties: properties,
-            HasParameterizedConstructor: hasParameterizedConstructor
-        ));
+        results.Add(_buildMessageTypeInfo(eventType, isCommand: false, isEvent: true, isSerializable: false, isComposite: false));
       }
     }
+  }
 
-    return results.Count > 0 ? results.ToImmutable() : [];
+  /// <summary>
+  /// Adds the message type of every receptor interface the type implements when that message type is
+  /// declared in a referenced assembly other than the framework's own. Types declared in this assembly
+  /// are already discovered from their own declarations, and the framework's types are registered by the
+  /// framework's context. Only concrete, publicly reachable commands and events qualify.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextReferencedCompositeTests.cs:Generator_ReceptorForReferencedCommandWithResponse_RegistersCommandAsync</tests>
+  private static void _addReferencedReceptorMessageTypes(
+      INamedTypeSymbol typeSymbol, ImmutableArray<JsonMessageTypeInfo>.Builder results) {
+    foreach (var iface in typeSymbol.AllInterfaces) {
+      if (!_isReceptorInterfaceDefinition(TypeNameUtilities.Display(iface.OriginalDefinition))
+          || iface.TypeArguments[0] is not INamedTypeSymbol messageType
+          || !_isReferencedConsumerType(messageType, typeSymbol.ContainingAssembly)) {
+        continue;
+      }
+
+      var isCommand = _implements(messageType, $"global::{I_COMMAND}");
+      var isEvent = _implements(messageType, $"global::{I_EVENT}");
+      if (isCommand || isEvent) {
+        results.Add(_buildMessageTypeInfo(messageType, isCommand, isEvent, isSerializable: false, isComposite: false));
+      }
+    }
+  }
+
+  /// <summary>The four receptor interface definitions whose first type argument is the consumed message.</summary>
+  private static bool _isReceptorInterfaceDefinition(string originalDef) =>
+      originalDef is "Whizbang.Core.IReceptor<TMessage>"
+          or "Whizbang.Core.IReceptor<TMessage, TResponse>"
+          or "Whizbang.Core.ISyncReceptor<TMessage>"
+          or "Whizbang.Core.ISyncReceptor<TMessage, TResponse>";
+
+  /// <summary>
+  /// True for a concrete, non-generic, publicly reachable type declared in a referenced assembly that
+  /// is neither <paramref name="self"/> nor the framework (whose own context registers its types).
+  /// </summary>
+  private static bool _isReferencedConsumerType(INamedTypeSymbol type, IAssemblySymbol self) =>
+      !type.IsAbstract
+      && !type.IsGenericType
+      && _isPubliclyReachable(type)
+      && !SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, self)
+      && type.ContainingAssembly.Name != WHIZBANG_CORE_ASSEMBLY;
+
+  /// <summary>True when the type implements the interface with the given fully qualified name.</summary>
+  private static bool _implements(INamedTypeSymbol type, string fullyQualifiedInterfaceName) =>
+      type.AllInterfaces.Any(i => TypeNameUtilities.FullyQualified(i) == fullyQualifiedInterfaceName);
+
+  /// <summary>
+  /// Every concrete, non-generic, publicly reachable <c>ICompositeEvent</c> declared in a referenced
+  /// assembly that builds on Whizbang (references Whizbang.Core), excluding Whizbang.Core itself, whose
+  /// own context registers the framework's composites (#915).
+  /// </summary>
+  /// <remarks>
+  /// Runs off the compilation, so it re-runs when the compilation changes; the walk is confined to the
+  /// referenced assemblies that reference the framework — a service's contract assemblies — and reads
+  /// only type declarations, never members, until a composite is found.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextReferencedCompositeTests.cs:Generator_ConsumerHandlesOnlyInnerEvent_EmitsMetadataForReferencedCompositeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextReferencedCompositeTests.cs:Generator_ReferencedComposites_OnlyConcretePublicNonGenericOnesAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextReferencedCompositeTests.cs:Generator_FrameworkComposites_NotDuplicatedIntoConsumerAsync</tests>
+  private static ImmutableArray<JsonMessageTypeInfo> _discoverReferencedComposites(
+      Compilation compilation, CancellationToken ct) {
+    var compositeInterface = compilation.GetTypeByMetadataName(I_COMPOSITE_EVENT);
+    if (compositeInterface is null) {
+      return [];
+    }
+
+    var framework = compositeInterface.ContainingAssembly;
+    var results = ImmutableArray.CreateBuilder<JsonMessageTypeInfo>();
+    foreach (var assembly in compilation.SourceModule.ReferencedAssemblySymbols) {
+      if (!SymbolEqualityComparer.Default.Equals(assembly, framework) && _referencesAssembly(assembly, framework)) {
+        _collectComposites(assembly.GlobalNamespace, compositeInterface, results, ct);
+      }
+    }
+    return results.ToImmutable();
+  }
+
+  /// <summary>True when any module of <paramref name="assembly"/> references <paramref name="target"/>.</summary>
+  private static bool _referencesAssembly(IAssemblySymbol assembly, IAssemblySymbol target) =>
+      assembly.Modules.Any(m => m.ReferencedAssemblySymbols.Any(r => SymbolEqualityComparer.Default.Equals(r, target)));
+
+  private static void _collectComposites(
+      INamespaceSymbol ns, INamedTypeSymbol compositeInterface,
+      ImmutableArray<JsonMessageTypeInfo>.Builder results, CancellationToken ct) {
+    ct.ThrowIfCancellationRequested();
+    foreach (var type in ns.GetTypeMembers()) {
+      _collectCompositeTypes(type, compositeInterface, results);
+    }
+    foreach (var child in ns.GetNamespaceMembers()) {
+      _collectComposites(child, compositeInterface, results, ct);
+    }
+  }
+
+  /// <summary>
+  /// Adds the type when it is a concrete, non-generic composite, then recurses into its nested types.
+  /// A non-public type stops the walk: nothing nested in it can be named from generated code.
+  /// </summary>
+  private static void _collectCompositeTypes(
+      INamedTypeSymbol type, INamedTypeSymbol compositeInterface, ImmutableArray<JsonMessageTypeInfo>.Builder results) {
+    if (type.DeclaredAccessibility != Accessibility.Public) {
+      return;
+    }
+
+    if (!type.IsAbstract && !type.IsGenericType
+        && type.AllInterfaces.Contains(compositeInterface, SymbolEqualityComparer.Default)) {
+      results.Add(_buildMessageTypeInfo(
+          type,
+          isCommand: _implements(type, $"global::{I_COMMAND}"),
+          isEvent: _implements(type, $"global::{I_EVENT}"),
+          isSerializable: false,
+          isComposite: true));
+    }
+
+    foreach (var nested in type.GetTypeMembers()) {
+      _collectCompositeTypes(nested, compositeInterface, results);
+    }
+  }
+
+  /// <summary>
+  /// Builds the serialization description of a type from its symbol: names, every property including
+  /// inherited ones (with nullability), and whether a public constructor takes exactly the writable
+  /// properties. The one place the several discovery paths describe a type, so they cannot drift.
+  /// </summary>
+  private static JsonMessageTypeInfo _buildMessageTypeInfo(
+      INamedTypeSymbol type, bool isCommand, bool isEvent, bool isSerializable, bool isComposite) {
+    // Use custom format that includes nullability annotations to avoid CS8619/CS8603 warnings
+    var properties = _getAllPropertiesIncludingInherited(type)
+        .Select(p => new PropertyInfo(
+            Name: p.Name,
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
+            Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+#pragma warning restore RS0030
+            IsValueType: _isValueType(p.Type),
+            IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
+            CanWrite: p.SetMethod != null
+        ))
+        .ToArray();
+
+    // Detect if type has a parameterized constructor matching all writable properties
+    // This is true for records with primary constructors like: record MyRecord(string Prop1, int Prop2)
+    // This is false for records with required properties like: record MyRecord { public required string Prop1 { get; init; } }
+    // Computed properties (CanWrite = false) are excluded from constructor matching
+    var writableProperties = properties.Where(p => p.CanWrite).ToArray();
+    bool hasParameterizedConstructor = type.Constructors.Any(c =>
+        c.DeclaredAccessibility == Accessibility.Public &&
+        c.Parameters.Length == writableProperties.Length &&
+        c.Parameters.All(p => writableProperties.Any(prop =>
+            prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
+
+    return new JsonMessageTypeInfo(
+        FullyQualifiedName: TypeNameUtilities.FullyQualified(type),
+        ClrTypeName: _getClrTypeName(type),
+        SimpleName: type.Name,
+        IsCommand: isCommand,
+        IsEvent: isEvent,
+        IsSerializable: isSerializable,
+        IsComposite: isComposite,
+        Properties: properties,
+        HasParameterizedConstructor: hasParameterizedConstructor
+    );
   }
 
   /// <summary>
@@ -3206,40 +3324,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         continue;
       }
 
-      var fullyQualifiedName = TypeNameUtilities.FullyQualified(modelType);
-      var clrTypeName = _getClrTypeName(modelType);
-      var simpleName = modelType.Name;
-
-      var properties = _getAllPropertiesIncludingInherited(modelType)
-          .Select(p => new PropertyInfo(
-              Name: p.Name,
-#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
-              Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
-#pragma warning restore RS0030
-              IsValueType: _isValueType(p.Type),
-              IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
-              CanWrite: p.SetMethod != null
-          ))
-          .ToArray();
-
-      var writableProperties = properties.Where(p => p.CanWrite).ToArray();
-      bool hasParameterizedConstructor = modelType.Constructors.Any(c =>
-          c.DeclaredAccessibility == Accessibility.Public &&
-          c.Parameters.Length == writableProperties.Length &&
-          c.Parameters.All(p => writableProperties.Any(prop =>
-              prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
-
-      return new JsonMessageTypeInfo(
-          FullyQualifiedName: fullyQualifiedName,
-          ClrTypeName: clrTypeName,
-          SimpleName: simpleName,
-          IsCommand: false,
-          IsEvent: false,
-          IsSerializable: true,
-          IsComposite: false,
-          Properties: properties,
-          HasParameterizedConstructor: hasParameterizedConstructor
-      );
+      return _buildMessageTypeInfo(modelType, isCommand: false, isEvent: false, isSerializable: true, isComposite: false);
     }
 
     return null;

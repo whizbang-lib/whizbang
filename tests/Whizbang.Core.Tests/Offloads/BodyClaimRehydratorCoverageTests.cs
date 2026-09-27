@@ -62,6 +62,37 @@ public class BodyClaimRehydratorCoverageTests {
     await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.SerializationError)
       .Because("a null-but-not-throwing deserialize is a wrong-shape body, same family of failure as a JsonException, and must dead-letter the same way");
     await Assert.That(result.FailureDescription).Contains("null or wrong shape");
+    await Assert.That(result.RawBody).IsEqualTo("null");
+  }
+
+  /// <summary>An event carrying nested <see cref="IEvent"/> elements; public so the generator registers it by name.</summary>
+  public sealed record NestedEventCarrierProbe : IEvent {
+    [StreamId]
+    public Guid StreamId { get; init; }
+    public List<IEvent> Carried { get; init; } = [];
+  }
+
+  /// <summary>
+  /// What breaks (#915): System.Text.Json reports metadata it cannot find with NotSupportedException,
+  /// not JsonException — here a nested polymorphic member whose discriminator this service cannot
+  /// resolve. It escaped the rehydrator, failed the whole transport batch, and the message was
+  /// redelivered until the broker dead-lettered it. It must dead-letter here, with the body.
+  /// </summary>
+  [Test]
+  public async Task MaybeRehydrateAsync_BodyNeedsMetadataThisServiceLacks_DeadLettersWithBodyAsync() {
+    var sp = _providerWithStore(out var store);
+    var body = "{\"id\":\"" + Guid.CreateVersion7() + "\",\"p\":{\"StreamId\":\"" + Guid.CreateVersion7()
+      + "\",\"Carried\":[{\"$type\":\"Elsewhere.Contracts.UnknownEvent\"}]},\"h\":[]}";
+    var realClaim = await store.UploadAsync(System.Text.Encoding.UTF8.GetBytes(body), "application/json");
+    var claimEnvelope = _wrapInClaimEnvelope(realClaim, originalTypeName: typeof(MessageEnvelope<NestedEventCarrierProbe>).AssemblyQualifiedName!);
+
+    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _jsonOptions(), sp, CancellationToken.None);
+
+    await Assert.That(result.IsDeadLetter).IsTrue();
+    await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.SerializationError);
+    await Assert.That(result.FailureDescription).Contains("type discriminator");
+    await Assert.That(result.RawBody).IsEqualTo(body);
   }
 
   /// <summary>Minimal store impl that captures bytes by claim's StorageKey.</summary>

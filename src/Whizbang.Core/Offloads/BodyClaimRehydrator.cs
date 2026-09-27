@@ -110,16 +110,23 @@ public static class BodyClaimRehydrator {
     IMessageEnvelope? rehydrated;
     try {
       rehydrated = JsonSerializer.Deserialize(downloaded.Span, typeInfo) as IMessageEnvelope;
-    } catch (JsonException ex) {
+    } catch (Exception ex) when (ex is JsonException or NotSupportedException) {
+      // NotSupportedException is how System.Text.Json reports metadata it cannot find (a polymorphic
+      // member whose discriminator this service cannot resolve, a type no context holds). It is as
+      // terminal on this build as malformed JSON, so it dead-letters rather than escaping to the
+      // transport, where it would be redelivered until the broker gave up on it (#915). The verified
+      // bytes travel with the result so the dead letter holds the original body, not just the claim.
       return RehydrateResult.DeadLetter(
         MessageFailureReason.SerializationError,
-        $"Failed to deserialize rehydrated body as '{claimPayload.OriginalTypeName}': {ex.Message}");
+        $"Failed to deserialize rehydrated body as '{claimPayload.OriginalTypeName}': {ex.Message}",
+        rawBody: System.Text.Encoding.UTF8.GetString(downloaded.Span));
     }
 
     if (rehydrated is null) {
       return RehydrateResult.DeadLetter(
         MessageFailureReason.SerializationError,
-        "Deserialized rehydrated body but result is null or wrong shape; expected IMessageEnvelope.");
+        "Deserialized rehydrated body but result is null or wrong shape; expected IMessageEnvelope.",
+        rawBody: System.Text.Encoding.UTF8.GetString(downloaded.Span));
     }
 
     // Observe the rehydration (bounded dimensions: message type + namespace — never message IDs).
@@ -163,6 +170,15 @@ public sealed record RehydrateResult {
   /// <summary>Human-readable failure description for logs / dashboards.</summary>
   public string? FailureDescription { get; init; }
 
+  /// <summary>
+  /// On a dead-letter result, the downloaded, integrity-verified (and opened) original body when the
+  /// failure came after download — what a dead-letter record must hold for the message to be replayed.
+  /// Null when the body was never obtained (unknown provider, hash mismatch, unopenable cipher).
+  /// </summary>
+  /// <docs>fundamentals/offloads/message-body-store</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:OffloadedBodyUnreadable_DeadLetteredWithDownloadedBodyAsync</tests>
+  public string? RawBody { get; init; }
+
   /// <summary>True when the input envelope carried a body claim and was successfully rehydrated.</summary>
   public bool WasRehydrated { get; init; }
 
@@ -189,6 +205,9 @@ public sealed record RehydrateResult {
     };
 
   /// <summary>Builds a dead-letter result (rehydrate failed and the message MUST NOT be processed).</summary>
-  public static RehydrateResult DeadLetter(MessageFailureReason reason, string description)
-    => new() { IsDeadLetter = true, FailureReason = reason, FailureDescription = description };
+  /// <param name="reason">Why the rehydrate failed.</param>
+  /// <param name="description">Human-readable detail.</param>
+  /// <param name="rawBody">The downloaded original body, when the failure came after download.</param>
+  public static RehydrateResult DeadLetter(MessageFailureReason reason, string description, string? rawBody = null)
+    => new() { IsDeadLetter = true, FailureReason = reason, FailureDescription = description, RawBody = rawBody };
 }
