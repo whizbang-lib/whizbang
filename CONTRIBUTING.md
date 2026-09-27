@@ -230,7 +230,9 @@ skill (`.claude/skills/release/SKILL.md`).
 ### Getting Help
 
 - **Documentation**: https://whizba.ng
-- **Issues** (questions, bugs and feature ideas): https://github.com/whizbang-lib/whizbang/issues
+- **Questions and ideas**: [GitHub Discussions](https://github.com/whizbang-lib/whizbang/discussions)
+  (Q&A for questions, Ideas for feature suggestions)
+- **Bugs**: https://github.com/whizbang-lib/whizbang/issues
 
 ### Reporting Bugs
 
@@ -244,7 +246,8 @@ skill (`.claude/skills/release/SKILL.md`).
 
 ### Suggesting Features
 
-1. Open an issue describing the feature
+1. Start in [Discussions → Ideas](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas)
+   to gauge interest; an accepted idea becomes an issue
 2. Include:
    - Use case and motivation
    - Proposed API design
@@ -281,6 +284,6 @@ By contributing, you agree that your contributions will be licensed under the MI
 
 ## Questions?
 
-Open an [issue](https://github.com/whizbang-lib/whizbang/issues) with your question.
+Ask in [Discussions → Q&A](https://github.com/whizbang-lib/whizbang/discussions/categories/q-a).
 
 Thank you for contributing to Whizbang!

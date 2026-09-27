@@ -21,8 +21,8 @@ accurate:
    dismissed as a false positive; no static-analysis finding is open.
 2. `SECURITY.md` states the support policy (the latest stable release) instead of a stale version
    table.
-3. `CONTRIBUTING.md` sends questions and feature ideas to issues (GitHub Discussions is not enabled),
-   no longer mentions issue or pull request templates that do not exist, links the docs site at
+3. GitHub Discussions is enabled, and `CONTRIBUTING.md` sends questions and feature ideas there and
+   bugs to issues. It no longer mentions issue or pull request templates that do not exist, links the docs site at
    `whizba.ng`, and describes how pull requests are actually reviewed and merged.
 4. The repository homepage is set to `https://whizba.ng`.
 5. GitHub detects the license as MIT.
@@ -45,7 +45,7 @@ human review.
 | Criterion | Answer | Justification |
 |---|---|---|
 | `description_good` | Met | The README opens with what the library is for: a .NET library for event-driven, CQRS and event-sourced applications, wired by source generators at compile time with no reflection and Native AOT support. <https://github.com/whizbang-lib/whizbang#readme> |
-| `interact` | Met | The README links the docs site, NuGet packages, releases and contributing guide; CONTRIBUTING covers asking questions, reporting bugs, requesting features and sending changes, through GitHub issues and pull requests. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md> |
+| `interact` | Met | The README links the docs site, NuGet packages, releases and contributing guide; CONTRIBUTING covers asking questions and suggesting features (GitHub Discussions), reporting bugs (issues) and sending changes (pull requests). <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md> |
 | `contribution` | Met | CONTRIBUTING describes the process: fork, branch per the gitflow naming, Conventional Commits, open a pull request into `develop`, CI must pass. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#submitting-changes> |
 | `contribution_requirements` | Met | CONTRIBUTING lists the standards a contribution must meet (code style, XML docs, AOT rules, TUnit tests, `dotnet format` clean, no warnings, lock files updated) and links the detailed guides. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#standards-and-guidelines> |
 
@@ -69,7 +69,7 @@ human review.
 | Criterion | Answer | Justification |
 |---|---|---|
 | `sites_https` | Met | The repository (GitHub), docs site (`https://whizba.ng`, HTTP redirects to HTTPS) and packages (nuget.org) are served over HTTPS only. |
-| `discussion` | Met | GitHub issues and pull requests: searchable, addressable by URL, open to new participants, no proprietary client needed. <https://github.com/whizbang-lib/whizbang/issues> |
+| `discussion` | Met | GitHub Discussions (Q&A, Ideas, Announcements) plus issues and pull requests: searchable, addressable by URL, open to new participants, no proprietary client needed. <https://github.com/whizbang-lib/whizbang/discussions> |
 | `english` | Met | All documentation, code comments and issue discussion are in English (US spelling is a documented standard). |
 | `maintained` | Met | Actively developed: over a thousand commits reached `develop` in September 2026, and stable releases shipped on 2026-09-22, 09-23, 09-26 and 09-27. <https://github.com/whizbang-lib/whizbang/releases> |
 
