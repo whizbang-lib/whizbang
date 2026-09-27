@@ -1306,6 +1306,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// message, invokes the batch handler, and then completes the successful ones. Messages that
   /// fail deserialization are already dead-lettered by _deserializeReceivedMessageAsync.
   /// </summary>
+  /// <remarks>
+  /// A handler that throws (the consumer reports a failed batch as
+  /// <see cref="Whizbang.Core.Workers.TransportBatchFailedException"/>) never reaches the completion
+  /// loop: each message is abandoned, or dead-lettered once it has reached
+  /// <see cref="AzureServiceBusOptions.MaxDeliveryAttempts"/>, exactly as a failing single message is
+  /// (#921). The throw is not handed back to the collector, whose in-memory re-queue would retry the
+  /// batch without the broker counting a delivery, so the delivery limit would never bound it.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerReportsBatchFailed_AbandonsNeverCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerFailsAtMaxDeliveryCount_DeadLettersNeverCompletesAsync</tests>
   private TransportBatchCollector<PendingServiceBusMessage> _buildPendingMessageCollector(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportBatchOptions batchOptions,
@@ -1313,39 +1323,74 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   ) {
     return new TransportBatchCollector<PendingServiceBusMessage>(
       batchOptions,
-      async batch => {
-        var transportMessages = new List<TransportMessage>(batch.Count);
-        var successfulArgs = new List<ProcessMessageEventArgs>(batch.Count);
-
-        // S3267: Loop contains await — LINQ doesn't support async lambdas
-#pragma warning disable S3267
-        foreach (var pending in batch) {
-          var (envelope, envelopeTypeName) = await _deserializeReceivedMessageAsync(pending.Args, destination);
-          if (envelope is not null) {
-            transportMessages.Add(new TransportMessage(envelope, envelopeTypeName));
-            successfulArgs.Add(pending.Args);
-          }
-        }
-#pragma warning restore S3267
-
-        if (transportMessages.Count == 0) {
-          return;
-        }
-
-        await batchHandler(transportMessages, CancellationToken.None);
-
-        // Per-message CompleteMessageAsync (ASB has no multi-ACK)
-        foreach (var args in successfulArgs) {
-          try {
-            await args.CompleteMessageAsync(args.Message, cancellationToken: CancellationToken.None);
-          } catch (ServiceBusException ex) {
-            _logger.LogWarning(ex,
-              "Failed to complete message {MessageId} — will be redelivered after lock expiry",
-              args.Message.MessageId);
-          }
-        }
-      }
+      batch => _flushPendingBatchAsync(batch, batchHandler, destination)
     );
+  }
+
+  /// <summary>
+  /// One collector flush: deserializes the batch, hands it to the handler, and settles it. A failed
+  /// batch is abandoned (or dead-lettered at the delivery limit), never completed (#921).
+  /// </summary>
+  private async Task _flushPendingBatchAsync(
+    IReadOnlyList<PendingServiceBusMessage> batch,
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination
+  ) {
+    var (transportMessages, successfulArgs) = await _deserializePendingBatchAsync(batch, destination);
+    if (transportMessages.Count == 0) {
+      return;
+    }
+
+    try {
+      await batchHandler(transportMessages, CancellationToken.None);
+    } catch (Exception ex) {
+      // The batch failed: never complete it. Abandon (or dead-letter at the delivery limit) so the
+      // broker redelivers and counts the attempt (#921). A shutdown is abandoned too: the message
+      // goes back at once instead of waiting out its lock.
+      foreach (var args in successfulArgs) {
+        await _handleMessageProcessingErrorAsync(args, ex, destination);
+      }
+      return;
+    }
+
+    await _completeAllAsync(successfulArgs);
+  }
+
+  /// <summary>
+  /// Deserializes each pending message; the ones that fail are already dead-lettered by
+  /// _deserializeReceivedMessageAsync and are left out of both lists.
+  /// </summary>
+  private async Task<(List<TransportMessage> Messages, List<ProcessMessageEventArgs> Args)> _deserializePendingBatchAsync(
+    IReadOnlyList<PendingServiceBusMessage> batch,
+    TransportDestination destination
+  ) {
+    var transportMessages = new List<TransportMessage>(batch.Count);
+    var successfulArgs = new List<ProcessMessageEventArgs>(batch.Count);
+
+    // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
+    foreach (var pending in batch) {
+      var (envelope, envelopeTypeName) = await _deserializeReceivedMessageAsync(pending.Args, destination);
+      if (envelope is not null) {
+        transportMessages.Add(new TransportMessage(envelope, envelopeTypeName));
+        successfulArgs.Add(pending.Args);
+      }
+    }
+#pragma warning restore S3267
+    return (transportMessages, successfulArgs);
+  }
+
+  /// <summary>Completes each handled message (Service Bus has no multi-ACK).</summary>
+  private async Task _completeAllAsync(List<ProcessMessageEventArgs> handled) {
+    foreach (var args in handled) {
+      try {
+        await args.CompleteMessageAsync(args.Message, cancellationToken: CancellationToken.None);
+      } catch (ServiceBusException ex) {
+        _logger.LogWarning(ex,
+          "Failed to complete message {MessageId} — will be redelivered after lock expiry",
+          args.Message.MessageId);
+      }
+    }
   }
 
   // Keep SubscribeAsync as internal for backward compat during migration

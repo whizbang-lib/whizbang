@@ -206,6 +206,8 @@ public class BodyClaimRehydratorTests {
     await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.SerializationError)
       .Because("Storage corruption / wrong-type claims must dead-letter with SerializationError — the worker must never bubble JsonException to its outer scope.");
     await Assert.That(result.FailureDescription).Contains("Failed to deserialize");
+    await Assert.That(result.RawBody).IsEqualTo("}}}not-json{{{")
+      .Because("the verified bytes travel with the dead letter, so the record holds the original body and not only the claim");
   }
 
   // Helpers

@@ -363,6 +363,9 @@ internal sealed class RecordingTransportReceiver : ServiceBusReceiver {
   /// <summary>Completes when the first CompleteMessageAsync call is observed.</summary>
   public TaskCompletionSource CompletedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+  /// <summary>Completes when the first settlement that is NOT a completion (abandon or dead-letter) is observed.</summary>
+  public TaskCompletionSource NotCompletedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
   public override Task CompleteMessageAsync(
     ServiceBusReceivedMessage message, CancellationToken cancellationToken = default) {
     Completed.Add(message.MessageId);
@@ -375,6 +378,7 @@ internal sealed class RecordingTransportReceiver : ServiceBusReceiver {
     IDictionary<string, object>? propertiesToModify = null,
     CancellationToken cancellationToken = default) {
     Abandoned.Add(message.MessageId);
+    NotCompletedSignal.TrySetResult();
     return AbandonException is null ? Task.CompletedTask : Task.FromException(AbandonException);
   }
 
@@ -384,6 +388,7 @@ internal sealed class RecordingTransportReceiver : ServiceBusReceiver {
     string? deadLetterErrorDescription = null,
     CancellationToken cancellationToken = default) {
     DeadLettered.Add((message.MessageId, deadLetterReason, deadLetterErrorDescription));
+    NotCompletedSignal.TrySetResult();
     return DeadLetterException is null ? Task.CompletedTask : Task.FromException(DeadLetterException);
   }
 }

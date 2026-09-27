@@ -194,7 +194,7 @@ git push origin feature/my-feature
 
 6. **Create Pull Request**
    - Go to GitHub and create a PR from your fork
-   - Fill out the PR template
+   - Describe what changed and why
    - Link related issues
    - Wait for CI checks to pass
 
@@ -210,10 +210,12 @@ git push origin feature/my-feature
 
 ### Code Review Process
 
-1. Automated checks run via GitHub Actions
-2. Maintainers review code and documentation
-3. Address feedback and update PR
-4. Once approved, maintainer merges PR
+1. Automated checks run via GitHub Actions: the full test matrix, formatting, 100% coverage of new
+   lines, zero SonarCloud findings, CodeQL and secret scanning. A pull request cannot merge until
+   every required check passes.
+2. The maintainer reviews pull requests from other contributors and may ask for changes.
+3. Address feedback and update the PR.
+4. The maintainer merges it through the merge queue.
 
 ## Release Process
 
@@ -227,14 +229,15 @@ skill (`.claude/skills/release/SKILL.md`).
 
 ### Getting Help
 
-- **Documentation**: https://whizbang-lib.github.io
-- **Discussions**: https://github.com/whizbang-lib/whizbang/discussions
-- **Issues**: https://github.com/whizbang-lib/whizbang/issues
+- **Documentation**: https://whizba.ng
+- **Questions and ideas**: [GitHub Discussions](https://github.com/whizbang-lib/whizbang/discussions)
+  (Q&A for questions, Ideas for feature suggestions)
+- **Bugs**: https://github.com/whizbang-lib/whizbang/issues
 
 ### Reporting Bugs
 
 1. Check existing issues first
-2. Create new issue with template
+2. Open a new issue
 3. Include:
    - .NET version
    - Operating system
@@ -243,9 +246,9 @@ skill (`.claude/skills/release/SKILL.md`).
 
 ### Suggesting Features
 
-1. Open a discussion first to gauge interest
-2. If there's support, create feature request issue
-3. Include:
+1. Start in [Discussions → Ideas](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas)
+   to gauge interest; an accepted idea becomes an issue
+2. Include:
    - Use case and motivation
    - Proposed API design
    - Example usage
@@ -281,6 +284,6 @@ By contributing, you agree that your contributions will be licensed under the MI
 
 ## Questions?
 
-Feel free to ask questions in [GitHub Discussions](https://github.com/whizbang-lib/whizbang/discussions).
+Ask in [Discussions → Q&A](https://github.com/whizbang-lib/whizbang/discussions/categories/q-a).
 
 Thank you for contributing to Whizbang!

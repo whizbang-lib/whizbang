@@ -33,6 +33,7 @@
     <PackageVersion Include="Dapper" Version="2.1.89" />
     <PackageVersion Include="FastEndpoints" Version="7.2.0" />
     <PackageVersion Include="FastEndpoints.Swagger" Version="7.2.0" />
+    <PackageVersion Include="FsCheck" Version="3.4.0" />
     <PackageVersion Include="HotChocolate.AspNetCore" Version="15.1.14" />
     <PackageVersion Include="HotChocolate.Data" Version="15.1.14" />
     <PackageVersion Include="ILRepack.Lib.MSBuild.Task" Version="2.0.44.1" />

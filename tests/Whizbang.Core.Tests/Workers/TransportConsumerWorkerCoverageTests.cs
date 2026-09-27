@@ -984,14 +984,14 @@ public class TransportConsumerWorkerCoverageTests {
   // ========================================
 
   /// <summary>
-  /// A failing inbox store must cost ONE batch, never the process. The worker runs its batch handler
-  /// through <see cref="TransportBatchGuard"/>, so the fault is logged and the broker redelivers;
-  /// letting it escape propagates out of <c>ExecuteAsync</c> and, under the default
-  /// <c>BackgroundServiceExceptionBehavior.StopHost</c>, stops the host — observed in production as
-  /// an orderly shutdown with exit code 0 and no Error-level line anywhere.
+  /// A failing inbox store must cost ONE batch, never the process, and must not be settled as
+  /// consumed. The worker runs its batch handler through <see cref="TransportBatchGuard"/>, so the
+  /// fault is logged and reported to the transport as <see cref="TransportBatchFailedException"/>,
+  /// which every transport abandons for redelivery instead of completing (#921). The worker itself
+  /// keeps running — observed in production, an escaping fault once stopped a host with exit code 0.
   /// </summary>
   [Test]
-  public async Task HandleMessage_WhenInboxStoreThrows_ContainsTheBatchFailureAsync() {
+  public async Task HandleMessage_WhenInboxStoreThrows_ReportsTheBatchFailedAndKeepsRunningAsync() {
     // Arrange
     var messageId = MessageId.New();
     var transport = new CoverageTransport();
@@ -1037,17 +1037,29 @@ public class TransportConsumerWorkerCoverageTests {
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
-    // Act - returning normally IS the containment: an escape here is what stops the host.
-    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
+    // Act - the transport must see the failure (so it does not complete the message) as the typed
+    // signal, while the worker stays up.
+    Exception? reported = null;
+    try {
+      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
+    } catch (Exception ex) {
+      reported = ex;
+    }
+    var workerStillRunning = !worker.ExecuteTask!.IsCompleted;
 
     await cts.CancelAsync();
+
+    await Assert.That(reported).IsTypeOf<TransportBatchFailedException>()
+      .Because("a failure the transport never sees is a batch it completes and loses (#921)");
+    await Assert.That(workerStillRunning).IsTrue()
+      .Because("one failed batch must never stop the worker");
 
     // Assert - the store really was attempted, so the containment below is not vacuous.
     await Assert.That(throwingCoordinator.StoreAttempts).IsEqualTo(1)
       .Because("without a real failure this test would prove nothing about the guard.");
     await Assert.That(logger.Exceptions.OfType<InvalidOperationException>().Count()).IsEqualTo(1)
-      .Because("a contained batch failure that logs nothing reproduces the silent shutdown this "
-             + "guard exists to remove — the broker redelivers, and the operator must be told why.");
+      .Because("a batch failure that logs nothing reproduces the silent shutdown this guard exists "
+             + "to remove — the broker redelivers, and the operator must be told why.");
   }
 
   // ========================================

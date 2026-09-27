@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -277,6 +278,158 @@ public class StrandedSagaSweepTests {
   }
 
   [Test]
+  [NotInParallel("ScopeContextAccessor")]
+  public async Task Sweep_ItemRepositoryRequiresTenantScope_ReadsInTheSagasTenantAndArmsTheTickAsync() {
+    _clearAmbientScope();
+    var sagaId = _id(16);
+    var old = _ago(TimeSpan.FromHours(2));
+    var repo = new TenantScopedItemRepository(new Dictionary<Guid, string?> { [sagaId] = TENANT }, old);
+    var dispatcher = new RecordingDispatcher();
+    var svc = new SweptSagaService(new DispatcherSagaEventEmitter(dispatcher), repo, [new IncompleteSaga(_saga(sagaId, old), TENANT)]);
+
+    var armed = await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(1)
+      .Because("the sweep runs on a maintenance worker with no scope; a repository reading through a tenant-scoped lens must still be readable");
+    await Assert.That(repo.Reads).IsEquivalentTo([
+      new ScopedRead(nameof(ISagaItemRepository.GetLastActivityAsync), sagaId, TENANT),
+      new ScopedRead(nameof(ISagaItemRepository.GetAggregateForSagaAsync), sagaId, TENANT)]);
+    var (_, publishedEvent, publishedScope) = dispatcher.PublishOnceCalls.Single();
+    await Assert.That(publishedScope?.TenantId).IsEqualTo(TENANT);
+    await Assert.That(((SagaCompletionWatchdogTickEvent)publishedEvent!).StreamId).IsEqualTo(sagaId);
+    await Assert.That(Whizbang.Core.Security.ScopeContextAccessor.CurrentContext).IsNull()
+      .Because("the tenant is established for the saga's work only, never left on the worker");
+  }
+
+  [Test]
+  [NotInParallel("ScopeContextAccessor")]
+  public async Task Sweep_SagasInDifferentTenants_EachIsReadAndArmedInItsOwnTenantAsync() {
+    _clearAmbientScope();
+    var first = _id(17);
+    var second = _id(18);
+    var old = _ago(TimeSpan.FromHours(2));
+    var repo = new TenantScopedItemRepository(new Dictionary<Guid, string?> { [first] = "tenant-a", [second] = "tenant-b" }, old);
+    var dispatcher = new RecordingDispatcher();
+    var svc = new SweptSagaService(new DispatcherSagaEventEmitter(dispatcher), repo, [
+      new IncompleteSaga(_saga(first, old), "tenant-a"),
+      new IncompleteSaga(_saga(second, old), "tenant-b")]);
+
+    var armed = await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(2);
+    await Assert.That(repo.Reads).IsEquivalentTo([
+      new ScopedRead(nameof(ISagaItemRepository.GetLastActivityAsync), first, "tenant-a"),
+      new ScopedRead(nameof(ISagaItemRepository.GetAggregateForSagaAsync), first, "tenant-a"),
+      new ScopedRead(nameof(ISagaItemRepository.GetLastActivityAsync), second, "tenant-b"),
+      new ScopedRead(nameof(ISagaItemRepository.GetAggregateForSagaAsync), second, "tenant-b")])
+      .Because("one sweep crosses tenants; each saga must be read in its own, never in the one before it");
+    var armedIn = dispatcher.PublishOnceCalls.ToDictionary(
+      c => ((SagaCompletionWatchdogTickEvent)c.Event!).StreamId, c => c.Scope?.TenantId);
+    await Assert.That(armedIn[first]).IsEqualTo("tenant-a");
+    await Assert.That(armedIn[second]).IsEqualTo("tenant-b");
+  }
+
+  [Test]
+  [NotInParallel("ScopeContextAccessor")]
+  public async Task Sweep_SagaWithNoTenant_IsReadInTheWorkersOwnContextAsync() {
+    _clearAmbientScope();
+    var sagaId = _id(19);
+    var old = _ago(TimeSpan.FromHours(2));
+    var repo = new TenantScopedItemRepository(new Dictionary<Guid, string?> { [sagaId] = null }, old);
+    var dispatcher = new RecordingDispatcher();
+    var svc = new SweptSagaService(new DispatcherSagaEventEmitter(dispatcher), repo, [new IncompleteSaga(_saga(sagaId, old), null)]);
+
+    var armed = await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(1);
+    await Assert.That(repo.Reads.Select(r => r.TenantId)).IsEquivalentTo(new string?[] { null, null })
+      .Because("a saga that is not tenant-scoped is read as it always was");
+    await Assert.That(dispatcher.PublishOnceCalls.Single().Scope?.TenantId)
+      .IsEqualTo(Whizbang.Core.Lenses.TenantConstants.AllTenants);
+  }
+
+  [Test]
+  public async Task EmitterDefault_RunInTenant_RunsTheWorkAsIsAsync() {
+    ISagaEventEmitter emitter = new ScopelessEmitter();
+    using var cts = new CancellationTokenSource();
+
+    var received = await emitter.RunInTenantAsync(TENANT, ct => Task.FromResult(ct), cts.Token);
+
+    await Assert.That(received).IsEqualTo(cts.Token)
+      .Because("an emitter with no notion of scope runs the work unchanged, as the sweep did before it read in the tenant");
+  }
+
+  [Test]
+  public async Task EmitterDefault_RunInTenant_NullWork_ThrowsAsync() {
+    ISagaEventEmitter emitter = new ScopelessEmitter();
+
+    await Assert.That(async () => await emitter.RunInTenantAsync<int>(TENANT, null!, CancellationToken.None))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Sweep_OneSagasReadThrows_TheOthersAreStillArmedAndTheFailureIsLoggedAsync() {
+    var old = _ago(TimeSpan.FromHours(2));
+    var repo = new FailingItemRepository(old) { FailFor = _id(21) };
+    var emitter = new RecordingEmitter();
+    var logger = new RecordingLogger();
+    var svc = new SweptSagaService(emitter, repo, [
+      new IncompleteSaga(_saga(_id(20), old), "tenant-a"),
+      new IncompleteSaga(_saga(_id(21), old), "tenant-b"),
+      new IncompleteSaga(_saga(_id(22), old), "tenant-c")], logger);
+
+    var armed = await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(2)
+      .Because("one saga's bad read must not strand every saga swept after it");
+    await Assert.That(emitter.Once.Select(o => ((SagaCompletionWatchdogTickEvent)o.Event).StreamId))
+      .IsEquivalentTo([_id(20), _id(22)]);
+    var entry = logger.Entries.Single();
+    await Assert.That(entry.Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(entry.Exception).IsTypeOf<InvalidOperationException>();
+    await Assert.That(entry.Message).Contains(SAGA_NAME);
+    await Assert.That(entry.Message).Contains(_id(21).ToString());
+    await Assert.That(entry.Message).Contains("tenant-b");
+  }
+
+  [Test]
+  public async Task Sweep_CanceledMidSweep_StopsTheSweepAsync() {
+    var old = _ago(TimeSpan.FromHours(2));
+    using var cts = new CancellationTokenSource();
+    var repo = new FailingItemRepository(old) { CancelAt = _id(24), Cancellation = cts };
+    var emitter = new RecordingEmitter();
+    var logger = new RecordingLogger();
+    var svc = new SweptSagaService(emitter, repo, [
+      new IncompleteSaga(_saga(_id(23), old), TENANT),
+      new IncompleteSaga(_saga(_id(24), old), TENANT),
+      new IncompleteSaga(_saga(_id(25), old), TENANT)], logger);
+
+    await Assert.That(async () => await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), cts.Token))
+      .Throws<OperationCanceledException>();
+
+    await Assert.That(repo.ReadSagas).DoesNotContain(_id(25))
+      .Because("a canceled sweep stops; it is not a saga failure to log and step past");
+    await Assert.That(logger.Entries).IsEmpty();
+  }
+
+  [Test]
+  public async Task Sweep_OperationCanceledWithoutTheSweepBeingCanceled_IsTreatedAsThatSagasFailureAsync() {
+    var old = _ago(TimeSpan.FromHours(2));
+    var repo = new FailingItemRepository(old) { FailFor = _id(26), FailWith = new OperationCanceledException("a read timed out") };
+    var emitter = new RecordingEmitter();
+    var logger = new RecordingLogger();
+    var svc = new SweptSagaService(emitter, repo, [
+      new IncompleteSaga(_saga(_id(26), old), TENANT),
+      new IncompleteSaga(_saga(_id(27), old), TENANT)], logger);
+
+    var armed = await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(1)
+      .Because("only the sweep's own token stops the sweep; a timeout inside one saga's read is that saga's failure");
+    await Assert.That(logger.Entries.Single().Exception).IsTypeOf<OperationCanceledException>();
+  }
+
+  [Test]
   public async Task ParticipantDefault_ArmsNothingAsync() {
     ISagaWatchdogParticipant participant = new MinimalParticipant();
 
@@ -309,6 +462,84 @@ public class StrandedSagaSweepTests {
     public Task<SagaItemAggregate> GetAggregateForSagaAsync(Guid sagaId, CancellationToken cancellationToken)
       => Task.FromResult(new SagaItemAggregate(items.Count, 0, 0, items.Count));
     public Task<IReadOnlyList<SagaItemModel>> GetItemsAsync(Guid sagaId, CancellationToken cancellationToken) => Task.FromResult(items);
+  }
+
+  private static void _clearAmbientScope() {
+    Whizbang.Core.Security.ScopeContextAccessor.CurrentContext = null;
+    Whizbang.Core.Security.ScopeContextAccessor.CurrentInitiatingContext = null;
+  }
+
+  private sealed record ScopedRead(string Method, Guid SagaId, string? TenantId);
+
+  /// <summary>
+  /// Reads the way a repository over a tenant-scoped lens does: through the ambient scope accessor,
+  /// throwing when the saga's tenant is not the one in force.
+  /// </summary>
+  private sealed class TenantScopedItemRepository(IReadOnlyDictionary<Guid, string?> tenantOf, DateTimeOffset lastActivity) : ISagaItemRepository {
+    private readonly Whizbang.Core.Security.ScopeContextAccessor _accessor = new();
+    public List<ScopedRead> Reads { get; } = [];
+
+    public Task<SagaItemAggregate> GetAggregateForSagaAsync(Guid sagaId, CancellationToken cancellationToken) {
+      _read(nameof(GetAggregateForSagaAsync), sagaId);
+      return Task.FromResult(new SagaItemAggregate(Total: 3, Completed: 2, Failed: 0, InProgress: 1));
+    }
+
+    public Task<IReadOnlyList<SagaItemModel>> GetItemsAsync(Guid sagaId, CancellationToken cancellationToken) {
+      _read(nameof(GetItemsAsync), sagaId);
+      return Task.FromResult<IReadOnlyList<SagaItemModel>>([]);
+    }
+
+    public Task<DateTimeOffset?> GetLastActivityAsync(Guid sagaId, CancellationToken cancellationToken) {
+      _read(nameof(GetLastActivityAsync), sagaId);
+      return Task.FromResult<DateTimeOffset?>(lastActivity);
+    }
+
+    private void _read(string method, Guid sagaId) {
+      var ambient = _accessor.Current?.Scope?.TenantId;
+      var expected = tenantOf[sagaId];
+      if (ambient != expected) {
+        throw new InvalidOperationException(
+          $"Scope 'Tenant' requires ambient scope context for tenant '{expected}' but found '{ambient ?? "none"}'.");
+      }
+      Reads.Add(new ScopedRead(method, sagaId, ambient));
+    }
+  }
+
+  /// <summary>Idle items for every saga; throws, or cancels the sweep, when a chosen saga is read.</summary>
+  private sealed class FailingItemRepository(DateTimeOffset lastActivity) : ISagaItemRepository {
+    public Guid? FailFor { get; init; }
+    public Exception FailWith { get; init; } = new InvalidOperationException("read failed");
+    public Guid? CancelAt { get; init; }
+    public CancellationTokenSource? Cancellation { get; init; }
+    public List<Guid> ReadSagas { get; } = [];
+
+    public Task<SagaItemAggregate> GetAggregateForSagaAsync(Guid sagaId, CancellationToken cancellationToken)
+      => Task.FromResult(new SagaItemAggregate(Total: 3, Completed: 2, Failed: 0, InProgress: 1));
+
+    public Task<IReadOnlyList<SagaItemModel>> GetItemsAsync(Guid sagaId, CancellationToken cancellationToken)
+      => Task.FromResult<IReadOnlyList<SagaItemModel>>([]);
+
+    public async Task<DateTimeOffset?> GetLastActivityAsync(Guid sagaId, CancellationToken cancellationToken) {
+      ReadSagas.Add(sagaId);
+      if (sagaId == CancelAt) {
+        await Cancellation!.CancelAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+      }
+      if (sagaId == FailFor) {
+        throw FailWith;
+      }
+      return lastActivity;
+    }
+  }
+
+  private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
+
+  private sealed class RecordingLogger : ILogger {
+    public List<LogEntry> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+      => Entries.Add(new LogEntry(logLevel, formatter(state, exception), exception));
   }
 
   private sealed record OnceCall(string? TenantId, string ClaimKey, IEvent Event);
@@ -353,10 +584,11 @@ public class StrandedSagaSweepTests {
   private sealed class SweptSagaService(
       ISagaEventEmitter emitter,
       ISagaItemRepository? itemRepository,
-      IReadOnlyList<IncompleteSaga>? incomplete)
+      IReadOnlyList<IncompleteSaga>? incomplete,
+      ILogger? logger = null)
     : BaseSagaService<TestInitiatedEvent, TestItemsDispatchedEvent, TestItemStartedEvent, TestItemCompletedEvent,
                       TestItemFailedEvent, TestCompletedEvent, TestResetEvent, TestHookStartedEvent, TestHookCompletedEvent>(
-        SAGA_NAME, emitter, itemRepository, new NotTerminalReader(), options: null, NullLogger<SweptSagaService>.Instance) {
+        SAGA_NAME, emitter, itemRepository, new NotTerminalReader(), options: null, logger ?? NullLogger<SweptSagaService>.Instance) {
 
     protected override Task<IReadOnlyList<IncompleteSaga>> LoadIncompleteSagasAsync(CancellationToken cancellationToken)
       => incomplete is null ? base.LoadIncompleteSagasAsync(cancellationToken) : Task.FromResult(incomplete);

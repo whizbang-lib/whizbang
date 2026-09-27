@@ -123,7 +123,9 @@ public sealed class LifecycleStageTracker(int maxTrackedClaims = 100_000) {
   public void Purge(TimeSpan maxAge) {
     var cutoff = DateTimeOffset.UtcNow - maxAge;
     foreach (var kvp in _processed) {
-      if (kvp.Value < cutoff) {
+      // At or before the cutoff: a claim stamped in the same clock tick as the purge is maxAge old,
+      // not younger, and Purge(TimeSpan.Zero) must clear it.
+      if (kvp.Value <= cutoff) {
         _processed.TryRemove(kvp.Key, out _);
       }
     }

@@ -5,8 +5,10 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Sagas.Services;
 using Whizbang.Sagas.Tests.Generators;
@@ -57,14 +59,19 @@ public class SagaWatchdogTickDeliveryIntegrationTests {
     await registrar.StartAsync(CancellationToken.None);
   }
 
-  private static async Task _deliverAsync(IServiceProvider provider, string sagaName, LifecycleStage stage) {
+  private static async Task _deliverAsync(IServiceProvider provider, string sagaName, LifecycleStage stage, string? tenantId = null) {
     await using var scope = provider.CreateAsyncScope();
     var invoker = new ReceptorInvoker(provider.GetRequiredService<IReceptorRegistry>(), scope.ServiceProvider);
     var tick = new SagaCompletionWatchdogTickEvent { StreamId = Guid.NewGuid(), SagaName = sagaName, EntityId = Guid.NewGuid() };
     await invoker.InvokeAsync(new MessageEnvelope<SagaCompletionWatchdogTickEvent> {
       MessageId = MessageId.New(),
       Payload = tick,
-      Hops = [],
+      Hops = tenantId is null ? [] : [new MessageHop {
+        ServiceInstance = ServiceInstanceInfo.Unknown,
+        Type = HopType.Current,
+        Timestamp = DateTimeOffset.UtcNow,
+        Scope = ScopeDelta.FromPerspectiveScope(new PerspectiveScope { TenantId = tenantId, UserId = "SYSTEM" }),
+      }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
     }, stage);
   }
@@ -105,6 +112,28 @@ public class SagaWatchdogTickDeliveryIntegrationTests {
       .Because("a tick is armed for later; reaching the saga at arming time would re-arm at once and cascade");
   }
 
+  /// <summary>
+  /// The tick's own recovery reads the saga's items (aggregate, item list, stranded-item resolution)
+  /// with no scope of its own; they are tenant-safe only because the tick is handled in the tenant it
+  /// was published in, which the stranded-saga sweep sets to the saga's.
+  /// </summary>
+  [Test]
+  [NotInParallel("ScopeContextAccessor")]
+  public async Task HandWrittenSagaTick_PublishedInATenant_IsHandledInThatTenantAsync() {
+    ScopeContextAccessor.CurrentContext = null;
+    ScopeContextAccessor.CurrentInitiatingContext = null;
+    var handWritten = new RecordingParticipant(HAND_WRITTEN);
+    await using var provider = _host(handWritten);
+    await _startTheRouterRegistrarAsync(provider);
+
+    await _deliverAsync(provider, HAND_WRITTEN, LifecycleStage.PostInboxInline, tenantId: "tenant-a");
+
+    await Assert.That(handWritten.Received).IsEqualTo(1)
+      .Because("nothing was delivered, so the tenant assertion below would pass vacuously");
+    await Assert.That(handWritten.TenantSeen).IsEqualTo("tenant-a")
+      .Because("a repository over a tenant-scoped lens, read during recovery, needs the tick's tenant in force");
+  }
+
   [Test]
   public async Task SagaAttributeTick_IsLeftToItsGeneratedReceiverAsync() {
     var handWritten = new RecordingParticipant(HAND_WRITTEN);
@@ -121,9 +150,11 @@ public class SagaWatchdogTickDeliveryIntegrationTests {
     private int _received;
     public int Received => Volatile.Read(ref _received);
     public string SagaName => sagaName;
+    public string? TenantSeen { get; private set; }
 
     public Task<WatchdogTickOutcome> TryRecoverViaWatchdogTickAsync(
         SagaCompletionWatchdogTickEvent tick, CancellationToken cancellationToken) {
+      TenantSeen = new ScopeContextAccessor().Current?.Scope?.TenantId;
       Interlocked.Increment(ref _received);
       return Task.FromResult(WatchdogTickOutcome.ReArmed);
     }

@@ -555,8 +555,28 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     => Task.FromResult<IReadOnlyList<IncompleteSaga>>([]);
 
   /// <inheritdoc cref="ISagaWatchdogParticipant.ArmStrandedSagasAsync"/>
+  /// <remarks>
+  /// <para>
+  /// The sweep runs on a maintenance worker with no ambient scope, and one sweep crosses tenants. Each
+  /// saga's work (its last-activity read, its aggregate read and the tick it arms) therefore runs inside
+  /// that saga's tenant through <see cref="ISagaEventEmitter.RunInTenantAsync{TResult}"/>, so an item
+  /// repository reading through a tenant-scoped lens sees the right tenant. A saga with no tenant is
+  /// read in the worker's own context, as before.
+  /// </para>
+  /// <para>
+  /// A failure in one saga's work is logged and the sweep moves on to the next saga, so one bad read
+  /// cannot strand every saga swept after it; the failed saga is retried next cycle. Only the sweep's
+  /// own cancellation stops it. The count returned is of ticks actually armed.
+  /// </para>
+  /// </remarks>
   /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_OneSagasReadThrows_TheOthersAreStillArmedAndTheFailureIsLoggedAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_CanceledMidSweep_StopsTheSweepAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_OperationCanceledWithoutTheSweepBeingCanceled_IsTreatedAsThatSagasFailureAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_ItemRepositoryRequiresTenantScope_ReadsInTheSagasTenantAndArmsTheTickAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_SagasInDifferentTenants_EachIsReadAndArmedInItsOwnTenantAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_SagaWithNoTenant_IsReadInTheWorkersOwnContextAsync</tests>
   public virtual async Task<int> ArmStrandedSagasAsync(ISagaWakeLookup wakes, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(wakes);
 
@@ -578,15 +598,30 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     var now = DateTimeOffset.UtcNow;
     var armed = 0;
     foreach (var (saga, tenantId) in candidates.Where(c => !pending.Contains(c.Saga.Id))) {
-      var lastActivity = await _lastActivityAsync(saga, cancellationToken).ConfigureAwait(false);
-      if (now - lastActivity < _options.StrandedSagaIdleGuard) {
-        continue;
-      }
-      if (await _armStrandedAsync(saga, tenantId, lastActivity, now, cancellationToken).ConfigureAwait(false)) {
-        armed++;
+      try {
+        if (await _emitter.RunInTenantAsync(tenantId, ct => _sweepOneAsync(saga, tenantId, now, ct), cancellationToken)
+            .ConfigureAwait(false)) {
+          armed++;
+        }
+      } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
+        // One saga's failure is that saga's alone: it is retried next cycle, and the sagas after it are
+        // still swept. Only the sweep's own cancellation stops the sweep.
+        LogStrandedSagaSweepFailed(_logger, _sagaName, saga.Id, tenantId, ex);
       }
     }
     return armed;
+  }
+
+  /// <summary>
+  /// One saga's share of the sweep, run inside its tenant: arms a tick when it has been idle past the guard.
+  /// </summary>
+  private async Task<bool> _sweepOneAsync(
+      BaseSagaModel saga, string? tenantId, DateTimeOffset now, CancellationToken cancellationToken) {
+    var lastActivity = await _lastActivityAsync(saga, cancellationToken).ConfigureAwait(false);
+    if (now - lastActivity < _options.StrandedSagaIdleGuard) {
+      return false;
+    }
+    return await _armStrandedAsync(saga, tenantId, lastActivity, now, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>The newest change to the saga or any of its items.</summary>
@@ -889,6 +924,9 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   }
 
   // ── LoggerMessage source-gen partials ────────────────────────────────
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Stranded-saga sweep could not check {SagaName} saga {SagaId} in tenant {TenantId}; the other sagas were still swept and this one retries next cycle")]
+  private static partial void LogStrandedSagaSweepFailed(ILogger logger, string SagaName, Guid SagaId, string? TenantId, Exception exception);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "Requested continuation saga {ContinuationSagaName} after {SagaName} {SagaId}")]
   private static partial void LogContinuationRequested(ILogger logger, string ContinuationSagaName, string SagaName, Guid SagaId, Exception? exception);
