@@ -173,7 +173,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
 
     var holds = f.Worker.SnapshotAffinityHolds(TimeSpan.Zero, clock.GetUtcNow().UtcTicks);
 
-    await Assert.That(holds.Select(h => h.StreamId).ToList()).IsEquivalentTo(new[] { older, newer }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+    await Assert.That(holds.Select(h => h.StreamId).ToList()).IsEquivalentTo([older, newer], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the longest hold is listed first");
     await Assert.That(holds[0].Held).IsEqualTo(TimeSpan.FromSeconds(11));
     await Assert.That(holds[1].Held).IsEqualTo(TimeSpan.FromSeconds(1));

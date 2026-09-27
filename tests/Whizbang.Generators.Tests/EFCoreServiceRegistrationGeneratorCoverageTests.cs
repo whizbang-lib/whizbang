@@ -960,9 +960,29 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
     """);
 
     await Assert.That(generated).Contains("Lines ??=");
-    await Assert.That(generated).Contains("foreach")
+    await Assert.That(generated).Contains(".Lines) {")
       .Because("each element carries its own collections, so the repair has to run per element");
     await Assert.That(generated).Contains("Notes ??=");
+  }
+
+  /// <summary>A collection whose complex elements carry no collections gets no per-element loop.</summary>
+  [Test]
+  public async Task Coalescer_CollectionOfElementsWithoutCollections_EmitsNoElementLoopAsync() {
+    // The element type is a model class, so the walk descends into it, but it finds nothing to
+    // repair there. An empty foreach per row would be pure materialization cost.
+    var generated = await _generatedCoalescerAsync("""
+      public List<Line> Lines { get; set; } = new();
+    """, """
+    public class Line {
+      public string Sku { get; set; } = "";
+      public int Quantity { get; set; }
+    }
+    """);
+
+    await Assert.That(generated).Contains("Lines ??=")
+      .Because("the collection itself still needs repairing");
+    await Assert.That(generated).DoesNotContain(".Lines) {")
+      .Because("an element with no collections of its own has nothing to repair per element");
   }
 
   /// <summary>

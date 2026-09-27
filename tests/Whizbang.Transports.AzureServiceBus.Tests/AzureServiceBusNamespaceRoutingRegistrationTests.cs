@@ -365,9 +365,9 @@ public class AzureServiceBusNamespaceRoutingRegistrationTests {
     using var subscription = await router.SubscribeBatchAsync(
       (_, _) => Task.CompletedTask, new TransportDestination("orders", "svc-orders"), new TransportBatchOptions());
 
-    await Assert.That(defaultClient.CreatedProcessors.Select(p => (p.Topic, p.Subscription)).ToList())
+    await Assert.That(defaultClient.CreatedProcessors.ConvertAll(p => (p.Topic, p.Subscription)))
       .IsEquivalentTo([("orders", "svc-orders")]);
-    await Assert.That(factory.Clients["bulk"].CreatedProcessors.Select(p => (p.Topic, p.Subscription)).ToList())
+    await Assert.That(factory.Clients["bulk"].CreatedProcessors.ConvertAll(p => (p.Topic, p.Subscription)))
       .IsEquivalentTo([("orders", "svc-orders")])
       .Because("a handled type bound to 'bulk' mirrors the same entity into the 'bulk' namespace");
     await Assert.That(factory.Clients["control"].CreatedProcessors).IsEmpty()
