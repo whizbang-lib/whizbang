@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -367,6 +368,68 @@ public class StrandedSagaSweepTests {
   }
 
   [Test]
+  public async Task Sweep_OneSagasReadThrows_TheOthersAreStillArmedAndTheFailureIsLoggedAsync() {
+    var old = _ago(TimeSpan.FromHours(2));
+    var repo = new FailingItemRepository(old) { FailFor = _id(21) };
+    var emitter = new RecordingEmitter();
+    var logger = new RecordingLogger();
+    var svc = new SweptSagaService(emitter, repo, [
+      new IncompleteSaga(_saga(_id(20), old), "tenant-a"),
+      new IncompleteSaga(_saga(_id(21), old), "tenant-b"),
+      new IncompleteSaga(_saga(_id(22), old), "tenant-c")], logger);
+
+    var armed = await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(2)
+      .Because("one saga's bad read must not strand every saga swept after it");
+    await Assert.That(emitter.Once.Select(o => ((SagaCompletionWatchdogTickEvent)o.Event).StreamId))
+      .IsEquivalentTo([_id(20), _id(22)]);
+    var entry = logger.Entries.Single();
+    await Assert.That(entry.Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(entry.Exception).IsTypeOf<InvalidOperationException>();
+    await Assert.That(entry.Message).Contains(SAGA_NAME);
+    await Assert.That(entry.Message).Contains(_id(21).ToString());
+    await Assert.That(entry.Message).Contains("tenant-b");
+  }
+
+  [Test]
+  public async Task Sweep_CanceledMidSweep_StopsTheSweepAsync() {
+    var old = _ago(TimeSpan.FromHours(2));
+    using var cts = new CancellationTokenSource();
+    var repo = new FailingItemRepository(old) { CancelAt = _id(24), Cancellation = cts };
+    var emitter = new RecordingEmitter();
+    var logger = new RecordingLogger();
+    var svc = new SweptSagaService(emitter, repo, [
+      new IncompleteSaga(_saga(_id(23), old), TENANT),
+      new IncompleteSaga(_saga(_id(24), old), TENANT),
+      new IncompleteSaga(_saga(_id(25), old), TENANT)], logger);
+
+    await Assert.That(async () => await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), cts.Token))
+      .Throws<OperationCanceledException>();
+
+    await Assert.That(repo.ReadSagas).DoesNotContain(_id(25))
+      .Because("a canceled sweep stops; it is not a saga failure to log and step past");
+    await Assert.That(logger.Entries).IsEmpty();
+  }
+
+  [Test]
+  public async Task Sweep_OperationCanceledWithoutTheSweepBeingCanceled_IsTreatedAsThatSagasFailureAsync() {
+    var old = _ago(TimeSpan.FromHours(2));
+    var repo = new FailingItemRepository(old) { FailFor = _id(26), FailWith = new OperationCanceledException("a read timed out") };
+    var emitter = new RecordingEmitter();
+    var logger = new RecordingLogger();
+    var svc = new SweptSagaService(emitter, repo, [
+      new IncompleteSaga(_saga(_id(26), old), TENANT),
+      new IncompleteSaga(_saga(_id(27), old), TENANT)], logger);
+
+    var armed = await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(1)
+      .Because("only the sweep's own token stops the sweep; a timeout inside one saga's read is that saga's failure");
+    await Assert.That(logger.Entries.Single().Exception).IsTypeOf<OperationCanceledException>();
+  }
+
+  [Test]
   public async Task ParticipantDefault_ArmsNothingAsync() {
     ISagaWatchdogParticipant participant = new MinimalParticipant();
 
@@ -442,6 +505,43 @@ public class StrandedSagaSweepTests {
     }
   }
 
+  /// <summary>Idle items for every saga; throws, or cancels the sweep, when a chosen saga is read.</summary>
+  private sealed class FailingItemRepository(DateTimeOffset lastActivity) : ISagaItemRepository {
+    public Guid? FailFor { get; init; }
+    public Exception FailWith { get; init; } = new InvalidOperationException("read failed");
+    public Guid? CancelAt { get; init; }
+    public CancellationTokenSource? Cancellation { get; init; }
+    public List<Guid> ReadSagas { get; } = [];
+
+    public Task<SagaItemAggregate> GetAggregateForSagaAsync(Guid sagaId, CancellationToken cancellationToken)
+      => Task.FromResult(new SagaItemAggregate(Total: 3, Completed: 2, Failed: 0, InProgress: 1));
+
+    public Task<IReadOnlyList<SagaItemModel>> GetItemsAsync(Guid sagaId, CancellationToken cancellationToken)
+      => Task.FromResult<IReadOnlyList<SagaItemModel>>([]);
+
+    public async Task<DateTimeOffset?> GetLastActivityAsync(Guid sagaId, CancellationToken cancellationToken) {
+      ReadSagas.Add(sagaId);
+      if (sagaId == CancelAt) {
+        await Cancellation!.CancelAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+      }
+      if (sagaId == FailFor) {
+        throw FailWith;
+      }
+      return lastActivity;
+    }
+  }
+
+  private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
+
+  private sealed class RecordingLogger : ILogger {
+    public List<LogEntry> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+      => Entries.Add(new LogEntry(logLevel, formatter(state, exception), exception));
+  }
+
   private sealed record OnceCall(string? TenantId, string ClaimKey, IEvent Event);
 
   private sealed class RecordingEmitter : ISagaEventEmitter {
@@ -484,10 +584,11 @@ public class StrandedSagaSweepTests {
   private sealed class SweptSagaService(
       ISagaEventEmitter emitter,
       ISagaItemRepository? itemRepository,
-      IReadOnlyList<IncompleteSaga>? incomplete)
+      IReadOnlyList<IncompleteSaga>? incomplete,
+      ILogger? logger = null)
     : BaseSagaService<TestInitiatedEvent, TestItemsDispatchedEvent, TestItemStartedEvent, TestItemCompletedEvent,
                       TestItemFailedEvent, TestCompletedEvent, TestResetEvent, TestHookStartedEvent, TestHookCompletedEvent>(
-        SAGA_NAME, emitter, itemRepository, new NotTerminalReader(), options: null, NullLogger<SweptSagaService>.Instance) {
+        SAGA_NAME, emitter, itemRepository, new NotTerminalReader(), options: null, logger ?? NullLogger<SweptSagaService>.Instance) {
 
     protected override Task<IReadOnlyList<IncompleteSaga>> LoadIncompleteSagasAsync(CancellationToken cancellationToken)
       => incomplete is null ? base.LoadIncompleteSagasAsync(cancellationToken) : Task.FromResult(incomplete);
