@@ -2,11 +2,9 @@
 
 ## Supported Versions
 
-We release patches for security vulnerabilities for the following versions:
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+Security fixes are made on `develop` and ship in the next release. Only the latest stable release on
+[nuget.org](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/) is supported; upgrade
+to it to receive a fix. Older releases and prereleases are not patched.
 
 ## Reporting a Vulnerability
 
