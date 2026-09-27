@@ -131,6 +131,24 @@ public class PriorityHooksTests {
     await Assert.That(effective).IsEqualTo(80).Because("the consumer's rules compose; the later hook sees what the earlier one decided");
   }
 
+  private sealed class Batcher(int order, Func<PriorityBatchEntry, int> f) : IPriorityBatchHook {
+    public int Order => order;
+    public int Adjust(PriorityBatchEntry stream, IReadOnlyList<PriorityBatchEntry> batch) => f(stream);
+  }
+
+  [Test]
+  public async Task Chain_RunsBatchHooksInOrder_EachSeeingThePreviousAnswerAsync() {
+    var chain = new PriorityHookChain(
+      [], [],
+      [new Batcher(300, s => s.FoldedPriority + 1), new Batcher(100, _ => 20)]);
+    var stream = new PriorityBatchEntry((Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), FoldedPriority: 150, OldestAge: TimeSpan.Zero, PendingRows: 1);
+
+    var adjusted = chain.Adjust(stream, [stream]);
+
+    await Assert.That(adjusted).IsEqualTo(21)
+      .Because("order 100 set 20, order 300 saw 20 and added one; the sort is by Order, not registration");
+  }
+
   [Test]
   public async Task Chain_WithNoHooks_ReturnsWhatItWasGivenAsync() {
     var chain = new PriorityHookChain([], [], []);
