@@ -33,8 +33,8 @@ public class Uuid7GeneratorPropertyTests {
 
   private static readonly Gen<ClockHistory> _clockHistory =
     from startOffset in Gen.Choose(0, int.MaxValue)
-    from steps in Gen.ArrayOf(_clockStep)
-    from randomPool in Gen.NonEmptyListOf(Gen.Choose(0, 255).Select(b => (byte)b))
+    from steps in _clockStep.ArrayOf()
+    from randomPool in Gen.Choose(0, 255).Select(b => (byte)b).NonEmptyListOf()
     select new ClockHistory(BASE_MILLISECOND + startOffset, steps, [.. randomPool]);
 
   /// <summary>
