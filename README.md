@@ -5,6 +5,7 @@
 <p align="center">
   <a href="https://whizba.ng/">Documentation</a> &middot;
   <a href="https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/">NuGet</a> &middot;
+  <a href="https://github.com/whizbang-lib/whizbang/releases">Releases</a> &middot;
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -13,6 +14,7 @@
   <a href="https://codecov.io/gh/whizbang-lib/whizbang"><img src="https://codecov.io/gh/whizbang-lib/whizbang/branch/main/graph/badge.svg" alt="codecov"></a>
   <a href="https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang"><img src="https://sonarcloud.io/api/project_badges/measure?project=whizbang-lib_whizbang&metric=alert_status" alt="Quality Gate Status"></a>
   <a href="https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/"><img src="https://img.shields.io/nuget/v/SoftwareExtravaganza.Whizbang.Core.svg" alt="NuGet"></a>
+  <a href="https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/"><img src="https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Core.svg?label=nuget%20pre-release" alt="NuGet pre-release"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
 </p>
 
@@ -32,75 +34,92 @@
 
 ---
 
-## Why Whizbang?
+Whizbang is a .NET library for event-driven, CQRS and event-sourced applications. Handlers, routing, read
+models and storage are wired by source generators at compile time: no reflection, Native AOT from day one.
 
-- **Blazing Performance** — < 20ns in-process message dispatch with zero allocations on the hot path
-- **Native AOT from Day One** — Source generators wire everything at compile time; no reflection, no runtime surprises
-- **Type Safe** — Compile-time verification of message handlers, routing, and event schemas
-- **Developer Experience** — Rich IDE support with code navigation, diagnostics, and discovery via source generators
+> **Status:** pre-1.0. Stable releases ship as `0.x.0` on nuget.org, with alpha builds published from
+> `develop` in between. Package IDs carry the `SoftwareExtravaganza.` prefix
+> (`SoftwareExtravaganza.Whizbang.Core`, and so on).
 
-## Core Concepts
+## At a glance
 
-**Receptors** — Stateless message handlers that receive commands and produce events. Type-safe with flexible response types.
+```csharp
+// A command, and the event it produces. [StreamId] names the stream the event belongs to.
+public record CreateOrder([property: StreamId] Guid OrderId, string ProductName, int Quantity) : ICommand;
+public record OrderCreated([property: StreamId] Guid OrderId, string ProductName, int Quantity) : IEvent;
 
-**Dispatcher** — Message routing engine that connects messages to receptors with full observability (correlation, causation, hops).
+// A receptor: a stateless handler. The event it returns is stored and published for you.
+public class CreateOrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult(new OrderCreated(message.OrderId, message.ProductName, message.Quantity));
+}
 
-**Perspectives** — Materialized read models built from event streams. Individually hash-tracked for incremental migration.
-
-**Lenses** — Composable query projections over perspective data with LINQ translation to SQL.
-
-**Event Store** — Append-only event storage with stream-based organization, UUIDv7 ordering, and optimistic concurrency.
-
-**Policy Engine** — Declarative rules for message validation, transformation, and routing decisions.
-
-## Project Structure
-
-```
-src/
-├── Whizbang.Core/                          # Core interfaces, messaging, perspectives, lenses
-├── Whizbang.Generators/                    # Roslyn source generators (receptors, perspectives, registry)
-├── Whizbang.Data.Dapper.Postgres/          # Dapper + PostgreSQL stores (event store, work coordinator)
-├── Whizbang.Data.EFCore.Postgres/          # EF Core + PostgreSQL stores with turnkey initialization
-├── Whizbang.Data.EFCore.Postgres.Generators/  # EF Core source generators (schema, registration)
-├── Whizbang.Transports.RabbitMQ/           # RabbitMQ transport
-├── Whizbang.Transports.AzureServiceBus/    # Azure Service Bus transport
-├── Whizbang.Transports.HotChocolate/       # GraphQL integration via HotChocolate
-├── Whizbang.Transports.FastEndpoints/      # REST integration via FastEndpoints
-├── Whizbang.SignalR/                       # Real-time push via SignalR
-├── Whizbang.Observability/                 # Metrics and tracing
-├── Whizbang.Testing/                       # Test utilities and fakes
-└── Whizbang.Hosting.*/                     # Hosted service wiring for transports
+// Dispatch it, typed end to end.
+var created = await dispatcher.LocalInvokeAsync<CreateOrder, OrderCreated>(
+  new CreateOrder(TrackedGuid.New(), "Coffee", 2));
 ```
 
-## Technology Stack
+The [Quick Start](https://whizba.ng/docs/getting-started/quick-start) takes this to a running service with
+PostgreSQL, a read model and a query.
 
-- **.NET 10** — Target framework
-- **PostgreSQL** — Primary database with JSONB, UUIDv7, and hash-based schema migration
-- **EF Core 10** / **Dapper** — Dual data access with source-generated models
-- **Roslyn Source Generators** — Compile-time wiring for receptors, perspectives, and DI registration
-- **TUnit** — Source-generated testing with Microsoft.Testing.Platform
-- **Rocks** — Source-generated mocking for AOT compatibility
-- **Vogen** — Source-generated value objects
+## What's in the box
 
-## Getting Started
+- **Receptors and the dispatcher:** type-safe handlers, local and remote dispatch, correlation and causation
+  on every message.
+- **Event store and outbox/inbox:** append-only streams with UUIDv7 ordering, exactly-once handling through
+  the inbox, reliable publishing through the outbox, dead-letter recovery.
+- **Perspectives and lenses:** read models built from events, queried through LINQ that translates to SQL,
+  with physical columns and search indexes where you declare them.
+- **Sagas:** multi-stream coordination with per-item progress and recovery.
+- **Priorities, payload limits and offloads:** busy services keep interactive work first, oversized
+  messages are refused at the sender, and large bodies can move to blob storage.
+
+| Area | Packages |
+|---|---|
+| Core | `Whizbang.Core`, `Whizbang.Generators`, `Whizbang.Observability` |
+| Storage | `Whizbang.Data.EFCore.Postgres` (+ `.Generators`), `Whizbang.Data.Dapper.Postgres`, `Whizbang.Data.Dapper.Sqlite`, `Whizbang.Data.Postgres`, `Whizbang.Data.Schema`, and the `.Custom` bases for your own store |
+| Transports | `Whizbang.Transports.RabbitMQ`, `Whizbang.Transports.AzureServiceBus`, in-process |
+| API surfaces | `Whizbang.Transports.HotChocolate` (GraphQL), `Whizbang.Transports.FastEndpoints` (REST), `Whizbang.Transports.Mutations`, `Whizbang.SignalR` |
+| Hosting | `Whizbang.Hosting.AspNet`, `Whizbang.Hosting.RabbitMQ` and `Whizbang.Hosting.Azure.ServiceBus` (Aspire) |
+| Sagas | `Whizbang.Sagas`, `Whizbang.Sagas.Contracts`, `Whizbang.Sagas.Generators` |
+| Offloads | `Whizbang.Offloads.AzureBlob`, `Whizbang.Offloads.InMemory` |
+| Tools | `Whizbang.CLI`, `Whizbang.Migrate` (from Marten/Wolverine), `Whizbang.LanguageServer` |
+
+Every package is published as `SoftwareExtravaganza.<name>`.
+
+## Requirements
+
+- **.NET 10**
+- **PostgreSQL** for the production stores (tested against PostgreSQL 17). Search fields use the `pg_trgm`
+  extension, and the framework creates it when the server allows.
+- RabbitMQ or Azure Service Bus when services talk across processes; neither is needed in-process.
+
+## Getting started
 
 ```bash
 dotnet add package SoftwareExtravaganza.Whizbang.Core
+dotnet add package SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres
 ```
 
-See the [Quick Start guide](https://whizba.ng/docs/getting-started/quick-start) for a walkthrough.
+- [Quick Start](https://whizba.ng/docs/getting-started/quick-start)
+- [Samples](samples/): an e-commerce system with services on RabbitMQ and Azure Service Bus, run with Aspire.
 
-## Philosophy
+## Quality
 
-- **Zero Reflection** — Everything via source generators
-- **AOT Compatible** — Native AOT from day one
-- **Type Safe** — Compile-time safety everywhere
-- **Test Driven** — 21,000+ tests with comprehensive coverage
-- **Documentation First** — Docs drive implementation
+<!-- auto:quality -->
+- **Tests:** 24,000+ across unit, generator, integration and transport suites, run on every pull request.
+- **Coverage:** 100% of library lines; every pull request must cover all of its new lines and add no
+  SonarCloud findings.
+<!-- /auto:quality -->
 
-## Contributing
+Dispatch is designed to stay allocation-free on the in-process path; the benchmarks live in
+[`benchmarks/`](benchmarks/).
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+## Contributing and support
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test and send changes.
+- [SECURITY.md](SECURITY.md) to report a vulnerability privately.
+- [Issues](https://github.com/whizbang-lib/whizbang/issues) for bugs and questions.
 
 ## License
 
