@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <Description>In-memory IMessageBodyStore provider for Whizbang offloads. Dev/test/fixture use only — bodies live in process memory and disappear at restart.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Application</WhizbangPackageTier>
+    <WhizbangPackageArea>Message offload</WhizbangPackageArea>
   </PropertyGroup>
 
   <ItemGroup>

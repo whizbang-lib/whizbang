@@ -5,6 +5,9 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <Description>Aspire hosting extensions for Whizbang Azure Service Bus integration</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Application</WhizbangPackageTier>
+    <WhizbangPackageArea>Hosting</WhizbangPackageArea>
   </PropertyGroup>
 
   <ItemGroup>

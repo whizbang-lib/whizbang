@@ -1,0 +1,70 @@
+name: README refresh
+
+run-name: "Docs · README numbers refresh"
+
+# Keeps the README's generated quality block (test count, coverage) in step with what CI publishes.
+# scripts/Update-ReadmeStats.ps1 rewrites only the block between <!-- auto:quality --> markers; when that
+# changes anything, this opens (or updates) one PR into develop and queues it to merge. Nothing is
+# committed straight to a protected branch, and a night with nothing new does nothing at all.
+on:
+  schedule:
+    - cron: '0 6 * * *'  # daily, after the night's develop runs have published their test status
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readme-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh the README's numbers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read   # every write goes through RELEASE_PAT, so the PR it opens triggers CI
+    env:
+      BRANCH: docs/readme-refresh
+      BASE: develop
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Regenerate the quality block
+        shell: pwsh
+        run: ./scripts/Update-ReadmeStats.ps1
+
+      - name: Open or update the refresh PR
+        env:
+          # A PR opened with GITHUB_TOKEN never triggers workflows, so its required checks would never
+          # report; RELEASE_PAT opens it the way ci.yml opens its release PRs.
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- README.md; then
+            echo "README numbers are current; nothing to do."
+            echo "README numbers are current." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "whizbang-ci"
+          git config user.email "ci@whizba.ng"
+          git checkout -B "$BRANCH"
+          git add README.md
+          git commit -m "docs(readme): refresh the published test count and coverage"
+          git push --force origin "$BRANCH"
+          EXISTING=$(gh pr list --repo "$REPO" --head "$BRANCH" --base "$BASE" --state open --json number --jq '.[0].number // ""')
+          if [ -z "$EXISTING" ]; then
+            gh pr create --repo "$REPO" --head "$BRANCH" --base "$BASE" \
+              --title "docs(readme): refresh the published test count and coverage" \
+              --body "Nightly refresh of the README's generated quality block (scripts/Update-ReadmeStats.ps1), from the test status CI publishes and Codecov's totals for main. Only the text between the auto:quality markers changes."
+            EXISTING=$(gh pr list --repo "$REPO" --head "$BRANCH" --base "$BASE" --state open --json number --jq '.[0].number')
+          fi
+          # Queue it; the merge queue picks the method (passing one makes the enqueue fail silently).
+          gh pr merge "$EXISTING" --repo "$REPO" --auto
+          echo "README refresh queued in PR #$EXISTING." >> "$GITHUB_STEP_SUMMARY"

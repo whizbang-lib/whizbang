@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <Description>RabbitMQ transport implementation for Whizbang messaging with health checks and connection management.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Application</WhizbangPackageTier>
+    <WhizbangPackageArea>Transport</WhizbangPackageArea>
   </PropertyGroup>
 
   <ItemGroup>

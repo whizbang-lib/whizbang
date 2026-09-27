@@ -5,6 +5,9 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <Description>ASP.NET Core hosting extensions for Whizbang — flush middleware for request-scoped work coordination.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Application</WhizbangPackageTier>
+    <WhizbangPackageArea>Hosting</WhizbangPackageArea>
   </PropertyGroup>
 
   <ItemGroup>
