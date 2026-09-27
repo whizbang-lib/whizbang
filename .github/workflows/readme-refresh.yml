@@ -11,7 +11,8 @@ on:
     - cron: '0 6 * * *'  # daily, after the night's develop runs have published their test status
   workflow_dispatch:
 
-permissions: read-all
+permissions:
+  contents: read
 
 concurrency:
   group: readme-refresh
