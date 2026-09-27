@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <Description>Core mutations abstraction for Whizbang transports. Provides [CommandEndpoint] attribute and MutationEndpointBase with pre/post hooks for both REST and GraphQL.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Foundation</WhizbangPackageTier>
+    <WhizbangPackageArea>API surface base</WhizbangPackageArea>
   </PropertyGroup>
 
   <ItemGroup>

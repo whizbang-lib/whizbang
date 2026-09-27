@@ -3,6 +3,9 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <Description>Multi-stream saga coordination on Whizbang.Core: BaseSagaModel, SagaItemModel, per-item stream routing, completion reconciliation, and SagaCompletionGuard backed by IDispatcher.PublishOnceAsync. Pair with Whizbang.Sagas.Generators for the [Saga&lt;TBase&gt;("Name")] attribute and zero-boilerplate event generation.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Patterns</WhizbangPackageTier>
+    <WhizbangPackageArea>Sagas</WhizbangPackageArea>
     <TargetFramework>net10.0</TargetFramework>
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>

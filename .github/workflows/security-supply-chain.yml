@@ -9,6 +9,10 @@ on:
     - cron: '0 8 * * 2'  # Weekly on Tuesday at 8 AM UTC
   workflow_dispatch:
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions:
+  contents: read
+
 jobs:
   scan:
     name: OSV Scanner
@@ -27,8 +31,8 @@ jobs:
       with:
         dotnet-version: '10.0.x'
 
-    - name: Restore dependencies to generate lockfile
-      run: dotnet restore
+    - name: Restore dependencies from the committed lock files
+      run: dotnet restore --locked-mode
 
     - name: Install and Run OSV Scanner
       run: |

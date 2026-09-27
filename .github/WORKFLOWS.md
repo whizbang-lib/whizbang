@@ -27,7 +27,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 
 | File | Used by | Purpose |
 |---|---|---|
-| `reusable-build.yml` | CI | Compile, hash the assemblies (determinism manifest), upload the build |
+| `reusable-build.yml` | CI | Compile, hash the assemblies (determinism manifest), upload the build, instrument the test-side copies for coverage while it uploads |
 | `reusable-test-*.yml` | CI | One suite each: unit, PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob |
 | `reusable-quality.yml` | CI | Sonar analysis and the coverage gates, on this run's or a covering run's coverage |
 | `reusable-pack.yml` | CI, Release Prerelease | Pack a tested build without rebuilding |
@@ -46,4 +46,5 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 
 Shared data: `.github/nuget-packages.txt` (the packages every full publish ships),
 `.github/inert-paths.txt` (paths that cannot affect the build or tests, read through
-`.github/scripts/Test-InertDiff.ps1`).
+`.github/scripts/Test-InertDiff.ps1`). The rules of the one required check, `Gate · CI result`, are
+`.github/scripts/Test-CiResult.ps1`, with tests in `.github/scripts/tests/` run by `Test · Pipeline scripts`.

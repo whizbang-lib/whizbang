@@ -6,7 +6,14 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <Description>Aspire hosting extensions for Whizbang RabbitMQ integration with automatic topology configuration.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Application</WhizbangPackageTier>
+    <WhizbangPackageArea>Hosting</WhizbangPackageArea>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Whizbang.Hosting.RabbitMQ.Tests" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="RabbitMQ.Client" />

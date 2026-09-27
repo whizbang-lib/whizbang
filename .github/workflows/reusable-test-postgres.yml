@@ -23,6 +23,10 @@ on:
         required: false
         default: ''
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions:
+  contents: read
+
 jobs:
   postgres-tests:
     name: Run suite
@@ -65,7 +69,7 @@ jobs:
 
       - name: Restore Dependencies
         if: inputs.artifact-name == ''
-        run: dotnet restore
+        run: dotnet restore --locked-mode
 
       - name: Build Solution
         if: inputs.artifact-name == ''

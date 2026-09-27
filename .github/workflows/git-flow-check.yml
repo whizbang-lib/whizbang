@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions:
+  contents: read
+
 jobs:
   validate-branch-direction:
     name: Gate · Gitflow branch direction

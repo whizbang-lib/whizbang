@@ -708,9 +708,20 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _buildDataCoalesceStatements(ITypeSymbol modelType) {
     var sb = new StringBuilder();
-    var varCounter = 0;
-    _appendCoalesceStatements(sb, modelType, "data", "          ", 0, new HashSet<string>(StringComparer.Ordinal), ref varCounter);
+    _appendCoalesceStatements(sb, modelType, "data", "          ", 0, new CoalesceWalk());
     return sb.ToString();
+  }
+
+  /// <summary>
+  /// State shared across one model's coalesce walk: the types on the current path (cycle guard) and the counter
+  /// that names each generated loop/pattern variable uniquely.
+  /// </summary>
+  private sealed class CoalesceWalk {
+    private int _varCounter;
+
+    public HashSet<string> TypesOnPath { get; } = new(StringComparer.Ordinal);
+
+    public string NextVariable() => $"_c{_varCounter++}";
   }
 
   private static void _appendCoalesceStatements(
@@ -719,61 +730,90 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string expr,
       string indent,
       int depth,
-      HashSet<string> typesOnPath,
-      ref int varCounter) {
+      CoalesceWalk walk) {
     if (depth > MAX_COALESCE_DEPTH) {
       return;
     }
 
     var typeName = TypeNameUtilities.FullyQualified(type);
-    if (!typesOnPath.Add(typeName)) {
+    if (!walk.TypesOnPath.Add(typeName)) {
       return; // cycle guard — self/mutually-recursive model types
     }
 
     foreach (var property in _enumerateInstanceProperties(type)) {
       if (_isCoalescibleCollection(property.Type, out var elementType)) {
-        // init-only setters can't be assigned post-construction (`??=` would be CS8852 in generated code).
-        var coalesced = property.Type.NullableAnnotation != NullableAnnotation.Annotated
-            && property.SetMethod is { DeclaredAccessibility: Accessibility.Public, IsInitOnly: false };
-        if (coalesced) {
-          sb.AppendLine($"{indent}{expr}.{property.Name} ??= {_emptyCollectionExpression(property.Type, elementType!)};");
-        }
-
-        // Recurse into complex element types so deeper collections coalesce too.
-        if (elementType is not null && _isComplexModelClass(elementType)) {
-          var inner = new StringBuilder();
-          var loopVar = $"_c{varCounter++}";
-          _appendCoalesceStatements(inner, elementType, loopVar, coalesced ? indent + "  " : indent + "    ", depth + 1, typesOnPath, ref varCounter);
-          if (inner.Length > 0) {
-            if (coalesced) {
-              sb.AppendLine($"{indent}foreach (var {loopVar} in {expr}.{property.Name}) {{");
-              sb.Append(inner);
-              sb.AppendLine($"{indent}}}");
-            } else {
-              // Collection was left possibly-null (nullable-annotated or non-settable) — guard the walk.
-              sb.AppendLine($"{indent}if ({expr}.{property.Name} is not null) {{");
-              sb.AppendLine($"{indent}  foreach (var {loopVar} in {expr}.{property.Name}) {{");
-              sb.Append(inner);
-              sb.AppendLine($"{indent}  }}");
-              sb.AppendLine($"{indent}}}");
-            }
-          }
-        }
+        _appendCollectionCoalesce(sb, property, elementType, expr, indent, depth, walk);
       } else if (_isComplexModelClass(property.Type)) {
-        // Non-collection complex reference — walk THROUGH it (null-guarded) to reach nested collections.
-        // Deliberately no `??= new()`: a null reference may be legitimate; only collections are coalesced.
-        var inner = new StringBuilder();
-        var refVar = $"_c{varCounter++}";
-        _appendCoalesceStatements(inner, property.Type, refVar, indent + "  ", depth + 1, typesOnPath, ref varCounter);
-        if (inner.Length > 0) {
-          sb.AppendLine($"{indent}if ({expr}.{property.Name} is {{ }} {refVar}) {{");
-          sb.Append(inner);
-          sb.AppendLine($"{indent}}}");
-        }
+        _appendComplexReferenceWalk(sb, property, expr, indent, depth, walk);
       }
     }
 
-    typesOnPath.Remove(typeName);
+    walk.TypesOnPath.Remove(typeName);
+  }
+
+  /// <summary>
+  /// Coalesces one List&lt;T&gt;/array property and walks its complex elements so deeper collections coalesce too.
+  /// </summary>
+  private static void _appendCollectionCoalesce(
+      StringBuilder sb,
+      IPropertySymbol property,
+      ITypeSymbol? elementType,
+      string expr,
+      string indent,
+      int depth,
+      CoalesceWalk walk) {
+    // init-only setters can't be assigned post-construction (`??=` would be CS8852 in generated code).
+    var coalesced = property.Type.NullableAnnotation != NullableAnnotation.Annotated
+        && property.SetMethod is { DeclaredAccessibility: Accessibility.Public, IsInitOnly: false };
+    if (coalesced) {
+      sb.AppendLine($"{indent}{expr}.{property.Name} ??= {_emptyCollectionExpression(property.Type, elementType!)};");
+    }
+
+    // Recurse into complex element types so deeper collections coalesce too.
+    if (elementType is null || !_isComplexModelClass(elementType)) {
+      return;
+    }
+
+    var inner = new StringBuilder();
+    var loopVar = walk.NextVariable();
+    _appendCoalesceStatements(inner, elementType, loopVar, coalesced ? indent + "  " : indent + "    ", depth + 1, walk);
+    if (inner.Length == 0) {
+      return;
+    }
+
+    if (coalesced) {
+      sb.AppendLine($"{indent}foreach (var {loopVar} in {expr}.{property.Name}) {{");
+      sb.Append(inner);
+      sb.AppendLine($"{indent}}}");
+    } else {
+      // Collection was left possibly-null (nullable-annotated or non-settable) — guard the walk.
+      sb.AppendLine($"{indent}if ({expr}.{property.Name} is not null) {{");
+      sb.AppendLine($"{indent}  foreach (var {loopVar} in {expr}.{property.Name}) {{");
+      sb.Append(inner);
+      sb.AppendLine($"{indent}  }}");
+      sb.AppendLine($"{indent}}}");
+    }
+  }
+
+  /// <summary>
+  /// Non-collection complex reference — walks THROUGH it (null-guarded) to reach nested collections. Deliberately
+  /// no `??= new()`: a null reference may be legitimate; only collections are coalesced.
+  /// </summary>
+  private static void _appendComplexReferenceWalk(
+      StringBuilder sb,
+      IPropertySymbol property,
+      string expr,
+      string indent,
+      int depth,
+      CoalesceWalk walk) {
+    var inner = new StringBuilder();
+    var refVar = walk.NextVariable();
+    _appendCoalesceStatements(inner, property.Type, refVar, indent + "  ", depth + 1, walk);
+    if (inner.Length > 0) {
+      sb.AppendLine($"{indent}if ({expr}.{property.Name} is {{ }} {refVar}) {{");
+      sb.Append(inner);
+      sb.AppendLine($"{indent}}}");
+    }
   }
 
   /// <summary>Public instance properties with a getter, walking base types (models may inherit).</summary>

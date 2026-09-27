@@ -145,6 +145,44 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     await f.Coordinator.WaitForCompletionReportedAsync(TimeSpan.FromSeconds(5));
   }
 
+  [Test]
+  public async Task SeveralHeldGates_AreListedLongestHeldFirstAsync() {
+    // An operator reading the list during a stall needs the oldest hold at the top: it is the one blocking
+    // everything behind it. Two gates are held on the worker's clock, 10 s apart, and read back.
+    var clock = new FakeTimeProvider();
+    await using var f = await FakeFixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60), timeProvider: clock);
+    var older = (Guid)TrackedGuid.New();
+    var newer = (Guid)TrackedGuid.New();
+    var releaseOlder = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var releaseNewer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var olderEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var newerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    var olderHold = f.Worker.WithStreamAffinityGateAsync(older, PERSPECTIVE, async () => {
+      olderEntered.TrySetResult();
+      await releaseOlder.Task;
+    }, CancellationToken.None);
+    await olderEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    clock.Advance(TimeSpan.FromSeconds(10));
+    var newerHold = f.Worker.WithStreamAffinityGateAsync(newer, PERSPECTIVE, async () => {
+      newerEntered.TrySetResult();
+      await releaseNewer.Task;
+    }, CancellationToken.None);
+    await newerEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    clock.Advance(TimeSpan.FromSeconds(1));
+
+    var holds = f.Worker.SnapshotAffinityHolds(TimeSpan.Zero, clock.GetUtcNow().UtcTicks);
+
+    await Assert.That(holds.Select(h => h.StreamId).ToList()).IsEquivalentTo([older, newer], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the longest hold is listed first");
+    await Assert.That(holds[0].Held).IsEqualTo(TimeSpan.FromSeconds(11));
+    await Assert.That(holds[1].Held).IsEqualTo(TimeSpan.FromSeconds(1));
+
+    releaseOlder.TrySetResult();
+    releaseNewer.TrySetResult();
+    await Task.WhenAll(olderHold, newerHold);
+  }
+
   #region Fixture
 
   private sealed record WatchdogTestEvent(string Data) : IEvent;

@@ -27,12 +27,14 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   create-release-pr:
     name: Cut · Create the release branch and PR
+    permissions:
+      contents: write        # pushes the release branch
+      pull-requests: write   # opens the release PR
     runs-on: ubuntu-latest
 
     steps:

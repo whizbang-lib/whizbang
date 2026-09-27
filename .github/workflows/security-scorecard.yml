@@ -11,6 +11,10 @@ on:
 # Permissions are defined at job level for least-privilege principle
 # See: https://docs.github.com/en/actions/security-guides/automatic-token-authentication
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions:
+  contents: read
+
 jobs:
   analysis:
     name: Scorecard Analysis

@@ -519,6 +519,43 @@ namespace TestNamespace {
   }
 
   [Test]
+  public async Task PerspectiveRunnerGenerator_BareRowCapAndRowTtl_RegisterNothingAsync() {
+    // [RowCap] and [RowTtl] with no arguments leave every bound at its -1 default. That declares
+    // no bound, so the runner must register neither, exactly as if the attributes were absent.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record BareHappened : IEvent {
+    public string Id { get; init; } = "";
+  }
+
+  public record BareModel {
+    [StreamId]
+    public string Id { get; init; } = "";
+  }
+
+  [RowCap]
+  [RowTtl]
+  public class BarePerspective : IPerspectiveFor<BareModel, BareHappened> {
+    public BareModel Apply(BareModel currentData, BareHappened @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "BarePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).DoesNotContain("PerspectiveRowCapRegistry.Register")
+      .Because("a [RowCap] naming neither PerScope nor PerTenant declares no cap");
+    await Assert.That(runnerSource).DoesNotContain("PerspectiveTtlRegistry.Register")
+      .Because("a [RowTtl] naming neither Days nor Seconds declares no TTL");
+  }
+
+  [Test]
   [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_RowTtl_OverridesEphemeralDerivedTtlAsync() {
     // Ladder precedence: an explicit [RowTtl] on the perspective wins over the TTL derived

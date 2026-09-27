@@ -6,11 +6,13 @@ on:
   workflow_dispatch:  # Manual trigger
 
 permissions:
-  actions: write  # Required to delete caches
+  contents: read
 
 jobs:
   cleanup:
     name: Cleanup Old Caches
+    permissions:
+      actions: write  # Required to delete caches
     runs-on: ubuntu-latest
     steps:
       - name: Cleanup Old Caches

@@ -16,6 +16,8 @@ public static class AspireExtensions {
   /// <param name="name">Exchange name (e.g., "orders", "products")</param>
   /// <param name="type">Exchange type: "topic", "direct", "fanout", or "headers" (default: "topic")</param>
   /// <returns>The resource builder for fluent chaining</returns>
+  /// <tests>tests/Whizbang.Hosting.RabbitMQ.Tests/AspireExtensionsTests.cs:WithExchange_NameAndType_RecordsAnExchangeAnnotationAsync</tests>
+  /// <tests>tests/Whizbang.Hosting.RabbitMQ.Tests/AspireExtensionsTests.cs:WithExchange_TypeOmitted_DefaultsToTopicAsync</tests>
   public static IResourceBuilder<RabbitMQServerResource> WithExchange(
     this IResourceBuilder<RabbitMQServerResource> builder,
     string name,
@@ -37,6 +39,7 @@ public static class AspireExtensions {
   /// <param name="exchangeName">Exchange name to bind to</param>
   /// <param name="routingKey">Routing key pattern (e.g., "#" for topic, "service-name" for direct)</param>
   /// <returns>The resource builder for fluent chaining</returns>
+  /// <tests>tests/Whizbang.Hosting.RabbitMQ.Tests/AspireExtensionsTests.cs:WithQueueBinding_RecordsQueueExchangeAndRoutingKeyAsync</tests>
   public static IResourceBuilder<RabbitMQServerResource> WithQueueBinding(
     this IResourceBuilder<RabbitMQServerResource> builder,
     string queueName,

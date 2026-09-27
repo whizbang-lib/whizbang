@@ -2,6 +2,9 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <Description>Roslyn source generators for zero-reflection, AOT-compatible code generation including dispatcher routing, message registry, and diagnostics infrastructure.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Application</WhizbangPackageTier>
+    <WhizbangPackageArea>Core</WhizbangPackageArea>
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>Whizbang.Generators</RootNamespace>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>

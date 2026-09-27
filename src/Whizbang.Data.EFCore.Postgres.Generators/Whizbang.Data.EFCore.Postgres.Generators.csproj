@@ -2,6 +2,10 @@
 
   <PropertyGroup>
     <IsPackable>true</IsPackable>
+    <Description>Roslyn source generators for the EF Core PostgreSQL store: read-model configuration, associations and service registration, generated at compile time.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Application</WhizbangPackageTier>
+    <WhizbangPackageArea>Data store</WhizbangPackageArea>
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>Whizbang.Data.EFCore.Postgres.Generators</RootNamespace>
     <LangVersion>latest</LangVersion>

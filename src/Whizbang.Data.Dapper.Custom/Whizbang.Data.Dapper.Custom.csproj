@@ -3,6 +3,9 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <Description>Base Dapper implementation and abstractions for building custom database providers with AOT compatibility.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Foundation</WhizbangPackageTier>
+    <WhizbangPackageArea>ORM base</WhizbangPackageArea>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

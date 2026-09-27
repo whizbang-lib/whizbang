@@ -6,6 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 
+    <!-- Restore from committed packages.lock.json files. CI restores in locked mode, so a
+         build can only use the exact package versions (and content hashes) reviewed in the lock
+         files; a local restore updates them when Directory.Packages.props changes, and the
+         updated lock files are committed alongside it. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+
     <!-- Default: Don't pack projects unless explicitly set -->
     <!-- src/ projects override this via src/Directory.Build.props -->
     <IsPackable>false</IsPackable>
@@ -41,7 +47,7 @@
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
     <!-- Local-only version — CI/CD build server overrides this. Do NOT commit non-local versions. -->
-    <Version>0.2600.0</Version>
+    <Version>0.2601.0</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>

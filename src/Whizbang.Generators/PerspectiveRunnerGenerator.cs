@@ -122,15 +122,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // event chose TransientStorage.TtlRow, the perspective's rows expire; the TTL is the LONGEST of its
     // TtlRow events' TtlSeconds (keep the row until its longest-lived contributing data expires). -1 = the
     // rows never expire (no TtlRow event). The generator emits a [ModuleInitializer] to register this TTL.
-    var ttlRowSeconds = -1;
-    foreach (var s in eventTypeSymbols) {
-      if (s is INamedTypeSymbol named && EphemeralResolver.Resolve(named) is { Storage: "TtlRow" }) {
-        var ttl = EphemeralResolver.ResolveTtlSeconds(named);
-        if (ttl > ttlRowSeconds) {
-          ttlRowSeconds = ttl;
-        }
-      }
-    }
+    var ttlRowSeconds = _resolveEphemeralTtlRowSeconds(eventTypeSymbols);
 
     // Perspective row retention: an explicit [RowTtl] on the perspective class OUTRANKS the
     // ephemeral-derived TTL (the override ladder — the read model's own declaration is more
@@ -138,27 +130,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // perspectives, which have no [Ephemeral] events to derive from: their rows can age out
     // while the log stays durable, because the event-time expiry anchor keeps rebuilds
     // deterministic and a reaped row re-folds from the log on wake.
-    var rowTtlAttribute = classSymbol.GetAttributes().FirstOrDefault(
-        static a => a.AttributeClass?.Name is "RowTtlAttribute" or "RowTtl");
-    if (rowTtlAttribute is not null) {
-      var explicitDays = -1;
-      var explicitSeconds = -1;
-      foreach (var namedArg in rowTtlAttribute.NamedArguments) {
-        if (namedArg.Key == "Days" && namedArg.Value.Value is int d) {
-          explicitDays = d;
-        } else if (namedArg.Key == "Seconds" && namedArg.Value.Value is int sec) {
-          explicitSeconds = sec;
-        }
-      }
-      var explicitTtl = -1;
-      if (explicitSeconds >= 0) {
-        explicitTtl = explicitSeconds;
-      } else if (explicitDays >= 0) {
-        explicitTtl = explicitDays * 86400;
-      }
-      if (explicitTtl >= 0) {
-        ttlRowSeconds = explicitTtl;
-      }
+    var explicitTtl = _resolveExplicitRowTtlSeconds(classSymbol);
+    if (explicitTtl >= 0) {
+      ttlRowSeconds = explicitTtl;
     }
 
     // Row cap: bounds how MANY rows a perspective keeps per scope, the companion to [RowTtl]'s bound on
@@ -166,59 +140,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // ephemeral-derived source, because cardinality is a read-model property with nothing in the event
     // stream to derive it from. PerScope partitions per (tenant, user), PerTenant across the tenant; the
     // scope key is what the SQL sweep's ROW_NUMBER() partitions by, so it travels with the number.
-    var rowCapPerScope = -1;
-    string? rowCapScopeKey = null;
-    var rowCapAttribute = classSymbol.GetAttributes().FirstOrDefault(
-        static a => a.AttributeClass?.Name is "RowCapAttribute" or "RowCap");
-    if (rowCapAttribute is not null) {
-      var perScope = -1;
-      var perTenant = -1;
-      foreach (var namedArg in rowCapAttribute.NamedArguments) {
-        if (namedArg.Key == "PerScope" && namedArg.Value.Value is int ps) {
-          perScope = ps;
-        } else if (namedArg.Key == "PerTenant" && namedArg.Value.Value is int pt) {
-          perTenant = pt;
-        }
-      }
-      // PerScope is the more specific partition, so it outranks PerTenant when both are declared.
-      if (perScope >= 0) {
-        rowCapPerScope = perScope;
-        rowCapScopeKey = "u";
-      } else if (perTenant >= 0) {
-        rowCapPerScope = perTenant;
-        rowCapScopeKey = "t";
-      }
-    }
+    var (rowCapPerScope, rowCapScopeKey) = _resolveRowCap(classSymbol);
 
     // Stream groups: each [StreamGroup] declaration is one membership with its own dials, encoded
     // compactly (key|announce|follow|bridge;...) so the record stays equatable for incremental
     // caching. Repeatable — a perspective in two groups is the case the dials exist for.
-    string? streamGroupSpec = null;
-    var streamGroupParts = new List<string>();
-    foreach (var groupAttribute in classSymbol.GetAttributes().Where(
-        static a => a.AttributeClass?.Name is "StreamGroupAttribute" or "StreamGroup")) {
-      if (groupAttribute.ConstructorArguments.Length == 0 ||
-          groupAttribute.ConstructorArguments[0].Value is not string groupKey ||
-          string.IsNullOrEmpty(groupKey)) {
-        continue;
-      }
-      var announce = true;
-      var follow = true;
-      var bridge = false;
-      foreach (var namedArg in groupAttribute.NamedArguments) {
-        if (namedArg.Key == "Announce" && namedArg.Value.Value is bool announceValue) {
-          announce = announceValue;
-        } else if (namedArg.Key == "Follow" && namedArg.Value.Value is bool followValue) {
-          follow = followValue;
-        } else if (namedArg.Key == "Bridge" && namedArg.Value.Value is bool bridgeValue) {
-          bridge = bridgeValue;
-        }
-      }
-      streamGroupParts.Add($"{groupKey}|{(announce ? 1 : 0)}|{(follow ? 1 : 0)}|{(bridge ? 1 : 0)}");
-    }
-    if (streamGroupParts.Count > 0) {
-      streamGroupSpec = string.Join(";", streamGroupParts);
-    }
+    var streamGroupSpec = _buildStreamGroupSpec(classSymbol);
 
     // A1-6b: a perspective marked [FullHistory] needs every event and cannot resume from a carry-forward /
     // closing event — the A1 close guard refuses a discard-close of any stream it consumes. Resolved at compile
@@ -230,18 +157,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
     if (streamKeyPropertyName is null) {
       // Return warning instead of silently skipping (WHIZ033)
-      var location = classDeclaration.GetLocation();
-      var lineSpan = location.GetLineSpan();
-      return new PerspectiveOrWarning(
-          Info: null,
-          Warning: new PerspectiveMissingStreamIdWarning(
-              PerspectiveName: classSymbol.Name,
-              ModelName: modelType.Name,
-              FilePath: lineSpan.Path,
-              Line: lineSpan.StartLinePosition.Line,
-              Column: lineSpan.StartLinePosition.Character
-          )
-      );
+      return _missingStreamIdWarning(classDeclaration, classSymbol, modelType);
     }
 
     // Build the CreateEmptyModel object initializer at generation time so the
@@ -311,6 +227,142 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             StreamGroupSpec: streamGroupSpec),
         Warning: null
     );
+  }
+
+  /// <summary>
+  /// Builds the WHIZ033 warning result for a perspective whose model has no [StreamId] property.
+  /// </summary>
+  private static PerspectiveOrWarning _missingStreamIdWarning(
+      ClassDeclarationSyntax classDeclaration,
+      INamedTypeSymbol classSymbol,
+      ITypeSymbol modelType) {
+    var location = classDeclaration.GetLocation();
+    var lineSpan = location.GetLineSpan();
+    return new PerspectiveOrWarning(
+        Info: null,
+        Warning: new PerspectiveMissingStreamIdWarning(
+            PerspectiveName: classSymbol.Name,
+            ModelName: modelType.Name,
+            FilePath: lineSpan.Path,
+            Line: lineSpan.StartLinePosition.Line,
+            Column: lineSpan.StartLinePosition.Character
+        )
+    );
+  }
+
+  /// <summary>
+  /// TtlRow perspective-row expiry (E2-4d), resolved virally: if ANY applied [Ephemeral] event chose
+  /// TransientStorage.TtlRow, the perspective's rows expire, with the LONGEST of those events' TtlSeconds.
+  /// Returns -1 when no applied event is TtlRow (the rows never expire).
+  /// </summary>
+  private static int _resolveEphemeralTtlRowSeconds(List<ITypeSymbol> eventTypeSymbols) {
+    var ttlRowSeconds = -1;
+    foreach (var s in eventTypeSymbols) {
+      if (s is INamedTypeSymbol named && EphemeralResolver.Resolve(named) is { Storage: "TtlRow" }) {
+        var ttl = EphemeralResolver.ResolveTtlSeconds(named);
+        if (ttl > ttlRowSeconds) {
+          ttlRowSeconds = ttl;
+        }
+      }
+    }
+    return ttlRowSeconds;
+  }
+
+  /// <summary>
+  /// Reads an explicit [RowTtl] on the perspective class, in seconds. Seconds outranks Days when both
+  /// are declared. Returns a negative value when the attribute is absent or declares neither.
+  /// </summary>
+  private static int _resolveExplicitRowTtlSeconds(INamedTypeSymbol classSymbol) {
+    var rowTtlAttribute = classSymbol.GetAttributes().FirstOrDefault(
+        static a => a.AttributeClass?.Name is "RowTtlAttribute" or "RowTtl");
+    if (rowTtlAttribute is null) {
+      return -1;
+    }
+    var explicitDays = -1;
+    var explicitSeconds = -1;
+    foreach (var namedArg in rowTtlAttribute.NamedArguments) {
+      if (namedArg.Key == "Days" && namedArg.Value.Value is int d) {
+        explicitDays = d;
+      } else if (namedArg.Key == "Seconds" && namedArg.Value.Value is int sec) {
+        explicitSeconds = sec;
+      }
+    }
+    if (explicitSeconds >= 0) {
+      return explicitSeconds;
+    }
+    if (explicitDays >= 0) {
+      return explicitDays * 86400;
+    }
+    return -1;
+  }
+
+  /// <summary>
+  /// Reads [RowCap] on the perspective class. PerScope is the more specific partition, so it outranks
+  /// PerTenant when both are declared. Returns (-1, null) when no cap is declared.
+  /// </summary>
+  private static (int PerScope, string? ScopeKey) _resolveRowCap(INamedTypeSymbol classSymbol) {
+    var rowCapAttribute = classSymbol.GetAttributes().FirstOrDefault(
+        static a => a.AttributeClass?.Name is "RowCapAttribute" or "RowCap");
+    if (rowCapAttribute is null) {
+      return (-1, null);
+    }
+    var perScope = -1;
+    var perTenant = -1;
+    foreach (var namedArg in rowCapAttribute.NamedArguments) {
+      if (namedArg.Key == "PerScope" && namedArg.Value.Value is int ps) {
+        perScope = ps;
+      } else if (namedArg.Key == "PerTenant" && namedArg.Value.Value is int pt) {
+        perTenant = pt;
+      }
+    }
+    if (perScope >= 0) {
+      return (perScope, "u");
+    }
+    if (perTenant >= 0) {
+      return (perTenant, "t");
+    }
+    return (-1, null);
+  }
+
+  /// <summary>
+  /// Encodes every [StreamGroup] declaration on the perspective class as key|announce|follow|bridge,
+  /// joined with ';'. Returns null when the class declares no valid membership.
+  /// </summary>
+  private static string? _buildStreamGroupSpec(INamedTypeSymbol classSymbol) {
+    var streamGroupParts = new List<string>();
+    foreach (var groupAttribute in classSymbol.GetAttributes().Where(
+        static a => a.AttributeClass?.Name is "StreamGroupAttribute" or "StreamGroup")) {
+      var encoded = _encodeStreamGroupMembership(groupAttribute);
+      if (encoded is not null) {
+        streamGroupParts.Add(encoded);
+      }
+    }
+    return streamGroupParts.Count > 0 ? string.Join(";", streamGroupParts) : null;
+  }
+
+  /// <summary>
+  /// Encodes one [StreamGroup] membership as key|announce|follow|bridge (1/0 flags).
+  /// Returns null when the group key is missing or empty.
+  /// </summary>
+  private static string? _encodeStreamGroupMembership(AttributeData groupAttribute) {
+    if (groupAttribute.ConstructorArguments.Length == 0 ||
+        groupAttribute.ConstructorArguments[0].Value is not string groupKey ||
+        string.IsNullOrEmpty(groupKey)) {
+      return null;
+    }
+    var announce = true;
+    var follow = true;
+    var bridge = false;
+    foreach (var namedArg in groupAttribute.NamedArguments) {
+      if (namedArg.Key == "Announce" && namedArg.Value.Value is bool announceValue) {
+        announce = announceValue;
+      } else if (namedArg.Key == "Follow" && namedArg.Value.Value is bool followValue) {
+        follow = followValue;
+      } else if (namedArg.Key == "Bridge" && namedArg.Value.Value is bool bridgeValue) {
+        bridge = bridgeValue;
+      }
+    }
+    return $"{groupKey}|{(announce ? 1 : 0)}|{(follow ? 1 : 0)}|{(bridge ? 1 : 0)}";
   }
 
   /// <summary>
@@ -414,103 +466,19 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var modelSimpleName = TypeNameUtilities.GetSimpleName(modelTypeName);
 
     // Generate AOT-compatible switch cases for event application
-    var mustExistEvents = perspective.MustExistEventTypes ?? [];
-    var eventReturnTypes = perspective.EventReturnTypes ?? [];
-    var returnTypeLookup = eventReturnTypes.ToDictionary(x => x.EventTypeName, x => x.ReturnType);
-    var applyCases = new StringBuilder();
-    foreach (var eventType in perspective.EventTypes) {
-      var isMustExist = mustExistEvents.Contains(eventType);
-      var eventSimpleName = TypeNameUtilities.GetSimpleName(eventType);
-
-      // Get return type for this event, default to Model
-      var returnType = returnTypeLookup.TryGetValue(eventType, out var rt) ? rt : ApplyReturnType.Model;
-
-      applyCases.AppendLine($"        case {eventType} typedEvent:");
-      if (isMustExist) {
-        applyCases.AppendLine("          if (currentModel == null)");
-        applyCases.AppendLine("            throw new global::System.InvalidOperationException(");
-        applyCases.AppendLine($"              \"{modelSimpleName} must exist when applying {eventSimpleName} in {perspectiveSimpleName}\");");
-      }
-
-      // Generate case code based on return type
-      // Note: currentModel is nullable in template, but user's Apply methods may expect non-nullable
-      // For Model/NullableModel returns, we use null-forgiving operator since these signatures
-      // typically have a non-nullable first parameter
-      switch (returnType) {
-        case ApplyReturnType.Model:
-          // Standard return: TModel - wrap with None action
-          // Use ! because user's Apply(TModel current, TEvent) expects non-nullable
-          applyCases.AppendLine("          return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
-          break;
-
-        case ApplyReturnType.NullableModel:
-          // Nullable return: TModel? - null means no change, wrap with None action
-          // Pass nullable since Apply(TModel? current, TEvent) accepts nullable
-          applyCases.AppendLine("          return (perspective.Apply(currentModel, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
-          break;
-
-        case ApplyReturnType.Action:
-          // Action return: ModelAction - keep current model, return the action
-          // Use ! because Apply(TModel current, TEvent) for deletion expects existing model
-          applyCases.AppendLine("          return (currentModel, perspective.Apply(currentModel!, typedEvent));");
-          break;
-
-        case ApplyReturnType.Tuple:
-          // Tuple return: (TModel?, ModelAction) - return as-is
-          // Use ! because Apply(TModel current, TEvent) expects existing model
-          applyCases.AppendLine("          return perspective.Apply(currentModel!, typedEvent);");
-          break;
-
-        case ApplyReturnType.ApplyResult:
-          // ApplyResult return: Extract model and action from result
-          // Use ! because Apply(TModel current, TEvent) expects existing model
-          applyCases.AppendLine($"          var result_{eventSimpleName} = perspective.Apply(currentModel!, typedEvent);");
-          applyCases.AppendLine($"          return (result_{eventSimpleName}.Model, result_{eventSimpleName}.Action);");
-          break;
-      }
-      applyCases.AppendLine();
-    }
+    var applyCases = _buildApplyCases(perspective, modelSimpleName, perspectiveSimpleName);
 
     // Generate event types array for polymorphic deserialization
-    var eventTypesArray = new StringBuilder();
-    for (int i = 0; i < perspective.EventTypes.Length; i++) {
-      eventTypesArray.Append($"      typeof({perspective.EventTypes[i]})");
-      if (i < perspective.EventTypes.Length - 1) {
-        eventTypesArray.AppendLine(",");
-      } else {
-        eventTypesArray.AppendLine();
-      }
-    }
+    var eventTypesArray = _buildEventTypesArray(perspective);
 
     // Generate ExtractStreamId methods (one per event type with StreamId)
-    var extractStreamIdMethods = new StringBuilder();
-    if (perspective.EventStreamIds != null) {
-      foreach (var eventStreamId in perspective.EventStreamIds) {
-        extractStreamIdMethods.AppendLine("  /// <summary>");
-        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {TypeNameUtilities.GetSimpleName(eventStreamId.EventTypeName)} event.");
-        extractStreamIdMethods.AppendLine("  /// </summary>");
-        extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamId.EventTypeName} @event) {{");
-        extractStreamIdMethods.AppendLine($"    return @event.{eventStreamId.StreamIdPropertyName}.ToString();");
-        extractStreamIdMethods.AppendLine("  }");
-        extractStreamIdMethods.AppendLine();
-      }
-    }
+    var extractStreamIdMethods = _buildExtractStreamIdMethods(perspective);
 
     // Generate the ResolveTargetStreamId switch body used by RunRebuildAsync. One arm per
     // [StreamId]-bearing event type returns the event's post-upcast StreamId; the default keeps the
     // event on the physical stream. When the perspective handles no [StreamId] events, the body is
     // just the physical-stream fallback (so re-key never splits — identical to the old rebuild).
-    var resolveTargetStreamId = new StringBuilder();
-    if (perspective.EventStreamIds != null) {
-      resolveTargetStreamId.AppendLine("    return @event switch {");
-      foreach (var eventStreamId in perspective.EventStreamIds) {
-        resolveTargetStreamId.AppendLine($"      {eventStreamId.EventTypeName} e => e.{eventStreamId.StreamIdPropertyName},");
-      }
-      resolveTargetStreamId.AppendLine("      _ => physicalStreamId,");
-      resolveTargetStreamId.AppendLine("    };");
-    } else {
-      resolveTargetStreamId.AppendLine("    return physicalStreamId;");
-    }
+    var resolveTargetStreamId = _buildResolveTargetStreamId(perspective);
 
     // Generate upsert call - either simple UpsertAsync or UpsertWithPhysicalFieldsAsync
     var upsertCode = _generateUpsertCode(perspective);
@@ -569,6 +537,123 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = result.Replace("__PERSPECTIVE_SIMPLE_NAME__", perspectiveSimpleName);
 
     return result;
+  }
+
+  /// <summary>
+  /// Builds the AOT-compatible switch cases that dispatch each event type to its Apply method,
+  /// wrapping each return shape into a (model, action) tuple.
+  /// </summary>
+  private static StringBuilder _buildApplyCases(PerspectiveInfo perspective, string modelSimpleName, string perspectiveSimpleName) {
+    var mustExistEvents = perspective.MustExistEventTypes ?? [];
+    var eventReturnTypes = perspective.EventReturnTypes ?? [];
+    var returnTypeLookup = eventReturnTypes.ToDictionary(x => x.EventTypeName, x => x.ReturnType);
+    var applyCases = new StringBuilder();
+    foreach (var eventType in perspective.EventTypes) {
+      var isMustExist = mustExistEvents.Contains(eventType);
+      var eventSimpleName = TypeNameUtilities.GetSimpleName(eventType);
+
+      // Get return type for this event, default to Model
+      var returnType = returnTypeLookup.TryGetValue(eventType, out var rt) ? rt : ApplyReturnType.Model;
+
+      applyCases.AppendLine($"        case {eventType} typedEvent:");
+      if (isMustExist) {
+        applyCases.AppendLine("          if (currentModel == null)");
+        applyCases.AppendLine("            throw new global::System.InvalidOperationException(");
+        applyCases.AppendLine($"              \"{modelSimpleName} must exist when applying {eventSimpleName} in {perspectiveSimpleName}\");");
+      }
+
+      // Generate case code based on return type
+      // Note: currentModel is nullable in template, but user's Apply methods may expect non-nullable
+      // For Model/NullableModel returns, we use null-forgiving operator since these signatures
+      // typically have a non-nullable first parameter
+      switch (returnType) {
+        case ApplyReturnType.Model:
+          // Standard return: TModel - wrap with None action
+          // Use ! because user's Apply(TModel current, TEvent) expects non-nullable
+          applyCases.AppendLine("          return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+          break;
+
+        case ApplyReturnType.NullableModel:
+          // Nullable return: TModel? - null means no change, wrap with None action
+          // Pass nullable since Apply(TModel? current, TEvent) accepts nullable
+          applyCases.AppendLine("          return (perspective.Apply(currentModel, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+          break;
+
+        case ApplyReturnType.Action:
+          // Action return: ModelAction - keep current model, return the action
+          // Use ! because Apply(TModel current, TEvent) for deletion expects existing model
+          applyCases.AppendLine("          return (currentModel, perspective.Apply(currentModel!, typedEvent));");
+          break;
+
+        case ApplyReturnType.Tuple:
+          // Tuple return: (TModel?, ModelAction) - return as-is
+          // Use ! because Apply(TModel current, TEvent) expects existing model
+          applyCases.AppendLine("          return perspective.Apply(currentModel!, typedEvent);");
+          break;
+
+        case ApplyReturnType.ApplyResult:
+          // ApplyResult return: Extract model and action from result
+          // Use ! because Apply(TModel current, TEvent) expects existing model
+          applyCases.AppendLine($"          var result_{eventSimpleName} = perspective.Apply(currentModel!, typedEvent);");
+          applyCases.AppendLine($"          return (result_{eventSimpleName}.Model, result_{eventSimpleName}.Action);");
+          break;
+      }
+      applyCases.AppendLine();
+    }
+    return applyCases;
+  }
+
+  /// <summary>
+  /// Builds the typeof(...) list of handled event types used for polymorphic deserialization.
+  /// </summary>
+  private static StringBuilder _buildEventTypesArray(PerspectiveInfo perspective) {
+    var eventTypesArray = new StringBuilder();
+    for (int i = 0; i < perspective.EventTypes.Length; i++) {
+      eventTypesArray.Append($"      typeof({perspective.EventTypes[i]})");
+      if (i < perspective.EventTypes.Length - 1) {
+        eventTypesArray.AppendLine(",");
+      } else {
+        eventTypesArray.AppendLine();
+      }
+    }
+    return eventTypesArray;
+  }
+
+  /// <summary>
+  /// Builds one ExtractStreamId overload per event type that carries a [StreamId] property.
+  /// </summary>
+  private static StringBuilder _buildExtractStreamIdMethods(PerspectiveInfo perspective) {
+    var extractStreamIdMethods = new StringBuilder();
+    if (perspective.EventStreamIds != null) {
+      foreach (var eventStreamId in perspective.EventStreamIds) {
+        extractStreamIdMethods.AppendLine("  /// <summary>");
+        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {TypeNameUtilities.GetSimpleName(eventStreamId.EventTypeName)} event.");
+        extractStreamIdMethods.AppendLine("  /// </summary>");
+        extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamId.EventTypeName} @event) {{");
+        extractStreamIdMethods.AppendLine($"    return @event.{eventStreamId.StreamIdPropertyName}.ToString();");
+        extractStreamIdMethods.AppendLine("  }");
+        extractStreamIdMethods.AppendLine();
+      }
+    }
+    return extractStreamIdMethods;
+  }
+
+  /// <summary>
+  /// Builds the ResolveTargetStreamId body used by RunRebuildAsync.
+  /// </summary>
+  private static StringBuilder _buildResolveTargetStreamId(PerspectiveInfo perspective) {
+    var resolveTargetStreamId = new StringBuilder();
+    if (perspective.EventStreamIds != null) {
+      resolveTargetStreamId.AppendLine("    return @event switch {");
+      foreach (var eventStreamId in perspective.EventStreamIds) {
+        resolveTargetStreamId.AppendLine($"      {eventStreamId.EventTypeName} e => e.{eventStreamId.StreamIdPropertyName},");
+      }
+      resolveTargetStreamId.AppendLine("      _ => physicalStreamId,");
+      resolveTargetStreamId.AppendLine("    };");
+    } else {
+      resolveTargetStreamId.AppendLine("    return physicalStreamId;");
+    }
+    return resolveTargetStreamId;
   }
 
   private static string _buildStreamGroupRegistrations(string? streamGroupSpec, string modelTypeName) {

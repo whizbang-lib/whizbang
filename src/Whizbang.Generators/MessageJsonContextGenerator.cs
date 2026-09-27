@@ -200,21 +200,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // The generated JsonTypeInfo lives in a public context class, so every link in the containment
     // chain must be public for the emitted code to compile.
-    for (var scope = sagaType; scope is not null; scope = scope.ContainingType) {
-      if (scope.DeclaredAccessibility != Accessibility.Public) {
-        return [];
-      }
+    if (!_isPubliclyReachable(sagaType)) {
+      return [];
     }
 
     // ForAttributeWithMetadataName only yields a context that carries at least one matching attribute.
     var attribute = context.Attributes[0];
 
-    var includeHooks = true;
-    foreach (var namedArgument in attribute.NamedArguments) {
-      if (namedArgument.Key == SagaEventShapes.INCLUDE_HOOKS_ARGUMENT && namedArgument.Value.Value is bool value) {
-        includeHooks = value;
-      }
-    }
+    var includeHooks = _readIncludeHooks(attribute);
 
     // [Saga<TEventBase>] supplies the base explicitly; [Saga] falls back to SagaEventBase. Either way
     // the base is a real referenced type, so its properties (MessageId, OccurredAt, correlation ids,
@@ -261,6 +254,33 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     return builder.ToImmutable();
+  }
+
+  /// <summary>
+  /// True when the type and every type containing it are public, so generated public code can reference
+  /// nested types emitted into it.
+  /// </summary>
+  private static bool _isPubliclyReachable(INamedTypeSymbol type) {
+    for (var scope = type; scope is not null; scope = scope.ContainingType) {
+      if (scope.DeclaredAccessibility != Accessibility.Public) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// The saga attribute's <c>IncludeHooks</c> named argument; <see langword="true"/> when it is not set.
+  /// The last occurrence wins.
+  /// </summary>
+  private static bool _readIncludeHooks(AttributeData attribute) {
+    var includeHooks = true;
+    foreach (var namedArgument in attribute.NamedArguments) {
+      if (namedArgument.Key == SagaEventShapes.INCLUDE_HOOKS_ARGUMENT && namedArgument.Value.Value is bool value) {
+        includeHooks = value;
+      }
+    }
+    return includeHooks;
   }
 
   /// <summary>
