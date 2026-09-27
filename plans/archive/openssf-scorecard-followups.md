@@ -1,6 +1,21 @@
+> **Archived 2026-09-27.** Items 1, 2 and 6 shipped in PR #916: FsCheck property tests, the Best
+> Practices draft (`docs/openssf-best-practices-draft.md`), and the LICENSE fix (GitHub now reports
+> `MIT`). Items 3 to 5 remain recorded decisions. Leftovers:
+>
+> - **Best Practices registration** (owner only): register the project at bestpractices.dev, paste
+>   the draft, then add the badge to the README once the project id exists.
+> - **"Fix before submitting" list** in the draft: dismiss CodeQL alert #16 (false positive in a
+>   sample), update the `SECURITY.md` supported-versions table, fix the stale Discussions,
+>   issue-template, docs-site and review wording in `CONTRIBUTING.md`, set the repository homepage.
+> - **Docs-site contributor section** on writing FsCheck properties under TUnit (item 1's docs
+>   bullet): not written, because the docs site is a separate repository; the in-repo guide is
+>   `ai-docs/testing-tunit.md#property-tests-with-fscheck`.
+> - **Scorecard confirmed** on the merge commit (`bc56aa2e7`, 2026-09-27): overall 7.4 to 7.9,
+>   Fuzzing 0 to 10, License 9 to 10. CII-Best-Practices stays 0 until the project is registered.
+
 # OpenSSF Scorecard Follow-ups
 
-**Status**: Planned (not started)
+**Status**: Shipped (items 1, 2, 6) in PR #916
 **Researched**: 2026-09-27, against `origin/develop` and a Scorecard run taken the same day
 **Owner**: Phil Carbone
 
