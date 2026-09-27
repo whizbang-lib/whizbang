@@ -8,6 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
@@ -350,6 +351,97 @@ public class AzureServiceBusNamespaceRoutingRegistrationTests {
 
   #endregion
 
+  #region Consume-side mirror
+
+  [Test]
+  public async Task SubscribeBatchAsync_HandledTypeBoundToANamespace_AlsoSubscribesOnThatNamespaceAsync() {
+    // The consume-side rule: a service that HANDLES a message type routed to a traffic-class
+    // namespace must listen there too, or every message published into that namespace sits
+    // unconsumed. The subscription opens on default AND is mirrored onto 'bulk' — same entity.
+    var (provider, router, defaultClient, factory) = await _buildMirrorHostAsync(
+      handledMessageType: typeof(BulkImportRequested));
+    await using var _ = provider;
+
+    using var subscription = await router.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask, new TransportDestination("orders", "svc-orders"), new TransportBatchOptions());
+
+    await Assert.That(defaultClient.CreatedProcessors.Select(p => (p.Topic, p.Subscription)).ToList())
+      .IsEquivalentTo([("orders", "svc-orders")]);
+    await Assert.That(factory.Clients["bulk"].CreatedProcessors.Select(p => (p.Topic, p.Subscription)).ToList())
+      .IsEquivalentTo([("orders", "svc-orders")])
+      .Because("a handled type bound to 'bulk' mirrors the same entity into the 'bulk' namespace");
+    await Assert.That(factory.Clients["control"].CreatedProcessors).IsEmpty()
+      .Because("no handled type resolves to 'control', so it is publish-only and costs zero receivers");
+  }
+
+  [Test]
+  public async Task SubscribeBatchAsync_NoHandledTypeBoundToANamespace_SubscribesOnDefaultOnlyAsync() {
+    // A service that handles only unrouted types never opens a receiver in a class namespace:
+    // the namespace is publish-only for it, and the default subscription comes back unwrapped.
+    var (provider, router, defaultClient, factory) = await _buildMirrorHostAsync(
+      handledMessageType: typeof(OrderPlaced));
+    await using var _ = provider;
+
+    using var subscription = await router.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask, new TransportDestination("orders", "svc-orders"), new TransportBatchOptions());
+
+    await Assert.That(defaultClient.CreatedProcessors.Count).IsEqualTo(1);
+    await Assert.That(factory.Clients["bulk"].CreatedProcessors).IsEmpty();
+    await Assert.That(factory.Clients["control"].CreatedProcessors).IsEmpty();
+  }
+
+  /// <summary>
+  /// A two-class host with a routing binding ('bulk-import' tag → 'bulk' namespace) and a
+  /// receptor registry reporting exactly one handled type. Every client is a recording double,
+  /// so subscribing opens no connection and the processors created per namespace are visible.
+  /// </summary>
+  private static async Task<(ServiceProvider Provider, NamespaceRoutingTransport Router, RaisableServiceBusClient DefaultClient, RecordingNamespaceClientFactory Factory)>
+    _buildMirrorHostAsync(Type handledMessageType) {
+    var tagOptions = new Whizbang.Core.Tags.TagOptions();
+    tagOptions.RouteNamespace("bulk-import", "bulk");
+    var resolver = new Whizbang.Core.Tags.TransportNamespaceResolver(
+      tagOptions, () => [_tagRegistration(typeof(BulkImportRequested), "bulk-import")]);
+
+    var defaultClient = new RaisableServiceBusClient("default.servicebus.windows.net");
+    var factory = new RecordingNamespaceClientFactory();
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<ServiceBusClient>(defaultClient);
+    services.AddSingleton<IServiceBusNamespaceClientFactory>(factory);
+    services.AddSingleton(resolver);
+    services.AddSingleton<Whizbang.Core.Messaging.IReceptorRegistryQuery>(
+      new HandledMessagesRegistryQuery(handledMessageType.AssemblyQualifiedName!));
+    services.AddAzureServiceBusTransport(
+      new Dictionary<string, string> {
+        [TransportNamespaces.DefaultKey] = EMULATOR_CONNECTION_STRING,
+        ["bulk"] = SECOND_EMULATOR_CONNECTION_STRING,
+        ["control"] = SECOND_EMULATOR_CONNECTION_STRING
+      },
+      o => {
+        o.AutoProvisionInfrastructure = false;
+        o.EnableSessions = false;
+      });
+
+    var provider = services.BuildServiceProvider();
+    var router = (NamespaceRoutingTransport)provider.GetRequiredService<ITransport>();
+    await router.InitializeAsync();
+    return (provider, router, defaultClient, factory);
+  }
+
+  private static Whizbang.Core.Tags.MessageTagRegistration _tagRegistration(Type messageType, string tag) => new() {
+    MessageType = messageType,
+    AttributeType = typeof(Whizbang.Core.Attributes.SignalTagAttribute),
+    Tag = tag,
+    PayloadBuilder = _ => System.Text.Json.JsonSerializer.SerializeToElement(new { }),
+    AttributeFactory = () => new Whizbang.Core.Attributes.SignalTagAttribute { Tag = tag }
+  };
+
+  private sealed record BulkImportRequested(string BatchId);
+
+  private sealed record OrderPlaced(string OrderId);
+
+  #endregion
+
   #region Helpers
 
   /// <summary>
@@ -362,6 +454,32 @@ public class AzureServiceBusNamespaceRoutingRegistrationTests {
     services.AddSingleton(new ServiceBusClient(EMULATOR_CONNECTION_STRING));
     services.AddSingleton<IServiceBusNamespaceClientFactory>(new OfflineNamespaceClientFactory());
     return services;
+  }
+
+  /// <summary>Hands each non-default namespace its own recording client, keyed by namespace.</summary>
+  private sealed class RecordingNamespaceClientFactory : IServiceBusNamespaceClientFactory {
+    public Dictionary<string, RaisableServiceBusClient> Clients { get; } = new(StringComparer.Ordinal);
+
+    public ServiceBusClient CreateClient(string namespaceKey, string connectionString, AzureServiceBusOptions options) {
+      var client = new RaisableServiceBusClient($"{namespaceKey}.servicebus.windows.net");
+      Clients[namespaceKey] = client;
+      return client;
+    }
+
+    public IServiceBusAdminClient? CreateAdminClient(
+      string namespaceKey, string connectionString, AzureServiceBusOptions options) => null;
+  }
+
+  /// <summary>A receptor registry that reports exactly the given handled message types.</summary>
+  private sealed class HandledMessagesRegistryQuery(params string[] handledTypeNames)
+    : Whizbang.Core.Messaging.IReceptorRegistryQuery {
+    public bool HasReceptors(Whizbang.Core.Messaging.LifecycleStage stage, string messageType) => false;
+    public bool HasInboxHandler(string messageType) => handledTypeNames.Contains(messageType);
+    public bool HasAnyConsumer(string messageType) => handledTypeNames.Contains(messageType);
+
+    public IReadOnlyList<Whizbang.Core.Messaging.HandledMessageInfo> GetHandledMessages() =>
+      [.. handledTypeNames.Select(static n => new Whizbang.Core.Messaging.HandledMessageInfo(
+        n, "myapp.tests", Whizbang.Core.Routing.MessageKind.Event))];
   }
 
   private sealed class OfflineNamespaceClientFactory : IServiceBusNamespaceClientFactory {
