@@ -2110,7 +2110,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText =
       "SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
       "envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
-      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after)";
+      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run)";
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
       // from the same snapshot, instead of a separate per-cycle call. Untruncated by design: they
@@ -2143,39 +2143,56 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_idle_force_after", NpgsqlTypes.NpgsqlDbType.Interval) {
       Value = request.IdleForceAfter ?? IdleBandOptions.DEFAULT_FORCE_FULL_DRAIN_AFTER
     });
+    // 171 (#917): the outbox's own acquisition row bound and its per-stream run. Null keeps the store's
+    // previous behavior (bounded by p_max, one row per chosen head).
+    cmd.Parameters.Add(new NpgsqlParameter("p_outbox_rows", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)request.MaxOutboxAcquireRows ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("p_outbox_run", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)request.OutboxRunLength ?? DBNull.Value });
 
     var rows = new List<WorkBatchRow>();
     OutstandingWork? outstanding = null;
-    await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken)) {
-      while (await reader.ReadAsync(cancellationToken)) {
-        rows.Add(new WorkBatchRow {
-          Source = reader.GetString(0),
-          WorkId = await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetGuid(1),
-          StreamId = await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetGuid(2),
-          PartitionNumber = await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetInt32(3),
-          Destination = await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4),
-          MessageType = await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5),
-          EnvelopeType = await reader.IsDBNullAsync(6, cancellationToken) ? null : reader.GetString(6),
-          MessageData = await reader.IsDBNullAsync(7, cancellationToken) ? null : reader.GetString(7),
-          Metadata = await reader.IsDBNullAsync(8, cancellationToken) ? null : reader.GetValue(8)?.ToString(),
-          Status = await reader.IsDBNullAsync(9, cancellationToken) ? null : reader.GetInt32(9),
-          Attempts = await reader.IsDBNullAsync(10, cancellationToken) ? null : reader.GetInt32(10),
-          IsNewlyStored = await reader.IsDBNullAsync(11, cancellationToken) ? null : reader.GetBoolean(11),
-          IsOrphaned = await reader.IsDBNullAsync(12, cancellationToken) ? null : reader.GetBoolean(12),
-          PerspectiveName = await reader.IsDBNullAsync(13, cancellationToken) ? null : reader.GetString(13),
-          // 150: the inbox row's priority and arrival, folded per stream below for the batch hooks.
-          Priority = await reader.IsDBNullAsync(14, cancellationToken) ? null : reader.GetInt32(14),
-          ReceivedAt = await reader.IsDBNullAsync(15, cancellationToken) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(15, cancellationToken)
-        });
+    // 171: the claim says in-band, as a notice on this connection, when its outbox acquisition filled
+    // its bound. Listened for only for the length of this command.
+    var outboxAcquisitionFull = false;
+    void OnClaimNotice(object? sender, NpgsqlNoticeEventArgs e) {
+      if (string.Equals(e.Notice.MessageText, OUTBOX_ACQUISITION_FULL_NOTICE, StringComparison.Ordinal)) {
+        outboxAcquisitionFull = true;
       }
-      if (request.IncludeOutstanding && await reader.NextResultAsync(cancellationToken)
-          && await reader.ReadAsync(cancellationToken)) {
-        outstanding = new OutstandingWork {
-          InboxRows = reader.GetInt64(0),
-          OutboxRows = reader.GetInt64(1),
-          PerspectiveRows = reader.GetInt64(2),
-        };
+    }
+    conn.Notice += OnClaimNotice;
+    try {
+      await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken)) {
+        while (await reader.ReadAsync(cancellationToken)) {
+          rows.Add(new WorkBatchRow {
+            Source = reader.GetString(0),
+            WorkId = await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetGuid(1),
+            StreamId = await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetGuid(2),
+            PartitionNumber = await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetInt32(3),
+            Destination = await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4),
+            MessageType = await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5),
+            EnvelopeType = await reader.IsDBNullAsync(6, cancellationToken) ? null : reader.GetString(6),
+            MessageData = await reader.IsDBNullAsync(7, cancellationToken) ? null : reader.GetString(7),
+            Metadata = await reader.IsDBNullAsync(8, cancellationToken) ? null : reader.GetValue(8)?.ToString(),
+            Status = await reader.IsDBNullAsync(9, cancellationToken) ? null : reader.GetInt32(9),
+            Attempts = await reader.IsDBNullAsync(10, cancellationToken) ? null : reader.GetInt32(10),
+            IsNewlyStored = await reader.IsDBNullAsync(11, cancellationToken) ? null : reader.GetBoolean(11),
+            IsOrphaned = await reader.IsDBNullAsync(12, cancellationToken) ? null : reader.GetBoolean(12),
+            PerspectiveName = await reader.IsDBNullAsync(13, cancellationToken) ? null : reader.GetString(13),
+            // 150: the inbox row's priority and arrival, folded per stream below for the batch hooks.
+            Priority = await reader.IsDBNullAsync(14, cancellationToken) ? null : reader.GetInt32(14),
+            ReceivedAt = await reader.IsDBNullAsync(15, cancellationToken) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(15, cancellationToken)
+          });
+        }
+        if (request.IncludeOutstanding && await reader.NextResultAsync(cancellationToken)
+            && await reader.ReadAsync(cancellationToken)) {
+          outstanding = new OutstandingWork {
+            InboxRows = reader.GetInt64(0),
+            OutboxRows = reader.GetInt64(1),
+            PerspectiveRows = reader.GetInt64(2),
+          };
+        }
       }
+    } finally {
+      conn.Notice -= OnClaimNotice;
     }
     if (rows.Count > 0) {
       // #720: a claim that leased or re-emitted work may have queued ownership doorbells; ring them
@@ -2203,9 +2220,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
       OutboxStreamIds = outboxStreamIds,
       InboxStreamIds = inboxStreamIds,
       InboxStreams = ClaimedInboxStreamFolder.Fold(rows),
-      Outstanding = outstanding
+      Outstanding = outstanding,
+      OutboxAcquisitionFull = outboxAcquisitionFull
     };
   }
+
+  /// <summary>The notice <c>claim_work</c> raises when its outbox acquisition leased its whole row bound (171).</summary>
+  internal const string OUTBOX_ACQUISITION_FULL_NOTICE = "whizbang.outbox_acquisition_full=true";
 
   /// <inheritdoc />
   public async Task CommitHandlerResultAsync(
@@ -5019,6 +5040,67 @@ public class EFCoreWorkCoordinator<TDbContext>(
           ? reader.GetString(errorOrdinal)
           : null,
         Priority = priorityOrdinal >= 0 ? reader.GetInt32(priorityOrdinal) : Whizbang.Core.Priority.WorkPriority.UNDECLARED,
+      });
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<OutboxBatchRow>> ContinueOutboxStreamsAsync(
+    IReadOnlyList<OutboxStreamCursor> streams,
+    Guid instanceId,
+    int runLength,
+    long? maxBytes,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streams);
+    if (streams.Count == 0) {
+      return [];
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "wh_continue_outbox_streams");
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.CommandText = $"SELECT * FROM {functionName}(@p_instance_id, @p_stream_ids, @p_after_ids, @p_run_length, @p_max_bytes)";
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = streams.Select(s => s.StreamId).ToArray()
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("p_after_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = streams.Select(s => s.LastPublishedMessageId).ToArray()
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("p_run_length", runLength));
+    cmd.Parameters.Add(new NpgsqlParameter("p_max_bytes", NpgsqlTypes.NpgsqlDbType.Bigint) { Value = (object?)maxBytes ?? DBNull.Value });
+
+    // The function is new in 171 and returns fetch_outbox_batch's full column set, so there are no
+    // older shapes to tolerate here.
+    var results = new List<OutboxBatchRow>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new OutboxBatchRow {
+        MessageId = reader.GetGuid(0),
+        // Never NULL here: only a stream this instance owns is continued, so every row has one.
+        StreamId = reader.GetGuid(1),
+        Destination = await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetString(2),
+        MessageType = reader.GetString(3),
+        EnvelopeType = await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4),
+        EventData = reader.GetString(5),
+        Metadata = reader.GetString(6),
+        Scope = await reader.IsDBNullAsync(7, cancellationToken) ? null : reader.GetString(7),
+        Status = reader.GetInt32(8),
+        Attempts = reader.GetInt32(9),
+        PartitionNumber = await reader.IsDBNullAsync(10, cancellationToken) ? null : reader.GetInt32(10),
+        IsEvent = reader.GetBoolean(11),
+        CommitSequence = await reader.IsDBNullAsync(12, cancellationToken) ? null : reader.GetInt64(12),
+        OriginServiceId = await reader.IsDBNullAsync(13, cancellationToken) ? null : reader.GetGuid(13),
+        OriginCommitSequence = await reader.IsDBNullAsync(14, cancellationToken) ? null : reader.GetInt64(14),
+        Error = await reader.IsDBNullAsync(15, cancellationToken) ? null : reader.GetString(15),
+        Priority = reader.GetInt32(16),
       });
     }
     return results;

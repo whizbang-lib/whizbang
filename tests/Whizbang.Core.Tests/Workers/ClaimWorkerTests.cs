@@ -33,7 +33,6 @@ public class ClaimWorkerTests {
 
   private sealed class FakeCoordinator : IWorkCoordinator {
     private readonly Lock _lock = new();
-    private readonly System.Collections.Generic.Dictionary<int, TaskCompletionSource> _callWatchers = [];
     private int _orderCounter;
     public TaskCompletionSource FirstCallSignal { get; } = new();
     public int CallCount { get; private set; }
@@ -53,7 +52,6 @@ public class ClaimWorkerTests {
         CallCount++;
         if (FirstClaimOrder == 0) { FirstClaimOrder = ++_orderCounter; }
         FirstCallSignal.TrySetResult();
-        if (_callWatchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
       }
       return Task.FromResult(BatchToReturn);
     }
@@ -64,19 +62,6 @@ public class ClaimWorkerTests {
         if (FirstHeartbeatOrder == 0) { FirstHeartbeatOrder = ++_orderCounter; }
       }
       return Task.FromResult(true);
-    }
-
-    /// <summary>Resolves once at least <paramref name="n"/> ClaimWorkAsync calls have been observed.</summary>
-    public Task WaitForCallsAsync(int n, TimeSpan timeout) {
-      TaskCompletionSource tcs;
-      lock (_lock) {
-        if (CallCount >= n) { return Task.CompletedTask; }
-        if (!_callWatchers.TryGetValue(n, out tcs!)) {
-          tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-          _callWatchers[n] = tcs;
-        }
-      }
-      return tcs.Task.WaitAsync(timeout);
     }
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -448,9 +433,20 @@ public class ClaimWorkerTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
+    // Count DISTRIBUTED batches, not claims: a claim is counted when it starts, so stopping on the
+    // third claim could cut its distribution short and read as a filtered emit. OnBatchClaimed fires
+    // after a batch's stream ids are all written.
+    var distributed = 0;
+    var threeDistributed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnBatchClaimed += _ => {
+      if (Interlocked.Increment(ref distributed) >= 3) {
+        threeDistributed.TrySetResult();
+      }
+    };
+
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(5));
+    await threeDistributed.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
@@ -458,8 +454,8 @@ public class ClaimWorkerTests {
     await Assert.That(perspectiveDrain.Written).Contains(streamA)
       .Because("stuck IsInFlight flag must not block re-emission — drainer dedups via idempotent SQL");
     await Assert.That(perspectiveDrain.Written).Contains(streamB);
-    await Assert.That(perspectiveDrain.Written.Count).IsGreaterThanOrEqualTo(coord.CallCount * 2)
-      .Because("each poll emits both stream_ids; if the filter is back, count would be < callCount * 2");
+    await Assert.That(perspectiveDrain.Written.Count).IsGreaterThanOrEqualTo(Volatile.Read(ref distributed) * 2)
+      .Because("each poll emits both stream_ids; if the filter is back, count would be < distributed * 2");
   }
 
   [Test]
@@ -502,16 +498,27 @@ public class ClaimWorkerTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
+    // Count DISTRIBUTED batches, not claims: a claim is counted when it starts, so stopping on the
+    // third claim could cut its distribution short and read as a filtered emit. OnBatchClaimed fires
+    // after a batch's stream ids are all written.
+    var distributed = 0;
+    var threeDistributed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnBatchClaimed += _ => {
+      if (Interlocked.Increment(ref distributed) >= 3) {
+        threeDistributed.TrySetResult();
+      }
+    };
+
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(5));
+    await threeDistributed.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(drain.Written).Contains(streamA)
       .Because("stuck IsInFlight flag must not block re-emission");
     await Assert.That(drain.Written).Contains(streamB);
-    await Assert.That(drain.Written.Count).IsGreaterThanOrEqualTo(coord.CallCount * 2);
+    await Assert.That(drain.Written.Count).IsGreaterThanOrEqualTo(Volatile.Read(ref distributed) * 2);
   }
 
   [Test]
@@ -557,16 +564,27 @@ public class ClaimWorkerTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
+    // Count DISTRIBUTED batches, not claims: a claim is counted when it starts, so stopping on the
+    // third claim could cut its distribution short and read as a filtered emit. OnBatchClaimed fires
+    // after a batch's stream ids are all written.
+    var distributed = 0;
+    var threeDistributed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnBatchClaimed += _ => {
+      if (Interlocked.Increment(ref distributed) >= 3) {
+        threeDistributed.TrySetResult();
+      }
+    };
+
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(5));
+    await threeDistributed.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(drain.Written).Contains(streamA)
       .Because("stuck IsInFlight flag must not block re-emission — inbox drain symmetry with perspective + outbox");
     await Assert.That(drain.Written).Contains(streamB);
-    await Assert.That(drain.Written.Count).IsGreaterThanOrEqualTo(coord.CallCount * 2);
+    await Assert.That(drain.Written.Count).IsGreaterThanOrEqualTo(Volatile.Read(ref distributed) * 2);
   }
 
   [Test]

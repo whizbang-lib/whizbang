@@ -283,6 +283,31 @@ shutdown explicitly instead; `BacklogAgeWorker` *returns* on a cancellation rath
 `InboxDispatchWorker`'s per-item catch itself writes to a channel, which can throw once the flusher
 is disposed.
 
+## Finding 7: a few long outbox streams drained one row per stream per claim cycle
+
+The opposite shape from Finding 1: the database and the broker were idle and the backlog still took
+minutes. A job produced tens of thousands of events onto a few dozen streams of several hundred
+rows each, and the outbox
+drained at about one row per stream per two-second claim cycle, 7 to 14 minutes in all. The drain
+rate tracked how many streams still had rows, never the backlog or the claim settings. Three causes:
+the claim handed the outbox acquisition its adaptive STREAM window (floor 25, grown only on inbox
+evidence) as a ROW cap, so the oldest rows it leased were one row on each of the oldest streams; a
+stream then waited for the next claim cycle for its next row; and a claim that took new rows on the
+same streams read as a re-offer, so the loop napped before claiming again.
+
+Migration 171 and the loop around it: a claim leases a run of each chosen stream's consecutive rows
+under its own outbox row bound (`MaxOutboxRowsPerBatch`, `OutboxRunLength`); the drain continues a
+stream from the lease it holds (`wh_continue_outbox_streams`) instead of waiting a cycle; a failed row
+stops its stream and `process_outbox_failures` releases the rest of the run behind the retry; and a
+claim whose outbox acquisition filled its bound (`whizbang.outbox_acquisition_full=true`) is followed
+at once by another, bounded by `MaxOutstandingOutboxRows`. `OutboxStreamRunDrainMeasurementTests`
+measures 880 claim cycles before and 2 after for 44 x 500 rows at a window of 25.
+
+**Rule:** a stream count is never a row bound. A drain rate that scales with the number of streams
+that have work, rather than with the work, means something is moving one row per stream per cycle.
+Every run walk is priced by the run (`idx_outbox_stream_run`, keyed in the run's order), never by the
+stream's backlog.
+
 ## Two consumer-side findings, recorded because the framework cannot detect them
 
 - A consumer-owned trigger cast a document key's text to `timestamptz`, which fails on the canonical

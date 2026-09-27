@@ -358,22 +358,34 @@ public partial class DapperWorkCoordinator(
       "SELECT * FROM fetch_outbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
       new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes });
 
-    return [.. rows.Select(r => new OutboxBatchRow {
-      MessageId = r.message_id,
-      StreamId = r.stream_id,
-      Destination = r.destination,
-      MessageType = r.message_type,
-      EnvelopeType = r.envelope_type,
-      EventData = r.event_data,
-      Metadata = r.metadata,
-      Scope = r.scope,
-      Status = r.status,
-      Attempts = r.attempts,
-      PartitionNumber = r.partition_number,
-      IsEvent = r.is_event,
-      Error = r.error,
-      Priority = r.priority,
-    })];
+    return [.. rows.Select(_toOutboxBatchRow)];
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<OutboxBatchRow>> ContinueOutboxStreamsAsync(
+    IReadOnlyList<OutboxStreamCursor> streams,
+    Guid instanceId,
+    int runLength,
+    long? maxBytes,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streams);
+    if (streams.Count == 0) {
+      return [];
+    }
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var rows = await __scope.Connection.QueryAsync<OutboxBatchRowDto>(
+      "SELECT * FROM wh_continue_outbox_streams(@p_instance_id, @p_stream_ids, @p_after_ids, @p_run_length, @p_max_bytes)",
+      new {
+        p_instance_id = instanceId,
+        p_stream_ids = streams.Select(s => s.StreamId).ToArray(),
+        p_after_ids = streams.Select(s => s.LastPublishedMessageId).ToArray(),
+        p_run_length = runLength,
+        p_max_bytes = maxBytes
+      });
+
+    // Mapped exactly as fetch_outbox_batch is, whose shape the continuation returns.
+    return [.. rows.Select(_toOutboxBatchRow)];
   }
 
   /// <inheritdoc />
@@ -493,6 +505,23 @@ public partial class DapperWorkCoordinator(
   }
 
 #pragma warning disable CA1707, IDE1006, S1144 // Dapper DTO with snake_case to match SQL function output columns.
+  private static OutboxBatchRow _toOutboxBatchRow(OutboxBatchRowDto r) => new() {
+    MessageId = r.message_id,
+    StreamId = r.stream_id,
+    Destination = r.destination,
+    MessageType = r.message_type,
+    EnvelopeType = r.envelope_type,
+    EventData = r.event_data,
+    Metadata = r.metadata,
+    Scope = r.scope,
+    Status = r.status,
+    Attempts = r.attempts,
+    PartitionNumber = r.partition_number,
+    IsEvent = r.is_event,
+    Error = r.error,
+    Priority = r.priority,
+  };
+
   private sealed class OutboxBatchRowDto {
     public Guid message_id { get; set; }
     public Guid? stream_id { get; set; }

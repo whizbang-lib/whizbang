@@ -735,17 +735,15 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncEventTracker, tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
+    // Processing lands once the awaiter is waiting: a completion signal, not a delay that loses the
+    // race to a descheduled test thread and reads as NoPendingEvents.
+    var awaited = new ProcessWhenAwaitedTracker(syncEventTracker,
+      t => t.MarkProcessedByPerspective([eventId1, eventId2], perspectiveName));
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: awaited, tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All()
         .WithTimeout(TimeSpan.FromSeconds(5))
         .Build();
-
-    // Act - Signal processing after a short delay
-    _ = Task.Run(async () => {
-      await Task.Delay(50);
-      syncEventTracker.MarkProcessedByPerspective([eventId1, eventId2], perspectiveName);
-    });
 
     var result = await awaiter.WaitAsync(typeof(TestPerspective), options);
 
@@ -770,13 +768,10 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncEventTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
-
-    // Signal processing after a short delay
-    _ = Task.Run(async () => {
-      await Task.Delay(50);
-      syncEventTracker.MarkProcessedByPerspective([eventId], perspectiveName);
-    });
+    // Processing lands once the awaiter is waiting (a completion signal, not a delay).
+    var awaited = new ProcessWhenAwaitedTracker(syncEventTracker,
+      t => t.MarkProcessedByPerspective([eventId], perspectiveName));
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: awaited, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -805,18 +800,15 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncEventTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
+    // Only the string event is processed, once the awaiter is waiting (a completion signal, not a delay).
+    var awaited = new ProcessWhenAwaitedTracker(syncEventTracker,
+      t => t.MarkProcessedByPerspective([stringEventId], perspectiveName));
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: awaited, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Verify GetPendingEvents filtering returns only string events
     var stringEvents = syncEventTracker.GetPendingEvents(streamId, perspectiveName, [typeof(string)]);
     await Assert.That(stringEvents.Count).IsEqualTo(1);
     await Assert.That(stringEvents[0].EventId).IsEqualTo(stringEventId);
-
-    // Signal only the string event as processed
-    _ = Task.Run(async () => {
-      await Task.Delay(50);
-      syncEventTracker.MarkProcessedByPerspective([stringEventId], perspectiveName);
-    });
 
     // Act - filter for string only
     var result = await awaiter.WaitForStreamAsync(
@@ -1012,13 +1004,10 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: singletonTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
-
-    // Signal only the explicit eventId as processed (not the other event)
-    _ = Task.Run(async () => {
-      await Task.Delay(50);
-      singletonTracker.MarkProcessedByPerspective([eventId], perspectiveName);
-    });
+    // Only the explicit eventId is processed (not the other event), once the awaiter is waiting.
+    var awaited = new ProcessWhenAwaitedTracker(singletonTracker,
+      t => t.MarkProcessedByPerspective([eventId], perspectiveName));
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: awaited, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - Explicit eventIdToAwait should take priority over singleton tracker's other events
     var result = await awaiter.WaitForStreamAsync(
@@ -1271,5 +1260,40 @@ public class PerspectiveSyncAwaiterTests {
   private sealed class NullScope : IDisposable {
     public static NullScope Instance { get; } = new();
     public void Dispose() { }
+  }
+
+  /// <summary>
+  /// A tracker that processes events the moment an awaiter starts waiting on them, and not before.
+  /// Replaces a delayed <c>Task.Run</c> that marked the events processed: under load that ran before
+  /// the awaiter read its pending set, and the test read NoPendingEvents instead of Synced.
+  /// </summary>
+  private sealed class ProcessWhenAwaitedTracker(SyncEventTracker inner, Action<SyncEventTracker> onAwaited) : ISyncEventTracker {
+    private int _fired;
+
+    private Task<bool> _processAfter(Task<bool> wait) {
+      if (Interlocked.Exchange(ref _fired, 1) == 0) {
+        onAwaited(inner);
+      }
+      return wait;
+    }
+
+    public void TrackEvent(Type eventType, Guid eventId, Guid streamId, string perspectiveName) =>
+      inner.TrackEvent(eventType, eventId, streamId, perspectiveName);
+    public IReadOnlyList<TrackedSyncEvent> GetPendingEvents(Guid streamId, string perspectiveName, Type[]? eventTypes = null) =>
+      inner.GetPendingEvents(streamId, perspectiveName, eventTypes);
+    public void MarkProcessed(IEnumerable<Guid> eventIds) => inner.MarkProcessed(eventIds);
+    public IReadOnlyList<Guid> GetAllTrackedEventIds() => inner.GetAllTrackedEventIds();
+    public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, Guid? awaiterId = null, CancellationToken cancellationToken = default) =>
+      _processAfter(inner.WaitForEventsAsync(eventIds, timeout, awaiterId, cancellationToken));
+    public void MarkProcessedByPerspective(IEnumerable<Guid> eventIds, string perspectiveName) =>
+      inner.MarkProcessedByPerspective(eventIds, perspectiveName);
+    public Task<bool> WaitForPerspectiveEventsAsync(IReadOnlyList<Guid> eventIds, string perspectiveName, TimeSpan timeout, Guid? awaiterId = null, CancellationToken cancellationToken = default) =>
+      _processAfter(inner.WaitForPerspectiveEventsAsync(eventIds, perspectiveName, timeout, awaiterId, cancellationToken));
+    public Task<bool> WaitForAllPerspectivesAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, Guid? awaiterId = null, CancellationToken cancellationToken = default) =>
+      _processAfter(inner.WaitForAllPerspectivesAsync(eventIds, timeout, awaiterId, cancellationToken));
+    public void UnregisterAwaiter(Guid awaiterId) => inner.UnregisterAwaiter(awaiterId);
+    public int CleanupStaleEntries(TimeSpan maxAge) => inner.CleanupStaleEntries(maxAge);
+    public void MarkPerspectiveStreamProcessed(string perspectiveName, Guid streamId) =>
+      inner.MarkPerspectiveStreamProcessed(perspectiveName, streamId);
   }
 }

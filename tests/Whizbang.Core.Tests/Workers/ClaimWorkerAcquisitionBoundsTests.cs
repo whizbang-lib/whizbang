@@ -320,6 +320,169 @@ public class ClaimWorkerAcquisitionBoundsTests {
       .Because("a release cut short by shutdown propagates the cancellation to the loop, which exits; it is not a release failure to log and swallow");
   }
 
+  // ---- #917: the outbox has its own row bound, leases runs, and re-claims after a full batch -------
+
+  [Test]
+  public async Task Claim_CarriesTheOutboxRowBoundAndRun_IndependentOfTheStreamWindowAsync() {
+    var coord = new ScriptedCoordinator(_ => _emptyBatch());
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      MaxStreamsPerBatch = 1000,
+      MinStreamsPerBatch = 25,
+      MaxOutboxRowsPerBatch = 500,
+      OutboxRunLength = 40,
+      AdaptiveOutstandingBudget = false,
+    });
+
+    await coord.WaitForCallsAsync(1, TimeSpan.FromSeconds(5));
+
+    await Assert.That(coord.Requests[0].MaxStreams).IsEqualTo(25)
+      .Because("precondition: the stream window starts at its floor");
+    await Assert.That(coord.Requests[0].MaxOutboxAcquireRows).IsEqualTo(500)
+      .Because("the stream window used as the outbox row cap leased one row on each of the oldest streams per "
+             + "claim, so a backlog on a few long streams drained one row per stream per cycle");
+    await Assert.That(coord.Requests[0].OutboxRunLength).IsEqualTo(40);
+  }
+
+  [Test]
+  public async Task Claim_OutboxRowBound_NarrowsToTheHeadroomUnderItsCeilingAsync() {
+    var coord = new ScriptedCoordinator(_ => _emptyBatch()) {
+      OutstandingToReport = new OutstandingWork { InboxRows = 0, OutboxRows = 9_800, PerspectiveRows = 0 },
+    };
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      MaxOutboxRowsPerBatch = 1000,
+      MaxOutstandingOutboxRows = 10_000,
+    }, completionMeter: new WorkCompletionMeter());
+
+    await coord.WaitForCallsAsync(2, TimeSpan.FromSeconds(5));
+
+    await Assert.That(coord.Requests[0].MaxOutboxAcquireRows).IsEqualTo(1000)
+      .Because("before anything is measured the configured batch applies");
+    await Assert.That(coord.Requests[1].MaxOutboxAcquireRows).IsEqualTo(200)
+      .Because("holding 9,800 of a 10,000-row ceiling leaves room for 200; this is what ends a run of immediate "
+             + "re-claims when the drain falls behind");
+  }
+
+  [Test]
+  public async Task Claim_OutboxRowBound_IsZeroAtTheCeilingAsync() {
+    var coord = new ScriptedCoordinator(_ => _emptyBatch()) {
+      OutstandingToReport = new OutstandingWork { InboxRows = 0, OutboxRows = 12_000, PerspectiveRows = 0 },
+    };
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      MaxOutstandingOutboxRows = 10_000,
+    }, completionMeter: new WorkCompletionMeter());
+
+    await coord.WaitForCallsAsync(2, TimeSpan.FromSeconds(5));
+
+    await Assert.That(coord.Requests[1].MaxOutboxAcquireRows).IsEqualTo(0)
+      .Because("an instance over its ceiling leases nothing new and only re-offers what it holds");
+  }
+
+  [Test]
+  public async Task Claim_OutboxRowBoundSwitchedOff_LeavesTheStoresPreviousBoundAsync() {
+    var coord = new ScriptedCoordinator(_ => _emptyBatch());
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      MaxOutboxRowsPerBatch = 0,
+      OutboxRunLength = 0,
+      AdaptiveOutstandingBudget = false,
+    });
+
+    await coord.WaitForCallsAsync(1, TimeSpan.FromSeconds(5));
+
+    await Assert.That(coord.Requests[0].MaxOutboxAcquireRows).IsNull()
+      .Because("null tells the store to bound outbox acquisition by the stream window, as it did before");
+    await Assert.That(coord.Requests[0].OutboxRunLength).IsEqualTo(1)
+      .Because("a run below one is one row per chosen stream");
+  }
+
+  [Test]
+  public async Task FullOutboxAcquisition_ClaimsAgainWithoutSpacingAsync() {
+    // The same outbox streams every time, as a backlog on a few long streams looks claim after claim,
+    // but each claim's acquisition filled its bound. Every wait is a minute long and the drain linger
+    // (whose tight 500 ms cadence would otherwise stand in for the re-claim) is off: a loop that waited
+    // even once could not reach its fifth claim inside the test's window.
+    var stream = TrackedGuid.New().Value;
+    var coord = new ScriptedCoordinator(_ => new WorkBatch {
+      OutboxWork = [],
+      InboxWork = [],
+      PerspectiveWork = [],
+      OutboxStreamIds = [stream],
+      OutboxAcquisitionFull = true,
+    }) {
+      OutstandingToReport = new OutstandingWork { InboxRows = 0, OutboxRows = 100, PerspectiveRows = 0 },
+    };
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 60_000,
+      PollingMaxIntervalMilliseconds = 60_000,
+      NotifyDrainLingerSeconds = 0,
+    }, completionMeter: new WorkCompletionMeter());
+
+    await coord.WaitForCallsAsync(5, TimeSpan.FromSeconds(30));
+
+    await Assert.That(harness.Worker.ImmediateReclaimCount).IsGreaterThanOrEqualTo(4)
+      .Because("a full acquisition is proof there is more work; a backlog inserted before the loop reached it rings "
+             + "no further doorbells, so waiting took one bounded batch per interval");
+  }
+
+  [Test]
+  public async Task FullOutboxAcquisition_WithoutMeasuredHoldings_KeepsTheCadenceAsync() {
+    var stream = TrackedGuid.New().Value;
+    var coord = new ScriptedCoordinator(_ => new WorkBatch {
+      OutboxWork = [],
+      InboxWork = [],
+      PerspectiveWork = [],
+      OutboxStreamIds = [stream],
+      OutboxAcquisitionFull = true,
+    });
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      AdaptiveOutstandingBudget = false,
+    });
+
+    await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(10));
+
+    await Assert.That(harness.Worker.ImmediateReclaimCount).IsEqualTo(0)
+      .Because("with nothing measuring what the instance holds, back-to-back full claims would lease the whole "
+             + "backlog; the loop keeps its cadence instead");
+  }
+
+  [Test]
+  public async Task ReofferOfHeldOutboxStreams_WithHoldingsMeasured_StillSpacesOutAsync() {
+    // The same held streams, nothing newly acquired: a re-offer. Measured holdings must not turn it
+    // into an immediate re-claim.
+    var stream = TrackedGuid.New().Value;
+    var coord = new ScriptedCoordinator(_ => new WorkBatch {
+      OutboxWork = [],
+      InboxWork = [],
+      PerspectiveWork = [],
+      OutboxStreamIds = [stream],
+    }) {
+      OutstandingToReport = new OutstandingWork { InboxRows = 0, OutboxRows = 100, PerspectiveRows = 0 },
+    };
+    var claimedAt = new List<long>();
+    coord.OnClaim = _ => claimedAt.Add(System.Diagnostics.Stopwatch.GetTimestamp());
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 50,
+      PollingMaxIntervalMilliseconds = 2_000,
+      NotifyHealthyPollingIntervalMilliseconds = null,
+    }, completionMeter: new WorkCompletionMeter());
+
+    await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(10));
+
+    await Assert.That(harness.Worker.ImmediateReclaimCount).IsEqualTo(0);
+    await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(claimedAt[1], claimedAt[2]))
+      .IsGreaterThan(TimeSpan.FromMilliseconds(70))
+      .Because("re-offering the same held work is idle for cadence purposes; only a full ACQUISITION re-claims at once");
+  }
+
   // ---- harness -------------------------------------------------------------------------------------
 
   private static WorkBatch _emptyBatch() => new() { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
