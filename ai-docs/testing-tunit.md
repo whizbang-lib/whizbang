@@ -12,7 +12,8 @@ TUnit is a modern, source-generation-based testing framework that works fundamen
 2. [TUnit Test Patterns](#tunit-test-patterns)
 3. [Rocks Mocking Library](#rocks-mocking-library)
 4. [Bogus Fake Data Generation](#bogus-fake-data-generation)
-5. [Common Mistakes](#common-mistakes) (includes **Mistake 7: NEVER use Task.Delay in tests**)
+5. [Property Tests with FsCheck](#property-tests-with-fscheck)
+6. [Common Mistakes](#common-mistakes) (includes **Mistake 7: NEVER use Task.Delay in tests**)
 
 ---
 
@@ -546,6 +547,45 @@ public class OrderServiceTests {
     }
 }
 ```
+
+---
+
+## Property Tests with FsCheck
+
+FsCheck generates inputs for a property; TUnit stays the test framework. There is no FsCheck
+runner integration here: a property runs inside an ordinary `[Test]` through
+`Helpers/PropertyCheck.Run`, which throws on the first counterexample, so the TUnit test fails with
+the property name, the input that broke it and the seed.
+
+```csharp
+using FsCheck;          // Gen<T> and friends live in the root namespace
+using FsCheck.Fluent;   // Prop.ForAll, Gen.Choose, ArbMap.Default ...
+
+[Test]
+[Category("Property")]
+public async Task FromCanonical_AnyDerivations_AreStableAndSortBySourceThenOrdinalAsync() {
+    var property = Prop.ForAll(_pair.ToArbitrary(), pair => _holdsFor(pair));
+
+    await Assert.That(() => PropertyCheck.Run(nameof(DerivedIdentityPropertyTests), property, maxTest: 500, seed: 0x5EED_0D1D))
+      .ThrowsNothing();
+}
+```
+
+Rules:
+
+- **Fixed seed, modest `maxTest`.** Properties run in the unit suite on every PR; a fixed seed makes CI and
+  local runs explore the same inputs, so a failure always reproduces. Change the seed locally to explore.
+- **Pick properties whose failure is a real bug**: ordering, round-trips, invariants between flags. Prove the
+  property can fail by breaking the code under test once before trusting it.
+- **Keep `using FsCheck;`.** OpenSSF Scorecard's Fuzzing check detects FsCheck only by a literal
+  `using FsCheck;` in a `.cs` file; `using FsCheck.Fluent;` does not match. The using must reference
+  something real (`Gen<T>`, `Property`, `Config`, `Check`) or `dotnet format` removes it and the check drops
+  to 0. `Helpers/PropertyCheck.cs` keeps one for that reason.
+- **Test projects only.** FsCheck is referenced from the test projects that use it (today
+  `Whizbang.Core.Tests`); nothing that ships depends on it.
+
+Examples: `ValueObjects/Uuid7GeneratorPropertyTests.cs`, `Messaging/DerivedIdentityPropertyTests.cs`,
+`ValueObjects/TrackedGuidPropertyTests.cs` in `tests/Whizbang.Core.Tests`.
 
 ---
 

@@ -28,6 +28,7 @@
     <PackageReference Include="TUnit" />
     <PackageReference Include="Rocks" />
     <PackageReference Include="Bogus" />
+    <PackageReference Include="FsCheck" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
