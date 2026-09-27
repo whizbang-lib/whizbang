@@ -137,6 +137,27 @@ public class BaseSagaServiceCoverageTests {
       .Because("a declined recovery emits nothing at all — not even a lifecycle event");
   }
 
+  // With no projection loader wired, a null projection means "cannot see", not "the saga is gone".
+  // Ending the chain on it would take the watchdog away from every service that relies on the
+  // in-memory fast path alone, so the tick keeps re-arming exactly as it did before a missing saga
+  // started ending the chain.
+  [Test]
+  public async Task TryRecoverViaWatchdogTickAsync_WithNoProjectionLoaderWired_StillReArmsAsync() {
+    var emitter = new RecordingEmitter();
+    var svc = new DefaultLoaderSagaService(emitter);
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(new SagaCompletionWatchdogTickEvent {
+      StreamId = _sagaId,
+      SagaName = SAGA_NAME,
+      EntityId = _entityId,
+      RescheduleCount = 0,
+    }, CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.ReArmed)
+      .Because("an absent loader is not evidence that the saga is missing");
+    await Assert.That(emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Single().RescheduleCount).IsEqualTo(1);
+  }
+
   // ── Test doubles ───────────────────────────────────────────────────────
 
   private sealed class RecordingEmitter : ISagaEventEmitter {
