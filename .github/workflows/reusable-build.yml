@@ -46,7 +46,7 @@ jobs:
           restore-keys: ${{ runner.os }}-nuget-
 
       - name: Restore Dependencies
-        run: dotnet restore
+        run: dotnet restore --locked-mode
 
       - name: Build Solution
         env:

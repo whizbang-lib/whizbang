@@ -30,8 +30,8 @@ jobs:
       with:
         dotnet-version: '10.0.x'
 
-    - name: Restore dependencies to generate lockfile
-      run: dotnet restore
+    - name: Restore dependencies from the committed lock files
+      run: dotnet restore --locked-mode
 
     - name: Install and Run OSV Scanner
       run: |

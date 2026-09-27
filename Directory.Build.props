@@ -6,6 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 
+    <!-- Restore from committed packages.lock.json files. CI restores in locked mode, so a
+         build can only use the exact package versions (and content hashes) reviewed in the lock
+         files; a local restore updates them when Directory.Packages.props changes, and the
+         updated lock files are committed alongside it. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+
     <!-- Default: Don't pack projects unless explicitly set -->
     <!-- src/ projects override this via src/Directory.Build.props -->
     <IsPackable>false</IsPackable>

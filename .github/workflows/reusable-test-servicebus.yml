@@ -63,7 +63,7 @@ jobs:
 
       - name: Restore Dependencies
         if: inputs.artifact-name == ''
-        run: dotnet restore
+        run: dotnet restore --locked-mode
 
       - name: Build Solution
         if: inputs.artifact-name == ''

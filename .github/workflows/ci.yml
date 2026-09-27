@@ -405,7 +405,7 @@ jobs:
         run: |
           set -euo pipefail
           QUEUE_VERSION=$(cat queue-manifest/version.txt)
-          dotnet restore
+          dotnet restore --locked-mode
           BUILD_ARGS=(--no-restore --configuration Release)
           if [ -n "$QUEUE_VERSION" ]; then BUILD_ARGS+=("-p:Version=$QUEUE_VERSION"); fi
           dotnet build "${BUILD_ARGS[@]}"
@@ -675,7 +675,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore Dependencies
-        run: dotnet restore
+        run: dotnet restore --locked-mode
 
       # Whitespace and style only. The analyzers pass would run the third-party analyzers too, and
       # this job has not built the tree: the source generators that ship as project references

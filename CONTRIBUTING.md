@@ -121,6 +121,15 @@ See [ai-docs/testing-tunit.md](ai-docs/testing-tunit.md) and [ai-docs/tdd-strict
 
 See [src/Whizbang.Generators/ai-docs/](src/Whizbang.Generators/ai-docs/) for detailed guidelines.
 
+### Package Versions and Lock Files
+
+- Package versions live in `Directory.Packages.props` (central package management); a project's
+  `PackageReference` carries no version.
+- Every project has a committed `packages.lock.json`. CI restores with `--locked-mode`, so a
+  build can only use the exact versions and content hashes in those files.
+- After adding a package or changing a version, run `dotnet restore Whizbang.slnx` and commit the
+  updated lock files with the change. A pull request whose lock files are stale fails at restore.
+
 ### Boy Scout Rule
 
 **Leave code better than you found it.**
