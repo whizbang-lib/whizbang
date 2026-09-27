@@ -3,6 +3,9 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <Description>Saga event interfaces, item-state enums, and SagaContext. Consumed by Whizbang.Sagas runtime + Whizbang.Sagas.Generators source generator; carries no behavior so it can ship to AOT clients without dragging the runtime.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Foundation</WhizbangPackageTier>
+    <WhizbangPackageArea>Pattern contracts</WhizbangPackageArea>
     <TargetFramework>net10.0</TargetFramework>
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>

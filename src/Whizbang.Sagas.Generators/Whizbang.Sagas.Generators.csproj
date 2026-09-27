@@ -3,6 +3,9 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <Description>Source generator for Whizbang.Sagas. Emits the nine nested saga event classes + typed Service + DI extension method from the [Saga&lt;TBase&gt;("Name")] attribute, removing boilerplate from every consumer that authors a saga.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Patterns</WhizbangPackageTier>
+    <WhizbangPackageArea>Sagas</WhizbangPackageArea>
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>Whizbang.Sagas.Generators</RootNamespace>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>

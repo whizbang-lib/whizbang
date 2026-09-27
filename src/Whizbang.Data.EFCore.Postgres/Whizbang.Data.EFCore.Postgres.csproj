@@ -19,6 +19,9 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <Description>PostgreSQL Entity Framework Core integration for Whizbang with source-generated configuration.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Application</WhizbangPackageTier>
+    <WhizbangPackageArea>Data store</WhizbangPackageArea>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <Description>HotChocolate GraphQL integration for Whizbang Lenses with filtering, sorting, paging, and projection support.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Application</WhizbangPackageTier>
+    <WhizbangPackageArea>API surface</WhizbangPackageArea>
   </PropertyGroup>
 
   <ItemGroup>

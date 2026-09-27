@@ -3,6 +3,9 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <Description>PostgreSQL-specific data layer for Whizbang including connection management, migrations, and Npgsql integration.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Foundation</WhizbangPackageTier>
+    <WhizbangPackageArea>Database server</WhizbangPackageArea>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

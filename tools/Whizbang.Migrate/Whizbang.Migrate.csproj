@@ -15,6 +15,9 @@
     <Version>0.1.0</Version>
     <Authors>Whizbang Contributors</Authors>
     <Description>Migration tool for converting Marten/Wolverine projects to Whizbang with git worktree isolation and journaling</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Application</WhizbangPackageTier>
+    <WhizbangPackageArea>Tools</WhizbangPackageArea>
     <PackageTags>whizbang;migration;marten;wolverine;cli;roslyn</PackageTags>
     <PackageProjectUrl>https://github.com/whizbang-lib/whizbang</PackageProjectUrl>
     <RepositoryUrl>https://github.com/whizbang-lib/whizbang</RepositoryUrl>

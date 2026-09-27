@@ -2,6 +2,9 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <Description>Core types, interfaces, and messaging infrastructure for building event-driven, CQRS, and event-sourced applications with zero reflection and AOT compatibility.</Description>
+    <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
+    <WhizbangPackageTier>Application</WhizbangPackageTier>
+    <WhizbangPackageArea>Core</WhizbangPackageArea>
     <RootNamespace>Whizbang.Core</RootNamespace>
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
