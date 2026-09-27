@@ -206,23 +206,28 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var seen = new HashSet<string>(System.StringComparer.Ordinal);
     for (INamedTypeSymbol? t = type; t is not null && t.SpecialType != SpecialType.System_Object; t = t.BaseType) {
       foreach (var member in t.GetMembers().OfType<IPropertySymbol>()) {
-        if (member.IsStatic || member.IsIndexer) {
-          continue;
-        }
-        if (member.DeclaredAccessibility != Accessibility.Public) {
-          continue;
-        }
-        if (member.GetMethod is null || member.GetMethod.DeclaredAccessibility != Accessibility.Public) {
-          continue;
-        }
-        if (member.Name == "EqualityContract") {
-          continue;
-        }
-        if (seen.Add(member.Name)) {
+        if (_isSerializableProperty(member) && seen.Add(member.Name)) {
           yield return member;
         }
       }
     }
+  }
+
+  /// <summary>
+  /// A public, non-static, non-indexer property with a public getter that is not the compiler-generated
+  /// record <c>EqualityContract</c>.
+  /// </summary>
+  private static bool _isSerializableProperty(IPropertySymbol member) {
+    if (member.IsStatic || member.IsIndexer) {
+      return false;
+    }
+    if (member.DeclaredAccessibility != Accessibility.Public) {
+      return false;
+    }
+    if (member.GetMethod is null || member.GetMethod.DeclaredAccessibility != Accessibility.Public) {
+      return false;
+    }
+    return member.Name != "EqualityContract";
   }
 
   private static string _sha256Hex(string input) {
@@ -248,17 +253,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var assemblyName = compilation.AssemblyName ?? "UnknownAssembly";
     var namespaceName = $"{assemblyName}.Generated";
 
-    // pinned id -> distinct former names, from the committed ledger.
-    var formerByPinnedId = new Dictionary<string, List<string>>(System.StringComparer.OrdinalIgnoreCase);
-    foreach (var pf in formerNames) {
-      if (!formerByPinnedId.TryGetValue(pf.PinnedId, out var list)) {
-        list = [];
-        formerByPinnedId[pf.PinnedId] = list;
-      }
-      if (!list.Contains(pf.FormerClrTypeName)) {
-        list.Add(pf.FormerClrTypeName);
-      }
-    }
+    var formerByPinnedId = _indexFormerNamesByPinnedId(formerNames);
 
     var ordered = infos.OrderBy(i => i.TypeName, System.StringComparer.Ordinal).ToList();
 
@@ -285,40 +280,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
 
     source.AppendLine("  private static readonly IReadOnlyList<MessageTypeCatalogEntry> _all = new MessageTypeCatalogEntry[] {");
     foreach (var info in ordered) {
-      var pinnedIdLiteral = info.PinnedId is null ? "null" : $"\"{info.PinnedId}\"";
-      var initParts = new List<string>();
-      if (info.PinnedId is not null &&
-          formerByPinnedId.TryGetValue(info.PinnedId, out var formers) &&
-          formers.Count > 0) {
-        var arr = string.Join(", ", formers.Select(f => $"\"{f}\""));
-        initParts.Add($"FormerNames = new string[] {{ {arr} }}");
-      }
-      if (info.EphemeralDestruction is not null) {
-        initParts.Add(
-          "Ephemeral = new global::Whizbang.Core.Attributes.EphemeralInfo(" +
-          $"global::Whizbang.Core.Attributes.Destruction.{info.EphemeralDestruction}, " +
-          $"global::Whizbang.Core.Attributes.TransientStorage.{info.EphemeralStorage}, " +
-          $"{info.EphemeralRewindGraceSeconds}, " +
-          $"{info.EphemeralTtlSeconds})");
-      }
-      if (info.IsCollective) {
-        initParts.Add("IsCollective = true");
-      }
-      if (info.IsComposite) {
-        initParts.Add("IsComposite = true");
-      }
-      if (info.IsCompacted) {
-        initParts.Add("IsCompacted = true");
-      }
-      if (info.MaxPayloadBytes is { } maxPayloadBytes) {
-        initParts.Add($"MaxPayloadBytes = {maxPayloadBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}L");
-      }
-      // Type-definition fingerprint (F-3): every entry carries its deterministic settings + schema hashes.
-      // These two are always added, so initParts is never empty — the initializer is unconditional.
-      initParts.Add($"SettingsHash = \"{info.SettingsHash}\"");
-      initParts.Add($"SchemaHash = \"{info.SchemaHash}\"");
-      var initializer = $" {{ {string.Join(", ", initParts)} }}";
-      source.AppendLine($"    new(typeof({info.TypeName}), \"{info.ClrTypeName}\", \"{info.Kind}\", {pinnedIdLiteral}){initializer},");
+      source.AppendLine(_buildCatalogEntryLine(info, formerByPinnedId));
     }
     source.AppendLine("  };");
     source.AppendLine();
@@ -340,6 +302,65 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     source.AppendLine("}");
 
     context.AddSource("MessageTypeCatalog.g.cs", source.ToString());
+  }
+
+  /// <summary>
+  /// Pinned id to distinct former CLR type names, from the committed ledger.
+  /// </summary>
+  private static Dictionary<string, List<string>> _indexFormerNamesByPinnedId(ImmutableArray<PinnedFormerName> formerNames) {
+    var formerByPinnedId = new Dictionary<string, List<string>>(System.StringComparer.OrdinalIgnoreCase);
+    foreach (var pf in formerNames) {
+      if (!formerByPinnedId.TryGetValue(pf.PinnedId, out var list)) {
+        list = [];
+        formerByPinnedId[pf.PinnedId] = list;
+      }
+      if (!list.Contains(pf.FormerClrTypeName)) {
+        list.Add(pf.FormerClrTypeName);
+      }
+    }
+    return formerByPinnedId;
+  }
+
+  /// <summary>
+  /// One <c>new(typeof(...), ...) { ... }</c> element of the generated catalog array, without the line break.
+  /// </summary>
+  private static string _buildCatalogEntryLine(
+      MessageTypeCatalogEntryInfo info,
+      Dictionary<string, List<string>> formerByPinnedId) {
+    var pinnedIdLiteral = info.PinnedId is null ? "null" : $"\"{info.PinnedId}\"";
+    var initParts = new List<string>();
+    if (info.PinnedId is not null &&
+        formerByPinnedId.TryGetValue(info.PinnedId, out var formers) &&
+        formers.Count > 0) {
+      var arr = string.Join(", ", formers.Select(f => $"\"{f}\""));
+      initParts.Add($"FormerNames = new string[] {{ {arr} }}");
+    }
+    if (info.EphemeralDestruction is not null) {
+      initParts.Add(
+        "Ephemeral = new global::Whizbang.Core.Attributes.EphemeralInfo(" +
+        $"global::Whizbang.Core.Attributes.Destruction.{info.EphemeralDestruction}, " +
+        $"global::Whizbang.Core.Attributes.TransientStorage.{info.EphemeralStorage}, " +
+        $"{info.EphemeralRewindGraceSeconds}, " +
+        $"{info.EphemeralTtlSeconds})");
+    }
+    if (info.IsCollective) {
+      initParts.Add("IsCollective = true");
+    }
+    if (info.IsComposite) {
+      initParts.Add("IsComposite = true");
+    }
+    if (info.IsCompacted) {
+      initParts.Add("IsCompacted = true");
+    }
+    if (info.MaxPayloadBytes is { } maxPayloadBytes) {
+      initParts.Add($"MaxPayloadBytes = {maxPayloadBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}L");
+    }
+    // Type-definition fingerprint (F-3): every entry carries its deterministic settings + schema hashes.
+    // These two are always added, so initParts is never empty — the initializer is unconditional.
+    initParts.Add($"SettingsHash = \"{info.SettingsHash}\"");
+    initParts.Add($"SchemaHash = \"{info.SchemaHash}\"");
+    var initializer = $" {{ {string.Join(", ", initParts)} }}";
+    return $"    new(typeof({info.TypeName}), \"{info.ClrTypeName}\", \"{info.Kind}\", {pinnedIdLiteral}){initializer},";
   }
 }
 
