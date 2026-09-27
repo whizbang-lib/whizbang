@@ -1,4 +1,12 @@
 <Project>
+  <!-- The trimming/AOT analyzers add an implicit Microsoft.NET.ILLink.Tasks reference whose version
+       follows whichever .NET SDK patch happens to be installed. With committed lock files and
+       locked-mode restore, that would make every SDK patch (and every machine on a different one)
+       fail restore. Pin it so the lock files record one version everywhere; move it with the SDK. -->
+  <ItemGroup>
+    <KnownILLinkPack Update="Microsoft.NET.ILLink.Tasks" ILLinkPackVersion="10.0.12" />
+  </ItemGroup>
+
   <!-- Extract individual project registry -->
   <Target Name="ExtractMessageRegistry" AfterTargets="Build">
     <PropertyGroup>
