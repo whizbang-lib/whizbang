@@ -37,6 +37,7 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/DerivedIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DerivedIdentityPropertyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/EmissionIdentityTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeChildIdentityTests.cs</tests>
 internal static class DerivedIdentity {
