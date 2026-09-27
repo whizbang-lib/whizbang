@@ -252,6 +252,49 @@ public sealed partial class DispatcherSecurityBuilder {
   }
 
   /// <summary>
+  /// Runs arbitrary work with the explicit security context in force, then restores the caller's.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The other verbs establish the context around a single dispatch. Background work that has no
+  /// request of its own often has to <b>read</b> in a tenant before it can decide what to publish: a
+  /// maintenance sweep reading a tenant's records through a tenant-scoped lens, which refuses to run
+  /// without an ambient tenant. This runs such work under the same context those verbs would use, so
+  /// the reads and any dispatch inside them see one tenant and one identity.
+  /// </para>
+  /// <para>
+  /// The context is restored whether the work completes or throws, so a worker iterating over records
+  /// of several tenants never carries one tenant's context into the next record.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TResult">What the work returns.</typeparam>
+  /// <param name="work">The work to run; receives <paramref name="cancellationToken"/>.</param>
+  /// <param name="cancellationToken">Passed to the work.</param>
+  /// <returns>The work's result.</returns>
+  /// <example>
+  /// <code>
+  /// var pending = await dispatcher.AsSystem().ForTenant(tenantId)
+  ///   .RunAsync(ct => repository.CountPendingAsync(ct), cancellationToken);
+  /// </code>
+  /// </example>
+  /// <docs>fundamentals/security/scope-propagation#system-operations</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSecurityBuilderRunTests.cs</tests>
+  public async Task<TResult> RunAsync<TResult>(Func<CancellationToken, Task<TResult>> work, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(work);
+    var previousContext = ScopeContextAccessor.CurrentContext;
+    var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
+    try {
+      ScopeContextAccessor.CurrentContext = _createExplicitContext();
+      // Cleared for the same reason as PublishAsync: the getter reads the initiating context first.
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+      return await work(cancellationToken);
+    } finally {
+      ScopeContextAccessor.CurrentContext = previousContext;
+      ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
+    }
+  }
+
+  /// <summary>
   /// Invokes a receptor in-process with explicit security context and returns the typed business result.
   /// </summary>
   /// <typeparam name="TMessage">The message type.</typeparam>

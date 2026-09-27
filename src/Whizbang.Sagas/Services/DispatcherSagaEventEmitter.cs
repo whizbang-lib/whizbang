@@ -47,4 +47,21 @@ public sealed class DispatcherSagaEventEmitter(IDispatcher dispatcher) : ISagaEv
     var scoped = string.IsNullOrWhiteSpace(tenantId) ? system.ForAllTenants() : system.ForTenant(tenantId);
     return scoped.PublishOnceAsync(claimKey, eventData, cancellationToken);
   }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// Runs through the dispatcher's explicit security context, the same one
+  /// <see cref="PublishOnceInTenantAsync{TEvent}"/> publishes under, so the reads inside the work and
+  /// the tick published after them are made as one identity in one tenant. With no tenant the work runs
+  /// in the caller's context, exactly as it did before the sweep read in the saga's tenant.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Sagas.Tests/DispatcherSagaEventEmitterTests.cs:RunInTenantAsync_RunsTheWorkAsTheSystemInThatTenantAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/DispatcherSagaEventEmitterTests.cs:RunInTenantAsync_NoTenant_RunsTheWorkInTheCallersContextAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/DispatcherSagaEventEmitterTests.cs:RunInTenantAsync_NullWork_ThrowsAsync</tests>
+  public Task<TResult> RunInTenantAsync<TResult>(string? tenantId, Func<CancellationToken, Task<TResult>> work, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(work);
+    return string.IsNullOrWhiteSpace(tenantId)
+      ? work(cancellationToken)
+      : _dispatcher.AsSystem().ForTenant(tenantId).RunAsync(work, cancellationToken);
+  }
 }

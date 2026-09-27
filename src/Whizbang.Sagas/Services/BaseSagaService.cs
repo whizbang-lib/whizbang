@@ -555,8 +555,18 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     => Task.FromResult<IReadOnlyList<IncompleteSaga>>([]);
 
   /// <inheritdoc cref="ISagaWatchdogParticipant.ArmStrandedSagasAsync"/>
+  /// <remarks>
+  /// The sweep runs on a maintenance worker with no ambient scope, and one sweep crosses tenants. Each
+  /// saga's work (its last-activity read, its aggregate read and the tick it arms) therefore runs inside
+  /// that saga's tenant through <see cref="ISagaEventEmitter.RunInTenantAsync{TResult}"/>, so an item
+  /// repository reading through a tenant-scoped lens sees the right tenant. A saga with no tenant is
+  /// read in the worker's own context, as before.
+  /// </remarks>
   /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_ItemRepositoryRequiresTenantScope_ReadsInTheSagasTenantAndArmsTheTickAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_SagasInDifferentTenants_EachIsReadAndArmedInItsOwnTenantAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_SagaWithNoTenant_IsReadInTheWorkersOwnContextAsync</tests>
   public virtual async Task<int> ArmStrandedSagasAsync(ISagaWakeLookup wakes, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(wakes);
 
@@ -578,15 +588,24 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     var now = DateTimeOffset.UtcNow;
     var armed = 0;
     foreach (var (saga, tenantId) in candidates.Where(c => !pending.Contains(c.Saga.Id))) {
-      var lastActivity = await _lastActivityAsync(saga, cancellationToken).ConfigureAwait(false);
-      if (now - lastActivity < _options.StrandedSagaIdleGuard) {
-        continue;
-      }
-      if (await _armStrandedAsync(saga, tenantId, lastActivity, now, cancellationToken).ConfigureAwait(false)) {
+      if (await _emitter.RunInTenantAsync(tenantId, ct => _sweepOneAsync(saga, tenantId, now, ct), cancellationToken)
+          .ConfigureAwait(false)) {
         armed++;
       }
     }
     return armed;
+  }
+
+  /// <summary>
+  /// One saga's share of the sweep, run inside its tenant: arms a tick when it has been idle past the guard.
+  /// </summary>
+  private async Task<bool> _sweepOneAsync(
+      BaseSagaModel saga, string? tenantId, DateTimeOffset now, CancellationToken cancellationToken) {
+    var lastActivity = await _lastActivityAsync(saga, cancellationToken).ConfigureAwait(false);
+    if (now - lastActivity < _options.StrandedSagaIdleGuard) {
+      return false;
+    }
+    return await _armStrandedAsync(saga, tenantId, lastActivity, now, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>The newest change to the saga or any of its items.</summary>

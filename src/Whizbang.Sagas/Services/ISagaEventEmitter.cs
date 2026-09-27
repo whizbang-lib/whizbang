@@ -55,4 +55,29 @@ public interface ISagaEventEmitter {
   Task<bool> PublishOnceInTenantAsync<TEvent>(string? tenantId, string claimKey, TEvent eventData, CancellationToken cancellationToken)
       where TEvent : IEvent
     => PublishOnceAsync(claimKey, eventData, cancellationToken);
+
+
+  /// <summary>
+  /// Runs <paramref name="work"/> as the system acting in <paramref name="tenantId"/>, so reads inside it
+  /// see that tenant as the ambient scope.
+  /// </summary>
+  /// <remarks>
+  /// For background work with no request of its own that must read a tenant's records before it
+  /// publishes, such as the stranded-saga sweep: a repository reading through a tenant-scoped lens
+  /// refuses to run without an ambient tenant. <see langword="null"/> runs the work in the caller's own
+  /// context, unchanged. The default ignores the tenant and runs the work as is, for an emitter with no
+  /// notion of scope.
+  /// </remarks>
+  /// <typeparam name="TResult">What the work returns.</typeparam>
+  /// <param name="tenantId">The tenant to run in, or <see langword="null"/> for the caller's context.</param>
+  /// <param name="work">The work to run; receives <paramref name="cancellationToken"/>.</param>
+  /// <param name="cancellationToken">Passed to the work.</param>
+  /// <returns>The work's result.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:EmitterDefault_RunInTenant_RunsTheWorkAsIsAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:EmitterDefault_RunInTenant_NullWork_ThrowsAsync</tests>
+  Task<TResult> RunInTenantAsync<TResult>(string? tenantId, Func<CancellationToken, Task<TResult>> work, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(work);
+    return work(cancellationToken);
+  }
 }
