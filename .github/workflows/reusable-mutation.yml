@@ -19,6 +19,10 @@ on:
         required: false
         default: ''
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions:
+  contents: read
+
 jobs:
   mutation:
     name: Mutation Testing - ${{ inputs.project }}

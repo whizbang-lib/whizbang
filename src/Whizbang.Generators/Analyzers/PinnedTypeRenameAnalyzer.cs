@@ -70,28 +70,37 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
       }
     }, SymbolKind.NamedType);
 
-    context.RegisterCompilationEndAction(endContext => {
-      // WHIZ120 — a living pinned type whose current name the ledger doesn't know (rename, unacknowledged).
-      foreach (var kvp in living) {
-        var entry = ledger.FindByPinnedId(kvp.Key);
-        if (entry?.KnowsName(kvp.Value.ClrTypeName) == false) {
-          endContext.ReportDiagnostic(Diagnostic.Create(
-            DiagnosticDescriptors.PinnedTypeRenamedWithoutAcknowledgment,
-            kvp.Value.Location,
-            _simpleName(kvp.Value.ClrTypeName), kvp.Key, kvp.Value.ClrTypeName, entry.ClrTypeName));
-        }
-      }
+    context.RegisterCompilationEndAction(endContext => _reportLedgerDrift(endContext, ledger, living));
+  }
 
-      // WHIZ121 — a ledger entry with no living type of that pinned id.
-      foreach (var entry in ledger.Types) {
-        if (!living.ContainsKey(entry.PinnedId)) {
-          endContext.ReportDiagnostic(Diagnostic.Create(
-            DiagnosticDescriptors.LedgerEntryHasNoLivingType,
-            Location.None,
-            entry.PinnedId, entry.ClrTypeName));
-        }
+  /// <summary>
+  /// Diffs the living pinned types against the ledger at compilation end: WHIZ120 for an unacknowledged rename,
+  /// WHIZ121 for a ledger entry with no living type.
+  /// </summary>
+  private static void _reportLedgerDrift(
+      CompilationAnalysisContext endContext,
+      PinnedTypeLedger ledger,
+      ConcurrentDictionary<string, LivingPinnedType> living) {
+    // WHIZ120 — a living pinned type whose current name the ledger doesn't know (rename, unacknowledged).
+    foreach (var kvp in living) {
+      var entry = ledger.FindByPinnedId(kvp.Key);
+      if (entry?.KnowsName(kvp.Value.ClrTypeName) == false) {
+        endContext.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.PinnedTypeRenamedWithoutAcknowledgment,
+          kvp.Value.Location,
+          _simpleName(kvp.Value.ClrTypeName), kvp.Key, kvp.Value.ClrTypeName, entry.ClrTypeName));
       }
-    });
+    }
+
+    // WHIZ121 — a ledger entry with no living type of that pinned id.
+    foreach (var entry in ledger.Types) {
+      if (!living.ContainsKey(entry.PinnedId)) {
+        endContext.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.LedgerEntryHasNoLivingType,
+          Location.None,
+          entry.PinnedId, entry.ClrTypeName));
+      }
+    }
   }
 
   private static bool _tryGetPinned(ISymbol symbol, out string pinnedId, out string clrName, out Location location) {

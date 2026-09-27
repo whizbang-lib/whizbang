@@ -121,6 +121,19 @@ See [ai-docs/testing-tunit.md](ai-docs/testing-tunit.md) and [ai-docs/tdd-strict
 
 See [src/Whizbang.Generators/ai-docs/](src/Whizbang.Generators/ai-docs/) for detailed guidelines.
 
+### Package Versions and Lock Files
+
+- Package versions live in `Directory.Packages.props` (central package management); a project's
+  `PackageReference` carries no version.
+- Every project has a committed `packages.lock.json`. CI restores with `--locked-mode`, so a
+  build can only use the exact versions and content hashes in those files.
+- After adding a package or changing a version, run `dotnet restore Whizbang.slnx` and commit the
+  updated lock files with the change. A pull request whose lock files are stale fails at restore.
+- The SDK's implicit `Microsoft.NET.ILLink.Tasks` reference is pinned in `Directory.Build.targets`
+  so the lock files do not depend on which SDK patch is installed. Move it when moving the SDK.
+- The Aspire AppHost projects, and the tests that reference them, do not use lock files: the
+  packages they restore are specific to the operating system.
+
 ### Boy Scout Rule
 
 **Leave code better than you found it.**

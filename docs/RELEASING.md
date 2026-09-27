@@ -269,6 +269,20 @@ reviewer**. Every publish path funnels through it, so **nothing reaches nuget.or
 in the GitHub Actions UI. (`release-approval`, used by release.yml's "Approve Release" job, has no
 rules today and auto-passes — the real gate is `nuget-publish`.)
 
+### What a stable GitHub release carries
+
+A stable release attaches, after the NuGet push succeeds:
+
+- every package (`*.nupkg`) and its SHA-256 (`*.nupkg.sha256`);
+- `whizbang-X.Y.Z.sigstore.json`: the Sigstore bundle `nuget-push` produced when it attested the
+  packages, a keyless signature over a SLSA v1 provenance statement naming every package by digest;
+- `whizbang-X.Y.Z.intoto.jsonl`: that bundle's DSSE envelope, the in-toto provenance on its own.
+
+Both are the attestation already recorded in the repository's attestations, attached so a consumer or a
+scanner (OpenSSF Scorecard's Signed-Releases check) finds them on the release. Verify a package with
+`gh attestation verify <package>.nupkg --repo whizbang-lib/whizbang`. Because the assets come from the
+push, the attach job waits for the `nuget-publish` approval like the push does.
+
 ### Standing the gate down
 
 Set the repository variable **`PUBLISH_WITHOUT_APPROVAL`** to `true` and every publish goes straight

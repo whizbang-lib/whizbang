@@ -68,63 +68,15 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Return type must be ICollectiveSpec<TModel>. Reject other shapes
-    // silently so a misuse of the attribute doesn't crash the generator —
-    // an analyzer slice could diagnose this later.
-    if (methodSymbol.ReturnType is not INamedTypeSymbol returnType ||
-        !returnType.IsGenericType ||
-        returnType.OriginalDefinition.Name != SPEC_TYPE_NAME ||
-        !TypeNameUtilities.IsNamed(returnType.OriginalDefinition.ContainingNamespace, SPEC_NAMESPACE)) {
+    if (_specModelType(methodSymbol) is not { } modelType || !_hasCollectiveParameters(methodSymbol)) {
       return null;
     }
 
-    if (returnType.TypeArguments.Length != 1) {
-      return null;
-    }
-    var modelType = returnType.TypeArguments[0];
     var modelFqn = TypeNameUtilities.FullyQualified(modelType);
-
-    // First parameter implements ICollectiveEvent; an optional second parameter is the
-    // ICollectiveQuery context (handlers that scope by a sibling perspective take it; others omit it).
-    if (methodSymbol.Parameters.Length is < 1 or > 2) {
-      return null;
-    }
-    var eventType = methodSymbol.Parameters[0].Type;
-    var implementsCollectiveEvent = eventType.AllInterfaces
-      .Any(i => TypeNameUtilities.IsNamed(i, COLLECTIVE_EVENT_FQN));
-    if (!implementsCollectiveEvent) {
-      return null;
-    }
-    var eventFqn = TypeNameUtilities.FullyQualified(eventType);
-
+    var eventFqn = TypeNameUtilities.FullyQualified(methodSymbol.Parameters[0].Type);
     var takesQuery = methodSymbol.Parameters.Length == 2;
-    if (takesQuery) {
-      var queryParam = methodSymbol.Parameters[1].Type;
-      var isCollectiveQuery = TypeNameUtilities.IsNamed(queryParam, COLLECTIVE_QUERY_FQN)
-        || queryParam.AllInterfaces.Any(i => TypeNameUtilities.IsNamed(i, COLLECTIVE_QUERY_FQN));
-      if (!isCollectiveQuery) {
-        return null;
-      }
-    }
-
     var handlerFqn = TypeNameUtilities.FullyQualified(methodSymbol.ContainingType);
-
-    // Attribute named-argument enums come through as int (the underlying value).
-    var scopeHandling = "Framework";
-    var specKind = "Linq";
-    var batchSize = 0;
-    var statementTimeoutSeconds = 0;
-    foreach (var na in attr.NamedArguments) {
-      if (na.Key == "ScopeHandling" && na.Value.Value is int sh) {
-        scopeHandling = sh == 1 ? "Custom" : "Framework";
-      } else if (na.Key == "SpecKind" && na.Value.Value is int sk) {
-        specKind = sk == 1 ? "RawSql" : "Linq";
-      } else if (na.Key == "BatchSize" && na.Value.Value is int bs) {
-        batchSize = bs;
-      } else if (na.Key == "StatementTimeoutSeconds" && na.Value.Value is int st) {
-        statementTimeoutSeconds = st;
-      }
-    }
+    var (scopeHandling, specKind, batchSize, statementTimeoutSeconds) = _readNamedArguments(attr);
 
     return new CollectiveApplyInfo(
       ModelTypeFqn: modelFqn,
@@ -137,6 +89,75 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
       BatchSizeOverride: batchSize,
       StatementTimeoutSecondsOverride: statementTimeoutSeconds
     );
+  }
+
+  /// <summary>
+  /// The TModel of an <c>ICollectiveSpec&lt;TModel&gt;</c> return type, or null for any other shape. Other shapes
+  /// are rejected silently so a misuse of the attribute doesn't crash the generator — an analyzer slice could
+  /// diagnose this later.
+  /// </summary>
+  private static ITypeSymbol? _specModelType(IMethodSymbol methodSymbol) {
+    if (methodSymbol.ReturnType is not INamedTypeSymbol returnType ||
+        !returnType.IsGenericType ||
+        returnType.OriginalDefinition.Name != SPEC_TYPE_NAME ||
+        !TypeNameUtilities.IsNamed(returnType.OriginalDefinition.ContainingNamespace, SPEC_NAMESPACE)) {
+      return null;
+    }
+
+    return returnType.TypeArguments.Length == 1 ? returnType.TypeArguments[0] : null;
+  }
+
+  /// <summary>
+  /// First parameter implements ICollectiveEvent; an optional second parameter is the ICollectiveQuery context
+  /// (handlers that scope by a sibling perspective take it; others omit it).
+  /// </summary>
+  private static bool _hasCollectiveParameters(IMethodSymbol methodSymbol) {
+    if (methodSymbol.Parameters.Length is < 1 or > 2) {
+      return false;
+    }
+    var eventType = methodSymbol.Parameters[0].Type;
+    if (!eventType.AllInterfaces.Any(i => TypeNameUtilities.IsNamed(i, COLLECTIVE_EVENT_FQN))) {
+      return false;
+    }
+    if (methodSymbol.Parameters.Length == 1) {
+      return true;
+    }
+
+    var queryParam = methodSymbol.Parameters[1].Type;
+    return TypeNameUtilities.IsNamed(queryParam, COLLECTIVE_QUERY_FQN)
+      || queryParam.AllInterfaces.Any(i => TypeNameUtilities.IsNamed(i, COLLECTIVE_QUERY_FQN));
+  }
+
+  /// <summary>
+  /// Reads the attribute's named arguments. Enums come through as int (the underlying value); an argument whose
+  /// value is not an int is ignored, leaving the default.
+  /// </summary>
+  private static (string ScopeHandling, string SpecKind, int BatchSize, int StatementTimeoutSeconds) _readNamedArguments(AttributeData attr) {
+    var scopeHandling = "Framework";
+    var specKind = "Linq";
+    var batchSize = 0;
+    var statementTimeoutSeconds = 0;
+    foreach (var na in attr.NamedArguments) {
+      if (na.Value.Value is not int value) {
+        continue;
+      }
+      switch (na.Key) {
+        case "ScopeHandling":
+          scopeHandling = value == 1 ? "Custom" : "Framework";
+          break;
+        case "SpecKind":
+          specKind = value == 1 ? "RawSql" : "Linq";
+          break;
+        case "BatchSize":
+          batchSize = value;
+          break;
+        case "StatementTimeoutSeconds":
+          statementTimeoutSeconds = value;
+          break;
+      }
+    }
+
+    return (scopeHandling, specKind, batchSize, statementTimeoutSeconds);
   }
 
   private static void _emit(SourceProductionContext ctx, ImmutableArray<CollectiveApplyInfo> infos) {

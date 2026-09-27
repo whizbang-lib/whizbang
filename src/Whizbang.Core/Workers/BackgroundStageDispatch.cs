@@ -86,10 +86,7 @@ public static class BackgroundStageDispatch {
         _queue.Add((d, state));
       } catch (InvalidOperationException) {
         // Queue already completed — a straggler continuation posted after the body finished.
-        ThreadPool.QueueUserWorkItem(static s => {
-          var (callback, callbackState) = ((SendOrPostCallback, object?))s!;
-          callback(callbackState);
-        }, (d, state));
+        ThreadPool.QueueUserWorkItem(static s => s.Callback(s.State), (Callback: d, State: state), preferLocal: false);
       }
     }
 

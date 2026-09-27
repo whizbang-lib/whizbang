@@ -70,7 +70,7 @@ jobs:
       - name: Restore
         env:
           PROJECT: ${{ inputs.project }}
-        run: dotnet restore "$PROJECT"
+        run: dotnet restore "$PROJECT" --locked-mode
 
       - name: Apply fixes, one diagnostic at a time
         env:

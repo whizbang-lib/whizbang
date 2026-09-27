@@ -1,0 +1,10 @@
+allowBuilds:
+  '@parcel/watcher': set this to true or false
+  esbuild: set this to true or false
+  lmdb: set this to true or false
+  msgpackr-extract: set this to true or false
+# Transitive build-tool dependencies held at their patched versions until the Angular toolchain
+# pulls them in on its own. Remove an entry once `pnpm audit` stays clean without it.
+overrides:
+  browserslist: '>=4.28.7'
+  baseline-browser-mapping: '>=2.11.0'

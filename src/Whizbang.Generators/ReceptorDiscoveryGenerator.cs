@@ -159,20 +159,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // The generated registrations reference these types from generated public code, so every link in
     // the containment chain must be public.
-    for (var scope = sagaType; scope is not null; scope = scope.ContainingType) {
-      if (scope.DeclaredAccessibility != Accessibility.Public) {
-        return [];
-      }
+    if (!_isPubliclyReachable(sagaType)) {
+      return [];
     }
 
     // ForAttributeWithMetadataName only yields a context that carries at least one matching attribute.
-    var attribute = context.Attributes[0];
-
-    foreach (var namedArgument in attribute.NamedArguments) {
-      if (namedArgument.Key == SagaRecoveryReceptorShapes.GENERATE_SERVICE_ARGUMENT &&
-          namedArgument.Value.Value is bool generateService && !generateService) {
-        return [];
-      }
+    if (_suppressesGeneratedService(context.Attributes[0])) {
+      return [];
     }
 
     var sagaFullyQualifiedName = TypeNameHelper.GetFullyQualifiedName(sagaType);
@@ -215,6 +208,32 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     return builder.ToImmutable();
+  }
+
+  /// <summary>
+  /// True when the type and every type containing it are public, so generated public code can reference
+  /// nested types emitted into it.
+  /// </summary>
+  private static bool _isPubliclyReachable(INamedTypeSymbol type) {
+    for (var scope = type; scope is not null; scope = scope.ContainingType) {
+      if (scope.DeclaredAccessibility != Accessibility.Public) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// True when the saga attribute sets <c>GenerateService = false</c>.
+  /// </summary>
+  private static bool _suppressesGeneratedService(AttributeData attribute) {
+    foreach (var namedArgument in attribute.NamedArguments) {
+      if (namedArgument.Key == SagaRecoveryReceptorShapes.GENERATE_SERVICE_ARGUMENT &&
+          namedArgument.Value.Value is bool generateService && !generateService) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// <summary>

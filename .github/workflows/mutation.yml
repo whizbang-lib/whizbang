@@ -21,6 +21,10 @@ on:
         default: ''
         type: string
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions:
+  contents: read
+
 jobs:
   mutate:
     name: Mutation Testing

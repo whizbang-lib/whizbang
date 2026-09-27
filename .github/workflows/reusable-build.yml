@@ -15,6 +15,10 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
   DOTNET_NOLOGO: '1'
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Compile and hash
@@ -43,7 +47,7 @@ jobs:
           restore-keys: ${{ runner.os }}-nuget-
 
       - name: Restore Dependencies
-        run: dotnet restore
+        run: dotnet restore --locked-mode
 
       - name: Build Solution
         env:

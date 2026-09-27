@@ -1481,7 +1481,9 @@ public partial class PerspectiveWorker(
   /// first is mid-apply and double-apply on stale state (a production saga-strand race).
   /// See <c>plans/perspective-worker-stream-affinity.md</c>.
   /// </summary>
-  private async Task _withStreamAffinityGateAsync(
+  /// <remarks>Internal so a test can hold several gates at chosen times and read them back through
+  /// <see cref="SnapshotAffinityHolds"/>; the drain loop is its only production caller.</remarks>
+  internal async Task WithStreamAffinityGateAsync(
       Guid streamId, string perspectiveName, Func<Task> body, CancellationToken ct) {
     _ensureCursorCacheEvictionSubscribed();
     var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
@@ -2031,11 +2033,11 @@ public partial class PerspectiveWorker(
           try {
             // Intra-pod stream-affinity gate — serialize apply for this (stream, perspective) across
             // the parallel consumer loops AND against the standard path, closing the same-pod
-            // double-apply window the standard path already gated. See _withStreamAffinityGateAsync.
+            // double-apply window the standard path already gated. See WithStreamAffinityGateAsync.
             var pName = perspectiveName;
             var pEvents = filteredEvents;
             var pContext = currentContext;
-            await _withStreamAffinityGateAsync(streamId, pName, () =>
+            await WithStreamAffinityGateAsync(streamId, pName, () =>
               _runDrainModePerspectiveAsync(streamId, pName, pEvents, pContext, ct), ct);
           } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
             // Worker shutdown — propagate out of the loop, Parallel.ForEachAsync handles it.

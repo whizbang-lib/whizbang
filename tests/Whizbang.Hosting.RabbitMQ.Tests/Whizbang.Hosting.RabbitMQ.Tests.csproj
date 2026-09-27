@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
+    <!-- Unit: Fast tests, no external infrastructure needed -->
+    <WhizbangTestType>Unit</WhizbangTestType>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="TUnit.Assertions" />
+    <PackageReference Include="Aspire.Hosting.RabbitMQ" />
+    <!-- Security pin: MessagePack arrives transitively via Aspire.Hosting -> StreamJsonRpc.
+         The transitive 2.5.192 has a known high-severity vulnerability (CVE-2026-48109,
+         GHSA-hv8m-jj95-wg3x). Referenced directly so Central Package Management forces the
+         patched 2.5.301. Remove once Aspire.Hosting/StreamJsonRpc flow a patched MessagePack. -->
+    <PackageReference Include="MessagePack" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <ProjectReference Include="../../src/Whizbang.Hosting.RabbitMQ/Whizbang.Hosting.RabbitMQ.csproj" />
+  </ItemGroup>
+</Project>
