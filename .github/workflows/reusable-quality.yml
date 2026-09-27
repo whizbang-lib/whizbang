@@ -26,6 +26,9 @@ on:
         description: "Codecov token"
         required: true
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions: read-all
+
 jobs:
   quality:
     name: Sonar and coverage

@@ -9,6 +9,9 @@ on:
     - cron: '0 8 * * 2'  # Weekly on Tuesday at 8 AM UTC
   workflow_dispatch:
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions: read-all
+
 jobs:
   scan:
     name: OSV Scanner

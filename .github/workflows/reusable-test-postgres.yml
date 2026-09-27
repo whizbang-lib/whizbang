@@ -23,6 +23,9 @@ on:
         required: false
         default: ''
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions: read-all
+
 jobs:
   postgres-tests:
     name: Run suite

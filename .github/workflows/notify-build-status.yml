@@ -44,6 +44,9 @@ on:
       PUSHOVER_USER_KEY_10:
         required: false
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions: read-all
+
 jobs:
   notify:
     name: Send Notification

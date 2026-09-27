@@ -18,6 +18,9 @@ on:
         required: false
         default: ''
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions: read-all
+
 jobs:
   rabbitmq-tests:
     name: Run suite

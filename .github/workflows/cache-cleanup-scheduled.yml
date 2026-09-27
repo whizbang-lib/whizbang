@@ -5,12 +5,13 @@ on:
     - cron: '0 0 * * 0'  # Sunday midnight UTC
   workflow_dispatch:  # Manual trigger
 
-permissions:
-  actions: write  # Required to delete caches
+permissions: read-all
 
 jobs:
   cleanup:
     name: Cleanup Old Caches
+    permissions:
+      actions: write  # Required to delete caches
     runs-on: ubuntu-latest
     steps:
       - name: Cleanup Old Caches

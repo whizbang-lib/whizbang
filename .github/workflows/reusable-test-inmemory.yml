@@ -8,6 +8,9 @@ on:
         type: string
         required: false
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions: read-all
+
 jobs:
   inmemory-tests:
     name: Run suite

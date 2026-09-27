@@ -30,6 +30,9 @@ on:
         description: 'Whether this is a pre-release version'
         value: ${{ jobs.version.outputs.is_prerelease }}
 
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions: read-all
+
 jobs:
   version:
     name: GitVersion
