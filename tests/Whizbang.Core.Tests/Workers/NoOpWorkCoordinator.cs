@@ -30,7 +30,14 @@ internal class NoOpWorkCoordinator : IWorkCoordinator {
       SyncInquiryResults = null
     });
 
+  /// <summary>When set, the next inbox store throws it (once) — a store failure such as a statement timeout.</summary>
+  public Exception? FailNextInboxStore { get; set; }
+
   public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
+    if (FailNextInboxStore is { } failure) {
+      FailNextInboxStore = null;
+      throw failure;
+    }
     StoreInboxCallCount++;
     StoreInboxBatchSizes.Add(messages.Length);
     StoredInboxCount += messages.Length;

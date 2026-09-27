@@ -245,14 +245,20 @@ public class TransportConsumerWorkerUnstorableMessageTests {
     var good = _probeEnvelope("fine");
     var probeType = EnvelopeTypeNameHelper.Format(TypeNameFormatter.Format(typeof(UnstorableProbeEvent)));
 
-    await transport.DeliverBatchAsync([new TransportMessage(bad, probeType), new TransportMessage(good, probeType)]);
+    Exception? reported = null;
+    try {
+      await transport.DeliverBatchAsync([new TransportMessage(bad, probeType), new TransportMessage(good, probeType)]);
+    } catch (TransportBatchFailedException ex) {
+      reported = ex;
+    }
 
     await Assert.That(coordinator.StoredMessages.Select(m => m.MessageId)).IsEquivalentTo([good.MessageId.Value])
       .Because("neighbors are stored before the batch is failed, so their redelivery is a harmless duplicate");
-    var failure = logger.Entries.SingleOrDefault(e => e.Exception is InvalidOperationException);
-    await Assert.That(failure.Exception).IsNotNull()
-      .Because("with neither an inbox row nor custody, the batch must fail rather than report the message handled");
-    await Assert.That(failure.Exception!.Message).Contains(bad.MessageId.Value.ToString());
+    await Assert.That(reported).IsNotNull()
+      .Because("with neither an inbox row nor custody, the transport must be told the batch failed so it "
+             + "does not settle the message as consumed (#921)");
+    await Assert.That(reported!.InnerException!.Message).Contains(bad.MessageId.Value.ToString());
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Critical)).IsTrue();
 
     await worker.StopAsync(CancellationToken.None);
   }

@@ -1306,6 +1306,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// message, invokes the batch handler, and then completes the successful ones. Messages that
   /// fail deserialization are already dead-lettered by _deserializeReceivedMessageAsync.
   /// </summary>
+  /// <remarks>
+  /// A handler that throws (the consumer reports a failed batch as
+  /// <see cref="Whizbang.Core.Workers.TransportBatchFailedException"/>) never reaches the completion
+  /// loop: each message is abandoned, or dead-lettered once it has reached
+  /// <see cref="AzureServiceBusOptions.MaxDeliveryAttempts"/>, exactly as a failing single message is
+  /// (#921). The throw is not handed back to the collector, whose in-memory re-queue would retry the
+  /// batch without the broker counting a delivery, so the delivery limit would never bound it.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerReportsBatchFailed_AbandonsNeverCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerFailsAtMaxDeliveryCount_DeadLettersNeverCompletesAsync</tests>
   private TransportBatchCollector<PendingServiceBusMessage> _buildPendingMessageCollector(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportBatchOptions batchOptions,
@@ -1332,7 +1342,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           return;
         }
 
-        await batchHandler(transportMessages, CancellationToken.None);
+        try {
+          await batchHandler(transportMessages, CancellationToken.None);
+        } catch (Exception ex) {
+          // The batch failed: never complete it. Abandon (or dead-letter at the delivery limit) so the
+          // broker redelivers and counts the attempt (#921). A shutdown is abandoned too: the message
+          // goes back at once instead of waiting out its lock.
+          foreach (var args in successfulArgs) {
+            await _handleMessageProcessingErrorAsync(args, ex, destination);
+          }
+          return;
+        }
 
         // Per-message CompleteMessageAsync (ASB has no multi-ACK)
         foreach (var args in successfulArgs) {

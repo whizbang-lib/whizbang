@@ -486,13 +486,16 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:MixedBatch_DroppedTypesFilteredBeforeBulkInsertAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchProcessing_CreatesExactlyOneScopePerBatchAsync</tests>
   /// <summary>
-  /// Runs the batch handler so that a failed batch costs one batch, never the process.
+  /// Runs the batch handler so that a failed batch costs one batch, never the process, and is
+  /// reported to the transport as failed (<see cref="TransportBatchFailedException"/>) so it is
+  /// abandoned for redelivery rather than completed (#921).
   /// </summary>
   /// <remarks>
   /// Delegates to <see cref="TransportBatchGuard"/> so the containment behavior is testable on its
   /// own — the guard is the part that must be proven, and proving it should not require standing up
   /// a whole worker with a transport and a database behind it.
   /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBatchFailureTests.cs</tests>
   private Task _handleBatchWithoutKillingTheHostAsync(
       IReadOnlyList<TransportMessage> messages,
       TransportDestination destination,

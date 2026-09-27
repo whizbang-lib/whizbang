@@ -362,6 +362,30 @@ public class RabbitMQTransportBatchPathTests {
     await Assert.That(channel.AckAttempts).IsEmpty();
   }
 
+  /// <summary>
+  /// #921: the consumer reports a failed batch as <see cref="Whizbang.Core.Workers.TransportBatchFailedException"/>,
+  /// even when the cause is a database statement timeout that surfaced as a cancellation. It must be
+  /// NACKed for redelivery like any handler failure; a raw cancellation would slip past the NACK path.
+  /// </summary>
+  [Test]
+  public async Task SubscribeBatchAsync_HandlerReportsBatchFailedFromACancellation_NacksNeverAcksAsync() {
+    var options = new TransportBatchOptions { BatchSize = 1, SlideMs = 60_000, MaxWaitMs = 60_000 };
+    var (channel, _, _) = await _subscribeBatchAsync(
+      options,
+      handler: (_, _) => throw new Whizbang.Core.Workers.TransportBatchFailedException(
+        1, new OperationCanceledException("statement timeout")));
+
+    var (props, body) = RabbitTestWire.ValidWireMessage("m1");
+    await RabbitTestWire.DeliverAsync(channel, props, body, 1);
+
+    await channel.WaitForNackAttemptsAsync(1);
+
+    await Assert.That(channel.NackAttempts).Count().IsEqualTo(1);
+    await Assert.That(channel.NackAttempts[0].Requeue).IsTrue();
+    await Assert.That(channel.AckAttempts).IsEmpty()
+      .Because("a message whose batch failed must never be acknowledged as consumed");
+  }
+
   [Test]
   public async Task SubscribeBatchAsync_HandlerThrowsAlreadyClosed_SwallowsWithoutAckOrNackAsync() {
     var logger = new CapturingLogger<RabbitMQTransport>();
