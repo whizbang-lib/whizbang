@@ -12,24 +12,20 @@ Base URLs used below:
 - Docs site: `https://whizba.ng/docs/...` (a single-page app: deep links answer HTTP 404 with a
   redirect shell and render correctly in a browser)
 
-## Fix before submitting
+## Fixed before submitting
 
-These were found while verifying the answers. None blocks passing, but each makes an answer below
-weaker or a published page inaccurate.
+Found while verifying the answers and fixed on 2026-09-27, so the pages the answers link to are
+accurate:
 
-1. **CodeQL alert #16** (medium, `cs/exposure-of-sensitive-information`) in
-   `samples/ECommerce/ECommerce.NotificationWorker/Receptors/SendNotificationReceptor.cs` is a false
-   positive: the logged value is the `NotificationType` enum (its member `Email`), not an address.
-   Dismiss it as a false positive so `static_analysis_fixed` has no open medium finding to explain.
-2. **`SECURITY.md` supported-versions table** still lists `0.1.x`. State the current supported line
-   (the latest stable `0.x` release) so the policy matches what is shipped.
-3. **`CONTRIBUTING.md`** links GitHub Discussions (disabled on the repository), asks for issue
-   templates that do not exist, points "Documentation" at `whizbang-lib.github.io` rather than
-   `whizba.ng`, and says maintainers review each pull request, which is not current practice (see the
-   note on human review below).
-4. **Repository homepage field** on GitHub is empty; set it to `https://whizba.ng`.
-5. **License detection**: GitHub reports `NOASSERTION` until the change that removes the extra
-   SPDX line from `LICENSE` merges; `floss_license` and `license_location` are Met either way.
+1. CodeQL alert #16 (a sample application logging the `NotificationType` enum member `Email`) was
+   dismissed as a false positive; no static-analysis finding is open.
+2. `SECURITY.md` states the support policy (the latest stable release) instead of a stale version
+   table.
+3. `CONTRIBUTING.md` sends questions and feature ideas to issues (GitHub Discussions is not enabled),
+   no longer mentions issue or pull request templates that do not exist, links the docs site at
+   `whizba.ng`, and describes how pull requests are actually reviewed and merged.
+4. The repository homepage is set to `https://whizba.ng`.
+5. GitHub detects the license as MIT.
 
 ## Note on human review
 
@@ -49,7 +45,7 @@ human review.
 | Criterion | Answer | Justification |
 |---|---|---|
 | `description_good` | Met | The README opens with what the library is for: a .NET library for event-driven, CQRS and event-sourced applications, wired by source generators at compile time with no reflection and Native AOT support. <https://github.com/whizbang-lib/whizbang#readme> |
-| `interact` | Met | The README links the docs site, NuGet packages, releases and contributing guide; CONTRIBUTING covers reporting bugs, requesting features and sending changes, through GitHub issues and pull requests. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md> |
+| `interact` | Met | The README links the docs site, NuGet packages, releases and contributing guide; CONTRIBUTING covers asking questions, reporting bugs, requesting features and sending changes, through GitHub issues and pull requests. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md> |
 | `contribution` | Met | CONTRIBUTING describes the process: fork, branch per the gitflow naming, Conventional Commits, open a pull request into `develop`, CI must pass. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#submitting-changes> |
 | `contribution_requirements` | Met | CONTRIBUTING lists the standards a contribution must meet (code style, XML docs, AOT rules, TUnit tests, `dotnet format` clean, no warnings, lock files updated) and links the detailed guides. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#standards-and-guidelines> |
 
@@ -211,7 +207,7 @@ Both criteria are claims about the primary developer's knowledge; the maintainer
 |---|---|---|
 | `static_analysis` | Met | CodeQL, SonarCloud and the Roslyn analyzers (.NET, Roslynator, SonarAnalyzer) run on every pull request, and the pull request gate requires zero new SonarCloud findings. <https://github.com/whizbang-lib/whizbang/actions/workflows/codeql.yml>, <https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang> |
 | `static_analysis_common_vulnerabilities` | Met | CodeQL's C# security queries and SonarCloud's vulnerability and hotspot rules target common vulnerability classes. SonarCloud currently reports 0 vulnerabilities and 0 open security hotspots. |
-| `static_analysis_fixed` | Met | Confirmed findings are fixed before merge (the gate blocks them). The one open medium CodeQL alert is a confirmed false positive in a sample application (see "Fix before submitting"). |
+| `static_analysis_fixed` | Met | Confirmed findings are fixed before merge (the gate blocks them). No static-analysis finding is open; the one medium CodeQL alert was a confirmed false positive in a sample application and is dismissed with the reason. |
 | `static_analysis_often` | Met | Static analysis runs on every pull request and push to `develop` and `main`, plus a weekly scheduled CodeQL run. |
 
 ### Dynamic code analysis
