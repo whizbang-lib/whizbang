@@ -5,7 +5,8 @@ on:
     - cron: '0 0 * * 0'  # Sunday midnight UTC
   workflow_dispatch:  # Manual trigger
 
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   cleanup:

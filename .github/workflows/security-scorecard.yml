@@ -12,7 +12,8 @@ on:
 # See: https://docs.github.com/en/actions/security-guides/automatic-token-authentication
 
 # The repository default is read-only; stated here so no job can silently gain more.
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   analysis:

@@ -14,7 +14,8 @@ on:
     - cron: '0 0 * * 0'  # Weekly on Sunday
 
 # The repository default is read-only; stated here so no job can silently gain more.
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   analyze:

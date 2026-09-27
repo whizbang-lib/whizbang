@@ -10,7 +10,8 @@ on:
   workflow_dispatch:
 
 # The repository default is read-only; stated here so no job can silently gain more.
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   scan:
