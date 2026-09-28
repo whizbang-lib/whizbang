@@ -405,12 +405,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var isVersionedTarget = typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel));
     // The ordering guard, written against the incoming metadata: EXCLUDED.metadata in the upsert, the bound
     // parameter in the conditional UPDATE. The unconditional text is byte-identical to what it always was.
-    string guard(string incoming) => isVersionedTarget
-      ? $@"{qualifiedTable}.metadata->>'EventId' IS NULL
-           OR {incoming}->>'EventId' > {qualifiedTable}.metadata->>'EventId'"
-      : $@"{qualifiedTable}.metadata->>'CommitSequence' IS NULL
-           OR {incoming}->>'CommitSequence' IS NULL
-           OR ({incoming}->>'CommitSequence')::bigint >= ({qualifiedTable}.metadata->>'CommitSequence')::bigint";
+    string guard(string incoming) =>
+      Whizbang.Data.Postgres.Perspectives.PerspectiveRowVersionCommands.OrderingGuard(
+        qualifiedTable, incoming, isVersionedTarget);
     var whereClause = $@"
         WHERE {guard("EXCLUDED.metadata")}";
 
