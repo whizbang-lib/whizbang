@@ -14,7 +14,8 @@ namespace Whizbang.Core.Transports;
 ///   MessageId, so this is the envelope's id and the import idempotency key.</param>
 /// <param name="StreamId">The per-stream session key when present (ASB SessionId).</param>
 /// <param name="MessageType">The wire envelope type name (the EnvelopeType application property),
-///   or null when the property is absent.</param>
+///   or null when the property is absent. Custody records the payload type it wraps, the form a
+///   received inbox row stores, so a recovered message is judged and dispatched as its payload (#934).</param>
 /// <param name="Destination">Broker coordinates the message died on, e.g. <c>topic/subscription</c>.</param>
 /// <param name="EnvelopeJson">The message body, verbatim. Stored as-is.</param>
 /// <param name="BrokerReason">The broker's dead-letter reason (e.g. MaxDeliveryAttemptsExceeded).</param>

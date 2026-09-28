@@ -37,7 +37,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     PerspectiveMetadata Metadata,
     PerspectiveScope Scope,
     IDictionary<string, object?>? PhysicalFieldValues,
-    bool ForceUpdateScope) where TModel : class;
+    bool ForceUpdateScope,
+    PerspectiveRowVersion ExpectedVersion) where TModel : class;
 
   /// <summary>
   /// Optional Path 1 atomic-upsert hook. When set, <see cref="_upsertCoreAsync"/> attempts
@@ -85,7 +86,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       PerspectiveScope scope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, null, false), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, null, false, PerspectiveRowVersion.Unchecked), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowAsync<TModel>(
@@ -98,7 +99,34 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       bool forceUpdateScope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, null, forceUpdateScope), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, null, forceUpdateScope, PerspectiveRowVersion.Unchecked), cancellationToken);
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// On PostgreSQL the write lands only on the row version <paramref name="expectedVersion"/> names: an
+  /// existing row is updated with <c>UPDATE … WHERE id = @id AND xmin = @expected</c>, a missing one inserted
+  /// with <c>ON CONFLICT (id) DO NOTHING</c>, and a write that matches no row is refused with
+  /// <see cref="PerspectiveRowConflictException"/> unless the row is still at the expected version, in which
+  /// case the commit-sequence (or <see cref="IVersionedApplyTarget"/>) guard refused it and it is skipped
+  /// quietly, as before. One statement on the common path; the version read that explains a refusal runs
+  /// only when a write was refused. On the EF fallback path the row is locked (<c>SELECT … FOR UPDATE</c>)
+  /// and checked inside one transaction with the save. Any other provider ignores the version.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:Upsert_WithAVersionReadBeforeACollective_IsRefused_AndTheCollectiveSurvivesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:Upsert_OnTheCurrentVersion_ThatTheCommitSequenceGuardRefuses_IsSkippedQuietlyAsync</tests>
+  public Task UpsertPerspectiveRowAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default)
+      where TModel : class =>
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, null, forceUpdateScope, expectedVersion), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
@@ -111,7 +139,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       IDictionary<string, object?> physicalFieldValues,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, false), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, false, PerspectiveRowVersion.Unchecked), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
@@ -125,7 +153,25 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       bool forceUpdateScope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, forceUpdateScope), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, forceUpdateScope, PerspectiveRowVersion.Unchecked), cancellationToken);
+
+  /// <inheritdoc/>
+  /// <remarks>The physical-fields twin of the versioned overload; the same guard, with the physical columns in the same statement.</remarks>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      IDictionary<string, object?> physicalFieldValues,
+      bool forceUpdateScope,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default)
+      where TModel : class =>
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, forceUpdateScope, expectedVersion), cancellationToken);
+
 
   /// <summary>
   /// Maximum number of retries for TOCTOU duplicate-key races.
@@ -150,6 +196,12 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       UpsertRowArgs<TModel> args,
       CancellationToken cancellationToken)
       where TModel : class {
+    // A row version is a PostgreSQL row's xmin; another provider has none to compare against (and the store
+    // never hands one out there), so a version passed in is ignored rather than failing the write.
+    if (args.ExpectedVersion.IsChecked && !PerspectiveRowVersionSql.Supports(context)) {
+      args = args with { ExpectedVersion = PerspectiveRowVersion.Unchecked };
+    }
+
     // Per-event apply hooks: resolve once, mutate the row's data object (SetProperty) in place, and carry the
     // updated_at / version-bump decision to both write paths below. The default whizbang.timestamps hook yields
     // updated_at = now + a version bump — identical to the prior hardcoded stamping, now overridable.
@@ -187,6 +239,11 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // the caller should fall back to the retry loop (config off, physical fields present,
     // or any other unsupported case).
     if (await _tryAtomicUpsertAsync(context, args, hookPlan, expiresAt, expiryAnchor.UtcDateTime, cancellationToken)) {
+      return;
+    }
+
+    if (args.ExpectedVersion.IsChecked) {
+      await _upsertCheckedFallbackAsync(context, args, hookPlan, expiresAt, cancellationToken);
       return;
     }
 
@@ -346,14 +403,16 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // showed a small fraction of per-item rows survived the affinity gate and reverted to
     // State=Running — this marker closes that gap at the storage layer.
     var isVersionedTarget = typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel));
-    var whereClause = isVersionedTarget
-      ? $@"
-        WHERE {qualifiedTable}.metadata->>'EventId' IS NULL
-           OR EXCLUDED.metadata->>'EventId' > {qualifiedTable}.metadata->>'EventId'"
-      : $@"
-        WHERE {qualifiedTable}.metadata->>'CommitSequence' IS NULL
-           OR EXCLUDED.metadata->>'CommitSequence' IS NULL
-           OR (EXCLUDED.metadata->>'CommitSequence')::bigint >= ({qualifiedTable}.metadata->>'CommitSequence')::bigint";
+    // The ordering guard, written against the incoming metadata: EXCLUDED.metadata in the upsert, the bound
+    // parameter in the conditional UPDATE. The unconditional text is byte-identical to what it always was.
+    string guard(string incoming) => isVersionedTarget
+      ? $@"{qualifiedTable}.metadata->>'EventId' IS NULL
+           OR {incoming}->>'EventId' > {qualifiedTable}.metadata->>'EventId'"
+      : $@"{qualifiedTable}.metadata->>'CommitSequence' IS NULL
+           OR {incoming}->>'CommitSequence' IS NULL
+           OR ({incoming}->>'CommitSequence')::bigint >= ({qualifiedTable}.metadata->>'CommitSequence')::bigint";
+    var whereClause = $@"
+        WHERE {guard("EXCLUDED.metadata")}";
 
     // updated_at + the version bump come from the resolved per-event hook plan (default whizbang.timestamps:
     // updated_at = now, bump = 1). created_at is always the real now on insert (a hook cannot rewrite it).
@@ -364,15 +423,33 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var expiresColumn = expiresAt.HasValue ? ", expires_at" : "";
     var expiresValue = expiresAt.HasValue ? ", @wb_expires" : "";
     var expiresUpdate = expiresAt.HasValue ? "\n          expires_at = EXCLUDED.expires_at," : "";
-    var sql = $@"
+    var insert = $@"
         INSERT INTO {qualifiedTable} (id, data, metadata, scope, created_at, updated_at, sys_created_at, sys_updated_at, version{expiresColumn}{pfColumnsClause})
-        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @wb_created, @wb_updated, @wb_syscreated, @wb_sysupdated, 1{expiresValue}{pfValuesClause})
+        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @wb_created, @wb_updated, @wb_syscreated, @wb_sysupdated, 1{expiresValue}{pfValuesClause})";
+    // Issue #928: a checked write lands only on the version the apply read. An existing row is updated in
+    // place on that exact version; a missing one is inserted only if it is still missing. Either affects no
+    // row when the row moved, which the refusal check below turns into a conflict.
+    var expected = args.ExpectedVersion;
+    var sql = expected.State switch {
+      PerspectiveRowVersionState.Present => $@"
+        UPDATE {qualifiedTable} SET
+          data = @data::jsonb,
+          metadata = @metadata::jsonb,
+          updated_at = CASE WHEN @wb_suppressactivity THEN {qualifiedTable}.updated_at ELSE @wb_updated END,
+          sys_updated_at = @wb_sysupdated,{(expiresAt.HasValue ? "\n          expires_at = @wb_expires," : "")}
+          version = {qualifiedTable}.version + @wb_versionbump{(args.ForceUpdateScope ? ", scope = @scope::jsonb" : "")}{_physicalFieldAssignments(args.PhysicalFieldValues)}
+        WHERE {qualifiedTable}.id = @id AND {qualifiedTable}.xmin = @wb_expected_version
+          AND ({guard("@metadata::jsonb")})",
+      PerspectiveRowVersionState.Absent => insert + @"
+        ON CONFLICT (id) DO NOTHING",
+      _ => insert + $@"
         ON CONFLICT (id) DO UPDATE SET
           data = EXCLUDED.data,
           metadata = EXCLUDED.metadata,
           updated_at = CASE WHEN @wb_suppressactivity THEN {qualifiedTable}.updated_at ELSE EXCLUDED.updated_at END,
           sys_updated_at = EXCLUDED.sys_updated_at,{expiresUpdate}
-          version = {qualifiedTable}.version + @wb_versionbump{scopeUpdateClause}{pfUpdateClause}{whereClause}";
+          version = {qualifiedTable}.version + @wb_versionbump{scopeUpdateClause}{pfUpdateClause}{whereClause}",
+    };
 
     var connection = context.Database.GetDbConnection();
     var openedHere = false;
@@ -393,6 +470,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       cmd.Parameters.Add(new NpgsqlParameter("metadata", metadataJson));
       cmd.Parameters.Add(new NpgsqlParameter("scope", scopeJson));
       var writeClock = DateTime.UtcNow;
+      if (expected.State == PerspectiveRowVersionState.Present) {
+        cmd.Parameters.Add(PerspectiveRowVersionSql.ExpectedVersionParameter("wb_expected_version", expected));
+      }
       cmd.Parameters.Add(new NpgsqlParameter("wb_created", businessTime));
       // The timestamps hook may override business time explicitly; its default now yields the
       // applied event's own timestamp rather than the clock.
@@ -414,7 +494,10 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
           i++;
         }
       }
-      await cmd.ExecuteNonQueryAsync(cancellationToken);
+      var affected = await cmd.ExecuteNonQueryAsync(cancellationToken);
+      if (affected == 0 && expected.IsChecked) {
+        await _explainRefusedWriteAsync<TModel>(context, qualifiedTable, args.Id, expected, cancellationToken);
+      }
       return true;
     } catch (Exception ex) when (ex is InvalidCastException or NotSupportedException or System.Text.Json.JsonException) {
       // The atomic path couldn't serialize or bind this row — e.g. a CLR type Npgsql can't map to its
@@ -429,6 +512,84 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         await connection.CloseAsync();
       }
     }
+  }
+
+  /// <summary>
+  /// The physical-column assignments of the conditional <c>UPDATE</c>: <c>, "col" = @pf_i</c> per value, in
+  /// the dictionary's order, bound to the same <c>@pf_i</c> parameters the insert form binds.
+  /// </summary>
+  private static string _physicalFieldAssignments(IDictionary<string, object?>? physicalFieldValues) {
+    if (physicalFieldValues is null) {
+      return string.Empty;
+    }
+    var assignments = new StringBuilder();
+    var i = 0;
+    foreach (var columnName in physicalFieldValues.Keys) {
+      assignments.Append(", \"").Append(columnName.Replace("\"", "\"\"")).Append("\" = @pf_").Append(i);
+      i++;
+    }
+    return assignments.ToString();
+  }
+
+  /// <summary>
+  /// A checked write affected no row. Either the row moved since the apply read it (a conflict: throw, and
+  /// nothing was written), or it is still at the expected version and the ordering guard refused the write,
+  /// which is the quiet skip it always was. Runs only after a refused write, never on the common path.
+  /// </summary>
+  private static async Task _explainRefusedWriteAsync<TModel>(
+      DbContext context, string qualifiedTable, Guid id, PerspectiveRowVersion expected, CancellationToken cancellationToken)
+      where TModel : class {
+    var actual = await PerspectiveRowVersionSql.ReadVersionAsync(context, qualifiedTable, id, lockRow: false, cancellationToken);
+    if (expected.State == PerspectiveRowVersionState.Present && actual == expected) {
+      return;
+    }
+    throw new PerspectiveRowConflictException(typeof(TModel), id, expected, actual);
+  }
+
+  /// <summary>
+  /// The EF fallback write, checked: lock the row, compare its version with the expected one, and save, all
+  /// in one transaction, so no writer can move the row between the check and the save. Joins an ambient
+  /// transaction when there is one; otherwise opens its own inside the context's execution strategy (a
+  /// retrying strategy forbids a user transaction outside it).
+  /// </summary>
+  /// <remarks>
+  /// A missing row cannot be locked. When the version expected no row and a concurrent insert of the same id
+  /// commits between the check and the save, the save fails on the primary key: loudly, with nothing
+  /// written, which is what the guard promises. The stream-ownership claim keeps that to a second apply of
+  /// the same stream.
+  /// </remarks>
+  private async Task _upsertCheckedFallbackAsync<TModel>(
+      DbContext context,
+      UpsertRowArgs<TModel> args,
+      PerEventApplyHookPlan hookPlan,
+      DateTimeOffset? expiresAt,
+      CancellationToken cancellationToken)
+      where TModel : class {
+    var qualifiedTable = PerspectiveRowVersionSql.QualifiedTable<TModel>(context);
+    if (context.Database.CurrentTransaction is not null) {
+      await _checkThenUpsertAsync(context, qualifiedTable, args, hookPlan, expiresAt, cancellationToken);
+      return;
+    }
+    await context.Database.CreateExecutionStrategy().ExecuteAsync(async ct => {
+      await using var transaction = await context.Database.BeginTransactionAsync(ct);
+      await _checkThenUpsertAsync(context, qualifiedTable, args, hookPlan, expiresAt, ct);
+      await transaction.CommitAsync(ct);
+    }, cancellationToken);
+  }
+
+  private async Task _checkThenUpsertAsync<TModel>(
+      DbContext context,
+      string qualifiedTable,
+      UpsertRowArgs<TModel> args,
+      PerEventApplyHookPlan hookPlan,
+      DateTimeOffset? expiresAt,
+      CancellationToken cancellationToken)
+      where TModel : class {
+    var actual = await PerspectiveRowVersionSql.ReadVersionAsync(context, qualifiedTable, args.Id, lockRow: true, cancellationToken);
+    if (actual != args.ExpectedVersion) {
+      throw new PerspectiveRowConflictException(typeof(TModel), args.Id, args.ExpectedVersion, actual);
+    }
+    await _upsertCoreInnerAsync(context, args, hookPlan, expiresAt, cancellationToken);
   }
 
   /// <summary>

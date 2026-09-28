@@ -41,6 +41,13 @@ namespace Whizbang.Data.Postgres;
 /// warning; the tables stay in their current form, which every reader tolerates, and the next start
 /// tries again.
 /// </para>
+/// <para>
+/// Committing is not the end of it. The initializer's index over a rewritten key is a plain
+/// <c>CREATE INDEX</c>, which indexes every row version an open snapshot can still see, and a
+/// snapshot older than the rewrite can still see the rows in their old rendering. So a pass that
+/// converted anything returns only once no session older than its commit is left, waiting up to the
+/// command timeout, and a pass that converted nothing returns at once.
+/// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/CanonicalTemporalRewritePhaseTests.cs</tests>
@@ -128,6 +135,7 @@ public static class CanonicalTemporalRewritePhase {
     connection.Notice += relay;
 
     var applied = 0;
+    string? writer;
     try {
       foreach (var (name, sql) in pending) {
         await transaction.SaveAsync(SAVEPOINT, cancellationToken);
@@ -149,6 +157,7 @@ public static class CanonicalTemporalRewritePhase {
         }
       }
 
+      writer = await SupersededRowVersionFence.CaptureWriterAsync(connection, transaction, cancellationToken);
       await transaction.CommitAsync(cancellationToken);
     } finally {
       connection.Notice -= relay;
@@ -156,6 +165,19 @@ public static class CanonicalTemporalRewritePhase {
 
     var elapsedMs = (long)timeProvider.GetElapsedTime(started).TotalMilliseconds;
     CanonicalTemporalRewriteLog.Applied(log, applied, pending.Count, lockId, elapsedMs);
+
+    if (writer is not null) {
+      // The initializer indexes the rewritten keys as soon as this returns, with a plain CREATE
+      // INDEX, which also indexes every row version an open snapshot can still see. A snapshot
+      // older than this commit can still see the rows in their old rendering, and the index's cast
+      // fails on them. So this returns only once none is left, or says who is left.
+      var holders = await SupersededRowVersionFence.WaitAsync(
+        connection, writer, TimeSpan.FromSeconds(commandTimeoutSeconds), timeProvider, log, cancellationToken);
+      if (holders.Count > 0) {
+        CanonicalTemporalRewriteLog.OlderSnapshotsRemain(log, holders.Count, commandTimeoutSeconds, holders);
+      }
+    }
+
     return true;
   }
 
@@ -256,6 +278,14 @@ internal static partial class CanonicalTemporalRewriteLog {
       Message = "Stored-format rewrite applied {Applied} of {Total} table statement(s) under schema "
               + "lock {LockId} in {ElapsedMs} ms")]
   public static partial void Applied(ILogger logger, int applied, int total, long lockId, long elapsedMs);
+
+  [LoggerMessage(
+      Level = LogLevel.Warning,
+      Message = "Stored-format rewrite committed, but {Count} session(s) older than it were still "
+              + "open after {WaitedSeconds}s and can still see the rows it replaced; an index over a "
+              + "rewritten key fails until they finish, and the initializer's retry builds it then: "
+              + "{Holders}")]
+  public static partial void OlderSnapshotsRemain(ILogger logger, int count, int waitedSeconds, IReadOnlyList<string> holders);
 
   [LoggerMessage(
       Level = LogLevel.Warning,

@@ -149,7 +149,7 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     }
     // Keep the message if a consumer exists OR its namespace is absorbed (persist-for-later, even with no
     // consumer). Absorbed events still reach the inbox → the unconditional event-store write captures them.
-    if (_registry.HasAnyConsumer(payloadClrType) || _isAbsorbedNamespace(payloadClrType)) {
+    if (_hasAnyConsumer(payloadClrType) || _isAbsorbedNamespace(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
     return new MessageDiscardDecision(
@@ -182,13 +182,26 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     if (_isCompositeType(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
-    return _registry.HasAnyConsumer(payloadClrType)
+    return _hasAnyConsumer(payloadClrType)
       ? new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None)
       : new MessageDiscardDecision(
           ShouldDiscard: true,
           Reason: MessageDiscardReason.RegistryChanged,
           Detail: $"Inbox row references payload type '{payloadClrType}' but no consumer is registered now");
   }
+
+  /// <summary>
+  /// Whether anything consumes the message, asked about its payload. An envelope-wrapped name is
+  /// unwrapped first: the envelope is a transport wrapper nothing consumes, and judging it instead of
+  /// its payload skipped every broker dead letter recovered under its envelope type (#934). Unwrapped
+  /// here as well as in the default registry query, so a custom <see cref="IReceptorRegistryQuery"/>
+  /// is asked the same question.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchSkipGateTests.cs:ShouldSkipInbox_EnvelopeWrappedRow_WhosePayloadHasAConsumer_IsKeptAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchSkipGateTests.cs:ShouldSkipInbox_EnvelopeWrappedRow_WhosePayloadHasNoConsumer_IsStillSkippedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchSkipGateTests.cs:EvaluateReceive_EnvelopeWrappedName_WhosePayloadHasAConsumer_IsKeptAsync</tests>
+  private bool _hasAnyConsumer(string payloadClrType) =>
+    _registry.HasAnyConsumer(EventTypeMatchingHelper.ExtractInnerPayloadTypeName(payloadClrType));
 
   /// <inheritdoc />
   public MessageDiscardDecision EvaluateOutbox(string payloadClrType) {

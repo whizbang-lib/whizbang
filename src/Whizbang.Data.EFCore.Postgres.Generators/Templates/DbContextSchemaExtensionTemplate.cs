@@ -850,6 +850,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       segmentConnectionFactory,
       _renderFormatBraces(sql),
       SCHEMA_COMMAND_TIMEOUT_SECONDS,
+      logger,
       cancellationToken);
   }
 

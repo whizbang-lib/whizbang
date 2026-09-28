@@ -1,9 +1,10 @@
 namespace Whizbang.Core.Notifications;
 
 /// <summary>
-/// Options for the slice 26 commit-order stamper. The stamper is a per-DB singleton
-/// (enforced via <c>pg_try_advisory_lock</c>); every service instance runs the worker
-/// but only the lock-holder actively stamps.
+/// Options for the slice 26 commit-order stamper. The stamper is a singleton per service
+/// schema (enforced via <c>pg_try_advisory_lock</c> on a schema-scoped key); every service
+/// instance runs the worker but only the lock-holder actively stamps. Services that share a
+/// database in separate schemas each elect their own stamper.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
 public sealed class CommitOrderStamperOptions {
@@ -69,8 +70,11 @@ public sealed class CommitOrderStamperOptions {
   public bool DisableStamper { get; set; }
 
   /// <summary>
-  /// Advisory lock key. Must be the same across all instances of the same service DB. Default
-  /// is a stable constant chosen to not collide with application-level advisory locks.
+  /// Base of the advisory lock key. The stamper does not lock on this value directly: it
+  /// derives its key from this value and the service's schema, so every instance of one service
+  /// contends for the same lock while services in other schemas of the same database elect their
+  /// own stampers. Must be the same across all instances of the same service. Default is a stable
+  /// constant; change it only to move the derived key away from a colliding application lock.
   /// </summary>
   public long AdvisoryLockKey { get; set; } = 0x57480001_5557_5048L;
 }

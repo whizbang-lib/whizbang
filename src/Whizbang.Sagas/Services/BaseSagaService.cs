@@ -627,6 +627,9 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_ItemRepositoryRequiresTenantScope_ReadsInTheSagasTenantAndArmsTheTickAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_SagasInDifferentTenants_EachIsReadAndArmedInItsOwnTenantAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_SagaWithNoTenant_IsReadInTheWorkersOwnContextAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_TickLostAndSagaStillStranded_IsReArmedAfterTheInterval_NotBeforeAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_SeveralInstancesInOneInterval_ArmOneTickAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_TickStillComing_IsNotReArmedHoweverManyIntervalsHavePassedAsync</tests>
   public virtual async Task<int> ArmStrandedSagasAsync(ISagaWakeLookup wakes, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(wakes);
 
@@ -645,7 +648,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       return 0;
     }
 
-    var now = DateTimeOffset.UtcNow;
+    var now = _options.TimeProvider.GetUtcNow();
     var armed = 0;
     foreach (var (saga, tenantId) in candidates.Where(c => !pending.Contains(c.Saga.Id))) {
       try {
@@ -685,9 +688,15 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// <summary>
   /// Arms one tick for a stranded saga, already at the stall limit: the saga has been still for longer
   /// than a whole stall count, so the tick resolves stranded items on arrival instead of serving that
-  /// count again. Claimed on the saga and the time of its last change, so every instance and restart
-  /// sweeping the same stop arrive at one tick, and a saga that moves and stops again gets one more.
+  /// count again. Claimed on the saga, the time of its last change and the number of whole
+  /// <see cref="SagaOptions.StrandedSagaRearmInterval"/>s it has been still since, so every instance and
+  /// restart sweeping the same stop in one interval arrive at one tick, a saga that moves and stops
+  /// again gets one more, and a saga whose tick was lost gets another once per interval (#935).
   /// </summary>
+  /// <remarks>
+  /// The first interval keeps the key the sweep used before re-arming existed, so a saga already armed
+  /// by an earlier version in that interval is not armed twice.
+  /// </remarks>
   private async Task<bool> _armStrandedAsync(
       BaseSagaModel saga, string? tenantId, DateTimeOffset lastActivity, DateTimeOffset now, CancellationToken cancellationToken) {
     var agg = _itemRepository is null
@@ -702,7 +711,11 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       LastObservedFailed = agg?.Failed ?? saga.FailedItems,
       ConsecutiveStallCount = Math.Max(0, _options.MaxConsecutiveStalls - 1),
     };
+    var rearm = (now - lastActivity).Ticks / _options.StrandedSagaRearmInterval.Ticks;
     var claimKey = $"saga-watchdog-sweep:{_sagaName}:{saga.Id:N}:{lastActivity.UtcTicks}";
+    if (rearm > 0) {
+      claimKey += $":rearm-{rearm}";
+    }
     return await _emitter.PublishOnceInTenantAsync(tenantId, claimKey, tick, cancellationToken).ConfigureAwait(false);
   }
 

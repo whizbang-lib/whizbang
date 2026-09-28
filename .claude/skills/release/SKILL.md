@@ -58,6 +58,9 @@ Work out the version from facts, not guesses:
   the approval gate, the tag exists (`git ls-remote --tags origin vX.Y.Z`), and after approval the
   packages are live (`curl -s https://api.nuget.org/v3-flatcontainer/softwareextravaganza.whizbang.core/index.json | jq -r '.versions[-3:][]'`).
 - `gh pr merge --auto` prints nothing when the PR is already merged. Read `state` back.
+- A red `Plan · Locate the tested packages` says which failure it is: no run found, run not green, or
+  packages missing. Each has its own row in the Recovery table. "No run found" after a green
+  release-branch run is the search missing it: re-run the release's failed jobs, not the branch CI.
 
 ## Never
 

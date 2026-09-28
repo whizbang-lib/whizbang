@@ -2072,6 +2072,8 @@ namespace TestNamespace {
     await Assert.That(runnerSource).Contains("physicalFieldValues");
     await Assert.That(runnerSource).Contains(@"""status""");  // snake_case column name
     await Assert.That(runnerSource).Contains("model.Status");
+    // Issue #928: the physical-fields write also lands only on the row version the apply read.
+    await Assert.That(string.Concat(runnerSource!.Where(c => !char.IsWhiteSpace(c)))).Contains("physicalFieldValues,scope,forceUpdateScope,metadata,expectedVersion,cancellationToken");
   }
 
   [Test]
@@ -2116,6 +2118,9 @@ namespace TestNamespace {
     await Assert.That(runnerSource).Contains("UpsertAsync(");
     await Assert.That(runnerSource).DoesNotContain("UpsertWithPhysicalFieldsAsync");
     await Assert.That(runnerSource).DoesNotContain("physicalFieldValues");
+    // Issue #928: both scope branches write onto the row version the apply read.
+    await Assert.That(string.Concat(runnerSource!.Where(c => !char.IsWhiteSpace(c))).Split("metadata,expectedVersion,cancellationToken").Length - 1).IsEqualTo(2);
+    await Assert.That(runnerSource).Contains("ReadForApplyAsync(streamId, cancellationToken)");
   }
 
   [Test]

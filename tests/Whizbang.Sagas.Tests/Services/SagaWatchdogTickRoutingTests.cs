@@ -82,8 +82,8 @@ public class SagaWatchdogTickRoutingTests {
     await registrar.StartAsync(CancellationToken.None);
     await registrar.StopAsync(CancellationToken.None);
 
-    await Assert.That(registry.Stages).IsEquivalentTo([LifecycleStage.PostInboxInline])
-      .Because("a tick is armed for a future time; a sending-side receptor would fire at arming and re-arm at once");
+    await Assert.That(registry.Stages).IsEquivalentTo([LifecycleStage.PreInboxInline])
+      .Because("a sending-side receptor would fire at arming and re-arm at once, and the post-inbox stage is skipped for a tick its own service published");
     await Assert.That(registry.Receptors.Single()).IsTypeOf<SagaWatchdogTickRouter>();
   }
 
@@ -114,6 +114,25 @@ public class SagaWatchdogTickRoutingTests {
     await Assert.That(services.Any(d => d.ServiceType == typeof(IHostedService)
                                      && d.ImplementationType == typeof(SagaWatchdogTickRouterRegistrar)))
       .IsTrue();
+  }
+
+  /// <summary>
+  /// The router is registered at startup, so compile-time subscription discovery cannot see it; the
+  /// tick's topic is subscribed only because the router's registration declares it.
+  /// </summary>
+  [Test]
+  public async Task AddWhizbangSagas_DeclaresTheTickAsConsumed_OnceHoweverOftenItIsCalledAsync() {
+    var services = new ServiceCollection();
+
+    services.AddWhizbangSagas();
+    services.AddWhizbangSagas();
+    await using var sp = services.BuildServiceProvider();
+
+    var declared = sp.GetServices<Whizbang.Core.Routing.IRuntimeEventSubscription>().Select(s => s.EventType).ToList();
+    await Assert.That(declared.Count).IsEqualTo(1)
+      .Because("declaring the tick twice must not subscribe to its topic twice");
+    await Assert.That(declared[0] == typeof(SagaCompletionWatchdogTickEvent)).IsTrue()
+      .Because("without the declaration the router listens on a topic the host never subscribes to");
   }
 
   [Test]

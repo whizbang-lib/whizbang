@@ -12,8 +12,14 @@ namespace Whizbang.Core.Messaging;
 /// Ensures envelope type metadata is correctly captured before serialization.
 /// </summary>
 /// <docs>fundamentals/messages/envelope-serialization</docs>
+/// <tests>tests/Whizbang.Core.Tests/Offloads/BodyClaimRehydratorCrossContextTests.cs:OffloadedAndInline_SamePayload_StoreAndDispatchIdenticallyAsync</tests>
+/// <param name="jsonOptions">The host's JSON serializer options. Every call uses them with every registered
+/// context behind their resolver, so a host whose options chain only some contexts still writes and
+/// reads what the transport can (#939). If null, the registry alone.</param>
 public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null) : IEnvelopeSerializer {
-  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? new JsonSerializerOptions();
+  private readonly JsonSerializerOptions? _hostOptions = jsonOptions;
+
+  private JsonSerializerOptions _jsonOptions() => Serialization.JsonContextRegistry.WithCompleteChain(_hostOptions);
 
   /// <inheritdoc />
   public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
@@ -46,7 +52,7 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
 
     // Convert the envelope to MessageEnvelope<JsonElement> for AOT-compatible storage
     // Get type info to serialize the payload to JsonElement
-    var payloadTypeInfo = _jsonOptions.GetTypeInfo(payloadType)
+    var payloadTypeInfo = _jsonOptions().GetTypeInfo(payloadType)
       ?? throw new InvalidOperationException(
         $"No JSON type info found for payload type '{TypeNameFormatter.DisplayName(payloadType)}'. " +
         $"Ensure the type is registered in a JsonSerializerContext. MessageId: {envelope.MessageId}");
@@ -87,7 +93,7 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
     var jsonElement = jsonEnvelope.Payload;
 
     // Use JsonContextRegistry for AOT-safe type resolution (zero reflection)
-    var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(messageTypeName, _jsonOptions)
+    var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(messageTypeName, _jsonOptions())
       ?? throw new InvalidOperationException(
         $"Failed to resolve message type '{messageTypeName}'. " +
         "Ensure the assembly containing this type is loaded and registered via [ModuleInitializer]."

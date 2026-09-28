@@ -4638,7 +4638,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// the SQL side parses defensively (non-JSON bodies become JSON strings), so this path never
   /// deserializes and never loses a message to a parse failure. Idempotent on the wire message id.
   /// </summary>
+  /// <remarks>
+  /// The caller hands over the wire's envelope type name; custody records the PAYLOAD type it wraps,
+  /// the form a received inbox row stores (#934). Recovery re-emits the row into the inbox under
+  /// this name, and the inbox gate judges it by this name: recorded as the envelope, which nothing
+  /// consumes, every recovered message was skipped as having no consumer.
+  /// </remarks>
   /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BrokerDeadLetterImportSqlTests.cs:Import_OfAnEnvelopeTypedMessage_RecordsAndRecoversItsPayloadTypeAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredBrokerDeadLetterDispatchIntegrationTests.cs:RecoveredBrokerDeadLetter_ReachesItsCompileTimeReceptorAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredBrokerDeadLetterDispatchIntegrationTests.cs:RecoveredBrokerDeadLetter_ReachesItsRuntimeRegisteredConsumerAsync</tests>
   public async Task<bool> ImportBrokerDeadLetterAsync(
       Whizbang.Core.Transports.BrokerDeadLetterImport import,
       CancellationToken cancellationToken = default) {
@@ -4657,7 +4666,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = (object?)import.StreamId ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_message_type", NpgsqlTypes.NpgsqlDbType.Text) {
-        Value = (object?)import.MessageType ?? DBNull.Value
+        Value = import.MessageType is null
+          ? DBNull.Value
+          : Whizbang.Core.Messaging.EventTypeMatchingHelper.ExtractInnerPayloadTypeName(import.MessageType)
       });
       cmd.Parameters.AddWithValue("p_destination", import.Destination);
       cmd.Parameters.AddWithValue("p_envelope_json", import.EnvelopeJson);

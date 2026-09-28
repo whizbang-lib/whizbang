@@ -253,7 +253,7 @@ dotnet add package SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres
 
 <!-- auto:quality -->
 - **Tests:** 26,000+ across unit, generator, integration and transport suites, run on every pull request.
-- **Coverage:** 100% of library lines; every pull request must cover all of its new lines and add no
+- **Coverage:** 100.0% of library lines; every pull request must cover all of its new lines and add no
   SonarCloud findings.
 <!-- /auto:quality -->
 

@@ -554,7 +554,10 @@ public sealed partial class InboxDrainWorker(
     return new InboxWork {
       MessageId = row.MessageId,
       Envelope = envelope,
-      MessageType = row.MessageType,
+      // Named after the payload even when the row names its envelope, as a broker dead letter
+      // recovered before #934 does: dispatch resolves the payload by this name, and an envelope name
+      // would deserialize the payload as an envelope and reach no receptor.
+      MessageType = EventTypeMatchingHelper.ExtractInnerPayloadTypeName(row.MessageType),
       StreamId = row.StreamId,
       PartitionNumber = row.PartitionNumber,
       Attempts = row.Attempts,

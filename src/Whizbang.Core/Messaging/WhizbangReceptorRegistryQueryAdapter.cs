@@ -22,9 +22,19 @@ public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry runti
     => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasInboxHandler(messageType);
 
   /// <inheritdoc />
-  public bool HasAnyConsumer(string messageType)
-    => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasAnyConsumer(messageType)
-       || runtimeRegistry.HasRuntimeConsumerFor(messageType);
+  /// <remarks>
+  /// An envelope-wrapped name (<c>MessageEnvelope`1[[payload]]</c>) is answered for the payload it
+  /// wraps. The envelope is a transport wrapper nothing consumes; a transport handing the gate its
+  /// envelope type name, or a row recovered from dead-letter custody under it (#934), is asking
+  /// about the payload.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:HasAnyConsumer_EnvelopeWrappedName_OfAStaticallyConsumedPayload_CountsAsConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:HasAnyConsumer_EnvelopeWrappedName_OfARuntimeConsumedPayload_CountsAsConsumerAsync</tests>
+  public bool HasAnyConsumer(string messageType) {
+    var payloadType = EventTypeMatchingHelper.ExtractInnerPayloadTypeName(messageType);
+    return Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasAnyConsumer(payloadType)
+       || runtimeRegistry.HasRuntimeConsumerFor(payloadType);
+  }
 
   /// <inheritdoc />
   /// <remarks>Runtime-registered receptors (the control-plane surface) are NOT enumerated

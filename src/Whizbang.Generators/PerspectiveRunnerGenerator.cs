@@ -695,7 +695,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _appendSimpleUpsertCode(StringBuilder sb) {
     sb.AppendLine("    // Upsert model (insert or update) — metadata.EventId records the last applied event so the");
-    sb.AppendLine("    // next run can skip already-applied events (see RunWithEventsAsync idempotency guard).");
+    sb.AppendLine("    // next run can skip already-applied events (see RunWithEventsAsync idempotency guard), and");
+    sb.AppendLine("    // expectedVersion lands the write only on the row version the apply read (issue #928).");
     sb.AppendLine("    if (scope != null) {");
     sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
     sb.AppendLine("          streamId,");
@@ -703,6 +704,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     sb.AppendLine("          scope,");
     sb.AppendLine("          forceUpdateScope,");
     sb.AppendLine("          metadata,");
+    sb.AppendLine("          expectedVersion,");
     sb.AppendLine("          cancellationToken");
     sb.AppendLine("      );");
     sb.AppendLine("    } else {");
@@ -712,6 +714,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     sb.AppendLine("          new global::Whizbang.Core.Lenses.PerspectiveScope(),");
     sb.AppendLine("          false,");
     sb.AppendLine("          metadata,");
+    sb.AppendLine("          expectedVersion,");
     sb.AppendLine("          cancellationToken");
     sb.AppendLine("      );");
     sb.AppendLine("    }");
@@ -729,7 +732,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     }
 
     sb.AppendLine("    // Upsert model with physical field values — metadata.EventId records the last applied event");
-    sb.AppendLine("    // so the next run can skip already-applied events (see RunWithEventsAsync idempotency guard).");
+    sb.AppendLine("    // so the next run can skip already-applied events (see RunWithEventsAsync idempotency guard), and");
+    sb.AppendLine("    // expectedVersion lands the write only on the row version the apply read (issue #928).");
     sb.AppendLine("    await _perspectiveStore.UpsertWithPhysicalFieldsAsync(");
     sb.AppendLine("        streamId,");
     sb.AppendLine("        model,");
@@ -737,6 +741,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     sb.AppendLine("        scope,");
     sb.AppendLine("        forceUpdateScope,");
     sb.AppendLine("        metadata,");
+    sb.AppendLine("        expectedVersion,");
     sb.AppendLine("        cancellationToken");
     sb.AppendLine("    );");
   }

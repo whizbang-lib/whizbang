@@ -1,4 +1,7 @@
 using System.Collections.Immutable;
+using System.Data;
+using System.Globalization;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -327,6 +330,203 @@ public class SchemaCommandBoundaryTests : IAsyncDisposable {
     await Assert.That(await _scalarAsync(
       $"SELECT string_agg(DISTINCT data ->> 'OccurredAt', ',') FROM {TABLE}")).IsEqualTo(afterFirst);
     await Assert.That(await _indexCountAsync()).IsEqualTo("1");
+  }
+
+  /// <summary>
+  /// The longest a test waits for a line the apply logs almost at once. The wait is a signal, so
+  /// the bound exists only to fail rather than hang when the line never comes.
+  /// </summary>
+  private static readonly TimeSpan _signalTimeout = TimeSpan.FromSeconds(30);
+
+  private NpgsqlConnection _connect() => new(_connectionString);
+
+  /// <summary>
+  /// Opens a repeatable-read transaction and takes its snapshot, so the snapshot predates whatever
+  /// the test applies next and stays in force until the test ends it.
+  /// </summary>
+  /// <remarks>
+  /// A long report, a slow request on another instance, or an ANALYZE the server started on its own
+  /// all look like this to the database: a snapshot that can still see the row versions a later
+  /// rewrite superseded.
+  /// </remarks>
+  private async Task<(NpgsqlConnection Connection, NpgsqlTransaction Transaction)> _holdOlderSnapshotAsync() {
+    var holder = _connect();
+    await holder.OpenAsync();
+    var transaction = await holder.BeginTransactionAsync(IsolationLevel.RepeatableRead);
+    await using var take = new NpgsqlCommand("SELECT 1", holder, transaction);
+    await take.ExecuteScalarAsync();
+    return (holder, transaction);
+  }
+
+  /// <summary>
+  /// An index built after the rewrite has committed still meets the old rendering while a snapshot
+  /// older than that commit is open.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The characterization the wait in <see cref="SchemaCommandBoundary.ApplyAsync(string, string, int, CancellationToken)"/>
+  /// exists for. A commit is necessary and not sufficient: a plain <c>CREATE INDEX</c> indexes every
+  /// row version that some open snapshot can still see, not only the live one, and the version the
+  /// rewrite superseded is one of those for as long as a snapshot taken before the rewrite lives.
+  /// </para>
+  /// <para>
+  /// A read-only snapshot only counts in the same database. A transaction that has written counts
+  /// from any database of the server, which the test after the next one pins down.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AnIndexBuiltWhileAnOlderSnapshotIsOpenStillMeetsTheOldRenderingAsync() {
+    var (holder, snapshot) = await _holdOlderSnapshotAsync();
+    await using var _ = holder;
+    await using var __ = snapshot;
+
+    await _executeAsync(REWRITE);
+
+    var failure = await Assert.ThrowsAsync<PostgresException>(async () => {
+      foreach (var statement in JsonIndexSql.CreateStatements(_index, TABLE, "boundary")) {
+        await _executeAsync(statement);
+      }
+    });
+
+    await Assert.That(failure!.SqlState).IsEqualTo("22P02");
+    await Assert.That(failure.MessageText).Contains(OLD_RENDERING);
+    await Assert.That(await _storedTypeAsync()).IsEqualTo("number")
+      .Because("the rewrite committed; only the superseded row versions carry the old rendering");
+  }
+
+  /// <summary>
+  /// Applied across the boundary while an older snapshot is open, the apply waits for that snapshot
+  /// to end and then indexes.
+  /// </summary>
+  /// <remarks>
+  /// The schema pass runs at startup, which is exactly when other instances and other work are
+  /// connected to the same database, so this is the case an upgrade meets rather than a corner of
+  /// one. The snapshot ends only once the apply has said it is waiting, so the test proves a wait
+  /// happened rather than a lucky ordering; the logger signals that line and nothing polls for it.
+  /// </remarks>
+  [Test]
+  public async Task ApplyingAcrossTheBoundaryWaitsForAnOlderSnapshotAndThenIndexesAsync() {
+    var (holder, snapshot) = await _holdOlderSnapshotAsync();
+    await using var _ = holder;
+    await using var __ = snapshot;
+    var log = new SignalingListLogger();
+
+    var run = SchemaCommandBoundary.ApplyAsync(_connect, _perspectiveSchema(), 600, log);
+    var waiting = log.WaitForAsync("older than");
+
+    // Awaited when it finishes first, so a regression reports the apply's own failure, the 22P02 on
+    // the superseded rendering, rather than a missing log line.
+    if (await Task.WhenAny(run, waiting).WaitAsync(_signalTimeout) == run) {
+      await run;
+    }
+
+    await Assert.That(run.IsCompleted).IsFalse()
+      .Because("an index built while that snapshot is open meets the rendering the rewrite replaced");
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Information
+        && e.Message.Contains(holder.ProcessID.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("an operator watching a stalled startup needs to know which session it is waiting for");
+
+    await snapshot.CommitAsync();
+    await run;
+
+    await Assert.That(await _storedTypeAsync()).IsEqualTo("number");
+    await Assert.That(await _indexCountAsync()).IsEqualTo("1");
+  }
+
+  /// <summary>
+  /// A transaction that has written, in another database of the same server, is waited for too.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Transaction ids are server-wide. While a writer older than the rewrite is still running
+  /// anywhere on the server, every new snapshot reaches back past the rewrite, the index build's
+  /// own included, and the build treats the replaced rows as still visible. Nothing else is
+  /// connected to the database being migrated, and the index fails anyway.
+  /// </para>
+  /// <para>
+  /// This is what made the boundary tests fail only on a busy machine: other suites sharing the
+  /// server held write transactions open in their own databases. A wait that looked only at this
+  /// database found nothing to wait for and built the index into the same failure.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AWriterInAnotherDatabaseOfTheServerIsWaitedForAsync() {
+    var other = await PerTestDatabaseFactory.CreateAsync("boundaryother");
+    try {
+      await using var holder = new NpgsqlConnection(other.ConnectionString);
+      await holder.OpenAsync();
+      await using var writer = await holder.BeginTransactionAsync();
+      await using (var assign = new NpgsqlCommand("SELECT pg_current_xact_id()", holder, writer)) {
+        await assign.ExecuteScalarAsync();
+      }
+
+      var log = new SignalingListLogger();
+      var run = SchemaCommandBoundary.ApplyAsync(_connect, _perspectiveSchema(), 600, log);
+      var waiting = log.WaitForAsync("older than");
+
+      // Awaited when it finishes first, so a regression reports the apply's own failure.
+      if (await Task.WhenAny(run, waiting).WaitAsync(_signalTimeout) == run) {
+        await run;
+      }
+
+      await Assert.That(run.IsCompleted).IsFalse();
+      await Assert.That(log.Entries.Any(e => e.Message.Contains(
+          holder.ProcessID.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)))
+        .IsTrue();
+
+      await writer.CommitAsync();
+      await run;
+
+      await Assert.That(await _indexCountAsync()).IsEqualTo("1");
+    } finally {
+      await PerTestDatabaseFactory.DropAsync(other.Name);
+    }
+  }
+
+  /// <summary>
+  /// An older snapshot that outlasts the budget ends the apply with an error naming it, before the
+  /// index is attempted, and the committed rewrite stays.
+  /// </summary>
+  /// <remarks>
+  /// The budget is the command timeout, two seconds here, and the snapshot is never released, so
+  /// the budget is the only way out and the outcome cannot depend on scheduling. The rewrite having
+  /// stayed is what lets the next attempt succeed once the snapshot is gone.
+  /// </remarks>
+  [Test]
+  public async Task AnOlderSnapshotThatOutlastsTheBudgetIsReportedByNameAsync() {
+    var (holder, snapshot) = await _holdOlderSnapshotAsync();
+    await using var _ = holder;
+    await using var __ = snapshot;
+
+    var failure = await Assert.ThrowsAsync<TimeoutException>(
+      async () => await SchemaCommandBoundary.ApplyAsync(_connect, _perspectiveSchema(), 2, logger: null));
+
+    await Assert.That(failure!.Message)
+      .Contains(holder.ProcessID.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    await Assert.That(await _storedTypeAsync()).IsEqualTo("number");
+    await Assert.That(await _indexCountAsync()).IsEqualTo("0");
+  }
+
+  /// <summary>
+  /// A piece that wrote nothing gives the next piece nothing to wait for, whatever is open.
+  /// </summary>
+  /// <remarks>
+  /// Only a write leaves superseded row versions behind, so waiting after a piece that wrote nothing
+  /// would stall a startup behind unrelated long transactions for no benefit.
+  /// </remarks>
+  [Test]
+  public async Task APieceThatWroteNothingWaitsForNoOneAsync() {
+    var (holder, snapshot) = await _holdOlderSnapshotAsync();
+    await using var _ = holder;
+    await using var __ = snapshot;
+    var log = new SignalingListLogger();
+
+    await SchemaCommandBoundary.ApplyAsync(
+      _connect, $"SELECT 1;\n{SchemaCommandBoundary.MARKER}\nSELECT 2;", 600, log);
+
+    await Assert.That(log.Entries.Any(e => e.Message.Contains("older than", StringComparison.Ordinal)))
+      .IsFalse();
   }
 
   /// <summary>

@@ -163,6 +163,29 @@ public class EFCorePostgresPerspectiveStoreRoutingTests : EFCoreTestBase {
     await Assert.That(strategy.Calls.Single().ForceUpdateScope).IsTrue();
   }
 
+  [Test]
+  public async Task PhysicalFields_WithAnExpectedVersion_ReachesAStrategyThatTracksNoVersion_WithEverythingElseAsync() {
+    // The versioned overload is what the generated runner calls. A strategy that predates row
+    // versions keeps only the unversioned overloads, so the interface default must carry the
+    // caller's metadata, scope, fields and flag down to them rather than dropping the write.
+    await using var ctx = CreateDbContext();
+    var (store, strategy) = _store(ctx);
+    var id = Guid.CreateVersion7();
+    var fields = new Dictionary<string, object?> { ["price"] = 10m };
+
+    await store.UpsertWithPhysicalFieldsAsync(
+      id, new ProbeModel(), fields,
+      scope: null, forceUpdateScope: true, _callerMetadata, PerspectiveRowVersion.Of(7));
+
+    var call = strategy.Calls.Single();
+    await Assert.That(call.Id).IsEqualTo(id);
+    await Assert.That(call.TableName).IsEqualTo(TABLE);
+    await Assert.That(call.Metadata.EventType).IsEqualTo("Shop.OrderPlaced");
+    await Assert.That(call.PhysicalFields).IsEqualTo(fields);
+    await Assert.That(call.Scope).IsNotNull();
+    await Assert.That(call.ForceUpdateScope).IsTrue();
+  }
+
   // ============================================================
   // Partition-key routing
   // ============================================================

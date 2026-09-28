@@ -458,7 +458,14 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // reuse the same typed envelope. Cache hit on transport redelivery / lease re-claim within
       // the configured TTL. Returns null (typedEnvelope == null) when no deserializer or no
       // payload — lifecycle invocation then no-ops as before.
-      var typedEnvelope = _resolveTypedEnvelope(work);
+      var (typedEnvelope, refusal) = _resolveTypedEnvelope(work);
+      if (refusal is not null) {
+        // The serializer refused the payload. Continuing would finish the row as processed with no
+        // lifecycle stage run and, for a composite, no fan-out: the row is deleted and its content is
+        // lost without a trace (#938). It is dead-lettered with its body instead, never completed.
+        await _deadLetterUndeserializableAsync(work, refusal, ct);
+        return;
+      }
 
       // Composite fan-out (plans/composite-events-turnkey.md, Phase A): a composite arrives as an
       // ordinary inbox row. At the dispatch seam — inside the retry/DLQ envelope — it expands into N
@@ -517,26 +524,103 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   /// <summary>
   /// Slice 15: deserialize the message payload once per dispatch (or hit the cache on
-  /// re-delivery within TTL). Returns null when no deserializer is registered, no envelope
-  /// payload exists, or deserialization fails — callers then no-op the lifecycle stage.
+  /// re-delivery within TTL). The envelope is null when deserialization fails; the refusal is
+  /// set when the serializer refused the payload itself (see <see cref="IsPayloadRefusal"/>), which
+  /// the caller dead-letters. Any other failure (a type name this build does not register) is
+  /// logged once and the lifecycle stages no-op, as before.
   /// </summary>
-  private IMessageEnvelope? _resolveTypedEnvelope(InboxWork work) {
+  private (IMessageEnvelope? Envelope, Exception? Refusal) _resolveTypedEnvelope(InboxWork work) {
     // The handler name rides on the typed envelope's dispatch context so an emission made while handling
     // this row derives an identity that names the handler; a sibling handler row of the same message
     // then cannot derive the same id (EmissionIdentity).
     if (_deserializeCache is not null && _deserializeCache.TryGet(work.MessageId, out var cached) && cached is not null) {
-      return work.Envelope.ReconstructWithPayload(cached, work.HandlerName);
+      return (work.Envelope.ReconstructWithPayload(cached, work.HandlerName), null);
     }
     try {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
       _deserializeCache?.Set(work.MessageId, message);
-      return work.Envelope.ReconstructWithPayload(message, work.HandlerName);
+      return (work.Envelope.ReconstructWithPayload(message, work.HandlerName), null);
+    } catch (Exception ex) when (IsPayloadRefusal(ex)) {
+      return (null, ex);
     } catch (Exception ex) {
-      // Deserialize is now best-effort at the top of dispatch; per-stage code logs lifecycle
-      // errors but a fail here would silently skip ALL stages. Surface it once.
+      // Deserialize is best-effort at the top of dispatch for a failure that is not the payload's
+      // own: per-stage code logs lifecycle errors, but a fail here would silently skip ALL stages.
+      // Surface it once.
       _logLifecycleError(work.MessageId, "Deserialize", ex);
-      return null;
+      return (null, null);
     }
+  }
+
+  /// <summary>
+  /// Whether the serializer refused the payload itself: a <see cref="System.Text.Json.JsonException"/>
+  /// (malformed or mismatched JSON, a discriminator out of place) or a <see cref="NotSupportedException"/>
+  /// (metadata no registered context holds) anywhere in the chain. Either is terminal on this build: the
+  /// same bytes fail the same way on every retry.
+  /// </summary>
+  /// <param name="ex">The exception the deserializer raised, possibly wrapped.</param>
+  /// <returns><see langword="true"/> when a refusal was found.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs</tests>
+  internal static bool IsPayloadRefusal(Exception ex) {
+    for (Exception? current = ex; current is not null; current = current.InnerException) {
+      if (current is System.Text.Json.JsonException or NotSupportedException) {
+        return true;
+      }
+      if (current is AggregateException aggregate && aggregate.InnerExceptions.Any(IsPayloadRefusal)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Dead-letters an inbox row whose payload the serializer refused at dispatch (#938). The inbox
+  /// dead-letter move snapshots the row's own body into the dead-letter store and deletes the row in one
+  /// step, the path the attempts bound uses. The row is never completed: without a configured store, or
+  /// when the move itself fails, the failure is routed through the failure channel instead, so the row
+  /// keeps its body and the attempts bound governs it, rather than the completion that deletes it.
+  /// </summary>
+  /// <docs>messaging/transports/transport-consumer#unreadable-messages</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs</tests>
+  private async Task _deadLetterUndeserializableAsync(InboxWork work, Exception refusal, CancellationToken ct) {
+    const MessageFailureReason reason = Whizbang.Core.Messaging.MessageFailureReason.SerializationError;
+    var cause = refusal.GetBaseException();
+    var detail = $"The payload of inbox message {work.MessageId} ({work.MessageType}) could not be deserialized, "
+      + $"which a retry will not change: {cause.GetType().Name}: {cause.Message}";
+    LogUndeserializablePayload(_logger, work.MessageId, work.MessageType, refusal);
+
+    if (_deadLetterStore.IsConfigured) {
+      try {
+        var errorText = detail + Environment.NewLine + refusal;
+        var movedId = await _deadLetterStore.MoveAsync(
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+          sourceTable: DeadLetterSourceTable.INBOX,
+          sourceId: work.MessageId,
+          failureReason: reason,
+          errorText: errorText,
+          instanceId: _instanceProvider.InstanceId,
+          generation: _generationProvider.GetGeneration(),
+          ct: ct).ConfigureAwait(false);
+        if (movedId is not null) {
+          _dlqMetrics?.Added.Add(1,
+            new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
+            new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
+          _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, errorText);
+        } else {
+          LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
+        }
+        _inboxChannelWriter.RemoveInFlight(work.MessageId);   // #571: terminal path releases
+        return;
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogUndeserializableDeadLetterFailed(_logger, work.MessageId, ex);
+      }
+    }
+
+    await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+      MessageId = work.MessageId,
+      CompletedStatus = work.Status,
+      Error = detail + Environment.NewLine + refusal,
+      Reason = reason,
+    }, ct);
   }
 
   /// <summary>
@@ -1095,6 +1179,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
+
+  [LoggerMessage(EventId = 76, Level = LogLevel.Error,
+    Message = "InboxDispatchWorker could not deserialize the payload of message {MessageId} ({MessageType}), which a retry will not change; "
+            + "dead-lettering the row with its body instead of completing it")]
+  static partial void LogUndeserializablePayload(ILogger logger, Guid messageId, string messageType, Exception ex);
+
+  [LoggerMessage(EventId = 77, Level = LogLevel.Error,
+    Message = "InboxDispatchWorker could not dead-letter undeserializable message {MessageId}; failing the row instead so it keeps its body "
+            + "and the attempts bound governs it, never completing it")]
+  static partial void LogUndeserializableDeadLetterFailed(ILogger logger, Guid messageId, Exception ex);
 
   [LoggerMessage(EventId = 74, Level = LogLevel.Error, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing): the payload could not be deserialized, which a retry will not change")]
   static partial void LogLifecycleDeserializationError(ILogger logger, Guid messageId, string stage, Exception ex);

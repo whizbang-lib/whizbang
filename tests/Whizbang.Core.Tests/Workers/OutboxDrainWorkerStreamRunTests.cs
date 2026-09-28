@@ -183,6 +183,85 @@ public class OutboxDrainWorkerStreamRunTests {
       .Because("the cursor is the stream's LAST row published, whatever order the transport reported the results in");
   }
 
+  [Test]
+  public async Task ADeadlockedContinuation_IsRetriedAtOnce_NotLeftToTheClaimBackstopAsync() {
+    // #936: a continuation that loses a deadlock rolls back whole, so the same cursors are still
+    // right. Retried in place, the stream moves on in the same drain cycle; left to the batch guard,
+    // it waited for the claim loop to offer it again, which on an idle-backed-off loop took tens of
+    // seconds.
+    var stream = TrackedGuid.New().Value;
+    var rows = _rows(stream, 20);
+    var coord = new RunCoordinator();
+    coord.Leased[stream] = [.. rows.Take(10)];
+    coord.Pending[stream] = [.. rows.Skip(10)];
+    coord.ContinueFailures.Enqueue(FakeDbException.WithSqlState("40P01"));
+    var publish = new ScriptedPublishStrategy(bulk: false);
+    using var harness = _start(coord, publish, new OutboxDrainWorkerOptions { MaxPerStream = 10 }, stream);
+    await harness.Completion.WaitForCountAsync(20, TimeSpan.FromSeconds(30));
+    await harness.FirstCycle.WaitAsync(TimeSpan.FromSeconds(30));
+
+    await Assert.That(publish.PublishedIds).IsEquivalentTo(rows.Select(r => r.MessageId), TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the deadlocked round is retried at once, inside the cycle that published the run before it");
+    await Assert.That(coord.ContinueCursors.Take(2).Select(c => c.Single().LastPublishedMessageId))
+      .IsEquivalentTo([rows[9].MessageId, rows[9].MessageId], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the retry asks from the same cursor: the failed statement changed nothing");
+  }
+
+  [Test]
+  public async Task AContinuationThatKeepsDeadlocking_GivesUpAfterItsRetriesAsync() {
+    // Bounded: a continuation that cannot get through is left to the claim loop, as before, rather
+    // than holding the drain in a retry loop while other streams wait in the channel.
+    var stream = TrackedGuid.New().Value;
+    var rows = _rows(stream, 10);
+    var coord = new RunCoordinator();
+    coord.Leased[stream] = rows;
+    coord.Pending[stream] = _rows(stream, 5);
+    for (var i = 0; i < 10; i++) {
+      coord.ContinueFailures.Enqueue(FakeDbException.WithSqlState("40P01"));
+    }
+    var publish = new ScriptedPublishStrategy(bulk: false);
+    using var harness = _start(coord, publish, new OutboxDrainWorkerOptions { MaxPerStream = 10 }, stream);
+    await harness.FirstCycle.WaitAsync(TimeSpan.FromSeconds(30));
+
+    await Assert.That(coord.ContinueCursors.Count).IsEqualTo(OutboxDrainWorker.CONTINUATION_TRANSIENT_ATTEMPTS)
+      .Because("each attempt is one call, and the attempts are bounded");
+    await Assert.That(publish.AttemptedIds.Count).IsEqualTo(10)
+      .Because("only the claimed run published; the rest of the stream waits for the claim loop");
+  }
+
+  [Test]
+  public async Task AContinuationFailureThatIsNotTransient_IsNotRetriedAsync() {
+    // A defect is not retried: running the same broken statement again only repeats it.
+    var stream = TrackedGuid.New().Value;
+    var rows = _rows(stream, 10);
+    var coord = new RunCoordinator();
+    coord.Leased[stream] = rows;
+    coord.Pending[stream] = _rows(stream, 5);
+    coord.ContinueFailures.Enqueue(new InvalidOperationException("not the database"));
+    var publish = new ScriptedPublishStrategy(bulk: false);
+    using var harness = _start(coord, publish, new OutboxDrainWorkerOptions { MaxPerStream = 10 }, stream);
+    await harness.FirstCycle.WaitAsync(TimeSpan.FromSeconds(30));
+
+    await Assert.That(coord.ContinueCursors.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task AContinuationThatLostItsConnection_IsNotRetriedAtOnceAsync() {
+    // Transient, but not a conflict with another transaction: asking again at once does not clear a
+    // dropped connection, so the round goes to the batch guard and the claim loop, as before.
+    var stream = TrackedGuid.New().Value;
+    var rows = _rows(stream, 10);
+    var coord = new RunCoordinator();
+    coord.Leased[stream] = rows;
+    coord.Pending[stream] = _rows(stream, 5);
+    coord.ContinueFailures.Enqueue(FakeDbException.WithSqlState("08006"));
+    var publish = new ScriptedPublishStrategy(bulk: false);
+    using var harness = _start(coord, publish, new OutboxDrainWorkerOptions { MaxPerStream = 10 }, stream);
+    await harness.FirstCycle.WaitAsync(TimeSpan.FromSeconds(30));
+
+    await Assert.That(coord.ContinueCursors.Count).IsEqualTo(1);
+  }
+
   // --- fakes ---------------------------------------------------------------------------------------
 
   private static readonly JsonSerializerOptions _jsonOpts = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
@@ -222,6 +301,8 @@ public class OutboxDrainWorkerStreamRunTests {
     public ConcurrentDictionary<Guid, List<OutboxBatchRow>> Pending { get; } = new();
     public List<IReadOnlyList<OutboxStreamCursor>> ContinueCursors { get; } = [];
     public List<int> ContinueRunLengths { get; } = [];
+    /// <summary>Thrown, one per call, by the next continuation calls, before any row is leased.</summary>
+    public ConcurrentQueue<Exception> ContinueFailures { get; } = new();
     public int FetchCalls;
 
     /// <summary>When true, each fetch of a stream returns its next page of the leased run rather than its first.</summary>
@@ -255,6 +336,9 @@ public class OutboxDrainWorkerStreamRunTests {
       lock (_lock) {
         ContinueCursors.Add([.. streams]);
         ContinueRunLengths.Add(runLength);
+        if (ContinueFailures.TryDequeue(out var failure)) {
+          throw failure;
+        }
         foreach (var cursor in streams) {
           if (!Pending.TryGetValue(cursor.StreamId, out var pending)) {
             continue;
