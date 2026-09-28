@@ -141,6 +141,84 @@ public class ReceptorInvokerOwnedDomainFilterTests {
     await Assert.That(tracker.Count).IsEqualTo(1);
   }
 
+  /// <summary>
+  /// A locally dispatched event fires at both stages by default, and only once where an owned
+  /// domain is configured.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Stated because it is surprising, and because it was misread as a defect. Firing at every stage
+  /// is this framework's default contract, held by its own tests
+  /// (<c>NoOwnedDomains_AllStagesFire_BackwardCompat</c>,
+  /// <c>ReceptorIdempotent_AcrossDefaultStagesFiresAtEveryStage</c>). The double-fire guard beside
+  /// the filter above is an opt-in that arrives with owned domains, not a correction to the default.
+  /// </para>
+  /// <para>
+  /// What suppresses the echo for a host that configures no owned domain is
+  /// <see cref="IReceptorDedupStore"/>, which is per-receptor rather than per-stage: a receptor that
+  /// fired for a message does not fire again for it unless it declares itself idempotent. So a
+  /// duplicate delivery here is a question about that store, or about the receptor's own
+  /// idempotence declaration -- not about the stage contract, and not something to fix by changing
+  /// it. Thirty-one of this repository's tests say so.
+  /// </para>
+  /// </remarks>
+  /// <param name="withOwnedDomain">Whether the host configures an owned domain.</param>
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task LocalDispatchedEvent_FiresAtEveryStage_UnlessAnOwnedDomainNarrowsItAsync(bool withOwnedDomain) {
+    string[] ownedDomains = withOwnedDomain ? [OWNED_DOMAIN] : [];
+    var tracker = new FiringTracker();
+    var registry = new StubRegistry(tracker);
+    registry.RegisterReceptor<Shop.Orders.OrderPlaced>(LifecycleStage.LocalImmediateInline);
+    registry.RegisterReceptor<Shop.Orders.OrderPlaced>(LifecycleStage.PreOutboxInline);
+
+    var services = new ServiceCollection();
+    if (ownedDomains.Length > 0) {
+      services.AddSingleton<IOptions<RoutingOptions>>(
+        Options.Create(new RoutingOptions().OwnDomains(ownedDomains)));
+    }
+    var invoker = new ReceptorInvoker(registry, services.BuildServiceProvider());
+
+    // Both = LocalDispatch | Outbox: the local path ran, and the message is also going out.
+    var envelope = new MessageEnvelope<Shop.Orders.OrderPlaced> {
+      MessageId = MessageId.From((Guid)TrackedGuid.New()),
+      Payload = new Shop.Orders.OrderPlaced(),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Both, Source = MessageSource.Local },
+    };
+
+    await invoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, _context(LifecycleStage.LocalImmediateInline));
+    await invoker.InvokeAsync(envelope, LifecycleStage.PreOutboxInline, _context(LifecycleStage.PreOutboxInline));
+
+    await Assert.That(tracker.Count).IsEqualTo(withOwnedDomain ? 1 : 2)
+      .Because("every stage fires by default; naming an owned domain is what turns the outbox echo off");
+  }
+
+  /// <summary>
+  /// The owned-domain filter does not reach the inbox stage, so a foreign event still arrives.
+  /// </summary>
+  /// <remarks>
+  /// The filter skips a foreign event at PreOutbox, where it would be re-publishing somebody else's
+  /// event. The inbox stage is the opposite case: the event has arrived and this service is the one
+  /// consuming it. A framework event a host does not own -- a saga's watchdog tick, whose type lives
+  /// in the framework rather than in any host's domain -- is foreign to every host that receives it,
+  /// so were the filter to apply here it would drop every one of them.
+  /// </remarks>
+  [Test]
+  public async Task PreInbox_ForeignEvent_FiresEvenWithOwnedDomainsConfiguredAsync() {
+    var (invoker, tracker) = _invoker<Billing.Invoices.InvoiceIssued>(
+      LifecycleStage.PreInboxInline, OWNED_DOMAIN);
+
+    await invoker.InvokeAsync(
+      _envelope(new Billing.Invoices.InvoiceIssued()),
+      LifecycleStage.PreInboxInline,
+      _context(LifecycleStage.PreInboxInline));
+
+    await Assert.That(tracker.Count).IsEqualTo(1)
+      .Because("an arriving event is this service's to consume, whoever owns the namespace it lives in");
+  }
+
   [Test]
   public async Task PreOutbox_OwnedCommand_IsSkippedAsync() {
     // An owned command reaching PreOutbox is an echo of work this service already handled at
