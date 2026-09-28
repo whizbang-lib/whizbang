@@ -110,6 +110,42 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
              + "custody — the import path must never lose a message to a parse failure");
   }
 
+  /// <summary>
+  /// The import is handed the wire's envelope type name, but custody records the payload type the
+  /// envelope wraps: the form a received inbox row stores, and so the form recovery re-emits (#934).
+  /// Recorded as the envelope, the recovered row was judged by the inbox gate as a message nothing
+  /// consumes and skipped, so a recovered message was lost after recovery.
+  /// </summary>
+  [Test]
+  public async Task Import_OfAnEnvelopeTypedMessage_RecordsAndRecoversItsPayloadTypeAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var messageId = (Guid)TrackedGuid.New();
+    _ = await coordinator.ImportBrokerDeadLetterAsync(_import(messageId));
+
+    var conn = await _openAsync(ctx);
+    Guid dlqId;
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = "SELECT dead_letter_id, message_type FROM wh_dead_letters WHERE source_id = @id AND source_table = 'broker'";
+      cmd.Parameters.AddWithValue("id", messageId);
+      await using var reader = await cmd.ExecuteReaderAsync();
+      await Assert.That(await reader.ReadAsync()).IsTrue();
+      dlqId = reader.GetGuid(0);
+      await Assert.That(reader.GetString(1)).IsEqualTo("Test.Composite, Test")
+        .Because("custody records the payload type, the form a received inbox row stores");
+    }
+    await using (var recoverCmd = conn.CreateCommand()) {
+      recoverCmd.CommandText = "SELECT recover_dead_letter(@id)";
+      recoverCmd.Parameters.AddWithValue("id", dlqId);
+      _ = await recoverCmd.ExecuteScalarAsync();
+    }
+    await using var inboxCmd = conn.CreateCommand();
+    inboxCmd.CommandText = "SELECT message_type FROM wh_inbox WHERE message_id = @id";
+    inboxCmd.Parameters.AddWithValue("id", messageId);
+    await Assert.That((string?)await inboxCmd.ExecuteScalarAsync()).IsEqualTo("Test.Composite, Test")
+      .Because("the recovered row is judged by the inbox gate on this name");
+  }
+
   [Test]
   public async Task Recover_BrokerRow_ReemitsIntoInboxAndMarksRecoveredAsync() {
     await using var ctx = CreateDbContext();

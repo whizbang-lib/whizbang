@@ -176,6 +176,46 @@ public class InboxDrainWorkerTests {
       .Because("the dispatch worker enters the handling from the envelope's number; a blank there breaks inheritance for everything the handler emits");
   }
 
+  /// <summary>
+  /// A row recovered from broker dead-letter custody before #934 was fixed carries its envelope's type
+  /// name. Dispatch resolves the payload by the work item's type name, so a work item named after the
+  /// envelope would deserialize the payload as an envelope and reach no receptor. The work item is
+  /// named after the payload, the form every received row stores.
+  /// </summary>
+  [Test]
+  public async Task InboxDrainWorker_EnvelopeTypedRow_IsHandedOnUnderItsPayloadTypeAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var row = _row(msgId, streamId) with {
+      MessageType = EnvelopeTypeNameHelper.Format("Test.Contracts.Foo, Test.Contracts, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"),
+    };
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [row];
+    var drain = new FakeInboxDrainChannel();
+    var inbox = new CapturingInboxChannel { TargetCount = 1 };
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var worker = new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drain, inbox, gate,
+      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<InboxDrainWorker>.Instance);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+    await inbox.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(inbox.Written.Single().MessageType)
+      .IsEqualTo("Test.Contracts.Foo, Test.Contracts, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null");
+  }
+
   [Test]
   public async Task InboxDrainWorker_OnStreamId_FetchesBatch_FeedsInboxChannelInOrderAsync() {
     var streamId = (Guid)TrackedGuid.New();

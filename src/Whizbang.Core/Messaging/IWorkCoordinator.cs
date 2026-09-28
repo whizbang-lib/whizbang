@@ -2022,7 +2022,8 @@ public interface IWorkCoordinator {
   /// <summary>
   /// Gives a broker-dead-lettered message durable custody as a <c>wh_dead_letters</c> row
   /// (<c>source_table='broker'</c>, <see cref="MessageFailureReason.BrokerDeadLetter"/>), storing
-  /// the RAW wire body verbatim — no deserialization. Idempotent on the wire message id:
+  /// the RAW wire body verbatim — no deserialization, and records the payload type the wire's envelope
+  /// type wraps, the form a received inbox row stores (#934). Idempotent on the wire message id:
   /// <c>true</c> = custody row created; <c>false</c> = duplicate (custody already exists — the
   /// caller may settle the broker message). A FAILED import throws instead of returning
   /// <c>false</c>, so callers can distinguish "safe to settle" from "leave it for the next pass".
