@@ -42,12 +42,12 @@ public class InboxDispatchWorkerUndeserializablePayloadTests {
 
     await h.Worker.ProcessOneInnerAsync(work, CancellationToken.None);
 
-    var move = h.DeadLetters.Moves.Single();
-    await Assert.That(move.SourceId).IsEqualTo(work.MessageId);
-    await Assert.That(move.SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX)
+    var (sourceTable, sourceId, reason, errorText) = h.DeadLetters.Moves.Single();
+    await Assert.That(sourceId).IsEqualTo(work.MessageId);
+    await Assert.That(sourceTable).IsEqualTo(DeadLetterSourceTable.INBOX)
       .Because("the inbox dead-letter move snapshots the row's own body into the dead-letter store, which is what makes it replayable");
-    await Assert.That(move.Reason).IsEqualTo(MessageFailureReason.SerializationError);
-    await Assert.That(move.ErrorText).Contains("could not be deserialized");
+    await Assert.That(reason).IsEqualTo(MessageFailureReason.SerializationError);
+    await Assert.That(errorText).Contains("could not be deserialized");
     await Assert.That(h.Commits.All).IsEmpty()
       .Because("a row whose payload failed to deserialize must never be completed: completion deletes it without a trace");
     await Assert.That(h.Inbox.Released).Contains(work.MessageId)

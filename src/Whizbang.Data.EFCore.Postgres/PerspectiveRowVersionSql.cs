@@ -113,16 +113,21 @@ internal static class PerspectiveRowVersionSql {
     if (openedHere) {
       await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
     }
+    // The result is returned after the try: a return inside a try whose finally awaits leaves a
+    // compiler-emitted sequence point no test can reach.
+    T result;
     try {
-      await using var command = connection.CreateCommand();
-      command.CommandText = sql;
-      command.Transaction = context.Database.CurrentTransaction?.GetDbTransaction();
-      command.Parameters.Add(new NpgsqlParameter("id", id));
-      return await body(command).ConfigureAwait(false);
+      await using (var command = connection.CreateCommand()) {
+        command.CommandText = sql;
+        command.Transaction = context.Database.CurrentTransaction?.GetDbTransaction();
+        command.Parameters.Add(new NpgsqlParameter(nameof(id), id));
+        result = await body(command).ConfigureAwait(false);
+      }
     } finally {
       if (openedHere) {
         await connection.CloseAsync().ConfigureAwait(false);
       }
     }
+    return result;
   }
 }

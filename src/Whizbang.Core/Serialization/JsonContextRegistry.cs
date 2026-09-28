@@ -330,7 +330,7 @@ public static class JsonContextRegistry {
   /// Options built by this registry, or completed from a host's options, keyed by the options they
   /// answer for. A registry-built set maps to itself.
   /// </summary>
-  private static readonly ConditionalWeakTable<JsonSerializerOptions, CompletedChain> _completeChains = new();
+  private static readonly ConditionalWeakTable<JsonSerializerOptions, CompletedChain> _completeChains = [];
 
   /// <summary>The complete chain answering for one host options instance, and the registry generation it was built at.</summary>
   private sealed class CompletedChain(long generation, JsonSerializerOptions options) {
@@ -401,10 +401,11 @@ public static class JsonContextRegistry {
         ? JsonTypeInfoResolver.Combine(hostResolver, registry.TypeInfoResolver!)
         : registry.TypeInfoResolver,
     };
-    foreach (var converter in registry.Converters) {
-      if (!completed.Converters.Any(existing => existing.GetType() == converter.GetType())) {
-        completed.Converters.Add(converter);
-      }
+    // Evaluated lazily on purpose: each check sees the converters already added, so a type the
+    // registry lists twice is still added once.
+    foreach (var converter in registry.Converters
+        .Where(candidate => !completed.Converters.Any(existing => existing.GetType() == candidate.GetType()))) {
+      completed.Converters.Add(converter);
     }
     // Already complete: completing it again returns it unchanged.
     _completeChains.AddOrUpdate(completed, new CompletedChain(Generation, completed));
