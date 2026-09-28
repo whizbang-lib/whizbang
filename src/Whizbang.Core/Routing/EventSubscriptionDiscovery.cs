@@ -11,7 +11,9 @@ namespace Whizbang.Core.Routing;
 /// <para>
 /// Event subscriptions are determined by:
 /// 1. Auto-discovery: Namespaces from <see cref="EventNamespaceRegistry"/> (populated by module initializers)
-/// 2. Manual subscriptions: Namespaces configured via RoutingOptions.SubscribeTo()
+/// 2. Runtime subscriptions: topics of events consumed through receptors registered at startup
+///    (<see cref="IRuntimeEventSubscription"/>)
+/// 3. Manual subscriptions: Namespaces configured via RoutingOptions.SubscribeTo()
 /// </para>
 /// <para>
 /// Use this service at transport startup to determine which event topics to subscribe to.
@@ -21,18 +23,40 @@ namespace Whizbang.Core.Routing;
 public sealed class EventSubscriptionDiscovery {
   private readonly IEventNamespaceRegistry _registry;
   private readonly RoutingOptions _routingOptions;
+  private readonly IRuntimeEventSubscription[] _runtimeSubscriptions;
 
   /// <summary>
-  /// Creates a new event subscription discovery service.
+  /// Creates a new event subscription discovery service with no events consumed through receptors
+  /// registered at startup.
   /// </summary>
   /// <param name="routingOptions">Routing options containing manual subscriptions.</param>
   /// <param name="registry">Event namespace registry for testing (optional). When null, uses static <see cref="EventNamespaceRegistry"/>.</param>
   public EventSubscriptionDiscovery(
       IOptions<RoutingOptions> routingOptions,
-      IEventNamespaceRegistry registry) {
+      IEventNamespaceRegistry registry)
+    : this(routingOptions, registry, []) {
+  }
+
+  /// <summary>
+  /// Creates a new event subscription discovery service. This is the constructor the container
+  /// uses, so every <see cref="IRuntimeEventSubscription"/> a host or library registered is
+  /// subscribed alongside the compile-time discoveries.
+  /// </summary>
+  /// <param name="routingOptions">Routing options containing manual subscriptions.</param>
+  /// <param name="registry">The compile-time event namespace registry.</param>
+  /// <param name="runtimeSubscriptions">Events consumed through receptors registered at startup.</param>
+  /// <docs>fundamentals/dispatcher/routing#runtime-event-subscriptions</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:DiscoverEventNamespaces_RuntimeSubscription_SubscribesToTheEventsTopicAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:Constructor_NullRuntimeSubscriptions_ThrowsAsync</tests>
+  public EventSubscriptionDiscovery(
+      IOptions<RoutingOptions> routingOptions,
+      IEventNamespaceRegistry registry,
+      IEnumerable<IRuntimeEventSubscription> runtimeSubscriptions) {
     ArgumentNullException.ThrowIfNull(routingOptions);
+    ArgumentNullException.ThrowIfNull(runtimeSubscriptions);
     _routingOptions = routingOptions.Value;
     _registry = registry;
+    _runtimeSubscriptions = [.. runtimeSubscriptions];
   }
 
   /// <summary>
@@ -45,6 +69,8 @@ public sealed class EventSubscriptionDiscovery {
   /// <docs>fundamentals/dispatcher/routing#owned-and-subscribed</docs>
   /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubscriptionDiscoveryTests.cs:DiscoverEventNamespaces_ManualSubscriptionOnOwnedNamespace_ThrowsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubscriptionDiscoveryTests.cs:DiscoverEventNamespaces_ExcludesOwnedDomainChildNamespacesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:DiscoverEventNamespaces_RuntimeAndCompileTimeConsumersOfOneTopic_SubscribeOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RuntimeEventSubscriptionTests.cs:DiscoverEventNamespaces_RuntimeSubscriptionOnAnOwnedNamespace_IsLeftOutLikeACompileTimeOneAsync</tests>
   public IReadOnlySet<string> DiscoverEventNamespaces() {
     // Defense in depth (issue #636): the WithRouting factory refuses an owned-and-subscribed
     // namespace at first resolution, but hand-constructed options never pass through the factory.
@@ -60,6 +86,14 @@ public sealed class EventSubscriptionDiscovery {
 
     foreach (var ns in autoNamespaces) {
       namespaces.Add(ns);
+    }
+
+    // Add the topics of events consumed through receptors registered at startup. They join the
+    // compile-time set BEFORE the owned-domain subtraction, so such an event is subscribed exactly
+    // as a generated receptor for it would be — and a topic both kinds consume is subscribed once.
+    // The topic is the one the publisher sends the event to (NamespaceRoutingStrategy's default).
+    foreach (var subscription in _runtimeSubscriptions) {
+      namespaces.Add(NamespaceRoutingStrategy.DefaultTypeToTopic(subscription.EventType));
     }
 
     // Add manual subscriptions from RoutingOptions

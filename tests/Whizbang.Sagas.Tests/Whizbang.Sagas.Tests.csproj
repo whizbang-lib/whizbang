@@ -14,6 +14,9 @@
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
     <ProjectReference Include="../../src/Whizbang.Sagas.Contracts/Whizbang.Sagas.Contracts.csproj" />
     <ProjectReference Include="../../src/Whizbang.Sagas/Whizbang.Sagas.csproj" />
+    <!-- The multi-service harness: a real transport consumer over an in-memory wire, so a watchdog
+         tick's subscription and delivery are exercised as a transport carries them. -->
+    <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
     <ProjectReference Include="../../src/Whizbang.Sagas.Generators/Whizbang.Sagas.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <!-- The consumer-side JSON generator. A real saga consumer always has both analyzers loaded;
          running them together here is what proves a [Saga] declaration ends up with serializable
