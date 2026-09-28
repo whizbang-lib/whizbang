@@ -101,7 +101,9 @@ public class DapperPerspectiveMetadataTests : PostgresTestBase {
   /// <summary>
   /// Drift-lock for the defect SHAPE: any <see cref="IPerspectiveStore{TModel}"/> implementation
   /// that leaves the metadata-bearing overload to the interface default inherits a body that
-  /// discards metadata. Fails for a future store that forgets to override it.
+  /// discards metadata. Fails for a future store that forgets to override it. The row-version twin is
+  /// exempt: its default forwards to the metadata overload
+  /// (<c>PerspectiveRowVersionTests.UpsertAsync_WithExpectedVersion_Default_ForwardsToTheMetadataOverloadAsync</c>).
   /// </summary>
   [Test]
   public async Task EveryPerspectiveStore_OverridesTheMetadataOverload_NotTheLossyDefaultAsync() {
@@ -118,6 +120,11 @@ public class DapperPerspectiveMetadataTests : PostgresTestBase {
           continue;
         }
         if (!declared.GetParameters().Any(p => p.ParameterType == typeof(PerspectiveMetadata))) {
+          continue;
+        }
+        // The row-version twin's default forwards to the metadata overload checked here, so metadata
+        // survives it; ignoring the version is the documented behavior of a store that doesn't track one.
+        if (declared.GetParameters().Any(p => p.ParameterType == typeof(PerspectiveRowVersion))) {
           continue;
         }
         if (map.TargetMethods[i].DeclaringType?.IsInterface == true) {
