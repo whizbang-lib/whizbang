@@ -28,6 +28,7 @@ public static class BodyClaimRehydrator {
   /// conditions (provider unknown / hash mismatch) returns a failure result
   /// the caller routes to DLQ.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Offloads/BodyClaimRehydratorCrossContextTests.cs</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One decision over the claim's states; each branch is a documented outcome the caller routes on.")]
   public static async Task<RehydrateResult> MaybeRehydrateAsync(
       IMessageEnvelope envelope,
@@ -100,7 +101,13 @@ public static class BodyClaimRehydrator {
       }
     }
 
-    var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(claimPayload.OriginalTypeName, jsonOptions);
+    // The complete chain, not the host's options as given: the transport reads the same body inline with
+    // every registered context, so an offloaded body must resolve against them too. A host that registered
+    // its generated facade's four fixed contexts could otherwise not name a polymorphic member whose derived
+    // type lives in a contracts assembly's context, and the offloaded message dead-lettered while its
+    // inline twins were delivered (#939).
+    var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(
+      claimPayload.OriginalTypeName, Whizbang.Core.Serialization.JsonContextRegistry.WithCompleteChain(jsonOptions));
     if (typeInfo is null) {
       return RehydrateResult.DeadLetter(
         MessageFailureReason.SerializationError,
