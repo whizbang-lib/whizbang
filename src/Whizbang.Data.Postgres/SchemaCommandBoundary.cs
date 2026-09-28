@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 
 namespace Whizbang.Data.Postgres;
@@ -19,6 +21,13 @@ namespace Whizbang.Data.Postgres;
 /// see it. So an index built in the same transaction that rewrote the column it indexes is built
 /// over the values as they were before the rewrite. The rewrite is correct, its ordering is correct,
 /// and the index still fails.
+/// </para>
+/// <para>
+/// A commit is necessary and not sufficient either. A plain <c>CREATE INDEX</c> indexes every row
+/// version an open snapshot can still see, so while any session holds a snapshot taken before the
+/// rewrite committed, the version the rewrite replaced is indexed too, in its old rendering. So a
+/// piece that wrote is followed by a wait for the sessions older than it, bounded by the command
+/// timeout, before the next piece begins.
 /// </para>
 /// <para>
 /// The failure is worse than a failed startup. The whole transaction rolls back, which undoes the
@@ -85,7 +94,8 @@ public static class SchemaCommandBoundary {
   }
 
   /// <summary>
-  /// Applies <paramref name="sql"/> piece by piece, committing each piece before the next begins.
+  /// Applies <paramref name="sql"/> piece by piece, committing each piece before the next begins,
+  /// and reporting a wait at a boundary nowhere.
   /// </summary>
   /// <param name="connectionFactory">
   /// Produces a fresh, unopened connection for each piece. A factory rather than a connection
@@ -105,21 +115,85 @@ public static class SchemaCommandBoundary {
   /// Committing progressively is the point, so this deliberately takes no transaction: a caller that
   /// passed one would get the behavior this type exists to avoid.
   /// </remarks>
+  public static Task ApplyAsync(
+      Func<NpgsqlConnection> connectionFactory,
+      string sql,
+      int commandTimeoutSeconds,
+      CancellationToken cancellationToken = default) =>
+    ApplyAsync(connectionFactory, sql, commandTimeoutSeconds, logger: null, cancellationToken);
+
+  /// <summary>
+  /// Applies <paramref name="sql"/> piece by piece, committing each piece and waiting until no older
+  /// snapshot can see what it replaced before the next begins.
+  /// </summary>
+  /// <param name="connectionFactory">
+  /// Produces a fresh, unopened connection for each piece. See the overload without a logger.
+  /// </param>
+  /// <param name="sql">The script, with or without markers.</param>
+  /// <param name="commandTimeoutSeconds">
+  /// The timeout for each piece, and the longest the apply waits at a boundary for older snapshots.
+  /// </param>
+  /// <param name="logger">Where a wait at a boundary is reported, naming what it waits for.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <remarks>
+  /// <para>
+  /// A commit between the pieces is necessary and not sufficient. A plain <c>CREATE INDEX</c>
+  /// indexes every row version an open snapshot can still see, and a snapshot taken before a piece
+  /// committed can still see the rows that piece replaced, in their old rendering. So a piece that
+  /// wrote is followed by a wait for every session older than it, the way
+  /// <c>CREATE INDEX CONCURRENTLY</c> waits for older transactions. A piece that wrote nothing
+  /// replaced nothing, and the next piece follows it at once.
+  /// </para>
+  /// <para>
+  /// Each piece runs in a transaction of its own so its transaction id can be read before it
+  /// commits, which is what makes the wait exact: a session that began after the piece committed is
+  /// never waited for. A piece holding a statement that cannot run in a transaction, such as
+  /// <c>VACUUM</c>, does not belong between boundaries.
+  /// </para>
+  /// </remarks>
+  /// <exception cref="TimeoutException">
+  /// A session older than a piece that wrote was still open when the budget ran out. The piece has
+  /// committed and stays; the message names the sessions, and the next apply continues from there.
+  /// </exception>
   public static async Task ApplyAsync(
       Func<NpgsqlConnection> connectionFactory,
       string sql,
       int commandTimeoutSeconds,
+      ILogger? logger,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(sql);
 
+    var log = logger ?? NullLogger.Instance;
+    string? previousWriter = null;
+
     foreach (var segment in Segments(sql)) {
       await using var connection = connectionFactory();
       await connection.OpenAsync(cancellationToken);
-      await using var command = new NpgsqlCommand(segment, connection) {
+
+      if (previousWriter is not null) {
+        var holders = await SupersededRowVersionFence.WaitAsync(
+          connection, previousWriter, TimeSpan.FromSeconds(commandTimeoutSeconds), TimeProvider.System,
+          log, cancellationToken);
+        if (holders.Count > 0) {
+          throw new TimeoutException(
+            $"Schema SQL could not continue past a commit boundary within {commandTimeoutSeconds}s: "
+            + $"{holders.Count} session(s) still hold a snapshot older than the piece before it, and "
+            + "can still see the rows that piece replaced, which an index built now would meet in "
+            + $"their old form. The piece has committed; apply again once they finish: {string.Join("; ", holders)}");
+        }
+      }
+
+      await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+      await using (var command = new NpgsqlCommand(segment, connection, transaction) {
         CommandTimeout = commandTimeoutSeconds,
-      };
-      await command.ExecuteNonQueryAsync(cancellationToken);
+      }) {
+        await command.ExecuteNonQueryAsync(cancellationToken);
+      }
+
+      previousWriter = await SupersededRowVersionFence.CaptureWriterAsync(
+        connection, transaction, cancellationToken);
+      await transaction.CommitAsync(cancellationToken);
     }
   }
 

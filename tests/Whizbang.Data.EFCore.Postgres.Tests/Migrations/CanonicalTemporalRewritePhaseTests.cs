@@ -1,3 +1,4 @@
+using System.Data;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -5,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.Postgres;
+using Whizbang.Generators.Shared.Models;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
@@ -112,7 +114,7 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   /// <summary>The holder applies every rewrite, gives the lock back, and says what it did.</summary>
   [Test]
   public async Task TheRewritesRunUnderTheSchemaLockAsync() {
-    var log = new ListLogger();
+    var log = new SignalingListLogger();
 
     var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
       _connect, LOCK_ID, _rewrites("first", "second"), TIMEOUT_SECONDS, log);
@@ -137,14 +139,14 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   [Test]
   public async Task AnInstanceWaitsForTheLockAndAppliesOnceItIsReleasedAsync() {
     await using var holder = await _holdLockAsync();
-    var log = new ListLogger();
+    var log = new SignalingListLogger();
 
     var run = CanonicalTemporalRewritePhase.ApplyAsync(
       _connect, LOCK_ID, _rewrites("after-the-wait"), TIMEOUT_SECONDS, log);
 
     // The lock goes back only once the phase has said it is waiting, so the test proves a wait
     // happened rather than a lucky first attempt. The logger signals that line; nothing polls for
-    // it and nothing drives a clock, for the reason ListLogger gives.
+    // it and nothing drives a clock, for the reason SignalingListLogger gives.
     await log.WaitForAsync("waiting").WaitAsync(_signalTimeout);
     await _releaseLockAsync(holder);
 
@@ -168,7 +170,7 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   [Test]
   public async Task AnInstanceGivesUpWhenTheLockStaysHeldAsync() {
     await using var holder = await _holdLockAsync();
-    var log = new ListLogger();
+    var log = new SignalingListLogger();
 
     // The budget for the lock is the command timeout, two seconds here, and this holder never lets
     // go, so the budget is the only way out and the outcome cannot depend on scheduling.
@@ -189,7 +191,7 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   [Test]
   public async Task CancellationDuringTheWaitThrowsAsync() {
     await using var holder = await _holdLockAsync();
-    var log = new ListLogger();
+    var log = new SignalingListLogger();
     using var cts = new CancellationTokenSource();
 
     var run = CanonicalTemporalRewritePhase.ApplyAsync(
@@ -217,7 +219,7 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   /// </remarks>
   [Test]
   public async Task AFailureWhileTakingTheLockPropagatesAndHoldsNothingAsync() {
-    var log = new ListLogger();
+    var log = new SignalingListLogger();
 
     NpgsqlConnection doomed() {
       var connection = _connect();
@@ -251,7 +253,7 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   /// </remarks>
   [Test]
   public async Task AFailedRewriteStillReleasesTheLockAsync() {
-    var log = new ListLogger();
+    var log = new SignalingListLogger();
 
     var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
       _connect,
@@ -291,7 +293,7 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   /// </remarks>
   [Test]
   public async Task ANoticeRaisedByARewriteIsReportedAsync() {
-    var log = new ListLogger();
+    var log = new SignalingListLogger();
 
     await CanonicalTemporalRewritePhase.ApplyAsync(
       _connect, LOCK_ID,
@@ -300,6 +302,146 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
 
     await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Information && e.Message.Contains("3 row(s) converted")))
       .IsTrue();
+  }
+
+  private const string OLD_RENDERING = "2026-04-21T22:38:17.357886+00:00";
+
+  /// <summary>
+  /// A table holding a date in the rendering an earlier release wrote, and the rewrite that converts
+  /// it, so the index the initializer builds next has something to meet.
+  /// </summary>
+  /// <remarks>
+  /// fillfactor leaves no free space in a page, so the rewrite cannot update a row in place and the
+  /// superseded version is a row version of its own, as it is on a real table whose rows carry whole
+  /// documents.
+  /// </remarks>
+  private async Task<(string Name, string Sql)[]> _seedOldRenderingAsync() {
+    await _executeAsync("""
+      CREATE TABLE wh_per_fence (id uuid PRIMARY KEY, data jsonb NOT NULL) WITH (fillfactor = 100);
+      """);
+    await _executeAsync($"""
+      INSERT INTO wh_per_fence (id, data)
+      SELECT gen_random_uuid(),
+             jsonb_build_object('OccurredAt', '{OLD_RENDERING}', 'Padding', repeat('x', 1000))
+      FROM generate_series(1, 200);
+      """);
+
+    return [("fence", """
+      UPDATE wh_per_fence
+      SET data = data || jsonb_build_object('OccurredAt',
+            (EXTRACT(EPOCH FROM (data ->> 'OccurredAt')::timestamptz) * 1000000)::bigint)
+      WHERE jsonb_typeof(data -> 'OccurredAt') = 'string';
+      """)];
+  }
+
+  /// <summary>Builds the index the initializer builds over the rewritten key.</summary>
+  private async Task _indexRewrittenKeyAsync() {
+    var index = new JsonIndexInfo("OccurredAt", "OccurredAt", JsonIndexCast.Int8, true, false, false);
+    foreach (var statement in JsonIndexSql.CreateStatements(index, "wh_per_fence", "fence")) {
+      await _executeAsync(statement);
+    }
+  }
+
+  /// <summary>
+  /// Opens a repeatable-read transaction and takes its snapshot, so the snapshot predates the
+  /// rewrite and stays in force until the test ends it.
+  /// </summary>
+  private async Task<(NpgsqlConnection Connection, NpgsqlTransaction Transaction)> _holdOlderSnapshotAsync() {
+    var holder = _connect();
+    await holder.OpenAsync();
+    var transaction = await holder.BeginTransactionAsync(IsolationLevel.RepeatableRead);
+    await using var take = new NpgsqlCommand("SELECT 1", holder, transaction);
+    await take.ExecuteScalarAsync();
+    return (holder, transaction);
+  }
+
+  /// <summary>
+  /// The phase returns only once no snapshot older than its commit is left, so the index the
+  /// initializer builds next never meets a row version the rewrite superseded.
+  /// </summary>
+  /// <remarks>
+  /// The initializer builds that index right after this phase returns, with a plain
+  /// <c>CREATE INDEX</c>, which indexes every row version an open snapshot can still see. While a
+  /// snapshot taken before the rewrite lives, that includes the version carrying the old rendering,
+  /// and the cast in the index expression fails on it. At startup other instances and other work
+  /// are running against the same server, so this is the ordinary case, not a corner of one.
+  /// </remarks>
+  [Test]
+  public async Task ThePhaseReturnsOnlyOnceNoOlderSnapshotCanSeeWhatItRewroteAsync() {
+    var rewrites = await _seedOldRenderingAsync();
+    var (holder, snapshot) = await _holdOlderSnapshotAsync();
+    await using var _ = holder;
+    await using var __ = snapshot;
+    var log = new SignalingListLogger();
+
+    var run = CanonicalTemporalRewritePhase.ApplyAsync(_connect, LOCK_ID, rewrites, TIMEOUT_SECONDS, log);
+    await Task.WhenAny(run, log.WaitForAsync("older than")).WaitAsync(_signalTimeout);
+
+    await Assert.That(run.IsCompleted).IsFalse()
+      .Because("returning now hands the initializer a table whose superseded rows its index would meet");
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Information
+        && e.Message.Contains(holder.ProcessID.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("an operator watching a stalled startup needs to know which session it is waiting for");
+
+    await snapshot.CommitAsync();
+
+    await Assert.That(await run).IsTrue();
+    await _indexRewrittenKeyAsync();
+    await Assert.That(await _scalarAsync(
+      "SELECT count(*) FROM pg_indexes WHERE tablename = 'wh_per_fence' AND indexname LIKE '%occurredat%'"))
+      .IsEqualTo("1");
+  }
+
+  /// <summary>
+  /// An older snapshot that outlasts the budget is a warning naming it, and the rewrite stays.
+  /// </summary>
+  /// <remarks>
+  /// Reported rather than fatal, like the rest of this phase: the rewrite is committed, and the
+  /// initializer's retry builds the index once the snapshot is gone. The budget is the command
+  /// timeout, two seconds here, and the snapshot never ends, so the outcome cannot depend on
+  /// scheduling.
+  /// </remarks>
+  [Test]
+  public async Task AnOlderSnapshotThatOutlastsTheBudgetIsAWarningAsync() {
+    var rewrites = await _seedOldRenderingAsync();
+    var (holder, snapshot) = await _holdOlderSnapshotAsync();
+    await using var _ = holder;
+    await using var __ = snapshot;
+    var log = new SignalingListLogger();
+
+    var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
+      _connect, LOCK_ID, rewrites, commandTimeoutSeconds: 2, log);
+
+    await Assert.That(ran).IsTrue();
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Warning
+        && e.Message.Contains(holder.ProcessID.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)))
+      .IsTrue();
+    await Assert.That(await _scalarAsync(
+      "SELECT string_agg(DISTINCT jsonb_typeof(data -> 'OccurredAt'), ',') FROM wh_per_fence"))
+      .IsEqualTo("number");
+  }
+
+  /// <summary>
+  /// A pass that converted nothing waits for no one, whatever is open.
+  /// </summary>
+  /// <remarks>
+  /// Every start after the first finds its tables settled, and only a write leaves superseded row
+  /// versions behind. Waiting then would stall every startup behind unrelated long transactions.
+  /// </remarks>
+  [Test]
+  public async Task APassThatConvertedNothingWaitsForNoOneAsync() {
+    var (holder, snapshot) = await _holdOlderSnapshotAsync();
+    await using var _ = holder;
+    await using var __ = snapshot;
+    var log = new SignalingListLogger();
+
+    var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
+      _connect, LOCK_ID, [("settled", "SELECT 1;")], TIMEOUT_SECONDS, log);
+
+    await Assert.That(ran).IsTrue();
+    await Assert.That(log.Entries.Any(e => e.Message.Contains("older than", StringComparison.Ordinal)))
+      .IsFalse();
   }
 
   /// <summary>Nothing to rewrite takes no lock and opens no connection.</summary>
@@ -327,84 +469,5 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
     await Assert.That(async () => await CanonicalTemporalRewritePhase.ApplyAsync(
       _connect, LOCK_ID, _rewrites("x"), TIMEOUT_SECONDS, timeProvider: null!))
       .Throws<ArgumentNullException>();
-  }
-
-  /// <summary>Keeps every entry, so a test can ask what was said and at what level.</summary>
-  /// <summary>
-  /// Keeps every entry, and signals the moment one arrives that a test is waiting for.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// The signal is what makes these tests deterministic. The phase spends real time on database
-  /// round-trips, and a test that spins until it sees a log line, rather than being told, can hold
-  /// the thread pool for the whole spin: the round-trip's continuation never runs, the phase makes
-  /// no progress at all, and the test concludes it waited long enough. That reads as a failure in a
-  /// couple of hundred milliseconds and reproduces only under load, which is what it did.
-  /// </para>
-  /// <para>
-  /// Driving a <c>FakeTimeProvider</c> from such a spin makes it worse, because the loop creates
-  /// the phase's whole budget in fake time while the phase is still on its first round-trip, so the
-  /// phase gives up having never seen the lock released. These tests use the real clock: the budget
-  /// is thirty seconds and the phase retries every quarter second, so releasing the lock decides
-  /// the outcome and scheduling cannot.
-  /// </para>
-  /// <para>
-  /// <see cref="Entries"/> hands out a snapshot, because the phase logs from its own thread while a
-  /// test reads.
-  /// </para>
-  /// </remarks>
-  private sealed class ListLogger : ILogger {
-    private readonly List<(LogLevel Level, string Message)> _entries = [];
-    private readonly List<(string Fragment, TaskCompletionSource Signal)> _waiters = [];
-
-    /// <summary>Every entry logged so far.</summary>
-    public IReadOnlyList<(LogLevel Level, string Message)> Entries {
-      get {
-        lock (_entries) {
-          return [.. _entries];
-        }
-      }
-    }
-
-    /// <summary>Completes once an entry whose message contains <paramref name="fragment"/> arrives.</summary>
-    /// <param name="fragment">The text to wait for.</param>
-    /// <returns>A task that completes on the matching entry, or at once if one is already there.</returns>
-    public Task WaitForAsync(string fragment) {
-      lock (_entries) {
-        if (_entries.Exists(e => e.Message.Contains(fragment, StringComparison.Ordinal))) {
-          return Task.CompletedTask;
-        }
-
-        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _waiters.Add((fragment, signal));
-        return signal.Task;
-      }
-    }
-
-    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-
-    public bool IsEnabled(LogLevel logLevel) => true;
-
-    public void Log<TState>(
-        LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-        Func<TState, Exception?, string> formatter) {
-      var message = formatter(state, exception);
-      var ready = new List<TaskCompletionSource>();
-
-      lock (_entries) {
-        _entries.Add((logLevel, message));
-        for (var i = _waiters.Count - 1; i >= 0; i--) {
-          if (message.Contains(_waiters[i].Fragment, StringComparison.Ordinal)) {
-            ready.Add(_waiters[i].Signal);
-            _waiters.RemoveAt(i);
-          }
-        }
-      }
-
-      // Outside the lock: a continuation the phase runs must not be able to re-enter it.
-      foreach (var signal in ready) {
-        signal.SetResult();
-      }
-    }
   }
 }
