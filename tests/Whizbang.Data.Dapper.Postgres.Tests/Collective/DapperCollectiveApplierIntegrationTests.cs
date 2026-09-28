@@ -10,6 +10,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Data.Dapper.Postgres.Collective;
+using Whizbang.Data.Postgres.Collective;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 
@@ -128,6 +129,58 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
 
     await Assert.That(await _statusAsync(job)).IsEqualTo("Active")
       .Because("RemoveSetter(Status) drops the spec's Status=\"Archived\" setter — Status stays its seeded value.");
+  }
+
+  /// <summary>
+  /// A predicate on the row id runs against the real uuid column.
+  /// </summary>
+  /// <remarks>
+  /// The unit tests assert what the compiler binds; only a real column can say whether Postgres
+  /// accepts it. Bound as text this is 42883 "operator does not exist: uuid = text" and the whole
+  /// statement is refused, which is why the assertion here is that rows come back at all.
+  /// </remarks>
+  [Test]
+  public async Task IdPredicate_RunsAgainstTheRealUuidColumnAsync() {
+    await _createTableAsync();
+    var wanted = Guid.NewGuid();
+    var other = Guid.NewGuid();
+    await _seedAsync(wanted, "t-A", "Active");
+    await _seedAsync(other, "t-A", "Active");
+
+    var where = CollectivePredicateSqlCompiler<JobModel>.Compile(
+      row => row.Id == wanted, outerTableName: TABLE);
+
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    var found = (await conn.QueryAsync<Guid>(
+      $"SELECT id FROM {TABLE} WHERE {where.SqlFragment}",
+      new DynamicParameters(where.Parameters))).ToList();
+
+    await Assert.That(found).IsEquivalentTo([wanted])
+      .Because("the id column is uuid, so the bound guid has to reach it as a uuid and select its row");
+  }
+
+  /// <summary>A set of ids runs against the real uuid column too.</summary>
+  [Test]
+  public async Task IdContainsPredicate_RunsAgainstTheRealUuidColumnAsync() {
+    await _createTableAsync();
+    var first = Guid.NewGuid();
+    var second = Guid.NewGuid();
+    var excluded = Guid.NewGuid();
+    await _seedAsync(first, "t-A", "Active");
+    await _seedAsync(second, "t-A", "Active");
+    await _seedAsync(excluded, "t-A", "Active");
+    var wanted = new[] { first, second };
+
+    var where = CollectivePredicateSqlCompiler<JobModel>.Compile(
+      row => wanted.Contains(row.Id), outerTableName: TABLE);
+
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    var found = (await conn.QueryAsync<Guid>(
+      $"SELECT id FROM {TABLE} WHERE {where.SqlFragment}",
+      new DynamicParameters(where.Parameters))).ToList();
+
+    await Assert.That(found.Count).IsEqualTo(2)
+      .Because("both wanted ids match, and the excluded one does not");
   }
 
   [Test]

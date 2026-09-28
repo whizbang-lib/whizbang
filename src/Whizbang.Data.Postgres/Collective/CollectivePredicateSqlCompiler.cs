@@ -154,8 +154,8 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   private static void _compileComparison(
       BinaryExpression cmp, string op, Ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
       List<ReferencedJsonPath> refs) {
-    var leftIsCol = _tryColumn(cmp.Left, ctx, refs, out var leftSql, out var leftProp);
-    var rightIsCol = _tryColumn(cmp.Right, ctx, refs, out var rightSql, out var rightProp);
+    var leftIsCol = _tryColumn(cmp.Left, ctx, refs, out var leftSql, out var leftProp, out var leftKind);
+    var rightIsCol = _tryColumn(cmp.Right, ctx, refs, out var rightSql, out var rightProp, out var rightKind);
 
     if (leftIsCol && rightIsCol) {
       // Column <op> column → a correlation (e.g. s.id = wh_per_job.id). No parameter.
@@ -163,11 +163,11 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       return;
     }
     if (leftIsCol) {
-      _appendColumnCompareValue(leftSql!, leftProp!, op, cmp.Right, prefix, sql, parameters);
+      _appendColumnCompareValue(leftSql!, leftProp!, leftKind, op, cmp.Right, prefix, sql, parameters);
       return;
     }
     if (rightIsCol) {
-      _appendColumnCompareValue(rightSql!, rightProp!, op, cmp.Left, prefix, sql, parameters);
+      _appendColumnCompareValue(rightSql!, rightProp!, rightKind, op, cmp.Left, prefix, sql, parameters);
       return;
     }
     throw new NotSupportedException(
@@ -176,13 +176,38 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   }
 
   private static void _appendColumnCompareValue(
-      string columnSql, string propName, string op, Expression valueExpr, string prefix, StringBuilder sql,
-      Dictionary<string, object?> parameters) {
+      string columnSql, string propName, ColumnKind kind, string op, Expression valueExpr, string prefix,
+      StringBuilder sql, Dictionary<string, object?> parameters) {
     var value = _evaluateValue(valueExpr);
     var paramName = $"{prefix}_{propName.ToLowerInvariant()}";
-    parameters[paramName] = _toJsonbText(value);
+    parameters[paramName] = _bind(value, kind);
     sql.Append(columnSql).Append(' ').Append(op).Append(" @").Append(paramName);
   }
+
+  /// <summary>What a resolved column is, because it decides how a value bound against it is typed.</summary>
+  private enum ColumnKind {
+    /// <summary>A jsonb <c>-&gt;&gt;</c> extraction. Text, so the value is compared as text.</summary>
+    JsonText,
+
+    /// <summary>The row's <c>id</c>, a real uuid column.</summary>
+    Uuid,
+  }
+
+  // The value to bind against a column of <paramref name="kind"/>. A jsonb extraction is text and takes the
+  // text conversion below. The id column is a real uuid: Postgres refuses `uuid = text` outright (42883), so
+  // the guid goes through as itself and the driver types the parameter. A guid arriving as text is parsed
+  // rather than passed along, because a caller comparing an id to a string means the id.
+  private static object? _bind(object? value, ColumnKind kind) => kind switch {
+    ColumnKind.Uuid => value switch {
+      null => null,
+      Guid g => g,
+      string text when Guid.TryParse(text, out var parsed) => parsed,
+      _ => throw new NotSupportedException(
+        $"A predicate on the row id compares it with '{value.GetType().Name}'. The id column is a uuid, so the " +
+        "value has to be a Guid, or a string that parses as one."),
+    },
+    _ => _toJsonbText(value),
+  };
 
   // The text a jsonb `->>` extraction yields for <paramref name="value"/>, so the bound parameter compares
   // equal to `data->>'X'` / `scope->>'X'`. Only enums need special handling: EF's ComplexProperty().ToJson()
@@ -229,7 +254,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
         $"Object={(mc.Object is null ? "null" : mc.Object.Type.Name)}, Args={mc.Arguments.Count} [{arg0}, {arg1}].");
     }
 
-    if (!_tryColumn(itemExpr, ctx, refs, out var itemSql, out var itemProp)) {
+    if (!_tryColumn(itemExpr, ctx, refs, out var itemSql, out var itemProp, out var itemKind)) {
       throw new NotSupportedException(
         "Contains is only supported as <values>.Contains(row.Data.X / row.Scope.X) — the item must be a column field.");
     }
@@ -241,7 +266,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     var i = 0;
     foreach (var v in values) {
       var name = $"{prefix}_{itemProp!.ToLowerInvariant()}_{i}";
-      parameters[name] = _toJsonbText(v);
+      parameters[name] = _bind(v, itemKind);
       names.Add("@" + name);
       i++;
     }
@@ -303,9 +328,12 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   // row.Scope.X → scope->>'X', row.Data.X → data->>'X', row.Id → id — qualified per context (outer/inner).
   // When the match is a jsonb column, also records the UNqualified path against its table in <paramref name="refs"/>
   // as an expression-index candidate (§7).
-  private static bool _tryColumn(Expression e, Ctx ctx, List<ReferencedJsonPath> refs, out string? columnSql, out string? propName) {
+  private static bool _tryColumn(
+      Expression e, Ctx ctx, List<ReferencedJsonPath> refs, out string? columnSql, out string? propName,
+      out ColumnKind kind) {
     columnSql = null;
     propName = null;
+    kind = ColumnKind.JsonText;
     while (e is UnaryExpression { NodeType: ExpressionType.Convert } convert) {
       e = convert.Operand;
     }
@@ -338,6 +366,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
         && _qualifierFor(ip, ctx) is { } iq) {
       columnSql = $"{iq}id";
       propName = "id";
+      kind = ColumnKind.Uuid;
       return true;
     }
 
