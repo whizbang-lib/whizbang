@@ -376,6 +376,77 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
       .Because("expires_at = now + the registered TTL must ride through the atomic path's own INSERT, not only the legacy fallback");
   }
 
+  // Issue #928: a checked write on an existing row is a conditional UPDATE rather than an upsert, and it must
+  // slide the TTL window exactly as the upsert does. If it dropped expires_at, a TtlRow perspective whose
+  // row is only ever updated would age out while it was still active.
+  [Test]
+  public async Task Upsert_OnTheVersionItRead_ForATtlRegisteredModel_SlidesExpiresAtAsync() {
+    PerspectiveTtlRegistry.Register(typeof(UpsertCoverageWidgetModel), 3600);
+    _enablePathOne();
+    await _createWidgetTableAsync();
+    await using var context = _createWidgetDbContext();
+    var strategy = new PostgresUpsertStrategy();
+    var testId = Guid.CreateVersion7();
+    var table = PerspectiveRowVersionSql.QualifiedTable<UpsertCoverageWidgetModel>(context);
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+
+    await strategy.UpsertPerspectiveRowAsync(
+      context, WIDGET_TABLE, testId, new UpsertCoverageWidgetModel { Id = testId, Name = "Ttl" },
+      new PerspectiveMetadata { EventType = "WidgetCreated", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow.AddDays(-1) },
+      new PerspectiveScope(), forceUpdateScope: false, PerspectiveRowVersion.Absent);
+    var firstExpiry = await conn.QuerySingleAsync<DateTime>($"SELECT expires_at FROM {WIDGET_TABLE} WHERE id = @id", new { id = testId });
+    var read = await PerspectiveRowVersionSql.ReadVersionAsync(context, table, testId, lockRow: false, CancellationToken.None);
+
+    await strategy.UpsertPerspectiveRowAsync(
+      context, WIDGET_TABLE, testId, new UpsertCoverageWidgetModel { Id = testId, Name = "Ttl-updated" },
+      new PerspectiveMetadata { EventType = "WidgetRenamed", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow },
+      new PerspectiveScope(), forceUpdateScope: false, read);
+
+    var secondExpiry = await conn.QuerySingleAsync<DateTime>($"SELECT expires_at FROM {WIDGET_TABLE} WHERE id = @id", new { id = testId });
+    await Assert.That(secondExpiry - firstExpiry).IsGreaterThan(TimeSpan.FromHours(23))
+      .Because("the update's event is a day later, so the sliding window must move a day later with it");
+  }
+
+  // Issue #928 on the EF fallback: a physical value the atomic path cannot bind sends the write down the EF
+  // path, and a checked version must be honored there too, or a stale write would land through the back door.
+  [Test]
+  public async Task UpsertPerspectiveRowWithPhysicalFieldsAsync_OnTheFallbackPath_HonorsTheVersionAsync() {
+    _enablePathOne();
+    await _createWidgetTableAsync();
+    var strategy = new PostgresUpsertStrategy();
+    var testId = Guid.CreateVersion7();
+    var metadata = new PerspectiveMetadata { EventType = "WidgetCreated", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow };
+    PerspectiveRowVersion read;
+    await using (var context = _createWidgetDbContext()) {
+      await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+        context, WIDGET_TABLE, testId, new UpsertCoverageWidgetModel { Id = testId, Name = "First" }, metadata,
+        new PerspectiveScope(), new Dictionary<string, object?> { ["ref_id"] = TrackedGuid.New() },
+        forceUpdateScope: false, PerspectiveRowVersion.Absent);
+      read = await PerspectiveRowVersionSql.ReadVersionAsync(
+        context, PerspectiveRowVersionSql.QualifiedTable<UpsertCoverageWidgetModel>(context), testId, lockRow: false, CancellationToken.None);
+    }
+
+    await using (var context = _createWidgetDbContext()) {
+      await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+        context, WIDGET_TABLE, testId, new UpsertCoverageWidgetModel { Id = testId, Name = "Second" }, metadata,
+        new PerspectiveScope(), new Dictionary<string, object?> { ["ref_id"] = TrackedGuid.New() },
+        forceUpdateScope: false, read);
+    }
+
+    await using (var context = _createWidgetDbContext()) {
+      await Assert.That(async () => await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+          context, WIDGET_TABLE, testId, new UpsertCoverageWidgetModel { Id = testId, Name = "Stale" }, metadata,
+          new PerspectiveScope(), new Dictionary<string, object?> { ["ref_id"] = TrackedGuid.New() },
+          forceUpdateScope: false, read))
+        .Throws<PerspectiveRowConflictException>();
+    }
+
+    await using var readContext = _createWidgetDbContext();
+    var row = await readContext.Set<PerspectiveRow<UpsertCoverageWidgetModel>>().AsNoTracking().SingleAsync(r => r.Id == testId);
+    await Assert.That(row.Data.Name).IsEqualTo("Second");
+  }
+
   // If this catch were removed, a physical-field value whose CLR type the atomic path's raw parameter
   // binding cannot map (no NpgsqlDbType, no native handler registered for it) would blow up the whole
   // upsert instead of deferring to the EF-mapped write, whose own value converter knows how to store it —

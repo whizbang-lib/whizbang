@@ -42,6 +42,32 @@ public interface IPerspectiveStore<TModel> where TModel : class {
     => Task.FromResult<PerspectiveMetadata?>(null);
 
   /// <summary>
+  /// Read what a per-stream apply needs before it loads the model: the row's version and the metadata the
+  /// runner's idempotency filter reads, in one statement.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The generated runner calls this first, then loads the model (unless the row is absent), folds the
+  /// batch's events onto it and writes it back through the <see cref="UpsertAsync(Guid, TModel, PerspectiveScope, bool, PerspectiveMetadata, PerspectiveRowVersion, CancellationToken)"/>
+  /// overload with the version this returned. Reading the version before the model means the model is never
+  /// older than the version: a writer that commits between the two reads moves the version, so the write is
+  /// refused and retried rather than landing on top of it.
+  /// </para>
+  /// <para>
+  /// The default reports <see cref="PerspectiveApplyRead.Unchecked"/> without reading anything, and the runner
+  /// then reads the model and <see cref="GetMetadataByStreamIdAsync"/> exactly as it always did.
+  /// </para>
+  /// </remarks>
+  /// <param name="streamId">Stream ID (aggregate ID)</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The row's version and metadata, or <see cref="PerspectiveApplyRead.Unchecked"/> when the store does not track versions.</returns>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs:ReadForApplyAsync_Default_IsUncheckedAndDoesNoReadAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:ReadForApplyAsync_ReportsAbsence_ThenTheRowsVersionAndMetadata_AndSeesACollectiveAsync</tests>
+  Task<PerspectiveApplyRead> ReadForApplyAsync(Guid streamId, CancellationToken cancellationToken = default)
+    => Task.FromResult(PerspectiveApplyRead.Unchecked);
+
+  /// <summary>
   /// Insert or update a read model.
   /// Creates new row if id doesn't exist, updates if it does.
   /// Automatically increments version for optimistic concurrency.
@@ -106,6 +132,37 @@ public interface IPerspectiveStore<TModel> where TModel : class {
     => UpsertAsync(streamId, model, scope, forceUpdateScope, cancellationToken);
 
   /// <summary>
+  /// Upsert a read model with <paramref name="metadata"/>, but only onto the row version the apply read.
+  /// </summary>
+  /// <remarks>
+  /// A store that tracks row versions refuses the write with <see cref="PerspectiveRowConflictException"/>
+  /// when the row is no longer at <paramref name="expectedVersion"/> (it changed, appeared or was deleted since
+  /// <see cref="ReadForApplyAsync"/> read it), and writes nothing. A write whose version is current but whose
+  /// metadata the store's own ordering guards refuse is skipped quietly, as it always was.
+  /// <see cref="PerspectiveRowVersion.Unchecked"/> writes unconditionally. The default ignores the version.
+  /// </remarks>
+  /// <param name="streamId">Stream ID (aggregate ID)</param>
+  /// <param name="model">The read model data to store</param>
+  /// <param name="scope">Multi-tenancy and security scope</param>
+  /// <param name="forceUpdateScope">When true, scope is written on UPDATE (for IScopeEvent).</param>
+  /// <param name="metadata">Metadata of the last applied event</param>
+  /// <param name="expectedVersion">The version <see cref="ReadForApplyAsync"/> returned for this apply.</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs:UpsertAsync_WithExpectedVersion_Default_ForwardsToTheMetadataOverloadAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:Upsert_WithAVersionReadBeforeACollective_IsRefused_AndTheCollectiveSurvivesAsync</tests>
+  [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public store surface: the versioned twin of the metadata overload, which already carries six parameters; each is a distinct write concern and a parameter object would break every store implementation.")]
+  Task UpsertAsync(
+      Guid streamId,
+      TModel model,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default)
+    => UpsertAsync(streamId, model, scope, forceUpdateScope, metadata, cancellationToken);
+
+  /// <summary>
   /// Insert or update a read model with physical field values.
   /// Creates new row if id doesn't exist, updates if it does.
   /// Physical field values are applied to shadow properties or split columns.
@@ -156,6 +213,32 @@ public interface IPerspectiveStore<TModel> where TModel : class {
       PerspectiveMetadata metadata,
       CancellationToken cancellationToken = default)
     => UpsertWithPhysicalFieldsAsync(streamId, model, physicalFieldValues, scope, forceUpdateScope, cancellationToken);
+
+  /// <summary>
+  /// Upsert a read model with physical field values and <paramref name="metadata"/>, but only onto the row
+  /// version the apply read. Same contract as the versioned non-physical overload. The default ignores the version.
+  /// </summary>
+  /// <param name="streamId">Stream ID (aggregate ID)</param>
+  /// <param name="model">The read model data to store</param>
+  /// <param name="physicalFieldValues">Dictionary mapping column names to values for physical fields</param>
+  /// <param name="scope">The perspective scope (tenant/user context) extracted from event hops</param>
+  /// <param name="forceUpdateScope">When true, scope is written on UPDATE (for IScopeEvent).</param>
+  /// <param name="metadata">Metadata of the last applied event</param>
+  /// <param name="expectedVersion">The version <see cref="ReadForApplyAsync"/> returned for this apply.</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs:UpsertWithPhysicalFieldsAsync_WithExpectedVersion_Default_ForwardsToTheMetadataOverloadAsync</tests>
+  [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public store surface: the versioned twin of the physical-fields metadata overload; each parameter is a distinct write concern and a parameter object would break every store implementation.")]
+  Task UpsertWithPhysicalFieldsAsync(
+      Guid streamId,
+      TModel model,
+      IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default)
+    => UpsertWithPhysicalFieldsAsync(streamId, model, physicalFieldValues, scope, forceUpdateScope, metadata, cancellationToken);
 
   /// <summary>
   /// Get a read model by partition key (for multi-stream/global perspectives).
