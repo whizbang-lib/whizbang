@@ -2160,36 +2160,35 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     conn.Notice += OnClaimNotice;
     try {
-      await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken)) {
-        while (await reader.ReadAsync(cancellationToken)) {
-          rows.Add(new WorkBatchRow {
-            Source = reader.GetString(0),
-            WorkId = await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetGuid(1),
-            StreamId = await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetGuid(2),
-            PartitionNumber = await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetInt32(3),
-            Destination = await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4),
-            MessageType = await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5),
-            EnvelopeType = await reader.IsDBNullAsync(6, cancellationToken) ? null : reader.GetString(6),
-            MessageData = await reader.IsDBNullAsync(7, cancellationToken) ? null : reader.GetString(7),
-            Metadata = await reader.IsDBNullAsync(8, cancellationToken) ? null : reader.GetValue(8)?.ToString(),
-            Status = await reader.IsDBNullAsync(9, cancellationToken) ? null : reader.GetInt32(9),
-            Attempts = await reader.IsDBNullAsync(10, cancellationToken) ? null : reader.GetInt32(10),
-            IsNewlyStored = await reader.IsDBNullAsync(11, cancellationToken) ? null : reader.GetBoolean(11),
-            IsOrphaned = await reader.IsDBNullAsync(12, cancellationToken) ? null : reader.GetBoolean(12),
-            PerspectiveName = await reader.IsDBNullAsync(13, cancellationToken) ? null : reader.GetString(13),
-            // 150: the inbox row's priority and arrival, folded per stream below for the batch hooks.
-            Priority = await reader.IsDBNullAsync(14, cancellationToken) ? null : reader.GetInt32(14),
-            ReceivedAt = await reader.IsDBNullAsync(15, cancellationToken) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(15, cancellationToken)
-          });
-        }
-        if (request.IncludeOutstanding && await reader.NextResultAsync(cancellationToken)
-            && await reader.ReadAsync(cancellationToken)) {
-          outstanding = new OutstandingWork {
-            InboxRows = reader.GetInt64(0),
-            OutboxRows = reader.GetInt64(1),
-            PerspectiveRows = reader.GetInt64(2),
-          };
-        }
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        rows.Add(new WorkBatchRow {
+          Source = reader.GetString(0),
+          WorkId = await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetGuid(1),
+          StreamId = await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetGuid(2),
+          PartitionNumber = await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetInt32(3),
+          Destination = await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4),
+          MessageType = await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5),
+          EnvelopeType = await reader.IsDBNullAsync(6, cancellationToken) ? null : reader.GetString(6),
+          MessageData = await reader.IsDBNullAsync(7, cancellationToken) ? null : reader.GetString(7),
+          Metadata = await reader.IsDBNullAsync(8, cancellationToken) ? null : reader.GetValue(8)?.ToString(),
+          Status = await reader.IsDBNullAsync(9, cancellationToken) ? null : reader.GetInt32(9),
+          Attempts = await reader.IsDBNullAsync(10, cancellationToken) ? null : reader.GetInt32(10),
+          IsNewlyStored = await reader.IsDBNullAsync(11, cancellationToken) ? null : reader.GetBoolean(11),
+          IsOrphaned = await reader.IsDBNullAsync(12, cancellationToken) ? null : reader.GetBoolean(12),
+          PerspectiveName = await reader.IsDBNullAsync(13, cancellationToken) ? null : reader.GetString(13),
+          // 150: the inbox row's priority and arrival, folded per stream below for the batch hooks.
+          Priority = await reader.IsDBNullAsync(14, cancellationToken) ? null : reader.GetInt32(14),
+          ReceivedAt = await reader.IsDBNullAsync(15, cancellationToken) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(15, cancellationToken)
+        });
+      }
+      if (request.IncludeOutstanding && await reader.NextResultAsync(cancellationToken)
+          && await reader.ReadAsync(cancellationToken)) {
+        outstanding = new OutstandingWork {
+          InboxRows = reader.GetInt64(0),
+          OutboxRows = reader.GetInt64(1),
+          PerspectiveRows = reader.GetInt64(2),
+        };
       }
     } finally {
       conn.Notice -= OnClaimNotice;
