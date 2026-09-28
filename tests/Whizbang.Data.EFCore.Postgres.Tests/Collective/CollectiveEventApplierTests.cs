@@ -103,6 +103,8 @@ public class CollectiveEventApplierTests {
 
   private sealed record TenantScope(string TenantId) : CollectiveScope {
     public override string ScopeKind => "tenant";
+    /// <inheritdoc/>
+    public override string ScopeIdentity => ScopeKind + ":" + TenantId;
   }
 
   private sealed record TypeA(CollectiveScope Scope) : ICollectiveEvent;

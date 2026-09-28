@@ -296,6 +296,8 @@ public class CollectiveDispatcherTests {
 
   private sealed record TenantScope(string TenantId) : CollectiveScope {
     public override string ScopeKind => "tenant";
+    /// <inheritdoc/>
+    public override string ScopeIdentity => ScopeKind + ":" + TenantId;
   }
 
   private sealed record Archive(CollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;

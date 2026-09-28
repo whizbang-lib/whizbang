@@ -96,9 +96,14 @@ public class CollectiveEventContractTests {
 
   private sealed record TenantCollectiveScope(string TenantId) : CollectiveScope {
     public override string ScopeKind => "tenant";
+    /// <inheritdoc/>
+    public override string ScopeIdentity => ScopeKind + ":" + TenantId;
   }
 
   private sealed record GlobalCollectiveScope : CollectiveScope {
     public override string ScopeKind => "global";
+    /// <inheritdoc/>
+    /// <remarks>Nothing narrows this scope beyond its kind, so the kind is the whole identity.</remarks>
+    public override string ScopeIdentity => ScopeKind;
   }
 }
