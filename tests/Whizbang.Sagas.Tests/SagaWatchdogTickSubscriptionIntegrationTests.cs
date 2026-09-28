@@ -76,6 +76,40 @@ public class SagaWatchdogTickSubscriptionIntegrationTests {
   }
 
   /// <summary>
+  /// A tick the stranded-saga sweep arms is published by the saga's own service and received by the
+  /// same service. That is the normal topology for a hand-written saga, and the tick must get through
+  /// every step a received message takes: the receive gate stores it, the inbox gate keeps it, and the
+  /// inbox dispatch hands it to the saga.
+  /// </summary>
+  /// <remarks>
+  /// The router used to be registered at the one inbox stage the receptor invoker skips for a message
+  /// whose last hop is this same service, on the grounds that such a message already ran its
+  /// receptors when it was published. The router runs at no publishing stage, so a tick armed and
+  /// received by one service was stored, committed and handed to nobody, with nothing logged above
+  /// Debug.
+  /// </remarks>
+  [Test]
+  public async Task SweepTickPublishedByTheSagasOwnService_IsReceivedKeptAndReachesTheSagaAsync() {
+    var ledger = new TickLedger();
+    await using var harness = await _startAsync(ledger, compileTimeNamespaces: [], withSagas: true);
+    var service = harness.GetService(SERVICE);
+    await _startTheRouterAsync(service);
+    var topic = _tickTopic(service);
+    var self = service.Provider.GetRequiredService<IServiceInstanceProvider>().ToInfo();
+
+    await _publishTickAsync(harness, topic, publishedBy: self, sweepShaped: true);
+
+    var row = (await service.Inbox.WaitForInboxAsync(1, _signalTimeout)).Single();
+    var inboxGate = service.Provider.GetRequiredService<IMessageDiscardPolicy>().EvaluateInbox(row.MessageType);
+    await Assert.That(inboxGate.ShouldDiscard).IsFalse()
+      .Because($"the inbox gate must find the runtime-registered router for '{row.MessageType}'");
+    await _dispatchAtTheInboxStageAsync(service, row);
+
+    await Assert.That(ledger.Recovered).IsEqualTo(1)
+      .Because("a tick its own service published and received has to reach the saga, or the sweep recovers nothing");
+  }
+
+  /// <summary>
   /// The defect, reproduced: without the router's declaration nothing on this host subscribes to the
   /// tick's topic, so a published tick is never received. The test above means something only if
   /// this one holds. Delivery on the harness wire completes inside the publish call, so nothing
@@ -211,12 +245,22 @@ public class SagaWatchdogTickSubscriptionIntegrationTests {
   /// Publishes a tick onto the wire as the saga's service does: as the system, in the saga's tenant,
   /// which is the scope the inbox later establishes before any receptor runs.
   /// </summary>
-  private static Task _publishTickAsync(MultiServiceHarness harness, string topic) {
+  /// <param name="harness">The running harness.</param>
+  /// <param name="topic">The tick's topic.</param>
+  /// <param name="publishedBy">The service the tick's hop names; an unknown one when omitted.</param>
+  /// <param name="sweepShaped">Shapes the tick as the stranded-saga sweep arms it: already at the stall limit.</param>
+  private static Task _publishTickAsync(
+      MultiServiceHarness harness, string topic, ServiceInstanceInfo? publishedBy = null, bool sweepShaped = false) {
+    var tick = new SagaCompletionWatchdogTickEvent { StreamId = Guid.CreateVersion7(), SagaName = SAGA, EntityId = Guid.CreateVersion7() };
+    if (sweepShaped) {
+      tick.LastObservedAt = DateTimeOffset.UtcNow;
+      tick.ConsecutiveStallCount = new SagaOptions().MaxConsecutiveStalls - 1;
+    }
     var envelope = new MessageEnvelope<SagaCompletionWatchdogTickEvent> {
       MessageId = MessageId.New(),
-      Payload = new SagaCompletionWatchdogTickEvent { StreamId = Guid.CreateVersion7(), SagaName = SAGA, EntityId = Guid.CreateVersion7() },
+      Payload = tick,
       Hops = [new MessageHop {
-        ServiceInstance = ServiceInstanceInfo.Unknown,
+        ServiceInstance = publishedBy ?? ServiceInstanceInfo.Unknown,
         Type = HopType.Current,
         Timestamp = DateTimeOffset.UtcNow,
         Scope = ScopeDelta.FromPerspectiveScope(new PerspectiveScope { TenantId = "tenant-a", UserId = "SYSTEM" }),
@@ -230,21 +274,22 @@ public class SagaWatchdogTickSubscriptionIntegrationTests {
 
   /// <summary>
   /// Hands a stored inbox row to the host's invoker as the inbox dispatcher does: the payload
-  /// deserialized by name, the envelope rebuilt around it, invoked at the inbox stage.
+  /// deserialized by name, the envelope rebuilt around it, invoked at each inline inbox stage in the
+  /// dispatcher's order, before and after the row is committed.
   /// </summary>
   private static async Task _dispatchAtTheInboxStageAsync(MultiServiceHarness.ServiceRuntime service, InboxMessage row) {
     var payload = service.Provider.GetRequiredService<ILifecycleMessageDeserializer>()
       .DeserializeFromJsonElement(row.Envelope.Payload, row.MessageType);
-    await using var scope = service.Provider.CreateAsyncScope();
-    var invoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
-    await invoker.InvokeAsync(
-      row.Envelope.ReconstructWithPayload(payload),
-      LifecycleStage.PostInboxInline,
-      new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.PostInboxInline,
+    var envelope = row.Envelope.ReconstructWithPayload(payload);
+    foreach (var stage in (LifecycleStage[])[LifecycleStage.PreInboxInline, LifecycleStage.PostInboxInline]) {
+      await using var scope = service.Provider.CreateAsyncScope();
+      var invoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
+      await invoker.InvokeAsync(envelope, stage, new LifecycleExecutionContext {
+        CurrentStage = stage,
         MessageSource = MessageSource.Inbox,
         AttemptNumber = 1,
       });
+    }
   }
 
   /// <summary>Counts recoveries across every saga instance the host builds.</summary>
