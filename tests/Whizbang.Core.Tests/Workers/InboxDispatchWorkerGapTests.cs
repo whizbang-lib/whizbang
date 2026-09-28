@@ -777,9 +777,11 @@ public class InboxDispatchWorkerGapTests {
   // ============================================================
 
   /// <summary>
-  /// Covers _resolveTypedEnvelope's catch branch: a throwing deserializer must be
-  /// surfaced once via the lifecycle-error log and dispatch must continue — the row
-  /// still commits EventStored (lifecycle stages simply no-op on the null envelope).
+  /// Covers _resolveTypedEnvelope's non-refusal catch branch: a deserializer fault that is
+  /// not the serializer refusing the payload must be surfaced once via the lifecycle-error
+  /// log and dispatch must continue — the row still commits EventStored (lifecycle stages
+  /// simply no-op on the null envelope). A payload the serializer refuses is dead-lettered
+  /// instead (#938); see InboxDispatchWorkerUndeserializablePayloadTests.
   /// </summary>
   [Test]
   public async Task DeserializerThrows_LogsDeserializeError_AndStillCommitsEventStoredAsync() {

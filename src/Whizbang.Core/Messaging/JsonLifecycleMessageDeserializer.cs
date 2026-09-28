@@ -10,12 +10,15 @@ namespace Whizbang.Core.Messaging;
 /// Uses JsonContextRegistry for AOT-safe deserialization with zero reflection.
 /// </summary>
 /// <docs>fundamentals/lifecycle/lifecycle-stages</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeCrossContextDispatchTests.cs</tests>
 /// <remarks>
 /// Creates a new JSON lifecycle message deserializer.
 /// </remarks>
-/// <param name="jsonOptions">JSON serializer options for deserialization. If null, uses default options.</param>
+/// <param name="jsonOptions">The host's JSON serializer options. Every read uses them with every registered
+/// context behind their resolver (see <c>JsonContextRegistry.WithCompleteChain</c>), so a host whose
+/// options chain only some contexts still reads what the transport stored. If null, the registry alone.</param>
 public sealed class JsonLifecycleMessageDeserializer(JsonSerializerOptions? jsonOptions = null) : ILifecycleMessageDeserializer {
-  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? new JsonSerializerOptions();
+  private readonly JsonSerializerOptions? _hostOptions = jsonOptions;
 
   /// <summary>
   /// Deserializes a message from an OutboxMessage or InboxMessage envelope.
@@ -101,8 +104,10 @@ public sealed class JsonLifecycleMessageDeserializer(JsonSerializerOptions? json
         "This may indicate the payload was never set or was disposed.");
     }
 
-    // Use JsonContextRegistry for AOT-safe type resolution (zero reflection)
-    var jsonTypeInfo = JsonContextRegistry.GetTypeInfoByName(messageTypeName, _jsonOptions)
+    // Use JsonContextRegistry for AOT-safe type resolution (zero reflection), against the complete chain:
+    // a stored row reads the way the transport read it inline, whatever the host registered, and a
+    // discriminator a jsonb column moved out of first position is accepted (#938).
+    var jsonTypeInfo = JsonContextRegistry.GetTypeInfoByName(messageTypeName, JsonContextRegistry.WithCompleteChain(_hostOptions))
       ?? throw new InvalidOperationException(
         $"Failed to resolve message type '{messageTypeName}'. " +
         "Ensure the assembly containing this type is loaded and registered via [ModuleInitializer]."

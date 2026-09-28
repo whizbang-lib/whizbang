@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -321,7 +322,93 @@ public static class JsonContextRegistry {
       options.Converters.Add(entry.Converter);
     }
 
+    _completeChains.AddOrUpdate(options, new CompletedChain(Generation, options));
     return options;
+  }
+
+  /// <summary>
+  /// Options built by this registry, or completed from a host's options, keyed by the options they
+  /// answer for. A registry-built set maps to itself.
+  /// </summary>
+  private static readonly ConditionalWeakTable<JsonSerializerOptions, CompletedChain> _completeChains = new();
+
+  /// <summary>The complete chain answering for one host options instance, and the registry generation it was built at.</summary>
+  private sealed class CompletedChain(long generation, JsonSerializerOptions options) {
+    public long BuiltAtGeneration { get; } = generation;
+    public JsonSerializerOptions Options { get; } = options;
+  }
+
+  private static CompletedChain? _completedForNoHostOptions;
+
+  /// <summary>
+  /// Options that keep <paramref name="hostOptions"/>'s settings, resolver and converters, fall back to
+  /// every registered context behind that resolver, and accept a polymorphic discriminator out of first
+  /// position.
+  /// </summary>
+  /// <param name="hostOptions">The options the host registered, or <see langword="null"/> for the registry alone.</param>
+  /// <returns><paramref name="hostOptions"/> itself when this registry built it; otherwise the completed
+  /// options, reused for that instance until the registry changes.</returns>
+  /// <remarks>
+  /// <para>
+  /// The framework reads and writes a consumer's stored messages with whatever options the host
+  /// registered, while the transport reads the same messages inline with the full registry
+  /// (<see cref="CreateCombinedOptions()"/>). A host that registered its generated facade's
+  /// <c>WhizbangJsonContext.CreateOptions()</c> has four fixed contexts: no context of a shared
+  /// contracts assembly, and no out-of-order metadata. Two failures followed from that difference. An
+  /// offloaded body was unreadable where the same body inline was fine, because a polymorphic member's
+  /// derived type lived in the contracts assembly's context (#939). And an inbox row read back from a
+  /// <c>jsonb</c> column, which orders keys by length, had an inner element's <c>$type</c> pushed behind a
+  /// short key, which options without out-of-order metadata refuse (#938).
+  /// </para>
+  /// <para>
+  /// Host first, registry second: a type the host's resolver describes reads exactly as it did before,
+  /// under the host's own settings, so nothing a host configured on purpose changes. Only a type the
+  /// host's chain cannot describe, which used to throw, now resolves through the registry, as it does
+  /// on the transport. The registry's converters are added behind the host's, skipping any type the
+  /// host already converts.
+  /// </para>
+  /// </remarks>
+  /// <docs>messaging/transports/transport-consumer#unreadable-messages</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/JsonContextRegistryCompleteChainTests.cs</tests>
+  internal static JsonSerializerOptions WithCompleteChain(JsonSerializerOptions? hostOptions) {
+    var generation = Generation;
+    if (hostOptions is null) {
+      var cached = Volatile.Read(ref _completedForNoHostOptions);
+      if (cached is not null && cached.BuiltAtGeneration == generation) {
+        return cached.Options;
+      }
+      var built = CreateCombinedOptions();
+      Volatile.Write(ref _completedForNoHostOptions, new CompletedChain(generation, built));
+      return built;
+    }
+
+    if (_completeChains.TryGetValue(hostOptions, out var entry)
+        && (ReferenceEquals(entry.Options, hostOptions) || entry.BuiltAtGeneration == generation)) {
+      return entry.Options;
+    }
+
+    var completed = _complete(hostOptions);
+    _completeChains.AddOrUpdate(hostOptions, new CompletedChain(generation, completed));
+    return completed;
+  }
+
+  private static JsonSerializerOptions _complete(JsonSerializerOptions hostOptions) {
+    var registry = CreateCombinedOptions();
+    // The host's settings (naming policy, ignore conditions) and converters are kept as they are.
+    var completed = new JsonSerializerOptions(hostOptions) {
+      AllowOutOfOrderMetadataProperties = true,
+      TypeInfoResolver = hostOptions.TypeInfoResolver is { } hostResolver
+        ? JsonTypeInfoResolver.Combine(hostResolver, registry.TypeInfoResolver!)
+        : registry.TypeInfoResolver,
+    };
+    foreach (var converter in registry.Converters) {
+      if (!completed.Converters.Any(existing => existing.GetType() == converter.GetType())) {
+        completed.Converters.Add(converter);
+      }
+    }
+    // Already complete: completing it again returns it unchanged.
+    _completeChains.AddOrUpdate(completed, new CompletedChain(Generation, completed));
+    return completed;
   }
 
   /// <summary>
