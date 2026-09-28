@@ -124,6 +124,32 @@ public class JsonContextRegistryCompleteChainTests {
 
   // ------------------------------------------------------------------------------------------
 
+  /// <summary>
+  /// The options the generated facade hands out read what the framework's own read paths read.
+  /// </summary>
+  /// <remarks>
+  /// Completing the chain on the read paths left this route short: a host that calls
+  /// <c>WhizbangJsonContext.CreateOptions()</c> itself got the four fixed contexts and no
+  /// out-of-order metadata, so the same two failures were reachable through the options the
+  /// generator hands out -- a type declared in a shared contracts assembly with no metadata here,
+  /// and a discriminator a jsonb column pushed behind a shorter key. Asserted against the facade
+  /// this assembly's own generator emitted, rather than against the emitted text, because what
+  /// matters is what a host gets when it calls it.
+  /// </remarks>
+  [Test]
+  public async Task GeneratedFacadeOptions_AcceptOutOfOrderMetadata_AndSeeTheWholeRegistryAsync() {
+    var options = global::Whizbang.Core.Tests.Generated.WhizbangJsonContext.CreateOptions();
+
+    await Assert.That(options.AllowOutOfOrderMetadataProperties).IsTrue()
+      .Because("a jsonb column orders keys by length and moves a discriminator behind any shorter one");
+    await Assert.That(options.GetTypeInfo(typeof(TenantCollectiveScope))).IsNotNull()
+      .Because("a type the facade's own four contexts do not describe still has to resolve, which is "
+             + "what a shared contracts assembly's types are to a host");
+    await Assert.That(options.DefaultIgnoreCondition)
+      .IsEqualTo(System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)
+      .Because("completing the chain keeps what the facade configured; it only adds behind it");
+  }
+
   private sealed class NothingResolver : IJsonTypeInfoResolver {
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) => null;
   }
