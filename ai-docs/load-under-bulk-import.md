@@ -308,6 +308,55 @@ that have work, rather than with the work, means something is moving one row per
 Every run walk is priced by the run (`idx_outbox_stream_run`, keyed in the run's order), never by the
 stream's backlog.
 
+### Finding 7, round two: runs made the claim and the continuation deadlock
+
+With runs in place, a service of several instances ran the first job of its kind after the upgrade:
+a few hundred one-row streams plus their saga and completion events. The job's own work finished
+in about 25 s, and the outbox tail, including the completion event a UI waits on, arrived about 45 s
+later: one drain batch had failed with `40P01` and its streams waited for the claim loop. Nothing
+was lost.
+
+Reproduced by `OutboxStreamRunDeadlockSqlTests` with four instances, each running its claim, its
+drain fetch, its continuation and its completion flush (with failure releases) concurrently over
+overlapping streams, `log_lock_waits` on and a short `deadlock_timeout` in the test database. The
+server log named the pair: `claim_orphaned_outbox` (inside `claim_work`) refreshing
+`wh_active_streams` for the streams it had just leased, and `wh_continue_outbox_streams`, on the
+SAME instance's drain session, renewing `last_activity_at` on the ledger rows of the streams it
+continued. Each was one `UPDATE ... FROM` over several ledger rows, and each locked them in the
+order its join produced: the claim in arrival order, the continuation in the order it was asked.
+The same log showed a second, lesser cost: completions of rows the continuation had just leased
+waiting for the whole `claim_work`, because the claim's run lock tested only a message id and so
+locked rows that had changed hands since its snapshot, which it then never wrote.
+
+Migration 172 and the worker around it: the continuation's ledger renewal skips a locked row, so
+the continuation waits on nothing; the claim's refresh, the completion, the failure release and the
+lease renewal take their rows in the one order below; the run locks re-assert takeability; and the
+drain retries a continuation that lost a deadlock at once, from the same cursors, instead of leaving
+its streams to the claim loop (`OutboxDrainWorker.CONTINUATION_TRANSIENT_ATTEMPTS`).
+
+**Rule (lock order).** Every statement that locks more than one outbox or ledger row follows one
+order, and a statement that need not wait does not:
+
+1. Tables: `wh_outbox`, then `wh_active_streams` (the canonical order 162 set for the work tables:
+   `wh_outbox`, `wh_inbox`, `wh_inbox_state`, `wh_perspective_events`, `wh_active_streams`).
+2. Rows: `wh_outbox` by `(stream_id, created_at, message_id)`, which is `idx_outbox_stream_run`'s key
+   and a stream's publish order; `wh_active_streams` by `stream_id`. Write it as a locking subquery,
+   `SELECT ... ORDER BY <order> FOR UPDATE OF <alias>`, joined into the `UPDATE`/`DELETE`; a bare
+   multi-row `UPDATE ... WHERE id = ANY(...)` or `UPDATE ... FROM` locks in whatever order the plan
+   chooses, which is primary-key order, heap order or join order depending on the day.
+3. A write that is not load-bearing (an activity timestamp, a run that can stop early) locks with
+   `SKIP LOCKED` and treats a locked row as absent. Only a write that must happen waits, and then
+   only in the order above. A statement that waits for nothing cannot be part of a cycle.
+4. A lock re-asserts the predicate that chose the row. The rows a CTE read are the snapshot's; a
+   lock whose `WHERE` tests only the id also locks a row that has since changed hands, and holds it
+   to the end of the transaction without writing it.
+
+`OutboxStreamRunDeadlockSqlTests` pins each waiting statement's order the same way: another session
+holds the first row in the order, the statement is started, and once `pg_stat_activity` reports it
+waiting on a lock the test reads with `SKIP LOCKED` which of the later rows it already holds. In
+order, it holds none. Each lock subquery is driven by the keys the statement was given, so its cost
+is a sort of the batch, never of the table.
+
 ## Two consumer-side findings, recorded because the framework cannot detect them
 
 - A consumer-owned trigger cast a document key's text to `timestamptz`, which fails on the canonical

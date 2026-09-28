@@ -189,6 +189,82 @@ public class StrandedSagaSweepTests {
     await Assert.That(keys[0]).Contains(sagaId.ToString("N"));
   }
 
+  /// <summary>
+  /// The claim records that a tick was PUBLISHED, not that it was HANDLED. A stranded saga never
+  /// changes, so a claim keyed only on its last change made one lost tick its last (#935). The key
+  /// also counts whole re-arm intervals of stillness, so the saga is owed one more tick per interval.
+  /// </summary>
+  [Test]
+  public async Task Sweep_TickLostAndSagaStillStranded_IsReArmedAfterTheInterval_NotBeforeAsync() {
+    var sagaId = _id(40);
+    var clock = new MovableClock(DateTimeOffset.UtcNow);
+    var lastChange = clock.Now - TimeSpan.FromMinutes(10);
+    var options = new SagaOptions { StrandedSagaRearmInterval = TimeSpan.FromHours(1), TimeProvider = clock };
+    var emitter = new ClaimingEmitter();
+    var svc = new SweptSagaService(emitter, _repoIdleSince(sagaId, lastChange),
+      [new IncompleteSaga(_saga(sagaId, lastChange), TENANT)], options: options);
+    var noTickComing = new FixedWakes(new HashSet<Guid>());
+
+    var first = await svc.ArmStrandedSagasAsync(noTickComing, CancellationToken.None);
+    clock.Now += TimeSpan.FromMinutes(45);
+    var withinTheInterval = await svc.ArmStrandedSagasAsync(noTickComing, CancellationToken.None);
+    clock.Now += TimeSpan.FromMinutes(10);
+    var pastTheInterval = await svc.ArmStrandedSagasAsync(noTickComing, CancellationToken.None);
+
+    await Assert.That(first).IsEqualTo(1);
+    await Assert.That(withinTheInterval).IsEqualTo(0)
+      .Because("inside one re-arm interval the saga already has its tick, lost or not");
+    await Assert.That(pastTheInterval).IsEqualTo(1)
+      .Because("a whole interval of stillness later the first tick was evidently lost; the saga is owed another");
+    await Assert.That(emitter.Published.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task Sweep_SeveralInstancesInOneInterval_ArmOneTickAsync() {
+    var sagaId = _id(41);
+    var clock = new MovableClock(DateTimeOffset.UtcNow);
+    var lastChange = clock.Now - TimeSpan.FromHours(5);
+    var options = new SagaOptions { TimeProvider = clock };
+    var emitter = new ClaimingEmitter();
+    var instances = Enumerable.Range(0, 3).Select(_ => new SweptSagaService(emitter, _repoIdleSince(sagaId, lastChange),
+      [new IncompleteSaga(_saga(sagaId, lastChange), TENANT)], options: options)).ToList();
+
+    var armed = 0;
+    foreach (var instance in instances) {
+      armed += await instance.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
+      clock.Now += TimeSpan.FromMinutes(5);
+    }
+
+    await Assert.That(armed).IsEqualTo(1)
+      .Because("every instance and restart sweeping the same stop in one interval arrives at one claim");
+    await Assert.That(emitter.Published.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Sweep_TickStillComing_IsNotReArmedHoweverManyIntervalsHavePassedAsync() {
+    var sagaId = _id(42);
+    var clock = new MovableClock(DateTimeOffset.UtcNow);
+    var lastChange = clock.Now - TimeSpan.FromDays(3);
+    var emitter = new ClaimingEmitter();
+    var svc = new SweptSagaService(emitter, _repoIdleSince(sagaId, lastChange),
+      [new IncompleteSaga(_saga(sagaId, lastChange), TENANT)], options: new SagaOptions { TimeProvider = clock });
+
+    var armed = await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid> { sagaId }), CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(0)
+      .Because("a tick still waiting is a live chain; re-arming beside it would start a second chain");
+    await Assert.That(emitter.Published).IsEmpty();
+  }
+
+  [Test]
+  public async Task Options_RearmInterval_DefaultsToAnHour_AndMustBePositiveAsync() {
+    var options = new SagaOptions();
+
+    await Assert.That(options.StrandedSagaRearmInterval).IsEqualTo(TimeSpan.FromHours(1));
+    await Assert.That(() => options.StrandedSagaRearmInterval = TimeSpan.Zero).Throws<ArgumentOutOfRangeException>()
+      .Because("a zero interval would re-arm on every sweep");
+  }
+
   [Test]
   public async Task Sweep_LosingTheClaim_DoesNotCountAsArmedAsync() {
     var sagaId = _id(11);
@@ -566,6 +642,28 @@ public class StrandedSagaSweepTests {
     }
   }
 
+  /// <summary>A controllable clock for the sweep's idle and re-arm arithmetic.</summary>
+  private sealed class MovableClock(DateTimeOffset start) : TimeProvider {
+    public DateTimeOffset Now { get; set; } = start;
+    public override DateTimeOffset GetUtcNow() => Now;
+  }
+
+  /// <summary>Claims keys the way the claim store does: the first caller of a key wins, forever.</summary>
+  private sealed class ClaimingEmitter : ISagaEventEmitter {
+    private readonly HashSet<string> _claimed = [];
+    public List<IEvent> Published { get; } = [];
+    public Task PublishAsync<TEvent>(TEvent eventData) where TEvent : IEvent => Task.CompletedTask;
+    public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken) where TEvent : IEvent
+      => PublishOnceInTenantAsync(null, claimKey, eventData, cancellationToken);
+    public Task<bool> PublishOnceInTenantAsync<TEvent>(string? tenantId, string claimKey, TEvent eventData, CancellationToken cancellationToken) where TEvent : IEvent {
+      if (!_claimed.Add(claimKey)) {
+        return Task.FromResult(false);
+      }
+      Published.Add(eventData);
+      return Task.FromResult(true);
+    }
+  }
+
   private sealed class ScopelessEmitter : ISagaEventEmitter {
     public List<string> Claimed { get; } = [];
     public Task PublishAsync<TEvent>(TEvent eventData) where TEvent : IEvent => Task.CompletedTask;
@@ -585,10 +683,11 @@ public class StrandedSagaSweepTests {
       ISagaEventEmitter emitter,
       ISagaItemRepository? itemRepository,
       IReadOnlyList<IncompleteSaga>? incomplete,
-      ILogger? logger = null)
+      ILogger? logger = null,
+      SagaOptions? options = null)
     : BaseSagaService<TestInitiatedEvent, TestItemsDispatchedEvent, TestItemStartedEvent, TestItemCompletedEvent,
                       TestItemFailedEvent, TestCompletedEvent, TestResetEvent, TestHookStartedEvent, TestHookCompletedEvent>(
-        SAGA_NAME, emitter, itemRepository, new NotTerminalReader(), options: null, logger ?? NullLogger<SweptSagaService>.Instance) {
+        SAGA_NAME, emitter, itemRepository, new NotTerminalReader(), options, logger ?? NullLogger<SweptSagaService>.Instance) {
 
     protected override Task<IReadOnlyList<IncompleteSaga>> LoadIncompleteSagasAsync(CancellationToken cancellationToken)
       => incomplete is null ? base.LoadIncompleteSagasAsync(cancellationToken) : Task.FromResult(incomplete);

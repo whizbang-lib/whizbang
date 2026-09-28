@@ -160,13 +160,38 @@ public class AsbAcceptorAdaptiveWiringTests {
     time.Advance(_window);
     await _raiseSessionInitializingAsync(client, 1);
 
-    // Then drain: 0 active on 8 slots — quiet stamped, window elapses, next event decays.
-    await _raiseSessionClosingAsync(client, 5);
+    // Then go quiet: 1 active on 8 slots stamps quiet, the window elapses, and the close of the
+    // last held session decays the pool.
+    await _raiseSessionClosingAsync(client, 4);
     time.Advance(_window);
-    await client.LastSessionProcessor!.RaiseSessionInitializingAsync(_sessionEventArgs());
+    await _raiseSessionClosingAsync(client, 1);
 
     await Assert.That(client.LastSessionProcessor!.MaxConcurrentSessions).IsEqualTo(4)
       .Because("a full quiet window hands surplus acceptors back — idle receive cost trends to the floor by construction");
+  }
+
+  [Test]
+  public async Task SessionClosing_WithSiblingSessionsStillHeld_NeverShrinksTheRunningProcessorAsync() {
+    // Issue #937: sessions accepted in one burst idle out together. Shrinking the processor from
+    // the first one's close hook cancels acceptors while their siblings drain their receive links,
+    // and the SDK reports each canceled drain as an Error on a healthy, idle subscription.
+    var (transport, client, time, _) = _createTransport();
+    await transport.InitializeAsync();
+    await _subscribeBatchAsync(transport);
+    await _raiseSessionInitializingAsync(client, 4);
+    time.Advance(_window);
+    await _raiseSessionInitializingAsync(client, 1); // 5 held on 8 slots
+
+    await _raiseSessionClosingAsync(client, 4); // 1 held — quiet stamped
+    time.Advance(_window);
+    transport.EvaluateAcceptorGovernors(); // the periodic sweep, window elapsed, 1 session held
+    var whileHeld = client.LastSessionProcessor!.MaxConcurrentSessions;
+    await _raiseSessionClosingAsync(client, 1);
+
+    await Assert.That(whileHeld).IsEqualTo(8)
+      .Because("no scale-down may land while a session is held — that session can be mid-drain after its idle timeout");
+    await Assert.That(client.LastSessionProcessor!.MaxConcurrentSessions).IsEqualTo(4)
+      .Because("the deferred decay applies as soon as the last held session has closed");
   }
 
   [Test]

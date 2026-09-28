@@ -82,7 +82,7 @@ public class SagaWatchdogTickDeliveryIntegrationTests {
     await using var provider = _host(handWritten);
     await _startTheRouterRegistrarAsync(provider);
 
-    await _deliverAsync(provider, HAND_WRITTEN, LifecycleStage.PostInboxInline);
+    await _deliverAsync(provider, HAND_WRITTEN, LifecycleStage.PreInboxInline);
 
     await Assert.That(handWritten.Received).IsEqualTo(1)
       .Because("the tick has to reach the saga that armed it, exactly once, alongside the generated receivers");
@@ -94,7 +94,7 @@ public class SagaWatchdogTickDeliveryIntegrationTests {
     await using var provider = _host(handWritten);
     // Registrar deliberately not started: the host as it was before the framework owned a receiver.
 
-    await _deliverAsync(provider, HAND_WRITTEN, LifecycleStage.PostInboxInline);
+    await _deliverAsync(provider, HAND_WRITTEN, LifecycleStage.PreInboxInline);
 
     await Assert.That(handWritten.Received).IsEqualTo(0)
       .Because("this is the defect — delivered on time, received by nothing; the test above only means something if this one holds");
@@ -113,6 +113,22 @@ public class SagaWatchdogTickDeliveryIntegrationTests {
   }
 
   /// <summary>
+  /// The inbox runs a row's pre- and post-commit stages one after the other, so the router must answer
+  /// at exactly one of them: at both, every received tick would be recovered, and re-armed, twice.
+  /// </summary>
+  [Test]
+  public async Task HandWrittenSagaTick_AfterTheInboxCommit_DoesNotReachTheSagaAgainAsync() {
+    var handWritten = new RecordingParticipant(HAND_WRITTEN);
+    await using var provider = _host(handWritten);
+    await _startTheRouterRegistrarAsync(provider);
+
+    await _deliverAsync(provider, HAND_WRITTEN, LifecycleStage.PostInboxInline);
+
+    await Assert.That(handWritten.Received).IsEqualTo(0)
+      .Because("the router answers before the inbox commit; answering after it too would recover each tick twice");
+  }
+
+  /// <summary>
   /// The tick's own recovery reads the saga's items (aggregate, item list, stranded-item resolution)
   /// with no scope of its own; they are tenant-safe only because the tick is handled in the tenant it
   /// was published in, which the stranded-saga sweep sets to the saga's.
@@ -126,7 +142,7 @@ public class SagaWatchdogTickDeliveryIntegrationTests {
     await using var provider = _host(handWritten);
     await _startTheRouterRegistrarAsync(provider);
 
-    await _deliverAsync(provider, HAND_WRITTEN, LifecycleStage.PostInboxInline, tenantId: "tenant-a");
+    await _deliverAsync(provider, HAND_WRITTEN, LifecycleStage.PreInboxInline, tenantId: "tenant-a");
 
     await Assert.That(handWritten.Received).IsEqualTo(1)
       .Because("nothing was delivered, so the tenant assertion below would pass vacuously");
@@ -140,7 +156,7 @@ public class SagaWatchdogTickDeliveryIntegrationTests {
     await using var provider = _host(handWritten);
     await _startTheRouterRegistrarAsync(provider);
 
-    await _deliverAsync(provider, GeneratorTestDefaultSaga.SagaName, LifecycleStage.PostInboxInline);
+    await _deliverAsync(provider, GeneratorTestDefaultSaga.SagaName, LifecycleStage.PreInboxInline);
 
     await Assert.That(handWritten.Received).IsEqualTo(0)
       .Because("routing is by saga name, and a [Saga]-declared saga is not a router participant");

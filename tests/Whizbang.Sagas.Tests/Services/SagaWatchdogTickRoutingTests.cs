@@ -82,8 +82,8 @@ public class SagaWatchdogTickRoutingTests {
     await registrar.StartAsync(CancellationToken.None);
     await registrar.StopAsync(CancellationToken.None);
 
-    await Assert.That(registry.Stages).IsEquivalentTo([LifecycleStage.PostInboxInline])
-      .Because("a tick is armed for a future time; a sending-side receptor would fire at arming and re-arm at once");
+    await Assert.That(registry.Stages).IsEquivalentTo([LifecycleStage.PreInboxInline])
+      .Because("a sending-side receptor would fire at arming and re-arm at once, and the post-inbox stage is skipped for a tick its own service published");
     await Assert.That(registry.Receptors.Single()).IsTypeOf<SagaWatchdogTickRouter>();
   }
 

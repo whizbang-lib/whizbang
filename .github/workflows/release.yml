@@ -352,7 +352,7 @@ jobs:
     needs: check-release
     if: needs.check-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8   # the lookup's retries wait about two minutes before it gives up
     permissions:
       contents: read
       actions: read   # read the release-branch run and its artifacts
@@ -389,25 +389,10 @@ jobs:
             exit 1
           fi
 
-          # Addressed by workflow PATH, not by name: ci.yml sets a run-name, so no run is named "CI".
-          RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SRC&event=push&per_page=10" \
-            --jq '[.workflow_runs[] | select(.head_branch | startswith("release/v"))] | first // {} | {id: (.id // ""), conclusion: (.conclusion // ""), url: (.html_url // "")}')
-          RUN_ID=$(jq -r .id <<< "$RUN")
-          CONCLUSION=$(jq -r .conclusion <<< "$RUN")
-          RECOVER="Re-run the release-branch CI run for $SRC (all jobs), which rebuilds and re-tests its packages, then re-run this workflow: gh workflow run release.yml --ref main -f version=$VERSION -f release_type=auto -f dry_run=false"
-          if [ -z "$RUN_ID" ] || [ "$CONCLUSION" != success ]; then
-            echo "::error::No green release-branch CI run for $SRC (found: ${RUN_ID:-none} ${CONCLUSION:-}). $RECOVER"
-            exit 1
-          fi
-          ARTIFACT="nuget-packages-$RUN_ID"
-          LIVE=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?name=$ARTIFACT" --jq '[.artifacts[] | select(.expired | not)] | length')
-          if [ "$LIVE" -lt 1 ]; then
-            echo "::error::The tested packages ($ARTIFACT on run $RUN_ID) have expired or were never uploaded. $RECOVER"
-            exit 1
-          fi
-          echo "Promoting $ARTIFACT from release-branch run $RUN_ID ($SRC)."
-          { echo "run-id=$RUN_ID"; echo "artifact-name=$ARTIFACT"; } >> "$GITHUB_OUTPUT"
-          echo "### Promoting the tested packages from [run $RUN_ID]($(jq -r .url <<< "$RUN")), commit \`$SRC\`" >> "$GITHUB_STEP_SUMMARY"
+          # Which run tested it, green, with its packages still live. The lookup retries (a run search
+          # can briefly miss a finished run, #926) and names the recovery for each failure; the rules
+          # live in .github/scripts/Find-TestedPackages.ps1, tested by ci.yml's script-tests.
+          pwsh -NoProfile -File .github/scripts/Find-TestedPackages.ps1 -Sha "$SRC" -Version "$VERSION" -Repo "$REPO"
 
   # ============================================================================
   # Release - Create tag and GitHub Release

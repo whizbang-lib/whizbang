@@ -96,6 +96,33 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
       .Because("the adapter surfaces the runtime registration to both discard gates.");
   }
 
+  /// <summary>
+  /// A message recovered from dead-letter custody can carry its envelope's type name instead of its
+  /// payload's (#934). The envelope is a transport wrapper nothing consumes, so asking about the
+  /// wrapper instead of the payload answered "no consumer" for a message that had one.
+  /// </summary>
+  [Test]
+  public async Task HasAnyConsumer_EnvelopeWrappedName_OfAStaticallyConsumedPayload_CountsAsConsumerAsync() {
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
+    var payload = TypeNameFormatter.AssemblyQualifiedName(typeof(RuntimeConsumerProbeMessage));
+
+    await Assert.That(sut.HasAnyConsumer(payload)).IsTrue()
+      .Because("precondition: the payload has a compile-time receptor in this assembly");
+    await Assert.That(sut.HasAnyConsumer(EnvelopeTypeNameHelper.Format(payload))).IsTrue()
+      .Because("the envelope wraps a payload that has a consumer; the wrapper is not the message");
+  }
+
+  [Test]
+  public async Task HasAnyConsumer_EnvelopeWrappedName_OfARuntimeConsumedPayload_CountsAsConsumerAsync() {
+    const string payload = UNKNOWN_TYPE + ", Whizbang.Core.Tests";
+    var sut = new WhizbangReceptorRegistryQueryAdapter(new RuntimeRegistryFake(payload));
+
+    await Assert.That(sut.HasAnyConsumer(EnvelopeTypeNameHelper.Format(payload))).IsTrue()
+      .Because("a runtime-registered consumer, such as the saga watchdog tick router, is asked about the payload");
+    await Assert.That(sut.HasAnyConsumer(EnvelopeTypeNameHelper.Format(UNKNOWN_TYPE + ".Other, Whizbang.Core.Tests"))).IsFalse()
+      .Because("an envelope around a payload nothing consumes stays discardable");
+  }
+
   private sealed class RuntimeRegistryFake(string knownName) : IReceptorRegistry {
     public bool HasRuntimeConsumerFor(string clrTypeName) => clrTypeName == knownName;
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => [];

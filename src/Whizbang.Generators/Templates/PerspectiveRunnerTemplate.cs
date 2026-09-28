@@ -244,11 +244,75 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       events = events.OrderByMessageId().ToList();
     }
 
-    // Load current model or create new one
-    var currentModel = await _perspectiveStore.GetByStreamIdAsync(
-        streamId,
-        cancellationToken
-    );
+    // Lost-update guard (issue #928). The apply reads the row, folds the batch in memory and writes the
+    // whole row back; a writer that commits in between (a collective apply, a second apply of this
+    // stream) used to be overwritten silently. The write now lands only on the row version this attempt
+    // read, and a store that sees the row moved refuses it with PerspectiveRowConflictException: re-read,
+    // re-fold, write again. Bounded, because a row that moves under every attempt is a failure to report,
+    // not a loop to spin in. Detached lifecycle tasks one attempt started are awaited by the attempt that
+    // completes, so none is left unobserved.
+    // <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+    var backgroundTasks = new List<Task>();
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return await _runWithEventsAttemptAsync(
+            streamId, perspectiveName, lastProcessedEventId, events, attempt == 1, backgroundTasks, cancellationToken);
+      } catch (global::Whizbang.Core.Perspectives.PerspectiveRowConflictException conflict) when (attempt < MAX_ROW_CONFLICT_ATTEMPTS) {
+        _logger.LogDebug(
+            conflict,
+            "Row for {PerspectiveName} stream {StreamId} changed after it was read (attempt {Attempt} of {MaxAttempts}); re-reading and re-applying",
+            perspectiveName,
+            streamId,
+            attempt,
+            MAX_ROW_CONFLICT_ATTEMPTS
+        );
+      } catch (global::Whizbang.Core.Perspectives.PerspectiveRowConflictException conflict) {
+        _logger.LogWarning(
+            conflict,
+            "Row for {PerspectiveName} stream {StreamId} changed under each of {MaxAttempts} apply attempts; giving up so the batch is retried through the failure path. Nothing stale was written",
+            perspectiveName,
+            streamId,
+            MAX_ROW_CONFLICT_ATTEMPTS
+        );
+        throw;
+      }
+    }
+  }
+
+  /// <summary>
+  /// How many times one batch is re-read and re-applied when its write is refused because the row moved.
+  /// </summary>
+  private const int MAX_ROW_CONFLICT_ATTEMPTS = 5;
+
+  /// <summary>
+  /// One read-fold-write attempt of <see cref="RunWithEventsAsync"/>. Throws
+  /// <see cref="global::Whizbang.Core.Perspectives.PerspectiveRowConflictException"/> when the write is refused;
+  /// the caller re-runs it. The pre-perspective lifecycle stages fire on the first attempt only: they announce
+  /// the batch, and a retry re-folds the same batch.
+  /// </summary>
+  private async Task<PerspectiveCursorCompletion> _runWithEventsAttemptAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid? lastProcessedEventId,
+      IReadOnlyList<MessageEnvelope<IEvent>> events,
+      bool firePreLifecycle,
+      List<Task> backgroundTasks,
+      CancellationToken cancellationToken) {
+
+    // Read the row's version and metadata FIRST, then the model. The model can then never be older than
+    // the version the write is checked against: a writer that commits between the two reads moves the
+    // version and the write is refused, never landed. A store that tracks no versions returns Unchecked
+    // and the reads below are exactly the ones the runner always made.
+    var applyRead = await _perspectiveStore.ReadForApplyAsync(streamId, cancellationToken);
+    var rowVersion = applyRead.Version;
+
+    // Load current model or create new one. A checked read that found no row needs no model read.
+    var currentModel = rowVersion.State == global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Absent
+        ? null
+        : await _perspectiveStore.GetByStreamIdAsync(
+            streamId,
+            cancellationToken
+        );
 
     // Track whether the stream already exists in the DB. When it does not, the pre-created
     // empty default below is scaffolding for Apply input only — it must NOT be persisted
@@ -314,9 +378,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // 3) Neither side has commit_sequence (single-source / no stamper world) → event_id
     //    lex compare is sufficient because monotonic ordering holds without concurrent
     //    emission.
-    var existingMetadata = modelLoadedFromDb
-        ? await _perspectiveStore.GetMetadataByStreamIdAsync(streamId, cancellationToken)
-        : null;
+    var existingMetadata = !modelLoadedFromDb
+        ? null
+        : rowVersion.IsChecked
+            ? applyRead.Metadata
+            : await _perspectiveStore.GetMetadataByStreamIdAsync(streamId, cancellationToken);
     var lastAppliedEventId = existingMetadata?.EventId;
     var lastAppliedCommitSequence = existingMetadata?.CommitSequence;
     if (!string.IsNullOrEmpty(lastAppliedEventId) && events.Count > 0) {
@@ -405,7 +471,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     string? lastSuccessfulEventType = existingMetadata?.EventType;
     DateTime? lastSuccessfulEventAt = null;
     var processedEvents = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();  // Track envelopes for PostPerspectiveInline (fires AFTER save)
-    var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     // True once Apply has contributed a concrete model OR the row came from DB.
     // When false at save time, updatedModel is only the scaffolded default and must not be written.
@@ -415,8 +480,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var scopeChanged = false;  // Track if an IScopeEvent changed scope (forces scope UPDATE)
 
     try {
-      // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event)
-      if (events.Count > 0) {
+      // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event, and not again
+      // when a refused write re-runs the batch)
+      if (firePreLifecycle && events.Count > 0) {
         var firstEnvelope = events[0];  // First envelope for receptor routing (envelope preserves security context)
         var firstEnvelopeType = firstEnvelope.Payload.GetType();
         var firstEnvelopeTypeName = firstEnvelopeType.FullName ?? string.Empty;
@@ -662,7 +728,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               lastSuccessfulEventAt ?? DateTime.UtcNow,
               cancellationToken,
               lastScope?.FilterByFields(_inheritScopeOnCreate),
-              scopeChanged
+              scopeChanged,
+              rowVersion
           );
         }
 
@@ -787,7 +854,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
       };
 
-    } catch (Exception ex) {
+    } catch (Exception ex) when (ex is not global::Whizbang.Core.Perspectives.PerspectiveRowConflictException) {
+      // A refused write (the row moved) is not a partial failure: nothing was written and the caller re-runs
+      // the whole batch onto the moved row, so it passes straight through.
       // Partial success: save checkpoint up to last successful event
       if (lastSuccessfulEventId != null && lastSuccessfulEventId != lastProcessedEventId) {
         _logger.LogWarning(
@@ -814,7 +883,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 lastSuccessfulEventAt ?? DateTime.UtcNow,
                 cancellationToken,
                 lastScope?.FilterByFields(_inheritScopeOnCreate),
-                scopeChanged
+                scopeChanged,
+                rowVersion
             );
           }
         } catch (Exception saveEx) {
@@ -914,10 +984,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       DateTime checkpointEventAt,
       CancellationToken cancellationToken,
       PerspectiveScope? scope = null,
-      bool forceUpdateScope = false) {
+      bool forceUpdateScope = false,
+      global::Whizbang.Core.Perspectives.PerspectiveRowVersion expectedVersion = default) {
 
     // Build metadata that captures the last applied event's identity AND commit_sequence.
-    // The runner reads metadata back on the next run via GetMetadataByStreamIdAsync to filter
+    // The runner reads metadata back on the next run (ReadForApplyAsync, or GetMetadataByStreamIdAsync) to filter
     // out already-applied events (idempotency across worker crashes between row upsert and
     // cursor advance). CommitSequence is the load-bearing field for that filter: UUIDv7
     // event_ids can invert under concurrent emission, so event_id-only comparison silently
@@ -931,7 +1002,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     };
 
     #region UPSERT_CALL
-    // Upsert model (insert or update)
+    // Upsert model (insert or update) onto the row version the apply read (Unchecked writes unconditionally)
     // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync
     if (scope != null) {
       await _perspectiveStore.UpsertAsync(
@@ -940,6 +1011,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           scope,
           forceUpdateScope,
           metadata,
+          expectedVersion,
           cancellationToken
       );
     } else {
@@ -949,6 +1021,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           new global::Whizbang.Core.Lenses.PerspectiveScope(),
           false,
           metadata,
+          expectedVersion,
           cancellationToken
       );
     }

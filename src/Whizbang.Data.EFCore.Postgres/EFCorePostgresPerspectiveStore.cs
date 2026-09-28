@@ -65,6 +65,21 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   }
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// On PostgreSQL the version is the row's <c>xmin</c>, read in one statement with the metadata the runner's
+  /// idempotency filter needs (so the runner no longer reads the row a second time for it). Any other provider
+  /// reports <see cref="PerspectiveApplyRead.Unchecked"/> and reads nothing.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:ReadForApplyAsync_ReportsAbsence_ThenTheRowsVersionAndMetadata_AndSeesACollectiveAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:Upsert_WithACheckedVersion_OnANonPostgresProvider_IsNotCheckedAsync</tests>
+  public Task<PerspectiveApplyRead> ReadForApplyAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+    PerspectiveRowVersionSql.Supports(_context)
+      ? PerspectiveRowVersionSql.ReadForApplyAsync(
+          _context, PerspectiveRowVersionSql.QualifiedTable<TModel>(_context), streamId, cancellationToken)
+      : Task.FromResult(PerspectiveApplyRead.Unchecked);
+
+  /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordDoesNotExist_CreatesNewRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
@@ -83,21 +98,36 @@ public class EFCorePostgresPerspectiveStore<TModel>(
         _context, _tableName, streamId, model, _defaultMetadata, scope, forceUpdateScope, cancellationToken);
 
   /// <inheritdoc/>
+  public Task UpsertAsync(
+      Guid streamId,
+      TModel model,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      CancellationToken cancellationToken = default) =>
+    UpsertAsync(streamId, model, scope, forceUpdateScope, metadata, PerspectiveRowVersion.Unchecked, cancellationToken);
+
+  /// <inheritdoc/>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:Upsert_WithAVersionReadBeforeACollective_IsRefused_AndTheCollectiveSurvivesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:CollectiveCommittedBetweenReadAndWrite_IsNotOverwritten_FinalRowReflectsBothAsync</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Implements the versioned IPerspectiveStore overload, whose shape is fixed by the interface.")]
   public async Task UpsertAsync(
       Guid streamId,
       TModel model,
       PerspectiveScope scope,
       bool forceUpdateScope,
       PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
       CancellationToken cancellationToken = default) {
     try {
       await _upsertStrategy.UpsertPerspectiveRowAsync(
-          _context, _tableName, streamId, model, metadata, scope, forceUpdateScope, cancellationToken);
+          _context, _tableName, streamId, model, metadata, scope, forceUpdateScope, expectedVersion, cancellationToken);
     } catch (Exception failure) {
       // Every write funnels through here, so this is the one place a refusal can be explained in
-      // terms of the model rather than of a SQL state. Anything unrecognized is rethrown as it
-      // stands: see PerspectiveWriteErrors for why only a value with no representation at all is
-      // worth reshaping.
+      // terms of the model rather than of a SQL state. Anything unrecognized (a row-version conflict
+      // included) is rethrown as it stands: see PerspectiveWriteErrors for why only a value with no
+      // representation at all is worth reshaping.
       var translated = PerspectiveWriteErrors.Translate<TModel>(failure);
       if (ReferenceEquals(translated, failure)) {
         throw;
@@ -240,6 +270,23 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     _upsertStrategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
         _context, _tableName, streamId, model, metadata, scope ?? new PerspectiveScope(),
         physicalFieldValues, forceUpdateScope, cancellationToken);
+
+  /// <inheritdoc/>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyCoverageTests.cs:UpsertWithPhysicalFieldsAsync_OnTheVersionItRead_WritesTheColumns_AndARowThatMovedIsRefusedAsync</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Implements the versioned IPerspectiveStore overload, whose shape is fixed by the interface.")]
+  public Task UpsertWithPhysicalFieldsAsync(
+      Guid streamId,
+      TModel model,
+      IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default) =>
+    _upsertStrategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+        _context, _tableName, streamId, model, metadata, scope ?? new PerspectiveScope(),
+        physicalFieldValues, forceUpdateScope, expectedVersion, cancellationToken);
 
   /// <inheritdoc/>
   public async Task FlushAsync(CancellationToken cancellationToken = default) {

@@ -529,6 +529,12 @@ tagged** and fails closed if any of these does not hold:
 - that release-branch run is green;
 - its package artifact still exists (kept 7 days on a `release/v*` run).
 
+The run search can briefly miss a run that finished minutes earlier (#926), so the lookup
+(`.github/scripts/Find-TestedPackages.ps1`) asks by commit and then by listing the release branch's
+push runs, and retries for about two minutes before it fails. It waits on a run that is still going;
+a run that ended red, or an artifact listed as expired, fails at once. The error says which of the
+three failures it is (no run found, run not green, packages missing) and names that one's recovery.
+
 `Plan · Is this a release?` has already required that the PR came from `release/vX.Y.Z` with the same
 stable number in its title, and every package must carry exactly that version (the one package list,
 `.github/nuget-packages.txt`, checked by `.github/actions/verify-packages`). A failure leaves no tag
@@ -575,7 +581,9 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Release PR's `Gate · CI result` failed: "the suites ran in run N, whose gate ended ..." | the release-branch push run it yielded to was canceled or failed | Re-run that run: `gh run rerun <id> --failed` (the sticky PR comment names it), then re-run the PR's failed jobs. Or set `RELEASE_PR_FULL_MATRIX=true` and re-run the PR's CI, then unset it |
 | `Gate · CI result` failed: "X is skipped, but nothing proves this tree was tested anywhere else" | a suite was skipped by a condition that is not one of the gate's proven paths | A workflow bug: find why the job's `if` skipped it. Never re-run to get past it |
 | `Analyze · Quality` canceled at its time limit | runners queued the suites for hours | Re-run the failed jobs; the suites' coverage is still there |
-| `Plan · Locate the tested packages` failed: expired or not green | the release PR sat open past 7 days, or its run went red | Re-run the release-branch CI run (all jobs), then `gh workflow run release.yml --ref main -f version=X.Y.Z -f release_type=auto -f dry_run=false` |
+| `Plan · Locate the tested packages` failed: "No CI push run for ... was found" | the run search kept missing the run (#926), or no push run exists for that commit | `gh run list --workflow ci.yml --branch release/vX.Y.Z --event push`. A green run for the commit listed: the search missed it, so re-run this release's failed jobs (`gh run rerun <release run> --failed`); never re-run the release-branch CI for this. None listed: nothing tested those bytes, so do not publish; find out why the push run never ran |
+| `Plan · Locate the tested packages` failed: "ended '...', not success" or "still ..." | the release-branch run went red, was canceled, or had not finished | Fix or re-run it (`gh run rerun <id> --failed`), wait for green, then re-run this release's failed jobs (or `gh workflow run release.yml --ref main -f version=X.Y.Z -f release_type=auto -f dry_run=false`) |
+| `Plan · Locate the tested packages` failed: "have expired" or "has no nuget-packages-... artifact" | the release PR sat open past 7 days, or the packages were never uploaded | Re-run **all** jobs of the release-branch run (`gh run rerun <id>`), which rebuilds and re-tests them under the same artifact name, wait for green, then re-run this release's failed jobs (or dispatch as above) |
 | `Plan · Is this a release?` refused the merged PR | the title or branch didn't match `chore(release): vX.Y.Z` from `release/vX.Y.Z` | Re-dispatch as above with the right version; never re-title and re-merge |
 | Release Prerelease refused: "build has expired" / "not green" | the branch head's run is older than 7 days, running, or red | Re-run that CI run (or push), wait for green, retry |
 | Release Prerelease refused: "gate did not pass" / "PR's head is not this commit" | the release PR's Quality or SonarCloud check failed, or is still running, on the branch head | Fix it in the release branch through a PR until the release PR is green on its head, then retry |

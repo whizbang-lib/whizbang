@@ -182,6 +182,52 @@ public class AtomicUpsertPhysicalFieldsIntegrationTests : IAsyncDisposable {
     await Assert.That(version).IsEqualTo(2);
   }
 
+  // Issue #928: the conditional UPDATE a checked write issues must carry the physical columns exactly like
+  // the unconditional upsert does. If it dropped them, a per-stream apply would update the document while
+  // its denormalized columns kept serving the previous values.
+  [Test]
+  public async Task AtomicUpsert_WithPhysicalFields_OnTheVersionItRead_UpdatesTheColumns_AndAStaleVersionIsRefusedAsync() {
+    await using var ctx = _createDbContext();
+    var strategy = new PostgresUpsertStrategy();
+    var id = Guid.CreateVersion7();
+    var metadata = new PerspectiveMetadata { EventType = "ProductCreated", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow };
+    var table = PerspectiveRowVersionSql.QualifiedTable<global::Whizbang.Data.EFCore.Postgres.Tests.ProductPhysicalModel>(ctx);
+
+    await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+      ctx, "wh_per_product_physical", id,
+      new global::Whizbang.Data.EFCore.Postgres.Tests.ProductPhysicalModel { Id = id, Name = "Original", Price = 5m },
+      metadata, new PerspectiveScope(),
+      new Dictionary<string, object?> { { "name", "Original" }, { "price", 5m }, { "category", "old" } },
+      forceUpdateScope: false, PerspectiveRowVersion.Absent);
+    var read = await PerspectiveRowVersionSql.ReadVersionAsync(ctx, table, id, lockRow: false, CancellationToken.None);
+
+    await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+      ctx, "wh_per_product_physical", id,
+      new global::Whizbang.Data.EFCore.Postgres.Tests.ProductPhysicalModel { Id = id, Name = "Updated", Price = 99m },
+      metadata, new PerspectiveScope(),
+      new Dictionary<string, object?> { { "name", "Updated" }, { "price", 99m }, { "category", "new" } },
+      forceUpdateScope: false, read);
+
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    var (name, price, category, version) = await conn.QuerySingleAsync<(string name, decimal price, string category, int version)>(
+      "SELECT name, price, category, version FROM wh_per_product_physical WHERE id = @id",
+      new { id });
+    await Assert.That(name).IsEqualTo("Updated");
+    await Assert.That(price).IsEqualTo(99m);
+    await Assert.That(category).IsEqualTo("new");
+    await Assert.That(version).IsEqualTo(2);
+
+    await Assert.That(async () => await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+        ctx, "wh_per_product_physical", id,
+        new global::Whizbang.Data.EFCore.Postgres.Tests.ProductPhysicalModel { Id = id, Name = "Stale", Price = 1m },
+        metadata, new PerspectiveScope(),
+        new Dictionary<string, object?> { { "name", "Stale" }, { "price", 1m }, { "category", "stale" } },
+        forceUpdateScope: false, read))
+      .Throws<PerspectiveRowConflictException>()
+      .Because("the version was read before the previous write moved the row");
+  }
+
   [Test]
   public async Task AtomicUpsert_WithNullPhysicalFieldValue_BindsAsDbNullAsync() {
     // Arrange — category is nullable; pass null to confirm DBNull binding works.

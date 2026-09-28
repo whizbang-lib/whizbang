@@ -282,8 +282,10 @@ public class AzureServiceBusOptions {
   /// (capped at <see cref="MaxConcurrentSessions"/> — the ceiling) at once when active sessions
   /// fill the current pool, or when they hold at or above 80% of it for one
   /// <see cref="AcceptorEvaluationInterval"/>, and HALVES (floored) after a full interval below
-  /// 25% occupancy. Concurrency changes apply to the RUNNING processor (no stop/recreate) via
-  /// the SDK's dynamic concurrency update.
+  /// 25% occupancy, once no session is held. Concurrency changes apply to the RUNNING processor
+  /// (no stop/recreate) via the SDK's dynamic concurrency update; a shrink cancels acceptors of
+  /// the SDK's choosing, so it waits for held sessions to close rather than cancel one that is
+  /// draining its receive link after an idle timeout.
   /// <para>
   /// <b>Why:</b> every idle acceptor slot re-issues a broker accept each
   /// <see cref="SessionIdleTimeout"/> — a billable namespace request with zero messages flowing.

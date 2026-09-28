@@ -13,7 +13,9 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Policy: GROW (double, capped at the ceiling) at once when active sessions have FILLED the
 /// current pool (the next session is already queueing behind the cap), or when they have held at
 /// or above 80% of current concurrency for one full evaluation window; DECAY (halve, floored)
-/// after a full window with active sessions below 25% of current. Between those bands the pool
+/// after a full window with active sessions below 25% of current, applied at the first
+/// evaluation with no session held (a scale-down cancels acceptors the SDK picks, and a held
+/// session may be draining its receive link after an idle timeout). Between those bands the pool
 /// holds. A growth or decay step restarts both windows so the next decision is measured against
 /// the new pool size.
 /// </para>
@@ -144,8 +146,12 @@ public sealed class AsbAcceptorGovernor : Whizbang.Core.Execution.IConcurrencyGo
   /// <summary>
   /// One policy evaluation against the injected clock. Returns true when
   /// <see cref="CurrentConcurrency"/> changed — the caller then applies the new value to the
-  /// running processor (<c>ServiceBusSessionProcessor.UpdateConcurrency</c>).
+  /// running processor (<c>ServiceBusSessionProcessor.UpdateConcurrency</c>). A decay is held
+  /// back while any session is held and applies at the first evaluation after the last one closes.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorGovernorTests.cs:Evaluate_QuietWindowElapsed_WhileASessionIsHeld_HoldsConcurrencyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorGovernorTests.cs:Evaluate_QuietWindowElapsed_DecaysOnceTheLastHeldSessionClosesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs:SessionClosing_WithSiblingSessionsStillHeld_NeverShrinksTheRunningProcessorAsync</tests>
   public bool Evaluate() {
     var now = _timeProvider.GetUtcNow();
     lock (_sync) {
@@ -173,8 +179,14 @@ public sealed class AsbAcceptorGovernor : Whizbang.Core.Execution.IConcurrencyGo
         return true;
       }
 
+      // Decay waits until no session is held (issue #937). Shrinking the running processor makes
+      // the SDK cancel acceptors of its own choosing, and a held session that has just idled out
+      // is draining its receive link; a canceled drain is reported as an Error-level SDK event on
+      // a healthy subscription. A session is only held between its initialize and close hooks,
+      // and its drain finishes before the close hook, so with none held no drain is in flight.
       if (_quietSince is { } quietStart
           && now - quietStart >= _evaluationWindow
+          && _activeSessions == 0
           && _currentConcurrency > Floor) {
         _currentConcurrency = Math.Max(_currentConcurrency / SCALE_FACTOR, Floor);
         _restartWindows();

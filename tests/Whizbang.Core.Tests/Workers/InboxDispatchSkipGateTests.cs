@@ -98,6 +98,49 @@ public class InboxDispatchSkipGateTests {
     await Assert.That(skippedCount).IsEqualTo(0L);
   }
 
+  /// <summary>
+  /// A broker dead letter recovered into the inbox used to carry its envelope's type name (#934). The
+  /// gate asked whether anything consumes the envelope, found nothing, and skipped the row as
+  /// RegistryChanged: a recovered message lost after recovery. The gate asks about the payload.
+  /// </summary>
+  [Test]
+  public async Task ShouldSkipInbox_EnvelopeWrappedRow_WhosePayloadHasAConsumer_IsKeptAsync() {
+    var registry = new TestRegistry { Consumed = { "Test.Contracts.Foo, Test.Contracts" } };
+    var policyLogger = new RecordingLogger();
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.D"), routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+
+    var shouldSkip = InboxDispatchWorker.ShouldSkipInbox(
+      discardPolicy: policy,
+      messageType: EnvelopeTypeNameHelper.Format("Test.Contracts.Foo, Test.Contracts"),
+      messageId: Guid.Parse("44444444-4444-4444-4444-444444444444"));
+
+    await Assert.That(shouldSkip).IsFalse()
+      .Because("the envelope is a transport wrapper; the payload it carries has a consumer");
+    await Assert.That(policyLogger.Entries).IsEmpty();
+  }
+
+  [Test]
+  public async Task ShouldSkipInbox_EnvelopeWrappedRow_WhosePayloadHasNoConsumer_IsStillSkippedAsync() {
+    var registry = new TestRegistry { Consumed = { "Test.Contracts.Foo, Test.Contracts" } };
+    var policy = new MessageDiscardPolicy(registry: registry, logger: NullLogger<MessageDiscardPolicy>.Instance, meter: new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.E"), routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+
+    var decision = policy.EvaluateInbox(EnvelopeTypeNameHelper.Format("Test.Contracts.Bar, Test.Contracts"));
+
+    await Assert.That(decision.ShouldDiscard).IsTrue();
+    await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.RegistryChanged);
+  }
+
+  [Test]
+  public async Task EvaluateReceive_EnvelopeWrappedName_WhosePayloadHasAConsumer_IsKeptAsync() {
+    var registry = new TestRegistry { Consumed = { "Test.Contracts.Foo, Test.Contracts" } };
+    var policy = new MessageDiscardPolicy(registry: registry, logger: NullLogger<MessageDiscardPolicy>.Instance, meter: new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.F"), routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+
+    var decision = policy.EvaluateReceive(EnvelopeTypeNameHelper.Format("Test.Contracts.Foo, Test.Contracts"), topic: "t", subscription: "s");
+
+    await Assert.That(decision.ShouldDiscard).IsFalse()
+      .Because("a transport that hands the gate its envelope type name is asking about the payload inside it");
+  }
+
   [Test]
   public async Task ShouldSkipInbox_NoPolicyWired_ReturnsFalse_PreservesLegacyBehaviorAsync() {
     var shouldSkip = InboxDispatchWorker.ShouldSkipInbox(
