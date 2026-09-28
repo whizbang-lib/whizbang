@@ -88,4 +88,34 @@ public sealed class SagaOptions {
   /// </remarks>
   /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
   public TimeSpan StrandedSagaIdleGuard { get; set; } = TimeSpan.FromMinutes(5);
+
+  /// <summary>
+  /// How often the stranded-saga sweep arms another tick for a saga that stays stranded. Counted in
+  /// whole intervals of stillness since the saga's last change: a saga idle for k intervals is owed
+  /// its (k+1)th tick, one per interval however many instances sweep it.
+  /// </summary>
+  /// <remarks>
+  /// The sweep's claim records that a tick was published, not that it was handled. Without a re-arm
+  /// interval a stranded saga, which by definition does not change, kept one claim forever, and a
+  /// single lost tick was its last. A saga with a tick still waiting in an outbox or inbox is never
+  /// re-armed, whatever the interval. A saga that the tick abandons and that has nothing to resolve
+  /// stays incomplete, so it is re-armed and abandoned again once per interval; exclude abandoned
+  /// sagas in <c>LoadIncompleteSagasAsync</c> to stop that. Defaults to one hour; must be positive.
+  /// </remarks>
+  /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
+  /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_TickLostAndSagaStillStranded_IsReArmedAfterTheInterval_NotBeforeAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Options_RearmInterval_DefaultsToAnHour_AndMustBePositiveAsync</tests>
+  public TimeSpan StrandedSagaRearmInterval {
+    get => _strandedSagaRearmInterval;
+    set {
+      ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, TimeSpan.Zero);
+      _strandedSagaRearmInterval = value;
+    }
+  }
+
+  private TimeSpan _strandedSagaRearmInterval = TimeSpan.FromHours(1);
+
+  /// <summary>The clock the stranded-saga sweep reads; replaced only by tests.</summary>
+  internal TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 }
