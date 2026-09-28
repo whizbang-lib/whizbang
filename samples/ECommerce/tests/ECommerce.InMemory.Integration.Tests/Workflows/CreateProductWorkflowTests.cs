@@ -14,7 +14,7 @@ namespace ECommerce.InMemory.Integration.Tests.Workflows;
 /// Database cleanup between tests ensures isolation.
 /// </summary>
 [NotInParallel("InMemory")]  // Tests must run sequentially since they share a fixture
-[Timeout(60_000)]  // 60s timeout: first test needs container init (~15s), subsequent tests fast
+[Timeout(60_000)]  // Fixture start runs in a session hook (SharedInMemoryFixtureSessionHooks), outside this budget
 public class CreateProductWorkflowTests {
   private InMemoryIntegrationFixture? _fixture;
 

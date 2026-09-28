@@ -39,10 +39,12 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       TimeSpan? pollingInterval = null,
       TimeSpan? leaderElectionRetry = null,
       bool disable = false,
-      INotifySignalingGate? gate = null) {
+      INotifySignalingGate? gate = null,
+      string? searchPath = null) {
     var notificationOptions = new WhizbangNotificationOptions {
       DirectConnectionString = connectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
+      SearchPath = searchPath,
     };
     var stamperOptions = new CommitOrderStamperOptions {
       PollingInterval = pollingInterval ?? TimeSpan.FromMilliseconds(100),
@@ -206,6 +208,46 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
 
     await workerA.StopAsync(CancellationToken.None);
     await workerB.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Two services sharing one database, each in its own schema, each get a stamper. Stamping is
+  /// per schema (each service's <c>wh_event_store</c> is stamped by that service's leader), but
+  /// a Postgres advisory lock is per database. With one key for every schema, the first service
+  /// to elect a stamper excluded every other service's, whose events then stayed unstamped and
+  /// reached their perspectives only through the unstamped-row grace window and the next
+  /// backstop claim: seconds of added latency on every event, for as long as the processes ran.
+  /// </summary>
+  [Test]
+  public async Task Worker_TwoServiceSchemasInOneDatabase_EachElectsItsOwnStamperAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    const string otherSchema = "stamper_other_service";
+    await using (var setup = new NpgsqlConnection(ConnectionString)) {
+      await setup.OpenAsync();
+      await using var cmd = setup.CreateCommand();
+      // Just enough of a second service's schema for its stamper's pending-work probe to run.
+      cmd.CommandText =
+        $"CREATE SCHEMA {otherSchema}; CREATE TABLE {otherSchema}.wh_event_store (commit_sequence BIGINT)";
+      _ = await cmd.ExecuteNonQueryAsync();
+    }
+
+    var serviceA = _newWorker(ConnectionString, searchPath: "public");
+    var serviceB = _newWorker(ConnectionString, searchPath: otherSchema);
+    var leaderA = await _whenBecomesLeaderAsync(serviceA);
+    var leaderB = await _whenBecomesLeaderAsync(serviceB);
+
+    await serviceA.StartAsync(cts.Token);
+    await leaderA.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await serviceB.StartAsync(cts.Token);
+
+    try {
+      await leaderB.Task.WaitAsync(TimeSpan.FromSeconds(10));
+      await Assert.That(serviceA.IsLeader && serviceB.IsLeader).IsTrue()
+        .Because("each service's stamper leads for its own schema; neither may exclude the other");
+    } finally {
+      await serviceA.StopAsync(CancellationToken.None);
+      await serviceB.StopAsync(CancellationToken.None);
+    }
   }
 
   [Test]

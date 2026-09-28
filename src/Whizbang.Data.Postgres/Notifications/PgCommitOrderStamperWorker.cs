@@ -9,9 +9,10 @@ namespace Whizbang.Data.Postgres.Notifications;
 
 /// <summary>
 /// Slice 26 commit-order stamper. Allocates <c>commit_sequence</c> values via
-/// <c>stamp_pending_commit_sequences</c> on every wake. Singleton across the DB —
-/// every instance of the service runs the worker but only the one holding the
-/// <c>pg_try_advisory_lock</c> stamps. Non-holders sleep on a retry interval.
+/// <c>stamp_pending_commit_sequences</c> on every wake. Singleton per service schema —
+/// every instance of the service runs the worker but only the one holding the schema's
+/// <c>pg_try_advisory_lock</c> (see <see cref="CommitOrderStamperLockKey"/>) stamps.
+/// Non-holders sleep on a retry interval.
 ///
 /// <para>
 /// Wake sources:
@@ -116,6 +117,9 @@ public sealed partial class PgCommitOrderStamperWorker(
     }
 
     var resolution = NotificationConnectionStringResolver.Resolve(_notificationOptions, _configuration, _connectionStringFallback).WithAppliedSearchPath();
+    // One stamper per SCHEMA, not per database: the advisory lock spans the database, and a
+    // key shared by every schema let one service's stamper exclude every other service's.
+    var lockKey = CommitOrderStamperLockKey.Compute(resolution.SearchPath, _stamperOptions.AdvisoryLockKey);
     // Prefer a DI-registered NpgsqlDataSource: when the DbContext is configured
     // via UseNpgsql(NpgsqlDataSource), neither the connection string nor the
     // data source's public ConnectionString carry the password (Npgsql strips
@@ -186,7 +190,7 @@ public sealed partial class PgCommitOrderStamperWorker(
             await lockConn.OpenAsync(stoppingToken);
           }
 
-          var gotLock = await _tryAcquireLeaderLockAsync(lockConn, stoppingToken);
+          var gotLock = await _tryAcquireLeaderLockAsync(lockConn, lockKey, stoppingToken);
           if (!gotLock) {
             await lockConn.DisposeAsync();
             lockConn = null;
@@ -256,7 +260,7 @@ public sealed partial class PgCommitOrderStamperWorker(
         } finally {
           _setLeader(false);
           if (lockConn is not null) {
-            try { await _releaseLeaderLockAsync(lockConn); } catch { /* best effort */ }
+            try { await _releaseLeaderLockAsync(lockConn, lockKey); } catch { /* best effort */ }
             await lockConn.DisposeAsync();
           }
         }
@@ -322,16 +326,16 @@ public sealed partial class PgCommitOrderStamperWorker(
     }
   }
 
-  private async Task<bool> _tryAcquireLeaderLockAsync(NpgsqlConnection conn, CancellationToken ct) {
+  private static async Task<bool> _tryAcquireLeaderLockAsync(NpgsqlConnection conn, long lockKey, CancellationToken ct) {
     await using var cmd = new NpgsqlCommand("SELECT pg_try_advisory_lock(@k)", conn);
-    cmd.Parameters.AddWithValue("k", _stamperOptions.AdvisoryLockKey);
+    cmd.Parameters.AddWithValue("k", lockKey);
     var result = await cmd.ExecuteScalarAsync(ct);
     return result is bool b && b;
   }
 
-  private async Task _releaseLeaderLockAsync(NpgsqlConnection conn) {
+  private static async Task _releaseLeaderLockAsync(NpgsqlConnection conn, long lockKey) {
     await using var cmd = new NpgsqlCommand("SELECT pg_advisory_unlock(@k)", conn);
-    cmd.Parameters.AddWithValue("k", _stamperOptions.AdvisoryLockKey);
+    cmd.Parameters.AddWithValue("k", lockKey);
     _ = await cmd.ExecuteScalarAsync();
   }
 
