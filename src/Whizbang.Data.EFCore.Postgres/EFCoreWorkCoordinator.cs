@@ -2154,7 +2154,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // its bound. Listened for only for the length of this command.
     var outboxAcquisitionFull = false;
     void OnClaimNotice(object? sender, NpgsqlNoticeEventArgs e) {
-      if (string.Equals(e.Notice.MessageText, OUTBOX_ACQUISITION_FULL_NOTICE, StringComparison.Ordinal)) {
+      if (string.Equals(e.Notice.MessageText, OutboxClaimNotices.ACQUISITION_FULL, StringComparison.Ordinal)) {
         outboxAcquisitionFull = true;
       }
     }
@@ -2224,9 +2224,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
       OutboxAcquisitionFull = outboxAcquisitionFull
     };
   }
-
-  /// <summary>The notice <c>claim_work</c> raises when its outbox acquisition leased its whole row bound (171).</summary>
-  internal const string OUTBOX_ACQUISITION_FULL_NOTICE = "whizbang.outbox_acquisition_full=true";
 
   /// <inheritdoc />
   public async Task CommitHandlerResultAsync(
@@ -5082,29 +5079,42 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var results = new List<OutboxBatchRow>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
     while (await reader.ReadAsync(cancellationToken)) {
-      results.Add(new OutboxBatchRow {
-        MessageId = reader.GetGuid(0),
-        // Never NULL here: only a stream this instance owns is continued, so every row has one.
-        StreamId = reader.GetGuid(1),
-        Destination = await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetString(2),
-        MessageType = reader.GetString(3),
-        EnvelopeType = await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4),
-        EventData = reader.GetString(5),
-        Metadata = reader.GetString(6),
-        Scope = await reader.IsDBNullAsync(7, cancellationToken) ? null : reader.GetString(7),
-        Status = reader.GetInt32(8),
-        Attempts = reader.GetInt32(9),
-        PartitionNumber = await reader.IsDBNullAsync(10, cancellationToken) ? null : reader.GetInt32(10),
-        IsEvent = reader.GetBoolean(11),
-        CommitSequence = await reader.IsDBNullAsync(12, cancellationToken) ? null : reader.GetInt64(12),
-        OriginServiceId = await reader.IsDBNullAsync(13, cancellationToken) ? null : reader.GetGuid(13),
-        OriginCommitSequence = await reader.IsDBNullAsync(14, cancellationToken) ? null : reader.GetInt64(14),
-        Error = await reader.IsDBNullAsync(15, cancellationToken) ? null : reader.GetString(15),
-        Priority = reader.GetInt32(16),
-      });
+      results.Add(await _readContinuedOutboxRowAsync(reader, cancellationToken));
     }
     return results;
   }
+
+  /// <summary>One row of <c>wh_continue_outbox_streams</c>, in <c>fetch_outbox_batch</c>'s column order.</summary>
+  private static async Task<OutboxBatchRow> _readContinuedOutboxRowAsync(
+      System.Data.Common.DbDataReader reader, CancellationToken cancellationToken) => new() {
+        MessageId = reader.GetGuid(0),
+        // Never NULL here: only a stream this instance owns is continued, so every row has one.
+        StreamId = reader.GetGuid(1),
+        Destination = await _stringOrNullAsync(reader, 2, cancellationToken),
+        MessageType = reader.GetString(3),
+        EnvelopeType = await _stringOrNullAsync(reader, 4, cancellationToken),
+        EventData = reader.GetString(5),
+        Metadata = reader.GetString(6),
+        Scope = await _stringOrNullAsync(reader, 7, cancellationToken),
+        Status = reader.GetInt32(8),
+        Attempts = reader.GetInt32(9),
+        PartitionNumber = await _valueOrNullAsync(reader, 10, reader.GetInt32, cancellationToken),
+        IsEvent = reader.GetBoolean(11),
+        CommitSequence = await _valueOrNullAsync(reader, 12, reader.GetInt64, cancellationToken),
+        OriginServiceId = await _valueOrNullAsync(reader, 13, reader.GetGuid, cancellationToken),
+        OriginCommitSequence = await _valueOrNullAsync(reader, 14, reader.GetInt64, cancellationToken),
+        Error = await _stringOrNullAsync(reader, 15, cancellationToken),
+        Priority = reader.GetInt32(16),
+      };
+
+  private static async Task<string?> _stringOrNullAsync(
+      System.Data.Common.DbDataReader reader, int ordinal, CancellationToken cancellationToken) =>
+    await reader.IsDBNullAsync(ordinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(ordinal);
+
+  private static async Task<T?> _valueOrNullAsync<T>(
+      System.Data.Common.DbDataReader reader, int ordinal, Func<int, T> read, CancellationToken cancellationToken)
+      where T : struct =>
+    await reader.IsDBNullAsync(ordinal, cancellationToken).ConfigureAwait(false) ? null : read(ordinal);
 
   /// <inheritdoc />
   public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
@@ -5579,6 +5589,12 @@ internal class OrphanedEventRow {
 /// non-generic class because the <c>[LoggerMessage]</c> source generator does not emit into generic
 /// containing types.
 /// </summary>
+/// <summary>Notices <c>claim_work</c> raises for the coordinator to act on.</summary>
+internal static class OutboxClaimNotices {
+  /// <summary>Raised when the outbox acquisition leased its whole row bound (171).</summary>
+  internal const string ACQUISITION_FULL = "whizbang.outbox_acquisition_full=true";
+}
+
 internal static partial class EFCoreWorkCoordinatorLog {
   [LoggerMessage(
     Level = LogLevel.Warning,

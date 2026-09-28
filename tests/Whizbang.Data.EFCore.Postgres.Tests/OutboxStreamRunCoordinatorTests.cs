@@ -38,7 +38,7 @@ public class OutboxStreamRunCoordinatorTests : EFCoreTestBase {
              TIMESTAMPTZ '2026-01-01 00:00:00+00' + (m.ord * INTERVAL '1 millisecond'), @stream, 0
       FROM unnest(@ids) WITH ORDINALITY AS m(id, ord)";
     ins.Parameters.AddWithValue("ids", ids);
-    ins.Parameters.AddWithValue("stream", stream);
+    ins.Parameters.AddWithValue(nameof(stream), stream);
     await ins.ExecuteNonQueryAsync();
     return [.. ids];
   }
@@ -160,13 +160,14 @@ public class OutboxStreamRunCoordinatorTests : EFCoreTestBase {
     // forwarded event-store row, a scope, an envelope type and an error: every column the other test
     // reads as NULL is populated here, and the two it reads as populated are NULL.
     await using (var setup = conn.CreateCommand()) {
-      setup.CommandText = @"
-        UPDATE wh_outbox SET is_event = TRUE, scope = '{""t"":1}'::jsonb, envelope_type = 'Env', error = 'earlier failure',
+      setup.CommandText = """
+        UPDATE wh_outbox SET is_event = TRUE, scope = '{"t":1}'::jsonb, envelope_type = 'Env', error = 'earlier failure',
                              destination = NULL, partition_number = NULL
         WHERE message_id = @id;
         INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at,
                                     commit_sequence, origin_service_id, origin_commit_sequence)
-        VALUES (@id, @stream, @stream, 'Test', 'Test', NULL, 1, NOW(), 42, @origin, 7);";
+        VALUES (@id, @stream, @stream, 'Test', 'Test', NULL, 1, NOW(), 42, @origin, 7);
+        """;
       setup.Parameters.AddWithValue("id", ids[1]);
       setup.Parameters.AddWithValue("stream", stream);
       setup.Parameters.AddWithValue("origin", Guid.CreateVersion7());

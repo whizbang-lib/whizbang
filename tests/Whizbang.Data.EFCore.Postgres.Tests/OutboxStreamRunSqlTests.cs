@@ -77,7 +77,7 @@ public class OutboxStreamRunSqlTests : EFCoreTestBase {
              TIMESTAMPTZ '2026-01-01 00:00:00+00' + (m.ord * INTERVAL '1 millisecond'), m.stream, 0
       FROM unnest(@ids, @streams) WITH ORDINALITY AS m(id, stream, ord)";
     ins.Parameters.AddWithValue("ids", messageIds);
-    ins.Parameters.AddWithValue("streams", streamIds);
+    ins.Parameters.AddWithValue(nameof(streams), streamIds);
     await ins.ExecuteNonQueryAsync();
     return byStream;
   }
@@ -376,7 +376,7 @@ public class OutboxStreamRunSqlTests : EFCoreTestBase {
       await elapse.ExecuteNonQueryAsync();
     }
     _ = await _claimAsync(conn, instance, maxStreams: 1, maxOutboxRows: 100, runLength: 10);
-    var retried = (await _heldAsync(conn, instance)).Select(h => h.MessageId).ToList();
+    var retried = (await _heldAsync(conn, instance)).ConvertAll(h => h.MessageId);
 
     await Assert.That(retried).IsEquivalentTo(seeded.Skip(3), TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the retry leads the rest of its run, so the stream publishes in order");
@@ -406,7 +406,7 @@ public class OutboxStreamRunSqlTests : EFCoreTestBase {
     await Assert.That(continued).IsEquivalentTo(seeded.Skip(10).Take(10), TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the continuation returns the rows after the last one published, in order: the two "
              + "already held and the eight it leased, and never a published row awaiting its completion");
-    var held = (await _heldAsync(conn, instance)).Select(h => h.MessageId).ToList();
+    var held = (await _heldAsync(conn, instance)).ConvertAll(h => h.MessageId);
     await Assert.That(held).IsEquivalentTo(seeded.Take(20), TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the next run is leased from the lease the stream already holds");
 
@@ -506,8 +506,8 @@ public class OutboxStreamRunSqlTests : EFCoreTestBase {
     cmd.CommandText = "SELECT message_id FROM wh_continue_outbox_streams(@inst, @streams, @after, @run)";
     cmd.Parameters.AddWithValue("inst", instanceId);
     cmd.Parameters.AddWithValue("streams", new[] { stream });
-    cmd.Parameters.AddWithValue("after", new[] { after });
-    cmd.Parameters.AddWithValue("run", run);
+    cmd.Parameters.AddWithValue(nameof(after), new[] { after });
+    cmd.Parameters.AddWithValue(nameof(run), run);
     var rows = new List<Guid>();
     await using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync()) {
