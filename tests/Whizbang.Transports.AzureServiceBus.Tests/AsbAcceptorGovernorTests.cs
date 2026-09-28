@@ -156,6 +156,43 @@ public class AsbAcceptorGovernorTests {
   }
 
   [Test]
+  public async Task Evaluate_QuietWindowElapsed_WhileASessionIsHeld_HoldsConcurrencyAsync() {
+    // Issue #937: shrinking the running processor cancels acceptors the SDK picks, and a held
+    // session that has just idled out is mid-drain. A canceled drain surfaces as an Error-level
+    // SDK event on a subscription with nothing wrong, so decay waits until no session is held.
+    var time = new FakeTimeProvider();
+    var governor = _governor(time);
+    _growToEight(governor, time);
+
+    _closeSessions(governor, 3); // 1 active < 25% of 8 — quiet, but a session is still held
+    _ = governor.Evaluate();
+    time.Advance(_window);
+    var changed = governor.Evaluate();
+
+    await Assert.That(changed).IsFalse()
+      .Because("a held session can be draining its receive link after an idle timeout — shrinking now would cancel that drain");
+    await Assert.That(governor.CurrentConcurrency).IsEqualTo(8);
+  }
+
+  [Test]
+  public async Task Evaluate_QuietWindowElapsed_DecaysOnceTheLastHeldSessionClosesAsync() {
+    var time = new FakeTimeProvider();
+    var governor = _governor(time);
+    _growToEight(governor, time);
+    _closeSessions(governor, 3);
+    _ = governor.Evaluate();
+    time.Advance(_window);
+    _ = governor.Evaluate();
+
+    _closeSessions(governor, 1); // the last held session closes — its drain has finished
+    var decayed = governor.Evaluate();
+
+    await Assert.That(decayed).IsTrue()
+      .Because("the quiet window already elapsed; the deferred decay applies at the first evaluation with no session held");
+    await Assert.That(governor.CurrentConcurrency).IsEqualTo(4);
+  }
+
+  [Test]
   public async Task Evaluate_Decay_NeverGoesBelowTheFloorAsync() {
     var time = new FakeTimeProvider();
     var governor = _governor(time); // at the floor, zero active
