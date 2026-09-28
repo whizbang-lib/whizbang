@@ -558,5 +558,7 @@ public class SchemaBootstrapPhaseTests {
   private async Task<long> _lockHoldersAsync() =>
     await _scalarAsync<long>(
       "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 1 "
-      + $"AND ((classid::bigint << 32) | (objid::bigint & 4294967295)) = {LOCK_ID}");
+      + $"AND ((classid::bigint << 32) | (objid::bigint & 4294967295)) = {LOCK_ID} "
+      // pg_locks is cluster-wide; a sibling fixture's database on the shared container takes the same key.
+      + "AND database = (SELECT oid FROM pg_database WHERE datname = current_database())");
 }

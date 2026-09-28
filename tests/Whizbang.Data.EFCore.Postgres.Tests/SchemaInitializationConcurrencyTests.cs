@@ -859,7 +859,9 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText =
       "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 1 "
-      + "AND ((classid::bigint << 32) | (objid::bigint & 4294967295)) = @key";
+      + "AND ((classid::bigint << 32) | (objid::bigint & 4294967295)) = @key "
+      // pg_locks is cluster-wide; a sibling fixture's database on the shared container takes the same key.
+      + "AND database = (SELECT oid FROM pg_database WHERE datname = current_database())";
     cmd.Parameters.AddWithValue("key", _migratorDutyKey());
     return (long)(await cmd.ExecuteScalarAsync(ct))!;
   }

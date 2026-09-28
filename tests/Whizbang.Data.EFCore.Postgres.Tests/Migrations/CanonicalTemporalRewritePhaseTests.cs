@@ -79,9 +79,15 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   private static (string Name, string Sql)[] _rewrites(params string[] notes) =>
     [.. notes.Select(n => (n, $"INSERT INTO marker (note) VALUES ('{n}');"))];
 
-  /// <summary>Whether the schema lock is held by anyone.</summary>
+  /// <summary>Whether the schema lock is held by anyone in this test's database.</summary>
+  /// <remarks>
+  /// Scoped to the current database: pg_locks is cluster-wide, and a sibling fixture applying its own
+  /// schema in another database on the shared container takes the same lock id.
+  /// </remarks>
   private async Task<string> _lockHoldersAsync() =>
-    await _scalarAsync($"SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = {LOCK_ID}");
+    await _scalarAsync(
+      $"SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = {LOCK_ID}"
+      + " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())");
 
   /// <summary>Takes the schema lock at session scope on a connection the test keeps open.</summary>
   private async Task<NpgsqlConnection> _holdLockAsync() {
