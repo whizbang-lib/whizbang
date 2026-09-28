@@ -280,7 +280,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           // the fetch, the publish flush in its own finally — did not, and anything from there left
           // ExecuteAsync and stopped the host under the default StopHost behavior. Outbox rows are
           // durable and the claim backstop re-offers the streams, so reporting and continuing loses
-          // nothing; the classifier decides whether the line names the database or a defect.
+          // nothing; the classifier decides whether the line names the database or a defect. A
+          // continuation that lost a deadlock does not get here until its own retries are spent
+          // (_continueRoundAsync, #936): the claim backstop is the last resort, not the first.
           WorkerLoopRecovery.Report(ex,
             (transient, cause) => LogTransientBatchDrainFailed(
               _logger, transient.Reason, transient.SqlState ?? "none", cause),
@@ -1099,12 +1101,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         return;
       }
 
-      IReadOnlyList<OutboxBatchRow> rows;
-      using (var scope = _scopeFactory.CreateScope()) {
-        var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-        rows = await coordinator.ContinueOutboxStreamsAsync(
-          cursors, _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
-      }
+      var rows = await _continueRoundAsync(cursors, ct);
       if (rows.Count == 0) {
         return;
       }
@@ -1122,6 +1119,46 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         foreach (var sid in perStream.Keys) {
           _drainChannel.MarkDrained(sid);
         }
+      }
+    }
+  }
+
+  /// <summary>
+  /// One continuation round, retried at once when the store ends it on a conflict with another
+  /// transaction (#936).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A deadlock or a serialization failure rolls the continuation back whole: nothing was leased and
+  /// nothing returned, so the same cursors are still exactly right, and the transaction it lost to
+  /// has already gone on. Before this the failure left the batch, the batch guard reported it, and
+  /// the streams waited for the claim loop to offer them again, which on a loop backed off for want of
+  /// work took tens of seconds while the rows sat leased to this instance.
+  /// </para>
+  /// <para>
+  /// Only those two conflicts are retried, and at most <see cref="CONTINUATION_TRANSIENT_ATTEMPTS"/>
+  /// times: a lost connection or an exhausted server does not clear by asking again at once, and a
+  /// defect only repeats. Anything else, or the last attempt's failure, goes to the batch guard as
+  /// before, and the claim loop carries the streams on.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:ADeadlockedContinuation_IsRetriedAtOnce_NotLeftToTheClaimBackstopAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:AContinuationThatKeepsDeadlocking_GivesUpAfterItsRetriesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:AContinuationFailureThatIsNotTransient_IsNotRetriedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:AContinuationThatLostItsConnection_IsNotRetriedAtOnceAsync</tests>
+  private async Task<IReadOnlyList<OutboxBatchRow>> _continueRoundAsync(List<OutboxStreamCursor> cursors, CancellationToken ct) {
+    var attempt = 1;
+    while (true) {
+      try {
+        using var scope = _scopeFactory.CreateScope();
+        var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+        return await coordinator.ContinueOutboxStreamsAsync(
+          cursors, _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
+      } catch (Exception ex) when (attempt < CONTINUATION_TRANSIENT_ATTEMPTS
+                                   && TransientDatabaseFailure.TryClassify(ex, out var transient)
+                                   && transient.Reason is TransientDatabaseFailure.DEADLOCK or TransientDatabaseFailure.SERIALIZATION_FAILURE) {
+        LogContinuationRetried(_logger, transient.Reason, transient.SqlState ?? "none", cursors.Count, attempt, ex);
+        attempt++;
       }
     }
   }
@@ -1533,6 +1570,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     Message = "OutboxDrainWorker._publishOneAsync: PublishOneAsync RETURNED msg={MessageId} success={Success}")]
   static partial void LogPublishOneReturned(ILogger logger, Guid messageId, bool success);
 
+  /// <summary>
+  /// How many times one continuation round is attempted when the store ends it on a conflict with
+  /// another transaction (a deadlock or a serialization failure) before the round is given up (#936).
+  /// </summary>
+  internal const int CONTINUATION_TRANSIENT_ATTEMPTS = 3;
+
   /// <summary>The event id of a drain batch lost to a database failure that passes of its own accord.</summary>
   internal const int TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID = 53;
 
@@ -1552,6 +1595,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 58, Level = LogLevel.Debug,
     Message = "OutboxDrainWorker continued {Streams} stream(s) from their leases: {Rows} row(s) in round {Round}")]
   static partial void LogStreamsContinued(ILogger logger, int streams, int rows, int round);
+
+  [LoggerMessage(EventId = 59, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker: continuing {Streams} stream(s) lost a {Reason} (SQLSTATE {SqlState}) on attempt {Attempt}; "
+            + "retrying at once from the same cursors")]
+  static partial void LogContinuationRetried(
+    ILogger logger, string reason, string sqlState, int streams, int attempt, Exception exception);
 
   [LoggerMessage(EventId = BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
     Message = "Outbox drain batch failed; the streams re-offer via the claim backstop, but this failure "
