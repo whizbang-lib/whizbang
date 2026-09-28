@@ -53,6 +53,17 @@ namespace Whizbang.Core.Messaging;
 /// How long the band may go without a full drain before one happens regardless of activity. Null
 /// leaves the store default.
 /// </param>
+/// <param name="MaxOutboxAcquireRows">
+/// Row bound on outbox ACQUISITION, independent of <paramref name="MaxStreams"/>. Null means the store
+/// falls back to <paramref name="MaxStreams"/> rows, the behavior before the outbox had its own bound:
+/// the stream window used as a row cap leased about one row per stream per claim on a backlog of a
+/// few long streams (#917).
+/// </param>
+/// <param name="OutboxRunLength">
+/// How many consecutive rows of one outbox stream a claim may lease. The oldest rows still choose
+/// which streams move (at most <paramref name="MaxStreams"/> of them); each then leases a run of its
+/// next rows within <paramref name="MaxOutboxAcquireRows"/>. Null or 1 is one row per chosen head.
+/// </param>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 public sealed record ClaimWorkRequest(
   Guid InstanceId,
@@ -70,4 +81,6 @@ public sealed record ClaimWorkRequest(
   bool IdleSettled = false,
   TimeSpan? IdleTrickleAfter = null,
   int? IdleTrickleSlice = null,
-  TimeSpan? IdleForceAfter = null);
+  TimeSpan? IdleForceAfter = null,
+  int? MaxOutboxAcquireRows = null,
+  int? OutboxRunLength = null);

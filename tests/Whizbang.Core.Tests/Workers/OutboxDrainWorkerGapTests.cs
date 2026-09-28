@@ -823,17 +823,20 @@ public class OutboxDrainWorkerGapTests {
   /// null envelope → the ?? throw branch) or malformed JSON (JsonException branch) must both
   /// route to the failure channel without any publish or completion.
   /// </summary>
+  /// <remarks>
+  /// The two rows sit on two streams. On one stream the second would never be tried: a stream stops
+  /// at its first failure, so the rows behind it wait for its retry (#917).
+  /// </remarks>
   [Test]
   public async Task OutboxDrainWorker_UndeserializableRows_SingularPath_RouteToFailureChannelAsync() {
     var streamId = (Guid)TrackedGuid.New();
+    var otherStreamId = (Guid)TrackedGuid.New();
     var nullEnvelopeId = (Guid)TrackedGuid.New();
     var malformedId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
-    coord.RowsByStream[streamId] = [
-      _badRow(nullEnvelopeId, streamId, eventData: "null"),
-      _badRow(malformedId, streamId, eventData: "{{{ not json"),
-    ];
+    coord.RowsByStream[streamId] = [_badRow(nullEnvelopeId, streamId, eventData: "null")];
+    coord.RowsByStream[otherStreamId] = [_badRow(malformedId, otherStreamId, eventData: "{{{ not json")];
 
     var drainChannel = new GapDrainChannel();
     var completion = new GapCompletionChannel();
@@ -847,6 +850,7 @@ public class OutboxDrainWorkerGapTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await drainChannel.WriteAsync(streamId);
+    await drainChannel.WriteAsync(otherStreamId);
     await failure.ReachedTarget.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -866,17 +870,20 @@ public class OutboxDrainWorkerGapTests {
   /// and is EXCLUDED from the batch; the good row still ships in the (now smaller) batch and
   /// completes.
   /// </summary>
+  /// <remarks>
+  /// The good row is on another stream. Behind the bad row on its own stream it would be held for the
+  /// bad row's retry instead (#917), which <c>OutboxDrainWorkerStreamRunTests</c> covers.
+  /// </remarks>
   [Test]
   public async Task OutboxDrainWorker_BulkPath_BadRowExcluded_GoodRowStillPublishesAsync() {
     var streamId = (Guid)TrackedGuid.New();
+    var goodStreamId = (Guid)TrackedGuid.New();
     var badId = (Guid)TrackedGuid.New();
     var goodId = (Guid)TrackedGuid.New();
 
     var coord = new GapWorkCoordinator();
-    coord.RowsByStream[streamId] = [
-      _badRow(badId, streamId, eventData: "null"),
-      _row(goodId, streamId),
-    ];
+    coord.RowsByStream[streamId] = [_badRow(badId, streamId, eventData: "null")];
+    coord.RowsByStream[goodStreamId] = [_row(goodId, goodStreamId)];
 
     var drainChannel = new GapDrainChannel();
     var completion = new GapCompletionChannel();
@@ -887,9 +894,11 @@ public class OutboxDrainWorkerGapTests {
     var worker = _worker(sp, drainChannel, completion, failure,
       new OutboxDrainWorkerOptions { Enabled = true }, publish);
 
+    // Queued before the worker runs, so the two streams drain as one batch and share one bulk publish.
+    drainChannel.TryWrite(streamId);
+    drainChannel.TryWrite(goodStreamId);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await drainChannel.WriteAsync(streamId);
     await completion.ReachedTarget.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -912,11 +921,12 @@ public class OutboxDrainWorkerGapTests {
     var badA = (Guid)TrackedGuid.New();
     var badB = (Guid)TrackedGuid.New();
 
+    // One bad row per stream: a stream stops at its first failure (#917), so two on one stream would
+    // leave the second untried.
+    var otherStreamId = (Guid)TrackedGuid.New();
     var coord = new GapWorkCoordinator();
-    coord.RowsByStream[streamId] = [
-      _badRow(badA, streamId, eventData: "null"),
-      _badRow(badB, streamId, eventData: "not json at all"),
-    ];
+    coord.RowsByStream[streamId] = [_badRow(badA, streamId, eventData: "null")];
+    coord.RowsByStream[otherStreamId] = [_badRow(badB, otherStreamId, eventData: "not json at all")];
 
     var drainChannel = new GapDrainChannel();
     var completion = new GapCompletionChannel();
@@ -929,9 +939,11 @@ public class OutboxDrainWorkerGapTests {
     var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.OnWorkProcessingIdle += () => idle.TrySetResult();
 
+    // Queued before the worker runs, so both streams drain in the one batch the idle signal ends.
+    drainChannel.TryWrite(streamId);
+    drainChannel.TryWrite(otherStreamId);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await drainChannel.WriteAsync(streamId);
     await failure.ReachedTarget.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await idle.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();

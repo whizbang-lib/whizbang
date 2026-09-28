@@ -272,6 +272,16 @@ public class WorkCoordinatorDefaultInterfaceTests {
   }
 
   [Test]
+  public async Task ContinueOutboxStreamsAsync_DefaultImplementation_ReturnsNothing_SoTheDrainWaitsForTheClaimAsync() {
+    IReadOnlyList<OutboxStreamCursor> streams = [new OutboxStreamCursor((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New())];
+
+    var rows = await _coordinator.ContinueOutboxStreamsAsync(streams, (Guid)TrackedGuid.New(), runLength: 100, maxBytes: null);
+
+    await Assert.That(rows.Count).IsEqualTo(0)
+      .Because("a store that cannot continue a stream leaves it to the next claim cycle, the behavior before continuation existed");
+  }
+
+  [Test]
   public async Task FetchInboxBatchAsync_DefaultImplementation_ReturnsEmptyListAsync() {
     IReadOnlyList<Guid> streamIds = [(Guid)TrackedGuid.New()];
 

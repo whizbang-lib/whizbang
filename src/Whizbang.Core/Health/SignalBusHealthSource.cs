@@ -9,7 +9,9 @@ namespace Whizbang.Core.Health;
 /// (intentional states outside Running report as by-design), and while Running it reports the
 /// <see cref="SignalBusLivenessState"/> verdict: a failed wire-route self-test or a streak of
 /// work batches discovered by poll with no doorbell degrades the component — the system still
-/// serves (polling fallback), but every hop pays the poll interval (issue #505).
+/// serves (polling fallback), but every hop pays the poll interval (issue #505). A failed probe
+/// clears when a retry on the probe backoff passes or a real wire signal arrives after it, so a
+/// transient startup miss degrades the component for seconds, not for the whole re-probe interval.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 /// <tests>tests/Whizbang.Core.Tests/Health/SignalBusHealthWiringTests.cs:FailedWireRouteProbe_WhileRunning_ReportsDegradedAsync</tests>

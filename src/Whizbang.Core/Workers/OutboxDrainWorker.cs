@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -51,6 +52,19 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   // in the order they are taken).
   private readonly Lock _publishBatchLock = new();
   private readonly List<OutboxBatchRow> _publishAccumulator = [];
+
+  /// <summary>
+  /// Per drain cycle (#917): the last message published on each routable stream, the cursor a stream
+  /// is continued from. Cleared at the start of each cycle and taken by each continuation round.
+  /// </summary>
+  private readonly ConcurrentDictionary<Guid, Guid> _publishedThrough = new();
+
+  /// <summary>
+  /// Per drain cycle (#917): the drain keys of streams on which a row failed to publish. A stream in
+  /// here publishes nothing more this cycle and is never continued: the rows behind the failure stay
+  /// where they are, and the failure's report releases them to be retried after it, in order.
+  /// </summary>
+  private readonly ConcurrentDictionary<Guid, byte> _failedStreams = new();
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<OutboxDrainWorker> _logger;
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer;
@@ -251,7 +265,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           // (see _drainStreamBatchAsync) — that concurrency is a separate, still-required fix.
           var distinctStreams = new HashSet<Guid>(batch);
           if (distinctStreams.Count > 0) {
+            _publishedThrough.Clear();
+            _failedStreams.Clear();
             await _drainStreamBatchAsync([.. distinctStreams], stoppingToken);
+            // #917: move the streams on from the lease they already hold rather than waiting a claim
+            // cycle per run.
+            await _continueStreamsAsync(stoppingToken);
           }
         } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
           throw;
@@ -393,7 +412,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// paths differ only in whether an entry carries a prefetched page, so both route through here.
   /// </summary>
   private async Task _drainEachAsync(
-      IEnumerable<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>> work, CancellationToken ct) {
+      IEnumerable<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>> work, CancellationToken ct, bool fetchTail = true) {
     // Materialized so the governor learns how much was actually waiting — a count it cannot get
     // from a lazily-enumerated sequence.
     var batch = work as IReadOnlyCollection<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>>
@@ -409,7 +428,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var started = System.Diagnostics.Stopwatch.GetTimestamp();
     var completed = 0;
     try {
-      await _drainBatchAsync(batch, parallelOpts, () => Interlocked.Increment(ref completed))
+      await _drainBatchAsync(batch, parallelOpts, () => Interlocked.Increment(ref completed), fetchTail)
         .ConfigureAwait(false);
     } finally {
       // Ship the remainder even when the cycle threw. Rows already accumulated have been claimed
@@ -437,10 +456,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private Task _drainBatchAsync(
       IEnumerable<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>> work,
       ParallelOptions parallelOpts,
-      Action onStreamCompleted) {
+      Action onStreamCompleted,
+      bool fetchTail) {
     return Parallel.ForEachAsync(work, parallelOpts, async (entry, innerCt) => {
       try {
-        await _drainStreamInnerAsync(entry.Key, innerCt, prefetched: entry.Value);
+        await _drainStreamInnerAsync(entry.Key, innerCt, prefetched: entry.Value, fetchTail: fetchTail);
         // Counted only on success: a failed stream accomplished nothing, and counting it would
         // report healthy throughput while the drain was actually failing.
         onStreamCompleted();
@@ -470,9 +490,14 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// satisfy the FIRST loop iteration without a round-trip; every later iteration fetches
   /// normally, so a cap-filling stream still drains its tail. Null on the standalone path.
   /// </param>
+  /// <param name="fetchTail">
+  /// False for a continuation's rows (#917): those are exactly the rows after the stream's cursor,
+  /// and a tail fetch would return the rows just published, whose completion has not landed, to a
+  /// session that has not seen them. The next continuation round is the stream's tail instead.
+  /// </param>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Draining one stream to empty interleaves four concerns in a single loop: the prefetched first page, per-row deduplication, the attempt ladder that drops or dead-letters, and the choice between bulk and singular publish. The loop ends on a short page, which is only knowable after all four have run.")]
   private async Task _drainStreamInnerAsync(
-      Guid streamId, CancellationToken ct, IReadOnlyList<OutboxBatchRow>? prefetched = null) {
+      Guid streamId, CancellationToken ct, IReadOnlyList<OutboxBatchRow>? prefetched = null, bool fetchTail = true) {
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
@@ -509,6 +534,14 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       }
 
       if (rowsRaw.Count == 0) {
+        _logPerfIfInteresting(streamId, publishedCount, fetchCount, totalPublishMs, drainStartTicks);
+        return;
+      }
+
+      // #917: a row of this stream failed earlier in the cycle. Nothing behind it may publish before
+      // its retry; the failure's report releases these rows to be claimed again after it.
+      if (_failedStreams.ContainsKey(streamId)) {
+        LogStreamHeldBehindFailure(_logger, streamId, rowsRaw.Count);
         _logPerfIfInteresting(streamId, publishedCount, fetchCount, totalPublishMs, drainStartTicks);
         return;
       }
@@ -551,6 +584,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           // flush removes it. Without this the same row is re-fetched and re-"dropped" every
           // drain cycle forever (observed live: attempts past 470 on rows "dropped" for weeks).
           await _completionChannel.EnqueueAsync(row.MessageId, ct);
+          _markPublished(row);  // disposed of for good, so the stream's cursor moves past it
           continue;   // not published, not stored — the emitter re-issues on its own cadence
         }
         if (_options.MaxOutboxAttempts is int maxAttempts
@@ -612,11 +646,18 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         publishedCount += newRowList.Count;
       } else {
-        foreach (var row in newRowList) {
+        for (var i = 0; i < newRowList.Count; i++) {
           var publishStart = System.Diagnostics.Stopwatch.GetTimestamp();
-          await PublishOneAsync(row, ct);
+          var published = await PublishOneAsync(newRowList[i], ct);
           totalPublishMs += (System.Diagnostics.Stopwatch.GetTimestamp() - publishStart)
             * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+          if (!published) {
+            // #917: stop the stream at its first failure. Publishing the rows behind it would put them
+            // on the wire ahead of its retry; they stay leased until the failure's report releases them.
+            LogStreamHeldBehindFailure(_logger, streamId, newRowList.Count - i - 1);
+            _logPerfIfInteresting(streamId, publishedCount, fetchCount, totalPublishMs, drainStartTicks);
+            return;
+          }
           publishedCount++;
         }
       }
@@ -625,6 +666,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // hasn't landed — exit so the next claim_work tick can re-issue the stream once the
       // pending rows clear.
       if (newRows == 0) {
+        _logPerfIfInteresting(streamId, publishedCount, fetchCount, totalPublishMs, drainStartTicks);
+        return;
+      }
+
+      // #917: a continuation's rows are the stream's next run exactly; its tail is the next round.
+      if (!fetchTail) {
         _logPerfIfInteresting(streamId, publishedCount, fetchCount, totalPublishMs, drainStartTicks);
         return;
       }
@@ -733,11 +780,19 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     LogPublishBulkEntered(_logger, rows.Count);
     try {
       foreach (var row in rows) {
+        // #917: a stream stops at its first failure, including one a moment ago in this same batch.
+        // The rows behind it stay leased and unpublished; the failure's report releases them.
+        var rowStream = _drainKey(row);
+        if (_failedStreams.ContainsKey(rowStream)) {
+          LogStreamHeldBehindFailure(_logger, rowStream, 1);
+          continue;
+        }
         OutboxWork work;
         try {
           work = _toOutboxWork(row);
         } catch (Exception ex) {
           LogDeserializeFailed(_logger, row.MessageId, ex);
+          _markStreamFailed(row);
           await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
             MessageId = row.MessageId,
             CompletedStatus = (MessageProcessingStatus)row.Status,
@@ -819,6 +874,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         LogPublishTimedOut(_logger, works.Count, publishTimeoutSeconds);
         foreach (var (messageId, destination) in works.Select(w => (w.MessageId, w.Destination))) {
           var row = rowsByMessageId[messageId];
+          _markStreamFailed(row);
           await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
             MessageId = messageId,
             CompletedStatus = (MessageProcessingStatus)row.Status,
@@ -833,6 +889,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         foreach (var messageId in works.Select(work => work.MessageId)) {
           LogPublishFailed(_logger, messageId, ex);
           var row = rowsByMessageId[messageId];
+          _markStreamFailed(row);
           await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
             MessageId = messageId,
             CompletedStatus = (MessageProcessingStatus)row.Status,
@@ -858,7 +915,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
             Destination = row.Destination
           });
           await _completionChannel.EnqueueAsync(result.MessageId, ct);
+          _markPublished(row);
         } else {
+          _markStreamFailed(row);
           await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
             MessageId = result.MessageId,
             CompletedStatus = result.CompletedStatus,
@@ -874,19 +933,26 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     }
   }
 
-  internal async Task PublishOneAsync(OutboxBatchRow row, CancellationToken ct) {
+  /// <summary>Publishes one row; true when it reached the transport and its completion was enqueued.</summary>
+  /// <remarks>
+  /// The answer is what stops a stream at its first failure (#917): a row that did not publish is
+  /// reported to the failure channel, and the rows behind it on its stream must not go out ahead of
+  /// its retry.
+  /// </remarks>
+  internal async Task<bool> PublishOneAsync(OutboxBatchRow row, CancellationToken ct) {
     OutboxWork work;
     try {
       work = _toOutboxWork(row);
     } catch (Exception ex) {
       LogDeserializeFailed(_logger, row.MessageId, ex);
+      _markStreamFailed(row);
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
         MessageId = row.MessageId,
         CompletedStatus = (MessageProcessingStatus)row.Status,
         Error = ex.Message,
         Reason = MessageFailureReason.Unknown,
       }, ct);
-      return;
+      return false;
     }
     LogPublishOneEntered(_logger, row.MessageId, work.Destination ?? "<null>");
 
@@ -899,7 +965,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IReceptorInvoker? receptorInvoker = null;
     if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
       if (!await _trySecurityContextOrEnqueueTimeoutAsync(work, row, scope.ServiceProvider, ct)) {
-        return;
+        return false;
       }
       receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
     }
@@ -934,22 +1000,24 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           TaskScheduler.Default);
       }
       LogPublishTimedOut(_logger, 1, publishTimeoutSeconds);
+      _markStreamFailed(row);
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
         MessageId = row.MessageId,
         CompletedStatus = (MessageProcessingStatus)row.Status,
         Error = $"Publish timed out after {publishTimeoutSeconds}s — SDK call did not return for destination={work.Destination}",
         Reason = MessageFailureReason.TransportException,
       }, ct);
-      return;
+      return false;
     } catch (Exception ex) {
       LogPublishFailed(_logger, row.MessageId, ex);
+      _markStreamFailed(row);
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
         MessageId = row.MessageId,
         CompletedStatus = (MessageProcessingStatus)row.Status,
         Error = ex.Message,
         Reason = MessageFailureReason.Unknown,
       }, ct);
-      return;
+      return false;
     }
 
     if (result.Success) {
@@ -969,13 +1037,92 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         Destination = row.Destination
       });
       await _completionChannel.EnqueueAsync(row.MessageId, ct);
-    } else {
-      await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-        MessageId = row.MessageId,
-        CompletedStatus = result.CompletedStatus,
-        Error = result.Error ?? "publish failed",
-        Reason = result.Reason,
-      }, ct);
+      _markPublished(row);
+      return true;
+    }
+    _markStreamFailed(row);
+    await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+      MessageId = row.MessageId,
+      CompletedStatus = result.CompletedStatus,
+      Error = result.Error ?? "publish failed",
+      Reason = result.Reason,
+    }, ct);
+    return false;
+  }
+
+  /// <summary>Records that a row of this stream failed this cycle (#917); see <see cref="_failedStreams"/>.</summary>
+  private void _markStreamFailed(OutboxBatchRow row) => _failedStreams[_drainKey(row)] = 0;
+
+  /// <summary>
+  /// Moves a routable stream's cursor to this row (#917). Rows of a stream publish in message-id order,
+  /// so the largest id published is the cursor; a singleton row has no stream to continue.
+  /// </summary>
+  private void _markPublished(OutboxBatchRow row) {
+    if (row.StreamId is not Guid streamId || streamId == Guid.Empty) {
+      return;
+    }
+    _publishedThrough.AddOrUpdate(streamId, row.MessageId,
+      (_, prior) => row.MessageId.CompareTo(prior) > 0 ? row.MessageId : prior);
+  }
+
+  /// <summary>
+  /// Continues the streams this cycle published without a failure, from the leases they already hold
+  /// (#917), round after round until none has more or the round limit is reached.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Without this a stream moved one run per claim cycle: the claim leased a run, the drain published
+  /// it, and the stream then waited for the next claim, which on a backlog of a few long streams set the
+  /// drain rate at a run per stream per cycle. Here the drain asks the store for each stream's next run
+  /// as soon as the previous one is published. The store only continues a stream whose lease this
+  /// instance holds, so a stream stays on one instance, and it returns only the rows after the
+  /// stream's cursor, so a row whose completion has not landed is never published twice.
+  /// </para>
+  /// <para>
+  /// A stream with a failure is never continued: the rows behind the failure must wait for its retry.
+  /// The round limit keeps a few long streams from holding the drain while other streams wait in the
+  /// channel; past it the claim cycle carries them on as before.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:ALongStream_IsContinuedFromItsCursorWithoutAClaimCycleAsync</tests>
+  private async Task _continueStreamsAsync(CancellationToken ct) {
+    if (!_options.ContinueStreamRuns) {
+      return;
+    }
+    for (var round = 0; round < _options.MaxContinuationRounds; round++) {
+      var cursors = _publishedThrough
+        .Where(kv => !_failedStreams.ContainsKey(kv.Key))
+        .Select(kv => new OutboxStreamCursor(kv.Key, kv.Value))
+        .ToList();
+      _publishedThrough.Clear();
+      if (cursors.Count == 0) {
+        return;
+      }
+
+      IReadOnlyList<OutboxBatchRow> rows;
+      using (var scope = _scopeFactory.CreateScope()) {
+        var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+        rows = await coordinator.ContinueOutboxStreamsAsync(
+          cursors, _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
+      }
+      if (rows.Count == 0) {
+        return;
+      }
+      LogStreamsContinued(_logger, cursors.Count, rows.Count, round + 1);
+
+      var perStream = rows
+        .GroupBy(_drainKey)
+        .ToDictionary(g => g.Key, g => (IReadOnlyList<OutboxBatchRow>?)[.. g]);
+      foreach (var sid in perStream.Keys) {
+        _drainChannel.MarkDraining(sid);
+      }
+      try {
+        await _drainEachAsync(perStream, ct, fetchTail: false);
+      } finally {
+        foreach (var sid in perStream.Keys) {
+          _drainChannel.MarkDrained(sid);
+        }
+      }
     }
   }
 
@@ -1131,6 +1278,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       work.Envelope, scopedProvider, timeoutSeconds, ct);
     if (outcome == SecurityContextEstablishmentOutcome.TimedOut) {
       LogSecurityContextTimedOut(_logger, work.MessageId, timeoutSeconds);
+      _markStreamFailed(row);
       await SecurityContextHelper.EnqueueSecurityContextTimeoutFailureAsync(
         _failureChannel, WorkCategory.Outbox, work.MessageId,
         (MessageProcessingStatus)row.Status, timeoutSeconds, ct);
@@ -1397,6 +1545,14 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   static partial void LogTransientBatchDrainFailed(
     ILogger logger, string reason, string sqlState, Exception exception);
 
+  [LoggerMessage(EventId = 57, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker: stream {StreamId} holds {Rows} row(s) behind a failed publish this cycle; they wait for its retry")]
+  static partial void LogStreamHeldBehindFailure(ILogger logger, Guid streamId, int rows);
+
+  [LoggerMessage(EventId = 58, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker continued {Streams} stream(s) from their leases: {Rows} row(s) in round {Round}")]
+  static partial void LogStreamsContinued(ILogger logger, int streams, int rows, int round);
+
   [LoggerMessage(EventId = BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
     Message = "Outbox drain batch failed; the streams re-offer via the claim backstop, but this failure "
             + "is not the database's and wants fixing")]
@@ -1418,6 +1574,22 @@ public sealed class OutboxDrainWorkerOptions {
 
   /// <summary>Cap on how many leased outbox rows to drain per stream per iteration. Default 100.</summary>
   public int MaxPerStream { get; set; } = 100;
+
+  /// <summary>
+  /// Continue a stream from the lease it already holds once its rows are published, instead of waiting
+  /// for the next claim cycle (#917). Default <c>true</c>. Each round leases up to
+  /// <see cref="MaxPerStream"/> of the stream's next rows. A stream with a failed publish is never
+  /// continued; its remaining rows wait for the retry.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  public bool ContinueStreamRuns { get; set; } = true;
+
+  /// <summary>
+  /// How many continuation rounds one drain cycle may run before handing back to the claim cycle.
+  /// Default 10. Bounds how long a few long streams can hold the drain while other streams wait.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  public int MaxContinuationRounds { get; set; } = 10;
 
   /// <summary>
   /// Largest cross-stream publish batch (default 25). Zero keeps the legacy per-stream behavior.

@@ -20,12 +20,17 @@ namespace Whizbang.Core.Signals;
 /// dead routing layer — the exact false-healthy that hid #505. The probe re-runs every
 /// <see cref="SignalBusOptions.ReProbeIntervalMilliseconds"/> so a listener that dies mid-run is
 /// caught even when idle. Verdicts land in <see cref="SignalBusLivenessState"/>, which the
-/// <c>signal-bus</c> health component reports.
+/// <c>signal-bus</c> health component reports. After a failed probe the loop retries on the short
+/// <see cref="SignalBusOptions.FailedProbeRetryDelaysMilliseconds"/> backoff before returning to the
+/// normal interval, so a transient miss clears within seconds while a dead route keeps being reported.
+/// The verdict feeds the health component only; it does not change how the work pumps run.
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 /// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusHostingTests.cs:AddWhizbangSignalBus_HostStartAlone_StartsRegisteredTransportsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeTests.cs:HostedStart_ProbeVerifiesWireRoute_ViaInMemoryAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeTests.cs:HostedStart_DeadTransport_ProbeMarksWireRouteFailedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeBackoffTests.cs:TransientFirstProbeFailure_ReturnsToOperationalWithinTheBackoffAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeBackoffTests.cs:DeadTransport_StaysDegraded_BacksOffThenReturnsToTheNormalIntervalAsync</tests>
 public sealed partial class SignalBusHostedService(
   SignalBus bus,
   SignalBusLivenessState liveness,
@@ -42,6 +47,7 @@ public sealed partial class SignalBusHostedService(
   private readonly SignalBusOptions _options = options?.Value ?? new SignalBusOptions();
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+  private int[] _retryDelays = [];
 
   private readonly CancellationTokenSource _stopCts = new();
   private Task? _probeLoop;
@@ -69,14 +75,22 @@ public sealed partial class SignalBusHostedService(
   public void Dispose() => _stopCts.Dispose();
 
   private async Task _probeLoopAsync(CancellationToken stopping) {
+    _retryDelays = _options.FailedProbeRetryDelaysMilliseconds ?? [.. SignalBusOptions.DefaultFailedProbeRetryDelaysMilliseconds];
+    var consecutiveFailures = 0;
+    var timeoutMs = _options.FirstProbeTimeoutMilliseconds ?? _options.ProbeTimeoutMilliseconds;
     while (!stopping.IsCancellationRequested) {
       try {
-        var failed = await _probeAllTransportsAsync(stopping).ConfigureAwait(false);
+        var failed = await _probeAllTransportsAsync(timeoutMs, stopping).ConfigureAwait(false);
         _liveness.MarkProbeResult(failed is null, _time.GetUtcNow(), failed);
         if (failed is null) {
+          if (consecutiveFailures > 0) {
+            LogProbeRecovered(_logger, consecutiveFailures);
+          }
           LogProbeVerified(_logger, _transports.Length);
+          consecutiveFailures = 0;
         } else {
-          LogProbeFailed(_logger, failed, _options.ProbeTimeoutMilliseconds);
+          consecutiveFailures++;
+          _logProbeFailure(failed, timeoutMs, consecutiveFailures, _nextDelayMs(consecutiveFailures));
         }
       } catch (OperationCanceledException) when (stopping.IsCancellationRequested) {
         return;
@@ -84,14 +98,37 @@ public sealed partial class SignalBusHostedService(
         // A probe that cannot even run is an unverified route, never a silent pass — the exact
         // silent-failure class this service exists to surface. Mark failed and keep the loop alive.
         _liveness.MarkProbeResult(false, _time.GetUtcNow(), failedTransport: ex.GetType().Name);
+        consecutiveFailures++;
         LogProbeError(_logger, ex);
       }
+      timeoutMs = _options.ProbeTimeoutMilliseconds;
 
       try {
-        await Task.Delay(TimeSpan.FromMilliseconds(_options.ReProbeIntervalMilliseconds), _time, stopping).ConfigureAwait(false);
+        await Task.Delay(TimeSpan.FromMilliseconds(_nextDelayMs(consecutiveFailures)), _time, stopping).ConfigureAwait(false);
       } catch (OperationCanceledException) {
         return;
       }
+    }
+  }
+
+  /// <summary>
+  /// The wait before the next probe: after the Nth consecutive failure, the Nth retry delay while
+  /// the backoff lasts; otherwise (a pass, or the backoff exhausted) the normal re-probe interval.
+  /// </summary>
+  private int _nextDelayMs(int consecutiveFailures) =>
+    consecutiveFailures > 0 && consecutiveFailures <= _retryDelays.Length
+      ? _retryDelays[consecutiveFailures - 1]
+      : _options.ReProbeIntervalMilliseconds;
+
+  /// <summary>
+  /// A failure with retries left may be transient (a busy database on a cold start) and is a
+  /// warning; once the backoff is exhausted every further failure is an error.
+  /// </summary>
+  private void _logProbeFailure(string transport, int timeoutMs, int consecutiveFailures, int nextDelayMs) {
+    if (consecutiveFailures <= _retryDelays.Length) {
+      LogProbeFailedRetrying(_logger, transport, timeoutMs, nextDelayMs);
+    } else {
+      LogProbeFailed(_logger, consecutiveFailures, transport, timeoutMs, nextDelayMs);
     }
   }
 
@@ -100,7 +137,7 @@ public sealed partial class SignalBusHostedService(
   /// the typed loopback — so the in-memory transport's instant loopback can never vouch for a dead
   /// wire transport. Returns the first failing transport's type name, or null when all delivered.
   /// </summary>
-  private async Task<string?> _probeAllTransportsAsync(CancellationToken stopping) {
+  private async Task<string?> _probeAllTransportsAsync(int timeoutMs, CancellationToken stopping) {
     // With an instance identity, target our own channel — in a fleet, only this instance must ring.
     // Without one (single-process/test hosts) fall back to broadcast, which is still a self-loopback.
     var instanceId = _instanceProvider.InstanceId;
@@ -114,7 +151,7 @@ public sealed partial class SignalBusHostedService(
       await transport.PublishAsync(new SignalBusProbeSignal(), target, stopping).ConfigureAwait(false);
       try {
         await delivered.Task
-          .WaitAsync(TimeSpan.FromMilliseconds(_options.ProbeTimeoutMilliseconds), _time, stopping)
+          .WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), _time, stopping)
           .ConfigureAwait(false);
       } catch (TimeoutException) {
         return transport.GetType().Name;
@@ -131,11 +168,21 @@ public sealed partial class SignalBusHostedService(
     Message = "Signal bus wire route verified: all {TransportCount} transport(s) delivered the loopback probe")]
   private static partial void LogProbeVerified(ILogger logger, int transportCount);
 
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Signal bus wire route recovered after {FailedProbes} failed probe(s); the signal-bus health component is Operational again")]
+  private static partial void LogProbeRecovered(ILogger logger, int failedProbes);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Signal bus wire-route self-test did not complete: transport {Transport} did not deliver the loopback probe within {TimeoutMs}ms. " +
+              "The signal-bus health component reports Degraded until a probe passes or a wire signal arrives; re-probing in {NextProbeMs}ms. " +
+              "A single miss is often transient (a busy database during startup)")]
+  private static partial void LogProbeFailedRetrying(ILogger logger, string transport, int timeoutMs, int nextProbeMs);
+
   [LoggerMessage(Level = LogLevel.Error,
-    Message = "Signal bus wire route FAILED its self-test: transport {Transport} did not deliver the loopback probe within {TimeoutMs}ms. " +
-              "Doorbells are NOT reaching this instance — work pumps are running on polling fallback and every hop pays the poll interval. " +
-              "Check the direct (non-pooled) notify connection string, the shared notify connection's LISTEN subscriptions, and that the transport was started")]
-  private static partial void LogProbeFailed(ILogger logger, string transport, int timeoutMs);
+    Message = "Signal bus wire route FAILED its self-test {FailedProbes} consecutive time(s): transport {Transport} did not deliver the loopback probe within {TimeoutMs}ms. " +
+              "The signal-bus health component reports Degraded until a probe passes or a wire signal arrives. If the route is down, doorbells are not reaching this instance and work is discovered only at the poll interval. " +
+              "Check the direct (non-pooled) notify connection string, the shared notify connection's LISTEN subscriptions, and that the transport was started. Next probe in {NextProbeMs}ms")]
+  private static partial void LogProbeFailed(ILogger logger, int failedProbes, string transport, int timeoutMs, int nextProbeMs);
 
   [LoggerMessage(Level = LogLevel.Error,
     Message = "Signal bus wire-route probe threw instead of completing — the route is UNVERIFIED and marked degraded; the probe loop stays alive and will retry")]

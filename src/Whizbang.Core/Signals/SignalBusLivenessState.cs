@@ -72,7 +72,22 @@ public sealed class SignalBusLivenessState {
   }
 
   /// <summary>Record that a wire signal arrived (called by transports on receive).</summary>
-  public void MarkWireSignalReceived(DateTimeOffset at) => Volatile.Write(ref _lastWireSignalTicks, at.UtcTicks);
+  /// <remarks>
+  /// A signal arriving strictly after a failed probe (<see cref="LastWireSignalAt"/> past
+  /// <see cref="LastProbeAt"/>) proves the route delivers, so it clears the failure at once instead
+  /// of leaving the component Degraded until the next probe passes. A signal never sets a verdict
+  /// the startup self-test has not reached yet, and never overrides a probe that failed after it.
+  /// </remarks>
+  /// <docs>fundamentals/signal-bus/signal-bus#probe-backoff-and-recovery</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeBackoffTests.cs:WireSignalAfterAFailedProbe_ClearsTheFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeBackoffTests.cs:WireSignalBeforeAnyProbe_DoesNotVouchForTheRouteAsync</tests>
+  public void MarkWireSignalReceived(DateTimeOffset at) {
+    Volatile.Write(ref _lastWireSignalTicks, at.UtcTicks);
+    if (Volatile.Read(ref _verdict) == VERDICT_FAILED && at.UtcTicks > Volatile.Read(ref _lastProbeTicks)
+        && Interlocked.CompareExchange(ref _verdict, VERDICT_VERIFIED, VERDICT_FAILED) == VERDICT_FAILED) {
+      _failedTransport = null;
+    }
+  }
 
   /// <summary>Record a claim woken by a new-work doorbell — resets the missed streak.</summary>
   public void RecordDoorbellWake() {
@@ -113,7 +128,8 @@ public sealed class SignalBusLivenessState {
       var transport = _failedTransport;
       var via = transport is null ? "" : $" (transport {transport})";
       return new ComponentHealth(ComponentState.Degraded,
-        $"wire-route self-test failed{via}: doorbells are not being delivered; work pumps are running on polling fallback");
+        $"wire-route self-test failed{via}: the loopback probe was not delivered within the timeout. " +
+        "Degraded until a probe passes or a wire signal arrives; if the route is down, work is discovered by polling");
     }
     var missed = ConsecutiveMissedDoorbells;
     if (missed >= MissedDoorbellThreshold) {
