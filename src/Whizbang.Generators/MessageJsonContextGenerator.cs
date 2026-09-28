@@ -39,6 +39,8 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithGetOnlyProperty_UsesNullSetterAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithRecordStructNestedType_DiscoversStructAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithReadonlyRecordStruct_UsesConstructorInitializationAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextPropertyNameTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Serialization/GeneratedContextJsonPropertyNameTests.cs</tests>
 /// <docs>extending/source-generators/json-contexts</docs>
 /// Source generator that discovers message types (ICommand, IEvent) and generates
 /// WhizbangJsonContext with JsonTypeInfo for AOT-compatible serialization.
@@ -52,17 +54,87 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMPOSITE_EVENT = "Whizbang.Core.Minting.ICompositeEvent";
   private const string WHIZBANG_CORE_ASSEMBLY = "Whizbang.Core";
   private const string JSON_IGNORE_ATTRIBUTE = "System.Text.Json.Serialization.JsonIgnoreAttribute";
+  private const string JSON_PROPERTY_NAME_ATTRIBUTE = "System.Text.Json.Serialization.JsonPropertyNameAttribute";
 
   // The two halves of the emitted RegisterTypeName call; the alias arguments between them
   // differ per call site, the surrounding call does not.
   private const string REGISTER_TYPE_NAME_OPEN = "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n";
   private const string REGISTER_TYPE_NAME_CLOSE = "    MessageJsonContext.Default);";
 
-  /// <summary>True if the property carries <c>[JsonIgnore]</c> (any condition) — excluded from the
-  /// generated JsonTypeInfo to match System.Text.Json's own behavior.</summary>
-  private static bool _hasJsonIgnore(IPropertySymbol property) =>
-      property.GetAttributes().Any(a =>
-          a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{JSON_IGNORE_ATTRIBUTE}");
+  private const string IGNORE_ALWAYS = "Always";
+
+  /// <summary>
+  /// The condition of the property's <c>[JsonIgnore]</c> as a <c>JsonIgnoreCondition</c> member name:
+  /// <c>Always</c> for the attribute without a condition, <see langword="null"/> when the property has
+  /// no <c>[JsonIgnore]</c>. An <c>Always</c> property is excluded from the generated JsonTypeInfo; a
+  /// conditional one stays in it and is skipped only when writing, as System.Text.Json does.
+  /// </summary>
+  private static string? _jsonIgnoreCondition(IPropertySymbol property) {
+    var attribute = property.GetAttributes().FirstOrDefault(static a => $"{a.AttributeClass}" == JSON_IGNORE_ATTRIBUTE);
+    if (attribute is null) {
+      return null;
+    }
+    var condition = attribute.NamedArguments.FirstOrDefault(static n => n.Key == "Condition").Value;
+    // The enum's underlying value, named through the enum's own members rather than a copy of them.
+    return condition.Type?.GetMembers().OfType<IFieldSymbol>()
+        .FirstOrDefault(f => Equals(f.ConstantValue, condition.Value))?.Name
+      ?? IGNORE_ALWAYS;
+  }
+
+  /// <summary>
+  /// The statement that applies a conditional <c>[JsonIgnore]</c> to the property at
+  /// <paramref name="index"/>, or <see langword="null"/> when there is nothing to apply. The
+  /// predicate is the one System.Text.Json uses for the condition; <c>WhenReading</c> needs no
+  /// statement because it does not affect writing, and reads are not filtered by the generated
+  /// context.
+  /// </summary>
+  private static string? _ignoreConditionStatement(PropertyInfo prop, int index) => prop.IgnoreCondition switch {
+    "WhenWritingNull" => $"  properties[{index}].ShouldSerialize = static (_, value) => value is not null;",
+    "WhenWritingDefault" =>
+      $"  properties[{index}].ShouldSerialize = static (_, value) => !global::System.Collections.Generic.EqualityComparer<{prop.Type}>.Default.Equals(({prop.Type})value!, default!);",
+    "WhenWriting" => $"  properties[{index}].ShouldSerialize = static (_, _) => false;",
+    _ => null,
+  };
+
+  /// <summary>
+  /// The name from the property's own <c>[JsonPropertyName]</c>, or <see langword="null"/> when it has
+  /// none. Read from the property symbol itself, as System.Text.Json reads it: an override without
+  /// the attribute does not inherit its base property's name.
+  /// </summary>
+  /// <remarks>
+  /// The attribute class is compared through its display string, which renders an unbound (null)
+  /// class as empty rather than needing a null check of its own.
+  /// </remarks>
+  private static string? _jsonPropertyName(IPropertySymbol property) =>
+      property.GetAttributes()
+          .FirstOrDefault(static a => $"{a.AttributeClass}" == JSON_PROPERTY_NAME_ATTRIBUTE)
+          ?.ConstructorArguments.FirstOrDefault().Value as string;
+
+  /// <summary>
+  /// <paramref name="value"/> escaped for use between the quotes of a generated C# string literal.
+  /// A <c>[JsonPropertyName]</c> value is arbitrary text: a quote or backslash in it must not end the
+  /// literal early. (<c>FormatLiteral</c> escapes quotes only when it adds them, so they are added and
+  /// then trimmed.)
+  /// </summary>
+  private static string _stringLiteralContent(string value) {
+    var literal = Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(value, quote: true);
+    return literal[1..^1];
+  }
+
+  /// <summary>
+  /// Describes one property for serialization. The one place a property symbol becomes a
+  /// <see cref="PropertyInfo"/>, so message, nested and polymorphic types cannot drift apart.
+  /// </summary>
+  private static PropertyInfo _toPropertyInfo(IPropertySymbol p) => new(
+      Name: p.Name,
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
+      Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+#pragma warning restore RS0030
+      IsValueType: _isValueType(p.Type),
+      IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
+      CanWrite: p.SetMethod != null,
+      JsonName: _jsonPropertyName(p),
+      IgnoreCondition: _jsonIgnoreCondition(p));
   private const string GRAPHQL_NAME_ATTRIBUTE = "HotChocolate.GraphQLNameAttribute";
   private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
@@ -1732,11 +1804,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
           .Replace(PLACEHOLDER_PROPERTY_TYPE, prop.Type)
           .Replace(PLACEHOLDER_PROPERTY_NAME, prop.Name)
-          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, prop.Name)
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, _stringLiteralContent(prop.WireName))
           .Replace(PLACEHOLDER_MESSAGE_TYPE, message.FullyQualifiedName)
           .Replace(PLACEHOLDER_SETTER, setter);
 
       sb.AppendLine(propertyCode);
+      if (_ignoreConditionStatement(prop, i) is { } ignoreCondition) {
+        sb.AppendLine(ignoreCondition);
+      }
       sb.AppendLine();
     }
     sb.AppendLine("  return properties;");
@@ -3261,15 +3336,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       INamedTypeSymbol type, bool isCommand, bool isEvent, bool isSerializable, bool isComposite) {
     // Use custom format that includes nullability annotations to avoid CS8619/CS8603 warnings
     var properties = _getAllPropertiesIncludingInherited(type)
-        .Select(p => new PropertyInfo(
-            Name: p.Name,
-#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
-            Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
-#pragma warning restore RS0030
-            IsValueType: _isValueType(p.Type),
-            IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
-            CanWrite: p.SetMethod != null
-        ))
+        .Select(static p => _toPropertyInfo(p))
         .ToArray();
 
     // Detect if type has a parameterized constructor matching all writable properties
@@ -3432,16 +3499,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Extracts property information from a type symbol, including inherited properties.
   /// </summary>
   private static PropertyInfo[] _extractPropertiesFromType(INamedTypeSymbol typeSymbol) {
-    return [.. _getAllPropertiesIncludingInherited(typeSymbol)
-        .Select(p => new PropertyInfo(
-            Name: p.Name,
-#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
-            Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
-#pragma warning restore RS0030
-            IsValueType: _isValueType(p.Type),
-            IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
-            CanWrite: p.SetMethod != null
-        ))];
+    return [.. _getAllPropertiesIncludingInherited(typeSymbol).Select(static p => _toPropertyInfo(p))];
   }
 
   /// <summary>
@@ -3457,7 +3515,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // (e.g. CompositeEventBase.InnerEvents is a [JsonIgnore] computed view over Inner; serializing it
     // would both duplicate data and create an IEnumerable<IMessage> polymorphism cycle).
     var allProperties = typeSymbol.GetAllProperties().Reverse()
-        .Where(p => !_hasJsonIgnore(p))
+        .Where(static p => _jsonIgnoreCondition(p) != IGNORE_ALWAYS)
         .ToList();
 
     // For types with a primary constructor, order properties to match constructor parameters

@@ -2079,6 +2079,35 @@ public interface IWorkCoordinator {
     => FetchOutboxBatchAsync(streamIds, instanceId, maxPerStream, cancellationToken);
 
   /// <summary>
+  /// Continues outbox streams from the lease this instance already holds, without waiting for the
+  /// next claim cycle. For each stream whose lease this instance holds, leases up to
+  /// <paramref name="runLength"/> of the stream's next consecutive rows (stopping at the first row it
+  /// may not take) and returns the rows it holds AFTER the last one the drain published, in
+  /// <see cref="FetchOutboxBatchAsync(IReadOnlyList{Guid}, Guid, int, long?, CancellationToken)"/>'s
+  /// shape and order. Rows at or before a stream's cursor are published and awaiting their
+  /// completion; they are never returned again.
+  /// </summary>
+  /// <remarks>
+  /// A stream the instance does not own, or one with nothing after its cursor, returns nothing. The
+  /// default returns nothing, which a caller reads as "wait for the next claim", the behavior before
+  /// continuation existed.
+  /// </remarks>
+  /// <param name="streams">Each stream to continue and the last message the drain published on it.</param>
+  /// <param name="instanceId">The instance holding the streams' leases.</param>
+  /// <param name="runLength">Most rows returned per stream.</param>
+  /// <param name="maxBytes">Payload-byte cap per stream, as the fetch applies it; null disables it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxStreamRunCoordinatorTests.cs:ContinueOutboxStreamsAsync_ReturnsTheNextRunAfterTheCursorAsync</tests>
+  Task<IReadOnlyList<OutboxBatchRow>> ContinueOutboxStreamsAsync(
+    IReadOnlyList<OutboxStreamCursor> streams,
+    Guid instanceId,
+    int runLength,
+    long? maxBytes,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<OutboxBatchRow>>([]);
+
+  /// <summary>
   /// Per-stream-id payload fetch for the InboxDrainWorker. Mirror of
   /// <see cref="FetchOutboxBatchAsync"/> for <c>wh_inbox</c>, ordered by received_at within each stream.
   /// </summary>
@@ -2706,6 +2735,18 @@ public record WorkBatch {
   /// once <c>claim_work</c> SQL drops the body projection, this becomes the only outbox surface.
   /// </summary>
   public List<Guid> OutboxStreamIds { get; init; } = [];
+
+  /// <summary>
+  /// True when this claim's outbox ACQUISITION leased its whole row bound
+  /// (<see cref="ClaimWorkRequest.MaxOutboxAcquireRows"/>), so the backlog it was taken from is at
+  /// least that large again and the claim loop may claim once more without waiting. Only new work
+  /// sets it: a claim that re-offers what the instance already holds leaves it false, which is what
+  /// keeps an immediate re-claim from turning into a re-offer spin. False when the store does not
+  /// report it.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerAcquisitionBoundsTests.cs:FullOutboxAcquisition_ClaimsAgainWithoutSpacingAsync</tests>
+  public bool OutboxAcquisitionFull { get; init; }
 
   /// <summary>
   /// This instance's untruncated outstanding-work counts, taken in the SAME round trip and snapshot
@@ -3534,6 +3575,16 @@ public record PerspectiveEventCompletion {
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 public sealed record PendingPerspectiveEvent(Guid EventWorkId, Guid EventId, long? CommitSequence = null);
+
+/// <summary>
+/// Where the drain stands on one outbox stream: the stream, and the last message it published there.
+/// Passed to <see cref="IWorkCoordinator.ContinueOutboxStreamsAsync"/> so the continuation returns only
+/// the rows after it.
+/// </summary>
+/// <param name="StreamId">The outbox stream.</param>
+/// <param name="LastPublishedMessageId">The last message the drain published on the stream.</param>
+/// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+public sealed record OutboxStreamCursor(Guid StreamId, Guid LastPublishedMessageId);
 
 /// <summary>
 /// One leased outbox row returned from <see cref="IWorkCoordinator.FetchOutboxBatchAsync"/>.

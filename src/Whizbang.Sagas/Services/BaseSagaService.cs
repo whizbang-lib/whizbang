@@ -315,7 +315,25 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// per-item terminal events that landed on a different pod's tracker, …).
   /// </remarks>
   protected virtual Task<BaseSagaModel?> LoadProjectionAsync(Guid sagaId, CancellationToken cancellationToken) {
+    // Reaching the framework default means no loader is wired, so a null here says "cannot see",
+    // not "the saga is gone". The watchdog tick reads this to keep re-arming instead of ending
+    // the chain on a saga it merely cannot observe.
+    _noProjectionLoaderWired = true;
     return Task.FromResult<BaseSagaModel?>(null);
+  }
+
+  /// <summary>
+  /// Set once the framework-default <see cref="LoadProjectionAsync"/> runs: this service has no
+  /// projection loader, so a missing projection is not evidence of a missing saga.
+  /// </summary>
+  private volatile bool _noProjectionLoaderWired;
+
+  /// <summary>What one recovery attempt found, before it is reduced to the public boolean.</summary>
+  private enum WatchdogRecoveryResult {
+    NotYet,
+    Recovered,
+    AlreadyComplete,
+    SagaNotFound,
   }
 
   /// <summary>
@@ -333,8 +351,16 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// not yet at terminal).
   /// </returns>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogAsyncTests.cs</tests>
+  public virtual async Task<bool> TryRecoverViaWatchdogAsync(SagaContext ctx, CancellationToken cancellationToken)
+    => await _tryRecoverAsync(ctx, cancellationToken).ConfigureAwait(false) == WatchdogRecoveryResult.Recovered;
+
+  /// <summary>
+  /// The recovery attempt behind <see cref="TryRecoverViaWatchdogAsync"/>, keeping apart the reasons
+  /// it declines: a saga still in progress, one already complete and one that does not exist. The
+  /// watchdog tick acts on the difference; the public surface only says whether it recovered.
+  /// </summary>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Recovery tries the in-memory tracker first and falls back to the projection, and the fallback has its own reasons not to run: no loader, the saga gone, completion already dispatched, no items, or counts not yet terminal. The two paths and their exits are the recovery contract the summary describes.")]
-  public virtual async Task<bool> TryRecoverViaWatchdogAsync(SagaContext ctx, CancellationToken cancellationToken) {
+  private async Task<WatchdogRecoveryResult> _tryRecoverAsync(SagaContext ctx, CancellationToken cancellationToken) {
     cancellationToken.ThrowIfCancellationRequested();
 
     // Fast path — re-check the in-memory tracker. If a per-item terminal event came in
@@ -368,7 +394,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
         _releaseCompletionDispatch(ctx.SagaId);
         throw;
       }
-      return true;
+      return WatchdogRecoveryResult.Recovered;
     }
 
     // Slow path — load the projection for TotalItems + CompletionEventDispatched (both come
@@ -379,13 +405,13 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     // even when every item is terminal in the durable event store.
     var saga = await LoadProjectionAsync(ctx.SagaId, cancellationToken).ConfigureAwait(false);
     if (saga is null) {
-      return false;
+      return _noProjectionLoaderWired ? WatchdogRecoveryResult.NotYet : WatchdogRecoveryResult.SagaNotFound;
     }
     if (saga.CompletionEventDispatched) {
-      return false;
+      return WatchdogRecoveryResult.AlreadyComplete;
     }
     if (saga.TotalItems <= 0) {
-      return false;
+      return WatchdogRecoveryResult.NotYet;
     }
 
     int authoritativeCompleted, authoritativeFailed;
@@ -400,14 +426,14 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
           ct => _itemRepository.GetItemsAsync(ctx.SagaId, ct),
           _terminalReader, cancellationToken).ConfigureAwait(false);
       if (reconciled is not { } counts) {
-        return false;
+        return WatchdogRecoveryResult.NotYet;
       }
       authoritativeCompleted = counts.Completed;
       authoritativeFailed = counts.Failed;
     } else {
       // Backwards-compatible path: trust the consumer projection's counts directly.
       if (saga.CompletedItems + saga.FailedItems < saga.TotalItems) {
-        return false;
+        return WatchdogRecoveryResult.NotYet;
       }
       authoritativeCompleted = saga.CompletedItems;
       authoritativeFailed = saga.FailedItems;
@@ -429,14 +455,14 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
         tracker.DispatchedCompletion = true;
       }
     }
-    return true;
+    return WatchdogRecoveryResult.Recovered;
   }
 
   /// <summary>
   /// Watchdog-tick entry point used by the framework's tick receptor (or by a
   /// consumer-written receptor on <see cref="SagaCompletionWatchdogTickEvent"/>).
-  /// Calls <see cref="TryRecoverViaWatchdogAsync"/> and, on
-  /// <c>recovered == false</c>, computes an adaptive next-tick delay from the
+  /// Runs the same recovery as <see cref="TryRecoverViaWatchdogAsync"/> and, when the
+  /// saga is still in progress, computes an adaptive next-tick delay from the
   /// observed completion rate (see <c>_computeAdaptiveNextDelay</c>) — or, when
   /// <see cref="SagaOptions.MaxConsecutiveStalls"/> is reached, publishes
   /// <see cref="SagaCompletionAbandonedEvent"/> so operators can triage the
@@ -459,20 +485,34 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// with <c>scheduledFor</c> populated so <c>wh_outbox.scheduled_for</c> is
   /// set as designed.
   /// </para>
+  /// <para>
+  /// A tick that finds the saga already complete (its projection carries
+  /// <c>CompletionEventDispatched</c>) or missing (the projection loader returns no saga) ends the
+  /// chain: no next tick, no stall counted, no stranded item resolved and no abandon event. That
+  /// is the normal fate of a tick, because the per-item fast path usually completes a saga before
+  /// its tick fires. The tick consults the recovery path directly for this, rather than through the
+  /// overridable boolean <see cref="TryRecoverViaWatchdogAsync"/>, which cannot tell "done" from
+  /// "not yet".
+  /// </para>
   /// </remarks>
   /// <returns>
-  /// <c>RecoveredOrAbandoned.Recovered</c> when the slow path emitted
-  /// completion; <c>RecoveredOrAbandoned.ReArmed</c> when a next tick was
-  /// scheduled; <c>RecoveredOrAbandoned.Abandoned</c> when the schedule
-  /// exhausted and the abandon event was published.
+  /// <see cref="WatchdogTickOutcome.Recovered"/> when the slow path emitted completion;
+  /// <see cref="WatchdogTickOutcome.AlreadyComplete"/> or <see cref="WatchdogTickOutcome.SagaNotFound"/>
+  /// when there was nothing left to watch; <see cref="WatchdogTickOutcome.ReArmed"/> when a next tick
+  /// was scheduled; <see cref="WatchdogTickOutcome.Abandoned"/> when the schedule exhausted and the
+  /// abandon event was published.
   /// </returns>
-  /// <docs>fundamentals/sagas/completion-orchestration</docs>
+  /// <docs>fundamentals/sagas/completion-orchestration#watchdog-tick-outcomes</docs>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:FirstReArm_NoSnapshot_UsesInitialBudgetAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:ProgressBetweenTicks_NextDelayIsEtaBasedAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:NoProgressBetweenTicks_StallCounterIncrementsAndBacksOffAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_AbandonsAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:ProgressAfterStalls_ResetsStallCounterAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:NextDelay_ClampedAtMaxAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:CompletedSaga_TickWithProgress_EndsTheChainAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:CompletedSaga_TickAtTheStallLimit_NeitherResolvesItemsNorAbandonsAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MissingSaga_TickEndsTheChainAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/BaseSagaServiceCoverageTests.cs:TryRecoverViaWatchdogTickAsync_WithNoProjectionLoaderWired_StillReArmsAsync</tests>
   public virtual async Task<WatchdogTickOutcome> TryRecoverViaWatchdogTickAsync(
       SagaCompletionWatchdogTickEvent tick,
       CancellationToken cancellationToken) {
@@ -480,9 +520,8 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     cancellationToken.ThrowIfCancellationRequested();
 
     var ctx = new SagaContext(tick.StreamId, tick.EntityId);
-    var recovered = await TryRecoverViaWatchdogAsync(ctx, cancellationToken).ConfigureAwait(false);
-    if (recovered) {
-      return WatchdogTickOutcome.Recovered;
+    if (_toTerminalOutcome(await _tryRecoverAsync(ctx, cancellationToken).ConfigureAwait(false)) is { } ended) {
+      return ended;
     }
 
     // Read the current per-item snapshot up front so the next-delay computation and the
@@ -498,8 +537,8 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       // Stranded items were failed or re-dispatched. Complete now if that finished the saga, and
       // otherwise wake again with the stall count reset, so the new terminal events have time to
       // reach the projection before the saga is judged stuck a second time.
-      if (await TryRecoverViaWatchdogAsync(ctx, cancellationToken).ConfigureAwait(false)) {
-        return WatchdogTickOutcome.Recovered;
+      if (_toTerminalOutcome(await _tryRecoverAsync(ctx, cancellationToken).ConfigureAwait(false)) is { } endedAfterResolve) {
+        return endedAfterResolve;
       }
       await _emitter.PublishAsync(new SagaCompletionWatchdogTickEvent {
         StreamId = tick.StreamId,
@@ -537,6 +576,17 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     await _emitter.PublishAsync(next, now + nextDelay).ConfigureAwait(false);
     return WatchdogTickOutcome.ReArmed;
   }
+
+  /// <summary>
+  /// The tick outcome that ends the watchdog chain for a recovery result, or <see langword="null"/>
+  /// when the saga is still in progress and the tick goes on to re-arm, stall or abandon.
+  /// </summary>
+  private static WatchdogTickOutcome? _toTerminalOutcome(WatchdogRecoveryResult result) => result switch {
+    WatchdogRecoveryResult.Recovered => WatchdogTickOutcome.Recovered,
+    WatchdogRecoveryResult.AlreadyComplete => WatchdogTickOutcome.AlreadyComplete,
+    WatchdogRecoveryResult.SagaNotFound => WatchdogTickOutcome.SagaNotFound,
+    _ => null,
+  };
 
   /// <summary>
   /// The sagas the stranded-saga sweep should consider: this service's incomplete sagas, each with its

@@ -62,6 +62,16 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// <summary>Observed inbox rows per claimed stream, smoothed. Converts a row budget into streams.</summary>
   private double _rowsPerStream = 1.0;
   private int _lastOutstanding;
+
+  /// <summary>
+  /// Outbox rows this instance held at the last measured claim, or null when nothing has measured
+  /// them. Sizes the outbox acquisition bound (#917): a full claim is followed at once by another,
+  /// and this reading is what stops that loop leasing more than <see cref="ClaimWorkerOptions.MaxOutstandingOutboxRows"/>.
+  /// </summary>
+  private long? _lastOutboxOutstanding;
+
+  /// <summary>Set by a claim whose outbox acquisition filled its bound; the loop then claims again without waiting.</summary>
+  private bool _claimAgainNow;
   private long _lastDrainTicks;
   private readonly ILogger<ClaimWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
@@ -278,6 +288,15 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// </summary>
   public long StartupCatchUpCount => Interlocked.Read(ref _startupCatchUpCount);
 
+  private long _immediateReclaimCount;
+
+  /// <summary>
+  /// How many times a full outbox acquisition made the loop claim again without waiting (#917).
+  /// Exposed for observability and tests. Resets on process restart.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerAcquisitionBoundsTests.cs:FullOutboxAcquisition_ClaimsAgainWithoutSpacingAsync</tests>
+  public long ImmediateReclaimCount => Interlocked.Read(ref _immediateReclaimCount);
+
   /// <summary>
   /// Observable: the most recent <see cref="WorkBatch"/> distributed by the worker.
   /// Set whenever a tick produces a non-empty batch. Useful for wiring up downstream
@@ -444,7 +463,14 @@ public sealed partial class ClaimWorker : BackgroundService {
         // deliberately left untouched — every stream_id is still distributed on every cycle, so
         // nothing can wedge waiting on a suppressed emit. Only the wait adapts.
         var signature = _workSignature(batch);
-        _lastClaimWasRepeat = hadWork && signature == _lastWorkSignature;
+        // #917: an outbox acquisition that filled its bound took NEW rows, whatever stream ids they
+        // share with the last claim, so it is progress and never a re-offer. Claiming again at once is
+        // safe only while holdings are measured: the bound is then sized from them, and it falls to
+        // zero (no longer full) when the instance holds its ceiling. Unmeasured, the loop keeps its
+        // cadence rather than lease without limit.
+        var outboxFull = batch.OutboxAcquisitionFull && _lastOutboxOutstanding.HasValue;
+        _claimAgainNow = outboxFull;
+        _lastClaimWasRepeat = hadWork && signature == _lastWorkSignature && !outboxFull;
 
         // A sustained run of repeats means rows are leased to this instance and are NOT completing,
         // so the backlog cannot drain even though the process is healthy and polling. From outside
@@ -510,6 +536,17 @@ public sealed partial class ClaimWorker : BackgroundService {
           (transient, cause) => LogTransientFailure(_logger, transient.Reason, transient.SqlState ?? "none", cause),
           cause => LogError(_logger, cause));
         Interlocked.Increment(ref _consecutiveEmptyPolls);  // back off after errors too
+        _claimAgainNow = false;
+      }
+
+      // #917: a full outbox acquisition is proof there is more work, so claim again as soon as the
+      // batch is handed off instead of waiting out a spacing nap or a poll interval. A backlog that
+      // was inserted before the loop reached it rings no further doorbells, so without this the loop
+      // took one bounded batch per interval. The acquisition bound (sized from what this instance
+      // holds) is what ends the run of immediate claims.
+      if (_claimAgainNow) {
+        Interlocked.Increment(ref _immediateReclaimCount);
+        continue;
       }
 
       // F1 unify-now: when the signal bus is wired, bus signals + NOTIFY push drive the fast path via
@@ -725,6 +762,23 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   /// <summary>
+  /// The row bound for outbox acquisition this cycle (#917): the configured batch, narrowed to the
+  /// headroom under <see cref="ClaimWorkerOptions.MaxOutstandingOutboxRows"/> once holdings have been
+  /// measured. Zero while the instance holds its ceiling, so the claim only re-offers. Null when the
+  /// option is off, which leaves the store's previous bound (the stream window) in force.
+  /// </summary>
+  private int? _outboxAcquireRowBound() {
+    if (_options.MaxOutboxRowsPerBatch <= 0) {
+      return null;
+    }
+    if (_lastOutboxOutstanding is not long held) {
+      return _options.MaxOutboxRowsPerBatch;
+    }
+    var headroom = Math.Max(0L, _options.MaxOutstandingOutboxRows - held);
+    return (int)Math.Min(_options.MaxOutboxRowsPerBatch, headroom);
+  }
+
+  /// <summary>
   /// True while the perspective drain channel holds more stream ids than the configured cap (#719).
   /// A channel that cannot count reports false, so a store without the cap behaves as before.
   /// </summary>
@@ -809,6 +863,11 @@ public sealed partial class ClaimWorker : BackgroundService {
     // outstanding ceiling, so a wide window cannot lease more than the drain can hold.
     var maxAcquireRows = _acquireRowBound(maxStreams);
 
+    // The outbox has its own row bound (#917). The stream window above bounds how many streams move.
+    // Handed to the outbox acquisition as a row cap, it leased one row on each of the oldest streams
+    // per claim, so a backlog on a few long streams drained one row per stream per cycle.
+    var maxOutboxRows = _outboxAcquireRowBound();
+
     // Stealing (#725) is a last resort, never a first move. Only after this instance's own residue
     // has come back empty twice running does it reach for unowned rows assigned to other residues —
     // a live sibling's owned streams are never touched (the store enforces that). Under normal load
@@ -846,7 +905,9 @@ public sealed partial class ClaimWorker : BackgroundService {
       MaxAcquireRows: maxAcquireRows,
       AllowSteal: allowSteal,
       MaxPerspectiveStreams: maxPerspectiveStreams,
-      IdleSettled: idleSettled), ct);
+      IdleSettled: idleSettled,
+      MaxOutboxAcquireRows: maxOutboxRows,
+      OutboxRunLength: Math.Max(1, _options.OutboxRunLength)), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
 
     _recordClaimShape(batch, allowSteal);
@@ -963,6 +1024,9 @@ public sealed partial class ClaimWorker : BackgroundService {
     // behind work it could not affect) and, in the other direction, let a large inbox holding
     // hide behind a drained perspective set. Perspective has its own cap above.
     _observeDrain((int)Math.Min(int.MaxValue, outstanding.InboxRows));
+    // The outbox is bounded on its own count (#917), for the same reason the inbox is: a full outbox
+    // claim is followed immediately by another, and only what the instance holds can stop that.
+    _lastOutboxOutstanding = outstanding.OutboxRows;
   }
 
   /// <summary>
@@ -1309,6 +1373,44 @@ public sealed class ClaimWorkerOptions {
   public int? NotifyHealthyPollingIntervalMilliseconds { get; set; } = 5_000;
   /// <summary>Cap on rows returned per claim_work call. Default 1000.</summary>
   public int MaxStreamsPerBatch { get; set; } = 1000;
+
+  /// <summary>
+  /// Row bound on outbox acquisition per claim, independent of <see cref="MaxStreamsPerBatch"/> and the
+  /// adaptive stream window. Default 1000. Zero or less restores the previous bound: the stream window
+  /// used as a row cap.
+  /// </summary>
+  /// <remarks>
+  /// The stream window bounds how many streams move per claim; it starts at
+  /// <see cref="MinStreamsPerBatch"/> and grows on inbox evidence. As a row cap on the outbox it leased
+  /// one row on each of the oldest streams per claim, so a backlog fanned onto a few long streams
+  /// drained one row per stream per claim cycle while the database and the broker sat idle (#917). A
+  /// claim whose outbox acquisition fills this bound is followed at once by another; the bound is
+  /// narrowed to the headroom under <see cref="MaxOutstandingOutboxRows"/>, which is what ends that run.
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+  public int MaxOutboxRowsPerBatch { get; set; } = 1000;
+
+  /// <summary>
+  /// How many consecutive rows of one outbox stream a claim may lease. Default 100, the drain's
+  /// per-stream page (<see cref="OutboxDrainWorkerOptions.MaxPerStream"/>). 1 is the previous behavior.
+  /// </summary>
+  /// <remarks>
+  /// The oldest pending rows still choose which streams move; each chosen stream then leases up to this
+  /// many of its next rows, as an even share of <see cref="MaxOutboxRowsPerBatch"/> when the chosen
+  /// streams cannot all have a full run. Ordering holds because one instance holds the stream lease for
+  /// the whole run and the drain publishes a stream's rows in order; a run stops at the first row it may
+  /// not take, so it never leaves a gap.
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+  public int OutboxRunLength { get; set; } = 100;
+
+  /// <summary>
+  /// Ceiling on the outbox rows this instance may hold claimed and unpublished. Default 10000. Sizes the
+  /// outbox acquisition bound once holdings are measured, so back-to-back full claims stop when the
+  /// drain falls behind rather than leasing the whole backlog.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+  public int MaxOutstandingOutboxRows { get; set; } = 10_000;
 
   /// <summary>
   /// Narrows the claim batch when work is being re-claimed rather than finished. Default true.
