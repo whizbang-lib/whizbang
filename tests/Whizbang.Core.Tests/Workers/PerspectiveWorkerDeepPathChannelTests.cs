@@ -806,7 +806,10 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   /// #728: every consumer-loop iteration that ended on the WORK channel used to leave its wake
   /// wait queued on a <c>SemaphoreSlim</c>. <c>Release()</c> then completed the oldest of those
   /// stale waiters, which nothing awaited, and the live iteration slept on. Two iterations ended
-  /// by work, then ONE signal: the loop must wake and take an idle tick.
+  /// by work, then ONE signal: the loop must wake and take an idle tick. The signal can land while
+  /// the loop is still finishing the second batch (its completion is reported before the batch
+  /// returns); that interleaving is pinned by
+  /// <see cref="Worker_SignalWhileBatchInFlight_WakesTheNextIterationAsync"/>.
   /// </summary>
   [Test]
   public async Task Worker_SignalAfterWorkDrivenIterations_WakesOnTheFirstSignalAsync() {
@@ -837,6 +840,10 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
         // One empty poll after work is enough to flip active -> idle, which is the observable wake.
         IdleThresholdPolls = 1,
+        // One consumer loop. With several, the loops that lose the race for a work item take an
+        // empty tick and raise the idle event on their own, so the test passed without the signal
+        // ever being delivered.
+        MaxConcurrentDrainConsumers = 1,
       }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
@@ -901,6 +908,107 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await idleTick.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await Assert.That(idleTick.Task.IsCompletedSuccessfully).IsTrue()
       .Because("the one signal must reach the iteration the loop is actually awaiting");
+
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+  }
+
+  /// <summary>
+  /// A signal raised while the consumer loop is busy with a batch must wake the next iteration.
+  /// The iteration that took the batch ended on WORK and left its wake wait parked but no longer
+  /// awaited. The signal used to complete exactly that abandoned wait and clear it, so the next
+  /// iteration parked a fresh wait and slept until the poll interval: the wake was lost.
+  /// </summary>
+  [Test]
+  public async Task Worker_SignalWhileBatchInFlight_WakesTheNextIterationAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.WakeWhileBusyPerspective";
+
+    var coordinator = new RecordingWorkCoordinator();
+    var instanceProvider = new FakeInstanceProvider();
+    var runner = new GatedRunner();
+    var registry = new SingleRunnerRegistry(perspectiveName, runner, [typeof(DeepChannelEvent)]);
+    var listener = new FakeWorkNotificationListener();
+
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+    var serviceProvider = services.BuildServiceProvider();
+
+    var harness = new PerspectiveWorkerTestHarness();
+    var worker = new PerspectiveWorker(
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
+        // The idle timeout must never win the race here: only work or the signal may end an iteration.
+        PollingIntervalMilliseconds = 1_000_000,
+        NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
+        // One empty poll after work is enough to flip active -> idle, which is the observable wake.
+        IdleThresholdPolls = 1,
+        // One consumer loop, so no sibling loop is parked on the wake while this one is held in the
+        // batch: the signal has only the abandoned wait to land on.
+        MaxConcurrentDrainConsumers = 1,
+      }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: listener,
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
+        // The idle timeout must never win the race here: only work or the signal may end an iteration.
+        PollingIntervalMilliseconds = 1_000_000,
+        NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
+        // One empty poll after work is enough to flip active -> idle, which is the observable wake.
+        IdleThresholdPolls = 1,
+      })).Value));
+    var idleTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => idleTick.TrySetResult();
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await listener.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await harness.EnqueueWorkAsync(new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    }, cts.Token);
+    // Hold the loop inside the batch: the iteration that took it ended on work, so its wake wait
+    // is parked and nothing awaits it.
+    await runner.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Act: exactly one signal, raised while the loop is between waits.
+    listener.Raise(WorkSignalCategory.Perspective);
+    runner.Release.TrySetResult();
+
+    // Assert: the next iteration wakes on that signal, finds no work, and flips active -> idle.
+    await idleTick.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(idleTick.Task.IsCompletedSuccessfully).IsTrue()
+      .Because("a signal raised while the loop is busy must wake the next iteration, not an abandoned wait");
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -1209,6 +1317,31 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
 
     public IReadOnlyList<Type> GetEventTypes() => eventTypes;
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
+  }
+
+  /// <summary>A runner that parks inside its first run until the test releases it.</summary>
+  private sealed class GatedRunner : IPerspectiveRunner {
+    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Type PerspectiveType => typeof(GatedRunner);
+
+    public async Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
+      Entered.TrySetResult();
+      await Release.Task.WaitAsync(cancellationToken);
+      return new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = Guid.CreateVersion7(),
+        Status = PerspectiveProcessingStatus.Completed,
+        PerspectiveType = typeof(GatedRunner)
+      };
+    }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+      RunAsync(streamId, perspectiveName, null, cancellationToken);
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
   }
 
   private sealed class RecordingRunner : IPerspectiveRunner {
