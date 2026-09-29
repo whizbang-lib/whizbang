@@ -56,12 +56,14 @@ internal sealed record PerspectiveInfo(
 /// <param name="IsVectorField">True if this is a [VectorField] requiring Pgvector.Vector conversion</param>
 /// <param name="EnumScalarType">For an enumeration, the CLR name of the scalar its column holds; null otherwise.</param>
 /// <param name="ColumnType">The column type declared with <c>[PhysicalField(ColumnType = …)]</c>, if any.</param>
+/// <param name="TypeName">The property's fully qualified type, which a Split load reads its column as</param>
 internal sealed record PhysicalFieldInfoCompact(
     string PropertyName,
     string ColumnName,
     bool IsVectorField = false,
     string? EnumScalarType = null,
-    string? ColumnType = null
+    string? ColumnType = null,
+    string TypeName = "object"
 );
 
 /// <summary>

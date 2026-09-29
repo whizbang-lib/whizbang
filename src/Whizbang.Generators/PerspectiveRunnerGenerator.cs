@@ -535,6 +535,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // to send a setter or a condition on a physical property to its column (no reflection at run time).
     result = TemplateUtilities.ReplaceRegion(result, "PHYSICAL_FIELD_REGISTRATION",
         _buildPhysicalFieldRegistration(perspective, modelTypeName));
+    // Issue #977: a Split model's promoted fields live only in their columns, so the store has to read them
+    // back into the model the next event is applied to. The copy is generated here, where the fields are known.
+    result = TemplateUtilities.ReplaceRegion(result, "SPLIT_PHYSICAL_FIELD_REGISTRATION",
+        _buildSplitPhysicalFieldRegistration(perspective, modelTypeName));
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
@@ -659,6 +663,44 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       resolveTargetStreamId.AppendLine("    return physicalStreamId;");
     }
     return resolveTargetStreamId;
+  }
+
+  /// <summary>
+  /// Emits the <c>[ModuleInitializer]</c> that registers a Split model's promoted columns and the code that
+  /// copies them into a model loaded from its document. Empty for any other storage mode, whose document
+  /// already holds every field.
+  /// </summary>
+  /// <remarks>
+  /// A record is copied with a <c>with</c> expression, so an init-only property is set the same way the
+  /// runner strips it before the write; a class is assigned in place. A vector property that is not
+  /// nullable takes an empty array for a null column, as the strip does.
+  /// </remarks>
+  private static string _buildSplitPhysicalFieldRegistration(PerspectiveInfo perspective, string modelTypeName) {
+    if (perspective.StorageMode != 2 || perspective.PhysicalFields is not { Length: > 0 } fields) {
+      return "";
+    }
+
+    var columns = string.Join(", ", fields.Select(f =>
+        $"new global::Whizbang.Core.Perspectives.SplitPhysicalColumn(\"{f.ColumnName}\", {_csharpBool(f.IsVectorField)})"));
+    var reads = fields.Select(f => (f.PropertyName, Read: _splitColumnRead(f))).ToArray();
+    var hydrate = perspective.IsModelRecord
+        ? $"static (model, read) => model with {{ {string.Join(", ", reads.Select(r => $"{r.PropertyName} = {r.Read}"))} }}"
+        : $"static (model, read) => {{ {string.Concat(reads.Select(r => $"model.{r.PropertyName} = {r.Read}; "))}return model; }}";
+
+    return "[global::System.Runtime.CompilerServices.ModuleInitializer]\n" +
+        "  internal static void _registerSplitPhysicalFields() =>\n" +
+        $"      global::Whizbang.Core.Perspectives.SplitPhysicalFieldRegistry.Register(new global::Whizbang.Core.Perspectives.SplitPhysicalFieldMap<{modelTypeName}>(\n" +
+        $"          new[] {{ {columns} }},\n" +
+        $"          {hydrate}));";
+  }
+
+  /// <summary>The expression that reads one promoted column as its property's type.</summary>
+  private static string _splitColumnRead(PhysicalFieldInfoCompact field) {
+    if (!field.IsVectorField) {
+      return $"read.Read<{field.TypeName}>(\"{field.ColumnName}\")";
+    }
+    var read = $"read.GetVector(\"{field.ColumnName}\")";
+    return field.TypeName.EndsWith("?", StringComparison.Ordinal) ? read : $"{read} ?? global::System.Array.Empty<float>()";
   }
 
   private static string _buildStreamGroupRegistrations(string? streamGroupSpec, string modelTypeName) {
@@ -1261,7 +1303,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           ColumnName: columnName,
           IsVectorField: isVectorField,
           EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
-          ColumnType: columnType
+          ColumnType: columnType,
+          TypeName: TypeNameUtilities.FullyQualifiedWithNullability(property.Type)
       );
     }
 

@@ -100,6 +100,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // reflection. Empty for perspectives that joined no group — untouchable by cascades.
   #endregion
 
+  #region SPLIT_PHYSICAL_FIELD_REGISTRATION
+  // Generated: a Split model registers its promoted columns via a [ModuleInitializer], with the code that
+  // copies them into a model loaded from its document, so the store can read back the fields the document
+  // never holds (issue #977). Empty for every other storage mode.
+  #endregion
+
   private readonly IServiceProvider _serviceProvider;
   private readonly ILogger<__RUNNER_CLASS_NAME__> _logger;
   private readonly IEventStore _eventStore;

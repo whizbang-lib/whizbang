@@ -26,11 +26,21 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     where TModel : class {
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// A <see cref="FieldStorageMode.Split"/> model's promoted fields live only in their columns, so they are
+  /// selected with the document and copied into the model by its generated
+  /// <see cref="SplitPhysicalFieldMap{TModel}"/>. Without them the model the next event is applied to would
+  /// carry their defaults, and the write that follows would store those over the columns (issue #977).
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperSplitPhysicalFieldReloadTests.cs</tests>
   public async Task<TModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    SplitPhysicalFieldRegistry.TryGet<TModel>(out var split);
+    // Validated before anything is opened: a column name goes into the statement text.
+    var physicalSelect = string.Concat((split?.Columns ?? []).Select(c => $", {_selectColumn(c)}"));
     await using var conn = new NpgsqlConnection(connectionString);
     await conn.OpenAsync(cancellationToken);
 
-    var sql = $"SELECT data FROM {tableName} WHERE id = @p_id";
+    var sql = $"SELECT data{physicalSelect} FROM {tableName} WHERE id = @p_id";
     await using var cmd = new NpgsqlCommand(sql, conn);
     cmd.Parameters.AddWithValue("p_id", streamId);
 
@@ -42,7 +52,21 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     var json = reader.GetString(0);
     var typeInfo = jsonOptions.GetTypeInfo(typeof(TModel))
       ?? throw new InvalidOperationException($"No JsonTypeInfo found for {typeof(TModel).Name}.");
-    return (TModel?)JsonSerializer.Deserialize(json, typeInfo);
+    var model = (TModel?)JsonSerializer.Deserialize(json, typeInfo);
+    return model is null || split is null
+      ? model
+      : split.Hydrate(model, new NpgsqlPhysicalColumnReader(reader, split.Columns));
+  }
+
+  /// <summary>
+  /// A promoted column as it is selected. A vector is read as its components, the form the model holds; it is
+  /// written as text the column's type parses, so reading it back needs the cast.
+  /// </summary>
+  private static string _selectColumn(SplitPhysicalColumn column) {
+    if (!_isPlainIdentifier(column.Name)) {
+      throw new InvalidOperationException($"'{column.Name}' is not a plain column name.");
+    }
+    return column.IsVector ? $"{column.Name}::real[]" : column.Name;
   }
 
   /// <inheritdoc/>

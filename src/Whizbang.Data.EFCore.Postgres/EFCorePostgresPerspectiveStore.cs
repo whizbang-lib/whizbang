@@ -43,14 +43,54 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByStreamIdAsync_WhenRecordExists_ReturnsModelAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByStreamIdAsync_WhenRecordDoesNotExist_ReturnsNullAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByStreamIdAsync_WithStrongTypedId_ReturnsModelAsync</tests>
-  public async Task<TModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
-    // Query the perspective table by Id
-    var row = await _context.Set<PerspectiveRow<TModel>>()
-        .AsNoTracking()
-        .OrderBy(r => r.Id)
-        .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitPhysicalFieldReloadTests.cs:GetByStreamIdAsync_ReturnsThePromotedFieldsFromTheirColumnsAsync</tests>
+  public Task<TModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+    _loadAsync(streamId, cancellationToken);
 
-    // Return the model data, or null if not found
+  /// <summary>
+  /// Reads the model stored under <paramref name="id"/>, with its promoted fields when it is stored Split.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A Split field lives only in its column, which EF Core maps as a shadow property: a no-tracking read
+  /// discards it, and the model the next event is applied to would carry its default, which the write that
+  /// follows would store over the column (issue #977). A model with a generated
+  /// <see cref="SplitPhysicalFieldMap{TModel}"/> is therefore read tracked, its columns are copied from the
+  /// entry into the model, and the row is detached so nothing stays tracked for the write.
+  /// </para>
+  /// <para>
+  /// A row the context already holds unchanged is let go first, so the read materializes it afresh rather
+  /// than returning the held instance, whose document may be the one a write stripped. A row held with a
+  /// pending change is returned as it is and stays tracked for its write. A row that comes back detached was
+  /// hydrated as it was tracked, by the lens hydrator a shared context can carry, and is returned as it is:
+  /// its columns are no longer on an entry to read.
+  /// </para>
+  /// </remarks>
+  private async Task<TModel?> _loadAsync(Guid id, CancellationToken cancellationToken) {
+    var rows = _context.Set<PerspectiveRow<TModel>>();
+    if (!SplitPhysicalFieldRegistry.TryGet<TModel>(out var split)) {
+      var document = await rows.AsNoTracking()
+          .OrderBy(r => r.Id)
+          .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
+      return PerspectiveDataCoalescer.CoalescedData(document); // WORKAROUND(dotnet/efcore#38625)
+    }
+
+    var held = rows.Local.FirstOrDefault(r => r.Id == id);
+    if (held is not null && _context.Entry(held).State == EntityState.Unchanged) {
+      _context.Entry(held).State = EntityState.Detached;
+    }
+
+    var row = await rows
+        .OrderBy(r => r.Id)
+        .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
+    // Unchanged is a row this read materialized. A held row with a pending change came back as it is, and
+    // stays tracked for its write.
+    var entry = row is null ? null : _context.Entry(row);
+    if (entry?.State == EntityState.Unchanged) {
+      row!.Data = split.Hydrate(row.Data, new EntityEntryPhysicalColumnReader(entry));
+      entry.State = EntityState.Detached;
+    }
+
     return PerspectiveDataCoalescer.CoalescedData(row); // WORKAROUND(dotnet/efcore#38625)
   }
 
@@ -141,24 +181,12 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordExists_ReturnsModelAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordDoesNotExist_ReturnsNullAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WithStringPartitionKey_ReturnsModelAsync</tests>
-  public async Task<TModel?> GetByPartitionKeyAsync<TPartitionKey>(
+  public Task<TModel?> GetByPartitionKeyAsync<TPartitionKey>(
       TPartitionKey partitionKey,
       CancellationToken cancellationToken = default)
-      where TPartitionKey : notnull {
-
-    // Convert partition key to Guid for storage
-    // Supports Guid, string, int, etc. via conversion
-    var partitionGuid = _convertPartitionKeyToGuid(partitionKey);
-
-    // Query the perspective table by Id (which stores the partition key)
-    var row = await _context.Set<PerspectiveRow<TModel>>()
-        .AsNoTracking()
-        .OrderBy(r => r.Id)
-        .FirstOrDefaultAsync(r => r.Id == partitionGuid, cancellationToken);
-
-    // Return the model data, or null if not found
-    return PerspectiveDataCoalescer.CoalescedData(row); // WORKAROUND(dotnet/efcore#38625)
-  }
+      where TPartitionKey : notnull =>
+    // Convert partition key to Guid for storage (supports Guid, string, int, etc.); the row's Id stores it.
+    _loadAsync(_convertPartitionKeyToGuid(partitionKey), cancellationToken);
 
   /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_WhenRecordDoesNotExist_CreatesNewRecordAsync</tests>
