@@ -83,6 +83,20 @@ public class StartupPipelineRunnerOweTests {
   }
 
   [Test]
+  public async Task TheNullDefaultStore_OwesNothing_AndRefusesToCompleteAsync() {
+    var store = NullPendingDutyWorkStore.Instance;
+    var work = new PendingDutyWork(StartupDuties.MAINTAINER, "Rewrite", DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, 0, null, true);
+
+    await Assert.That(store.IsConfigured).IsFalse();
+    await store.OweAsync(StartupDuties.MAINTAINER, "Rewrite", CancellationToken.None);
+    await Assert.That(await store.ListOwedAsync(StartupDuties.MAINTAINER, CancellationToken.None)).IsEmpty();
+    await Assert.That(() => store.CompleteAsync(work, null!, CancellationToken.None)).Throws<InvalidOperationException>();
+    await Assert.That(() => store.RecordFailureAsync(work, null!, "x", CancellationToken.None)).Throws<InvalidOperationException>();
+    await Assert.That(((IPendingDutyWorkStore)new Store()).IsConfigured).IsTrue();
+    await Assert.That(() => new StartupPipelineRunner([], [], new ContendedElector(), null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task AStoreThatCannotOwe_LeavesTheStepSkipped_AndSaysSoAsync() {
     var runner = new StartupPipelineRunner([new SkipStep()], [], new ContendedElector(), new Store(() => Task.FromException(new InvalidOperationException("down"))));
 

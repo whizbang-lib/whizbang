@@ -88,6 +88,7 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Perspectives.IPerspectiveStreamLocker>(Perspectives.NullPerspectiveStreamLocker.Instance);
     services.TryAddSingleton<Startup.IStartupAssessor>(Startup.NullStartupAssessor.Instance);
     services.TryAddSingleton<Startup.IDutyElector>(Startup.NullDutyElector.Instance);
+    services.TryAddSingleton<Startup.IPendingDutyWorkStore>(Startup.NullPendingDutyWorkStore.Instance);
     services.TryAddSingleton<Signals.ISignalBus>(Signals.NullSignalBus.Instance);
     services.TryAddSingleton<Workers.IPinnedConnectionPool>(Workers.NoOpPinnedConnectionPool.Instance);
     // The event mint: the composite splitter every publish path groups through. Turnkey, and a host

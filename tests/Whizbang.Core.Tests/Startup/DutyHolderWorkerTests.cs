@@ -421,10 +421,10 @@ public class DutyHolderWorkerTests {
   public async Task Constructor_RefusesNullsAsync() {
     var options = Options.Create(new RoleAssignmentOptions());
     var logger = NullLogger<DutyHolderWorker>.Instance;
-    await Assert.That(() => new DutyHolderWorker(null!, new Store(), [], options, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new DutyHolderWorker(new Elector(), null!, [], options, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), null!, options, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), [], null!, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), [], options, null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new DutyHolderWorker(null!, new Store(), [], options, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new DutyHolderWorker(new Elector(), null!, [], options, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), null!, options, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), [], null!, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), [], options, null!, null)).Throws<ArgumentNullException>();
   }
 }

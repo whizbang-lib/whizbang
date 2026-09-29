@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core;
 using Whizbang.Core.Health;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
@@ -61,7 +62,7 @@ public static class RoleAssignmentServiceCollectionExtensions {
 
     // Pending duty work, and the holder loop that runs it: a skipped duty step is owed to the role
     // (the startup pipeline resolves this store), and whichever instance holds the role runs it.
-    services.TryAddSingleton<IPendingDutyWorkStore>(sp => new PgPendingDutyWorkStore(
+    services.TryAddSingletonOverNullDefault<IPendingDutyWorkStore>(sp => new PgPendingDutyWorkStore(
       sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>(),
       sp.GetRequiredService<IOptions<RoleAssignmentOptions>>(),
       sp.GetRequiredService<IConfiguration>(),

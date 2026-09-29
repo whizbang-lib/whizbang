@@ -88,7 +88,7 @@ public sealed class StartupPipelineRunner {
   private readonly IReadOnlyList<IStartupStep> _steps;
   private readonly IReadOnlyList<IStartupStepObserver> _observers;
   private readonly IDutyElector _dutyElector;
-  private readonly IPendingDutyWorkStore? _pendingWork;
+  private readonly IPendingDutyWorkStore _pendingWork;
 
   /// <summary>Creates a runner over the registered steps.</summary>
   /// <param name="steps">The registered steps, in any order — the resolver decides the real one.</param>
@@ -102,18 +102,32 @@ public sealed class StartupPipelineRunner {
   /// because the framework's exclusive steps are individually idempotent and separately guarded
   /// (the migration by its advisory lock, the rewrite by its request record).
   /// </param>
-  /// <param name="pendingWork">
-  /// Optional durable duty work. With it, a <see cref="NonHolderBehavior.Skip"/> step this instance
-  /// skipped because another instance holds the duty is OWED to that duty, and whichever instance
-  /// holds it runs the step (#966). Without it, a skipped step simply does not run here.
-  /// </param>
   /// <exception cref="ArgumentNullException"><paramref name="steps"/> is <see langword="null"/>.</exception>
   public StartupPipelineRunner(
       IReadOnlyList<IStartupStep> steps,
       IReadOnlyList<IStartupStepObserver> observers,
+      IDutyElector dutyElector)
+    : this(steps, observers, dutyElector, NullPendingDutyWorkStore.Instance) {
+  }
+
+  /// <summary>Creates a runner over the registered steps, owing skipped duty steps to their holder.</summary>
+  /// <param name="steps">The registered steps, in any order.</param>
+  /// <param name="observers">The observers to notify around each step and at run completion.</param>
+  /// <param name="dutyElector">Wins duties for steps that require an exclusive capability.</param>
+  /// <param name="pendingWork">
+  /// Durable duty work. When configured, a <see cref="NonHolderBehavior.Skip"/> step this instance
+  /// skipped because another instance holds the duty is OWED to that duty, and whichever instance
+  /// holds it runs the step (#966). The framework's null default owes nothing, and a skipped step
+  /// simply does not run here.
+  /// </param>
+  /// <exception cref="ArgumentNullException"><paramref name="steps"/> or <paramref name="pendingWork"/> is <see langword="null"/>.</exception>
+  public StartupPipelineRunner(
+      IReadOnlyList<IStartupStep> steps,
+      IReadOnlyList<IStartupStepObserver> observers,
       IDutyElector dutyElector,
-      IPendingDutyWorkStore? pendingWork = null) {
+      IPendingDutyWorkStore pendingWork) {
     ArgumentNullException.ThrowIfNull(steps);
+    ArgumentNullException.ThrowIfNull(pendingWork);
     _steps = steps;
     _observers = observers;
     _dutyElector = dutyElector;
@@ -282,7 +296,7 @@ public sealed class StartupPipelineRunner {
   /// effort: failing to owe it leaves the step exactly as skipped as it was before owing existed.
   /// </summary>
   private async ValueTask<string> _oweAsync(StartupStepDescriptor descriptor, CancellationToken cancellationToken) {
-    if (_pendingWork is null) {
+    if (!_pendingWork.IsConfigured) {
       return "";
     }
     try {

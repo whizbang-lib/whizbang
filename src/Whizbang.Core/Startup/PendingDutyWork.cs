@@ -41,6 +41,10 @@ public enum DutyWorkCompletion {
 /// </summary>
 /// <docs>proposals/duty-role-assignment</docs>
 public interface IPendingDutyWorkStore {
+  /// <summary>True when a real store is registered. The framework's null default returns false, so a
+  /// caller does not report work as owed when nothing would ever run it.</summary>
+  bool IsConfigured => true;
+
   /// <summary>Records that <paramref name="workKey"/> is owed to the holder of <paramref name="role"/>. Idempotent.</summary>
   /// <param name="role">The role.</param>
   /// <param name="workKey">What is owed.</param>
@@ -116,4 +120,36 @@ public interface IDutyWorkHandler {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Whether the work is done.</returns>
   ValueTask<DutyWorkResult> RunAsync(IDutyGrant grant, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// The framework's null default for <see cref="IPendingDutyWorkStore"/>: reports
+/// <see cref="IPendingDutyWorkStore.IsConfigured"/> false and owes nothing, so a skipped duty step
+/// is simply skipped, exactly as before owed work existed. Role assignment supplies the real store.
+/// </summary>
+/// <docs>proposals/duty-role-assignment</docs>
+/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineRunnerOweTests.cs</tests>
+public sealed class NullPendingDutyWorkStore : IPendingDutyWorkStore, INullDefault {
+  private NullPendingDutyWorkStore() { }
+
+  /// <summary>The shared instance.</summary>
+  public static NullPendingDutyWorkStore Instance { get; } = new();
+
+  /// <inheritdoc />
+  public bool IsConfigured => false;
+
+  /// <inheritdoc />
+  public Task OweAsync(string role, string workKey, CancellationToken cancellationToken) => Task.CompletedTask;
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<PendingDutyWork>> ListOwedAsync(string role, CancellationToken cancellationToken) =>
+    Task.FromResult<IReadOnlyList<PendingDutyWork>>([]);
+
+  /// <inheritdoc />
+  public Task<DutyWorkCompletion> CompleteAsync(PendingDutyWork work, IDutyGrant grant, CancellationToken cancellationToken) =>
+    throw new InvalidOperationException("No pending duty work store is registered, so no work is owed; check IsConfigured before calling.");
+
+  /// <inheritdoc />
+  public Task<bool> RecordFailureAsync(PendingDutyWork work, IDutyGrant grant, string failure, CancellationToken cancellationToken) =>
+    throw new InvalidOperationException("No pending duty work store is registered, so no work is owed; check IsConfigured before calling.");
 }

@@ -61,7 +61,9 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   /// <param name="handlers">What runs each kind of owed work.</param>
   /// <param name="options">Role-assignment tuning; only roles it manages are held here.</param>
   /// <param name="logger">Logger.</param>
-  /// <param name="notify">Optional shared notify connection, for release announcements.</param>
+  /// <param name="notify">The shared notify connection, for release announcements. Required, and
+  /// null only by an explicit choice: without it a hand-off waits for the next pass instead of
+  /// waking one.</param>
   /// <param name="metrics">Optional meters.</param>
   /// <param name="timeProvider">Optional clock for the pass cadence.</param>
 #pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam
@@ -71,7 +73,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
       IEnumerable<IDutyWorkHandler> handlers,
       IOptions<RoleAssignmentOptions> options,
       ILogger<DutyHolderWorker> logger,
-      ISharedNotifyConnection? notify = null,
+      ISharedNotifyConnection? notify,
       RoleAssignmentMetrics? metrics = null,
       TimeProvider? timeProvider = null) {
 #pragma warning restore S107

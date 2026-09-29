@@ -80,7 +80,7 @@ public class PendingDutyWorkE2ETests : EFCoreTestBase {
     new(_notification(), Options.Create(new RoleAssignmentOptions()), _config(), pod);
 
   private DutyHolderWorker _workerFor(Pod pod, IDutyElector elector, params IDutyWorkHandler[] handlers) => new(
-    elector, _storeFor(pod), handlers, Options.Create(new RoleAssignmentOptions()), NullLogger<DutyHolderWorker>.Instance);
+    elector, _storeFor(pod), handlers, Options.Create(new RoleAssignmentOptions()), NullLogger<DutyHolderWorker>.Instance, notify: null);
 
   private async Task<Pod> _joinAsync(CancellationToken ct) {
     var pod = new Pod();

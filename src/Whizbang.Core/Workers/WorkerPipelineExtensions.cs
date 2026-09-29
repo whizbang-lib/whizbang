@@ -219,8 +219,8 @@ public static class WorkerPipelineExtensions {
       // duty degrades to a shared capability — survivable only because the framework's exclusive
       // steps are individually idempotent and separately guarded.
       sp.GetRequiredService<Whizbang.Core.Startup.IDutyElector>(),
-      // Registered only with role assignment: a skipped duty step is then owed to the holder.
-      sp.GetService<Whizbang.Core.Startup.IPendingDutyWorkStore>()));
+      // The null default owes nothing; with role assignment a skipped duty step is owed to the holder.
+      sp.GetRequiredService<Whizbang.Core.Startup.IPendingDutyWorkStore>()));
     services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineWorker>());
 
