@@ -74,10 +74,12 @@ public class DapperCollectiveUnitTests {
   }
 
   [Test]
-  public async Task ScopeFilter_GreaterThan_ThrowsNotSupportedAsync() {
+  public async Task ScopeFilter_GreaterThan_CompilesToANumericComparisonAsync() {
+    // Once refused; ordering comparisons are supported now (#965), reading the key as a number.
     Expression<Func<PerspectiveRow<JobModel>, bool>> filter = row => row.Data.ViewCount > 5;
-    await Assert.That(() => CollectivePredicateSqlCompiler<JobModel>.Compile(filter))
-      .Throws<NotSupportedException>();
+    var result = CollectivePredicateSqlCompiler<JobModel>.Compile(filter);
+    await Assert.That(result.SqlFragment).IsEqualTo("(data->>'ViewCount')::numeric > @where_viewcount");
+    await Assert.That(result.Parameters["where_viewcount"]).IsEqualTo(5L);
   }
 
   [Test]
