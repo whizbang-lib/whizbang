@@ -39,7 +39,7 @@ public class DapperPerspectiveStorePhysicalFieldTests : PostgresTestBase {
         id UUID PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         scope JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), version INT NOT NULL DEFAULT 1,
-        name TEXT, amount DECIMAL, placed_at TIMESTAMPTZ, tier TEXT, location POINT, owner_id UUID);
+        name TEXT, amount DECIMAL, placed_at TIMESTAMPTZ, tier INTEGER, location POINT, owner_id UUID);
       """, conn);
     await cmd.ExecuteNonQueryAsync();
     _jsonOptions = new JsonSerializerOptions {
@@ -64,7 +64,7 @@ public class DapperPerspectiveStorePhysicalFieldTests : PostgresTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand(
-      $"SELECT name, amount, placed_at, tier, location::text, owner_id, metadata ->> 'EventType' FROM {TABLE_NAME} WHERE id = @id", conn);
+      $"SELECT name, amount, placed_at, tier::text, location::text, owner_id, metadata ->> 'EventType' FROM {TABLE_NAME} WHERE id = @id", conn);
     cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
@@ -87,7 +87,8 @@ public class DapperPerspectiveStorePhysicalFieldTests : PostgresTestBase {
     await Assert.That(row.Amount).IsEqualTo(12.5m);
     await Assert.That(row.PlacedAt).IsEqualTo(placedAt)
       .Because("an offset instant is stored as the same instant");
-    await Assert.That(row.Tier).IsEqualTo("Gold");
+    await Assert.That(row.Tier).IsEqualTo("1")
+      .Because("an enumeration is stored as its underlying number");
     await Assert.That(row.Location).IsEqualTo("(1,2)")
       .Because("a value the driver cannot send natively (a vector) is sent as text and parsed by the column's type");
     await Assert.That(row.Owner).IsEqualTo(owner);
@@ -106,7 +107,7 @@ public class DapperPerspectiveStorePhysicalFieldTests : PostgresTestBase {
     var row = await _readAsync(id);
     await Assert.That(row.Name).IsEqualTo("second");
     await Assert.That(row.Amount).IsEqualTo(2m);
-    await Assert.That(row.Tier).IsEqualTo("Gold");
+    await Assert.That(row.Tier).IsEqualTo("1");
     await Assert.That(row.Location).IsEqualTo("(3,4)");
     await Assert.That(row.Owner).IsNull().Because("a property that became null clears its column");
   }

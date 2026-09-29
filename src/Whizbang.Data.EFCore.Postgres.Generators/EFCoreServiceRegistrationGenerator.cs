@@ -924,7 +924,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         VectorIndexType: null,
         VectorIndexLists: null,
         ColumnType: columnType,
-        IsSearch: isSearch
+        IsSearch: isSearch,
+        EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type)
     );
   }
 
@@ -1220,7 +1221,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Map .NET types to PostgreSQL types
     // The TypeName is fully qualified with global:: prefix
-    var typeName = field.TypeName
+    // An enumeration is stored as its underlying number, so its column is typed from that scalar.
+    var typeName = (field.EnumScalarType ?? field.TypeName)
         .Replace(PLACEHOLDER_GLOBAL, "")
         .TrimEnd('?'); // Remove nullable suffix
 
@@ -3092,7 +3094,30 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       if (PhysicalColumnSql.Backfill(table, field) is { } backfill) {
         sb.AppendLine(backfill);
       }
+      _appendEnumTextColumnWarning(sb, table, field);
     }
+  }
+
+  /// <summary>
+  /// An enumeration in a physical column is stored as its underlying number. A column created before that, as
+  /// text holding the enum's names, is never altered here: the schema pass raises a warning naming the column and
+  /// the migration to run, and leaves the column as it is.
+  /// </summary>
+  private static void _appendEnumTextColumnWarning(StringBuilder sb, string table, PhysicalFieldInfo field) {
+    if (field.EnumScalarType is null || !string.IsNullOrWhiteSpace(field.ColumnType)) {
+      return;
+    }
+    var type = _getPostgresColumnType(field);
+    var literalTable = table.Replace("'", "''");
+    sb.AppendLine("DO $$ BEGIN");
+    sb.AppendLine($"  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('{literalTable}')");
+    sb.AppendLine($"    AND attname = '{field.ColumnName}' AND NOT attisdropped AND atttypid IN ('text'::regtype, 'varchar'::regtype)) THEN");
+    sb.AppendLine($"    RAISE WARNING 'Whizbang: column {field.ColumnName} of {literalTable} holds the enumeration {field.PropertyName} as text, "
+      + $"but an enumeration in a physical column is now stored as its underlying number, and writes to this column fail until it is migrated. The column is left unchanged. "
+      + $"Migrate it with ALTER TABLE {literalTable} ALTER COLUMN {field.ColumnName} TYPE {type} USING (CASE {field.ColumnName} WHEN ''<name>'' THEN <number> ... END), "
+      + "mapping each stored name to its number.';");
+    sb.AppendLine("  END IF;");
+    sb.AppendLine("END $$;");
   }
 
   /// <summary>

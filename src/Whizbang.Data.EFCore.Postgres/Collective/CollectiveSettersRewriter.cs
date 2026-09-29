@@ -67,13 +67,13 @@ internal static class CollectiveSettersRewriter {
   /// <c>CollectiveElementUpsertSql.ValueSql(PathName, ElementKey, …)</c> instead of the value itself.
   /// </para>
   /// <para>
-  /// <see cref="Value"/> is the unserialized value (the comparison's constant for a computed setter) and
-  /// <see cref="PropertyType"/> the target property's declared type: a setter whose target, or whose compared
-  /// property, is a <c>[PhysicalField]</c> binds the column with the CLR value as a typed parameter.
+  /// <see cref="Value"/> is the unserialized value (the comparison's constant for a computed setter): a setter
+  /// whose target, or whose compared property, is a <c>[PhysicalField]</c> binds the column from it as a typed
+  /// parameter.
   /// </para>
   /// </remarks>
   public sealed record CollectiveSetterAssignment(
-    string PathName, string JsonValue, bool IsNull, Type PropertyType, object? Value,
+    string PathName, string JsonValue, bool IsNull, object? Value,
     CollectiveComputedComparison? Comparison = null, string? ElementKey = null);
 
   /// <summary>
@@ -82,7 +82,7 @@ internal static class CollectiveSettersRewriter {
   /// (constant) <c>JsonValue</c>, wrapped by the adapter as
   /// <c>to_jsonb((data-&gt;'ComparedProperty')::jsonb &lt;op&gt; @value::jsonb)</c>. Null for constant setters.
   /// </summary>
-  public sealed record CollectiveComputedComparison(string ComparedProperty, string SqlOperator, Type ComparedType);
+  public sealed record CollectiveComputedComparison(string ComparedProperty, string SqlOperator);
 
   /// <summary>
   /// Walk the spec setters and return each top-level assignment as (property name, JSON-serialized value,
@@ -110,7 +110,7 @@ internal static class CollectiveSettersRewriter {
       var valueType = a.Value?.GetType() ?? (a.Comparison is null ? a.Property.PropertyType : typeof(object));
       var json = JsonSerializer.Serialize(a.Value, valueType, _persistenceJsonOptions);
       result.Add(new CollectiveSetterAssignment(
-        a.Property.Name, json, a.Value is null && a.Comparison is null, a.Property.PropertyType, a.Value, a.Comparison, a.ElementKey));
+        a.Property.Name, json, a.Value is null && a.Comparison is null, a.Value, a.Comparison, a.ElementKey));
     }
     return result;
   }
@@ -127,7 +127,7 @@ internal static class CollectiveSettersRewriter {
     foreach (var setter in setters) {
       var valueType = setter.Value?.GetType() ?? setter.PropertyType;
       var json = JsonSerializer.Serialize(setter.Value, valueType, _persistenceJsonOptions);
-      result.Add(new CollectiveSetterAssignment(setter.PropertyName, json, setter.Value is null, setter.PropertyType, setter.Value));
+      result.Add(new CollectiveSetterAssignment(setter.PropertyName, json, setter.Value is null, setter.Value));
     }
     return result;
   }
@@ -149,9 +149,8 @@ internal static class CollectiveSettersRewriter {
           Visit(node.Object);
         }
         var collection = _extractScalarProperty(_unwrapLambda(node.Arguments[0]));
-        if (CollectivePhysicalColumns.Resolve(modelType, collection.Name, collection.PropertyType) is not null) {
-          throw new NotSupportedException(
-            $"UpsertElement on {modelType.Name}.{collection.Name} targets a physical column; a keyed array is only supported in the document.");
+        if (CollectivePhysicalColumns.Resolve(modelType, collection.Name) is { } column) {
+          CollectivePhysicalColumns.EnsureKeyedArrayColumn(modelType, column);
         }
         var key = _elementMemberName(_unwrapLambda(node.Arguments[1]));
         var element = _evaluateValue(node.Arguments[2])
@@ -206,7 +205,7 @@ internal static class CollectiveSettersRewriter {
       if (lambda.Body is BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } bin
           && _tryComparedProperty(bin.Left) is { } comparedProperty) {
         var op = bin.NodeType == ExpressionType.Equal ? "=" : "<>";
-        return (new CollectiveComputedComparison(comparedProperty.Name, op, comparedProperty.PropertyType), _evaluateValue(_stripConvert(bin.Right)));
+        return (new CollectiveComputedComparison(comparedProperty.Name, op), _evaluateValue(_stripConvert(bin.Right)));
       }
       throw new NotSupportedException(
         "CollectiveSettersRewriter supports computed SetProperty only as a property-vs-constant comparison " +

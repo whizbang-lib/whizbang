@@ -45,7 +45,10 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Lane), "lane", FieldStorageMode.Split);
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Priority), "prio", FieldStorageMode.Split);
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Urgent), "urgent", FieldStorageMode.Split);
-    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Tags), "tags", FieldStorageMode.Split);
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Tags), "tags", FieldStorageMode.Split, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Notes), "notes", FieldStorageMode.Split);
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Kind), "kind", FieldStorageMode.Split, scalarType: typeof(int));
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Embedding), "embedding", FieldStorageMode.Split, isVector: true);
     PerspectivePhysicalFieldRegistry.Register(typeof(OrderModel), nameof(OrderModel.Priority), "priority", FieldStorageMode.Extracted);
     PerspectivePhysicalFieldRegistry.Register(typeof(OrderModel), nameof(OrderModel.Flagged), "flagged", FieldStorageMode.Extracted);
   }
@@ -189,13 +192,115 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
   }
 
   [Test]
-  public async Task Apply_UpsertElementOnAPhysicalField_ThrowsNotSupportedAsync() {
+  public async Task Apply_UpsertElementOnANonJsonbPhysicalField_ThrowsNotSupportedAsync() {
     var tag = new TicketTag { Key = "k" };
-    var spec = new TicketSpec(s => s.UpsertElement(t => t.Tags, x => x.Key, tag));
+    var spec = new TicketSpec(s => s.UpsertElement(t => t.Notes, x => x.Key, tag));
 
     await Assert.That(async () => await _applyTicketAsync(spec, "t-A")).Throws<NotSupportedException>()
-      .WithMessageContaining("targets a physical column")
-      .Because("A keyed array lives in the document; a physical column holding one cannot be upserted element-wise.");
+      .WithMessageContaining("jsonb")
+      .Because("Keyed elements need a jsonb column; any other column type cannot hold an element with a key member.");
+  }
+
+  // ── Enumerations: stored as their underlying number ───────────────────────────────────────────
+
+  [Test]
+  public async Task Apply_EnumSetter_WritesTheUnderlyingNumberToTheColumnAsync() {
+    var id = Guid.NewGuid();
+    await _runnerWriteTicketAsync(id, "t-A", new TicketModel { Lane = "cold", Kind = TicketKind.Task });
+    var before = await _documentAsync(SPLIT_TABLE, id);
+
+    await _applyTicketAsync(new TicketSpec(s => s.SetProperty(t => t.Kind, TicketKind.Bug)), "t-A");
+
+    await using var conn = await _openAsync();
+    await Assert.That(await conn.QuerySingleAsync<int>($"SELECT kind FROM {SPLIT_TABLE} WHERE id = @id", new { id })).IsEqualTo(1);
+    await Assert.That((await _documentAsync(SPLIT_TABLE, id)).Text).IsEqualTo(before.Text);
+  }
+
+  [Test]
+  public async Task Apply_WhereOnAnEnumPhysicalField_ComparesTheNumberAsync() {
+    var bug = Guid.NewGuid();
+    var task = Guid.NewGuid();
+    await _runnerWriteTicketAsync(bug, "t-A", new TicketModel { Kind = TicketKind.Bug, Title = "a" });
+    await _runnerWriteTicketAsync(task, "t-A", new TicketModel { Kind = TicketKind.Task, Title = "b" });
+
+    var affected = await _applyTicketAsync(
+      new TicketSpec(s => s.SetProperty(t => t.Title, "Triaged"), r => r.Data.Kind == TicketKind.Bug), "t-A");
+
+    await Assert.That(affected).IsEqualTo(1);
+    await using var conn = await _openAsync();
+    await Assert.That(await conn.QuerySingleAsync<string>($"SELECT data->>'Title' FROM {SPLIT_TABLE} WHERE id = @id", new { id = bug }))
+      .IsEqualTo("Triaged");
+  }
+
+  // ── Vectors ───────────────────────────────────────────────────────────────────────────────────
+
+  [Test]
+  public async Task Apply_VectorSetter_WritesTheVectorColumnAsync() {
+    var id = Guid.NewGuid();
+    await _runnerWriteTicketAsync(id, "t-A", new TicketModel { Embedding = [0f, 0f, 0f] });
+    var embedding = new[] { 1f, 2.5f, -3f };
+
+    await _applyTicketAsync(new TicketSpec(s => s.SetProperty(t => t.Embedding, embedding)), "t-A");
+
+    await using var conn = await _openAsync();
+    await Assert.That(await conn.QuerySingleAsync<string>($"SELECT embedding::text FROM {SPLIT_TABLE} WHERE id = @id", new { id }))
+      .IsEqualTo("[1,2.5,-3]");
+  }
+
+  // ── Keyed arrays in a jsonb column ────────────────────────────────────────────────────────────
+
+  [Test]
+  public async Task Apply_UpsertElementOnAPhysicalJsonbArray_UpsertsInTheColumnAsync() {
+    var id = Guid.NewGuid();
+    await _runnerWriteTicketAsync(id, "t-A", new TicketModel {
+      Tags = [new TicketTag { Key = "a", Label = "old" }, new TicketTag { Key = "b", Label = "keep" }],
+    });
+    var before = await _documentAsync(SPLIT_TABLE, id);
+    var replacement = new TicketTag { Key = "a", Label = "new" };
+    var added = new TicketTag { Key = "c", Label = "added" };
+
+    await _applyTicketAsync(new TicketSpec(s => s
+      .UpsertElement(t => t.Tags, x => x.Key, replacement)
+      .UpsertElement(t => t.Tags, x => x.Key, added)), "t-A");
+
+    await using var conn = await _openAsync();
+    var tags = await conn.QuerySingleAsync<string>(
+      $"SELECT jsonb_path_query_array(tags, '$[*].Label')::text FROM {SPLIT_TABLE} WHERE id = @id", new { id });
+    await Assert.That(tags).IsEqualTo("[\"new\", \"keep\", \"added\"]")
+      .Because("The matching element is replaced where it stands and a new key is appended, in the column.");
+    await Assert.That((await _documentAsync(SPLIT_TABLE, id)).Text).IsEqualTo(before.Text);
+  }
+
+  [Test]
+  public async Task Replay_MatchesLive_ForEnumVectorAndKeyedArrayAsync() {
+    var live = Guid.NewGuid();
+    var replayed = Guid.NewGuid();
+    TicketModel PreState() => new() {
+      Kind = TicketKind.Task,
+      Embedding = [0f, 0f, 0f],
+      Tags = [new TicketTag { Key = "a", Label = "old" }],
+      Title = "t",
+    };
+    await _runnerWriteTicketAsync(live, "t-A", PreState());
+    await _runnerWriteTicketAsync(replayed, "t-B", PreState());
+    var embedding = new[] { 0.5f, 1f, 1.5f };
+    var tag = new TicketTag { Key = "a", Label = "new" };
+    var spec = new TicketSpec(
+      s => s.SetProperty(t => t.Kind, TicketKind.Bug).SetProperty(t => t.Embedding, embedding)
+        .UpsertElement(t => t.Tags, x => x.Key, tag),
+      r => r.Data.Kind == TicketKind.Task);
+
+    await _applyTicketAsync(spec, "t-A");
+    var model = (TicketModel)new CollectiveInMemoryExecutor<TicketModel>().ApplyToRow(spec, PreState(), replayed);
+    await _runnerWriteTicketAsync(replayed, "t-B", model);
+
+    await using var conn = await _openAsync();
+    var same = await conn.QuerySingleAsync<bool>($"""
+      SELECT (SELECT (kind, embedding::text, tags, data) FROM {SPLIT_TABLE} WHERE id = @live)
+           = (SELECT (kind, embedding::text, tags, data) FROM {SPLIT_TABLE} WHERE id = @replayed)
+      """, new { live, replayed });
+    await Assert.That(same).IsTrue()
+      .Because("The enum number, the vector and the keyed array must come out the same live and replayed.");
   }
 
   // ── Replay equals live ────────────────────────────────────────────────────────────────────────
@@ -256,12 +361,18 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     [PhysicalField(ColumnName = "prio")] public int Priority { get; set; }
     [PhysicalField] public bool Urgent { get; set; }
     [PhysicalField(ColumnType = "jsonb")] public List<TicketTag>? Tags { get; set; }
+    [PhysicalField] public List<TicketTag>? Notes { get; set; }
+    [PhysicalField] public TicketKind Kind { get; set; }
+    [VectorField(3)] public float[]? Embedding { get; set; }
     public string Title { get; set; } = "";
     public bool IsHot { get; set; }
   }
 
-  internal sealed class TicketTag {
+  public enum TicketKind { Task, Bug }
+
+  public sealed class TicketTag {
     public string Key { get; set; } = "";
+    public string Label { get; set; } = "";
   }
 
   [PerspectiveStorage(FieldStorageMode.Extracted)]
@@ -308,9 +419,19 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
   private async Task _runnerWriteTicketAsync(Guid id, string tenant, TicketModel model) {
     // Generated for a Split model: the physical values go to their columns, the document holds the defaults.
     var physicalFieldValues = new Dictionary<string, object?> {
-      { "lane", model.Lane }, { "prio", model.Priority }, { "urgent", model.Urgent },
+      { "lane", model.Lane }, { "prio", model.Priority }, { "urgent", model.Urgent }, { "kind", model.Kind },
+      { "embedding", model.Embedding != null ? new Pgvector.Vector(model.Embedding) : null }, { "tags", model.Tags },
     };
-    var document = new TicketModel { Lane = default!, Priority = default!, Urgent = default!, Title = model.Title, IsHot = model.IsHot };
+    var document = new TicketModel {
+      Lane = default!,
+      Priority = default!,
+      Urgent = default!,
+      Kind = default!,
+      Embedding = System.Array.Empty<float>(),
+      Tags = default!,
+      Title = model.Title,
+      IsHot = model.IsHot,
+    };
     await _upsertAsync(SPLIT_TABLE, id, tenant, document, physicalFieldValues);
   }
 
@@ -367,14 +488,18 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     // Reflection-based options: the fixture models are nested test types no generated JSON context covers.
     dataSourceBuilder.ConfigureJsonOptions(new System.Text.Json.JsonSerializerOptions());
     dataSourceBuilder.EnableDynamicJson();
+    dataSourceBuilder.UseVector();
     _dataSource = dataSourceBuilder.Build();
 
     await using var conn = await _openAsync();
+    await conn.ExecuteAsync("CREATE EXTENSION IF NOT EXISTS vector");
+    await conn.ReloadTypesAsync();
     await conn.ExecuteAsync($"""
       CREATE TABLE {SPLIT_TABLE} (
         id UUID PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL, scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, version INTEGER NOT NULL,
-        lane TEXT, prio INTEGER NOT NULL DEFAULT 0, urgent BOOLEAN NOT NULL DEFAULT FALSE, tags JSONB);
+        lane TEXT, prio INTEGER NOT NULL DEFAULT 0, urgent BOOLEAN NOT NULL DEFAULT FALSE, tags JSONB,
+        kind INTEGER NOT NULL DEFAULT 0, embedding vector(3));
       CREATE TABLE {EXTRACTED_TABLE} (
         id UUID PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL, scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, version INTEGER NOT NULL,
@@ -403,7 +528,7 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
 
   private PhysicalDbContext _newContext() {
     var options = new DbContextOptionsBuilder<PhysicalDbContext>()
-      .UseNpgsql(_dataSource!)
+      .UseNpgsql(_dataSource!, o => o.UseVector())
       .AddInterceptors(new SqlCapture(_capturedSql))
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options;
@@ -417,6 +542,10 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
         e.Property<string?>("lane").HasColumnName("lane");
         e.Property<int>("prio").HasColumnName("prio");
         e.Property<bool>("urgent").HasColumnName("urgent");
+        // As the generator maps them: the enum as its number, the vector as pgvector, the array as jsonb.
+        e.Property<TicketKind>("kind").HasColumnName("kind").HasColumnType("integer").HasConversion<int>();
+        e.Property<Pgvector.Vector?>("embedding").HasColumnName("embedding").HasColumnType("vector(3)");
+        e.Property<List<TicketTag>?>("tags").HasColumnName("tags").HasColumnType("jsonb");
       });
       _mapRow<OrderModel>(modelBuilder, EXTRACTED_TABLE, e => {
         e.Property<int>("priority").HasColumnName("priority");

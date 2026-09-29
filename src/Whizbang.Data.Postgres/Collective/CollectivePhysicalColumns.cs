@@ -1,3 +1,4 @@
+using System.Linq;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.Postgres.Collective;
@@ -17,11 +18,9 @@ namespace Whizbang.Data.Postgres.Collective;
 /// writes the column and the document path in the same statement.
 /// </para>
 /// <para>
-/// The column value is bound as a typed parameter (the CLR value, which Npgsql types from its runtime type), the
-/// same way the per-event upsert binds physical values. Shapes a raw parameter cannot carry faithfully are
-/// refused with <see cref="NotSupportedException"/>: a vector field (its column form is a conversion the core data
-/// layer does not reference) and an enumeration (its column form depends on the conversion the store mapping
-/// chose).
+/// The column value is bound as a typed parameter, the same scalar the per-event upsert writes: an enumeration as
+/// its underlying number (<see cref="PerspectivePhysicalValues"/>), a vector in the driver's pgvector form, a
+/// keyed array in a jsonb column through the same upsert expression a document path uses.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
@@ -30,30 +29,62 @@ namespace Whizbang.Data.Postgres.Collective;
 public static class CollectivePhysicalColumns {
   /// <summary>
   /// The physical field a collective setter or condition on <paramref name="propertyName"/> targets, or null when
-  /// the property is a document path. Throws <see cref="NotSupportedException"/> for a physical field the collective
-  /// path cannot bind as a typed parameter.
+  /// the property is a document path.
   /// </summary>
   /// <param name="modelType">The model the property belongs to.</param>
   /// <param name="propertyName">The property.</param>
-  /// <param name="propertyType">The property's declared type, checked for shapes a raw parameter cannot carry.</param>
-  public static PerspectivePhysicalField? Resolve(Type modelType, string propertyName, Type propertyType) {
-    ArgumentNullException.ThrowIfNull(propertyType);
-    if (!PerspectivePhysicalFieldRegistry.TryResolve(modelType, propertyName, out var field)) {
-      return null;
-    }
+  public static PerspectivePhysicalField? Resolve(Type modelType, string propertyName) =>
+    PerspectivePhysicalFieldRegistry.TryResolve(modelType, propertyName, out var field) ? field : null;
+
+  /// <summary>
+  /// Refuses a vector column where a value is compared (a <c>Where</c> condition or a computed comparison):
+  /// equality over an embedding is not a meaningful cohort, and similarity search is not a collective shape.
+  /// </summary>
+  public static void EnsureComparable(Type modelType, PerspectivePhysicalField field) {
+    ArgumentNullException.ThrowIfNull(modelType);
     if (field.IsVector) {
       throw new NotSupportedException(
-        $"{modelType.Name}.{propertyName} is a [VectorField]. A collective cannot set or filter a vector column; " +
-        "write it through the perspective's per-event Apply instead.");
+        $"{modelType.Name}.{field.PropertyName} is a [VectorField]. A collective can set a vector column but cannot " +
+        "compare one; filter the cohort on another field.");
     }
-    if ((Nullable.GetUnderlyingType(propertyType) ?? propertyType).IsEnum) {
-      throw new NotSupportedException(
-        $"{modelType.Name}.{propertyName} is an enumeration stored in a physical column. Its column form depends on " +
-        "the store's value conversion, which a collective's raw parameter does not apply; write it through the " +
-        "perspective's per-event Apply, or keep the field in the document.");
-    }
-    return field;
   }
+
+  /// <summary>
+  /// Refuses a keyed-array upsert into a column that is not <c>jsonb</c>: only a jsonb column holds elements with
+  /// a key member (a native array holds scalars, which have none).
+  /// </summary>
+  public static void EnsureKeyedArrayColumn(Type modelType, PerspectivePhysicalField field) {
+    ArgumentNullException.ThrowIfNull(modelType);
+    if (!field.IsJsonbColumn) {
+      throw new NotSupportedException(
+        $"UpsertElement on {modelType.Name}.{field.PropertyName} targets a physical column that is not jsonb. Keyed " +
+        "elements need a jsonb column: declare it with [PhysicalField(ColumnType = \"jsonb\")], or keep the array in the document.");
+    }
+  }
+
+  /// <summary>
+  /// The value a physical column is bound with: an enumeration becomes its underlying number (the registered
+  /// scalar), the same scalar the per-event upsert writes; anything else is bound as it is. An enumeration in a
+  /// column whose type the author declared is refused, since its stored form is then the author's choice.
+  /// </summary>
+  public static object? ColumnValue(PerspectivePhysicalField field, object? value) {
+    if (value is Enum && !string.IsNullOrWhiteSpace(field.ColumnType)) {
+      throw new NotSupportedException(
+        $"{field.PropertyName} is an enumeration in a column declared as {field.ColumnType}. A collective stores an " +
+        "enumeration as its underlying number and cannot know the declared column's form; write it through the " +
+        "perspective's per-event Apply.");
+    }
+    return PerspectivePhysicalValues.ToColumnScalar(value, field.ScalarType);
+  }
+
+  /// <summary>
+  /// A vector's text form, <c>[1,2.5,-3]</c>, as pgvector parses it and as its client library prints it. Used where
+  /// the driver sends the vector as text for the column to parse (the Dapper path).
+  /// </summary>
+  public static string? VectorText(float[]? vector) =>
+    vector is null
+      ? null
+      : "[" + string.Join(",", vector.Select(v => v.ToString(System.Globalization.CultureInfo.InvariantCulture))) + "]";
 
   /// <summary>A column name as a quoted Postgres identifier.</summary>
   public static string Quote(string column) {

@@ -31,8 +31,15 @@ public class DapperCollectivePhysicalColumnIntegrationTests : PostgresTestBase {
     // What the perspective runner's [ModuleInitializer] registers for these models.
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Lane), "lane", FieldStorageMode.Split);
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Priority), "prio", FieldStorageMode.Split);
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Kind), "kind", FieldStorageMode.Split, scalarType: typeof(int));
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Embedding), "embedding", FieldStorageMode.Split, isVector: true);
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Tags), "tags", FieldStorageMode.Split, columnType: "jsonb");
     PerspectivePhysicalFieldRegistry.Register(typeof(OrderModel), nameof(OrderModel.Priority), "priority", FieldStorageMode.Extracted);
   }
+
+  private static readonly System.Text.Json.JsonSerializerOptions _storeJson = new() {
+    TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),
+  };
 
   [Test]
   public async Task Apply_PhysicalOnlySetter_UpdatesTheColumn_AndLeavesDataByteIdenticalAsync() {
@@ -124,14 +131,122 @@ public class DapperCollectivePhysicalColumnIntegrationTests : PostgresTestBase {
     await Assert.That(same).IsTrue();
   }
 
+  [Test]
+  public async Task Apply_EnumSetterAndPredicate_UseTheUnderlyingNumberAsync() {
+    await _createTablesAsync();
+    var bug = Guid.NewGuid();
+    var task = Guid.NewGuid();
+    await _runnerWriteAsync(bug, "t-A", new TicketModel { Kind = TicketKind.Bug, Title = "a" });
+    await _runnerWriteAsync(task, "t-A", new TicketModel { Kind = TicketKind.Task, Title = "b" });
+
+    var affected = await _applyAsync(
+      new TicketSpec(s => s.SetProperty(t => t.Kind, TicketKind.Task).SetProperty(t => t.Title, "Demoted"), r => r.Data.Kind == TicketKind.Bug), "t-A");
+
+    await Assert.That(affected).IsEqualTo(1);
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    var (kind, title) = await conn.QuerySingleAsync<(int, string)>($"SELECT kind, data->>'Title' FROM {SPLIT_TABLE} WHERE id = @id", new { id = bug });
+    await Assert.That(kind).IsEqualTo(0);
+    await Assert.That(title).IsEqualTo("Demoted");
+  }
+
+  [Test]
+  public async Task Store_EnumPhysicalField_IsWrittenAsItsNumberAsync() {
+    await _createTablesAsync();
+    var id = Guid.NewGuid();
+
+    await _runnerWriteAsync(id, "t-A", new TicketModel { Kind = TicketKind.Bug });
+
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    await Assert.That(await conn.QuerySingleAsync<int>($"SELECT kind FROM {SPLIT_TABLE} WHERE id = @id", new { id })).IsEqualTo(1)
+      .Because("The per-event write stores an enum column as the same number the collective binds.");
+  }
+
+  [Test]
+  public async Task Apply_VectorSetter_WritesTheVectorColumnAsync() {
+    await _createTablesAsync();
+    var id = Guid.NewGuid();
+    await _runnerWriteAsync(id, "t-A", new TicketModel { Embedding = [0f, 0f, 0f] });
+    var embedding = new[] { 1f, 2.5f, -3f };
+
+    await _applyAsync(new TicketSpec(s => s.SetProperty(t => t.Embedding, embedding)), "t-A");
+
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    await Assert.That(await conn.QuerySingleAsync<string>($"SELECT embedding::text FROM {SPLIT_TABLE} WHERE id = @id", new { id }))
+      .IsEqualTo("[1,2.5,-3]");
+  }
+
+  [Test]
+  public async Task Apply_UpsertElementOnAPhysicalJsonbArray_UpsertsInTheColumnAsync() {
+    await _createTablesAsync();
+    var id = Guid.NewGuid();
+    await _runnerWriteAsync(id, "t-A", new TicketModel {
+      Tags = [new TicketTag { Key = "a", Label = "old" }, new TicketTag { Key = "b", Label = "keep" }],
+    });
+    var before = await _documentAsync(SPLIT_TABLE, id);
+    var replacement = new TicketTag { Key = "a", Label = "new" };
+
+    await _applyAsync(new TicketSpec(s => s.UpsertElement(t => t.Tags, x => x.Key, replacement)), "t-A");
+
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    var labels = await conn.QuerySingleAsync<string>(
+      $"SELECT jsonb_path_query_array(tags, '$[*].Label')::text FROM {SPLIT_TABLE} WHERE id = @id", new { id });
+    await Assert.That(labels).IsEqualTo("[\"new\", \"keep\"]");
+    await Assert.That(await _documentAsync(SPLIT_TABLE, id)).IsEqualTo(before);
+  }
+
+  [Test]
+  public async Task Replay_MatchesLive_ForEnumVectorAndKeyedArrayAsync() {
+    await _createTablesAsync();
+    var live = Guid.NewGuid();
+    var replayed = Guid.NewGuid();
+    TicketModel PreState() => new() {
+      Kind = TicketKind.Task,
+      Embedding = [0f, 0f, 0f],
+      Tags = [new TicketTag { Key = "a", Label = "old" }],
+      Title = "t",
+    };
+    await _runnerWriteAsync(live, "t-A", PreState());
+    await _runnerWriteAsync(replayed, "t-B", PreState());
+    var embedding = new[] { 0.5f, 1f, 1.5f };
+    var tag = new TicketTag { Key = "a", Label = "new" };
+    var spec = new TicketSpec(
+      s => s.SetProperty(t => t.Kind, TicketKind.Bug).SetProperty(t => t.Embedding, embedding)
+        .UpsertElement(t => t.Tags, x => x.Key, tag),
+      r => r.Data.Kind == TicketKind.Task);
+
+    await _applyAsync(spec, "t-A");
+    var model = (TicketModel)new CollectiveInMemoryExecutor<TicketModel>().ApplyToRow(spec, PreState(), replayed);
+    await _runnerWriteAsync(replayed, "t-B", model);
+
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    var same = await conn.QuerySingleAsync<bool>($"""
+      SELECT (SELECT (kind, embedding::text, tags, data) FROM {SPLIT_TABLE} WHERE id = @live)
+           = (SELECT (kind, embedding::text, tags, data) FROM {SPLIT_TABLE} WHERE id = @replayed)
+      """, new { live, replayed });
+    await Assert.That(same).IsTrue();
+  }
+
   // ── Fixtures ──────────────────────────────────────────────────────────────────────────────────
 
   [PerspectiveStorage(FieldStorageMode.Split)]
   internal sealed class TicketModel {
     [PhysicalField] public string? Lane { get; set; }
     [PhysicalField(ColumnName = "prio")] public int Priority { get; set; }
+    [PhysicalField] public TicketKind Kind { get; set; }
+    // A [VectorField] in the real model; the attribute is left off here because it requires the pgvector EF Core
+    // package this Dapper project does not reference. The registration above marks it a vector exactly as the
+    // runner would.
+    public float[]? Embedding { get; set; }
+    [PhysicalField(ColumnType = "jsonb")] public List<TicketTag>? Tags { get; set; }
     public string Title { get; set; } = "";
     public bool IsHot { get; set; }
+  }
+
+  internal enum TicketKind { Task, Bug }
+
+  internal sealed class TicketTag {
+    public string Key { get; set; } = "";
+    public string Label { get; set; } = "";
   }
 
   [PerspectiveStorage(FieldStorageMode.Extracted)]
@@ -166,11 +281,13 @@ public class DapperCollectivePhysicalColumnIntegrationTests : PostgresTestBase {
 
   private async Task _createTablesAsync() {
     using var conn = await ConnectionFactory.CreateConnectionAsync();
+    await conn.ExecuteAsync("CREATE EXTENSION IF NOT EXISTS vector");
     await conn.ExecuteAsync($"""
       CREATE TABLE {SPLIT_TABLE} (
         id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb, scope jsonb NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-        version bigint NOT NULL DEFAULT 1, lane text, prio integer NOT NULL DEFAULT 0);
+        version bigint NOT NULL DEFAULT 1, lane text, prio integer NOT NULL DEFAULT 0,
+        kind integer NOT NULL DEFAULT 0, embedding vector(3), tags jsonb);
       CREATE TABLE {EXTRACTED_TABLE} (
         id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb, scope jsonb NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
@@ -178,14 +295,23 @@ public class DapperCollectivePhysicalColumnIntegrationTests : PostgresTestBase {
       """);
   }
 
-  // Written the way the generated runner writes a Split model: values to the columns, defaults in the document.
-  private async Task _writeTicketAsync(Guid id, string tenant, string? lane, int priority, string title, bool isHot = false) {
-    using var conn = await ConnectionFactory.CreateConnectionAsync();
-    var data = System.Text.Json.JsonSerializer.Serialize(new TicketModel { Title = title, IsHot = isHot });
-    await conn.ExecuteAsync($"""
-      INSERT INTO {SPLIT_TABLE} (id, data, scope, lane, prio) VALUES (@id, @data::jsonb, @scope::jsonb, @lane, @priority)
-      ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, lane = EXCLUDED.lane, prio = EXCLUDED.prio
-      """, new { id, data, scope = $"{{\"t\": \"{tenant}\"}}", lane, priority });
+  private Task _writeTicketAsync(Guid id, string tenant, string? lane, int priority, string title, bool isHot = false) =>
+    _runnerWriteAsync(id, tenant, new TicketModel { Lane = lane, Priority = priority, Title = title, IsHot = isHot });
+
+  // What the generated runner does for a Split model, through the real Dapper store: the physical values go to
+  // their columns (the vector as the float array, which pgvector assigns to the column) and the document holds
+  // the defaults in their place.
+  private async Task _runnerWriteAsync(Guid id, string tenant, TicketModel model) {
+    var physicalFieldValues = new Dictionary<string, object?> {
+      { "lane", model.Lane }, { "prio", model.Priority }, { "kind", model.Kind }, { "embedding", model.Embedding }, { "tags", model.Tags },
+    };
+    var document = new TicketModel {
+      Title = model.Title,
+      IsHot = model.IsHot,
+      Embedding = System.Array.Empty<float>(),
+    };
+    var store = new DapperPostgresPerspectiveStore<TicketModel>(ConnectionString, SPLIT_TABLE, _storeJson);
+    await store.UpsertWithPhysicalFieldsAsync(id, document, physicalFieldValues, new PerspectiveScope { TenantId = tenant });
   }
 
   private async Task _writeOrderAsync(Guid id, string tenant, int priority, string status) {

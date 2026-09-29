@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Models;
 using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
@@ -697,7 +698,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       sb.Append("\n    global::Whizbang.Core.Perspectives.PerspectivePhysicalFieldRegistry.Register(typeof(")
         .Append(modelTypeName).Append("), \"").Append(field.PropertyName).Append("\", \"").Append(field.ColumnName)
         .Append("\", global::Whizbang.Core.Perspectives.FieldStorageMode.").Append(mode)
-        .Append(", isVector: ").Append(_csharpBool(field.IsVectorField)).Append(");");
+        .Append(", isVector: ").Append(_csharpBool(field.IsVectorField));
+      // An enumeration's column holds its underlying number unless the author declared the column's type.
+      if (field.EnumScalarType is { } scalar && string.IsNullOrWhiteSpace(field.ColumnType)) {
+        sb.Append(", scalarType: typeof(global::").Append(scalar).Append(')');
+      }
+      if (!string.IsNullOrWhiteSpace(field.ColumnType)) {
+        sb.Append(", columnType: \"").Append(field.ColumnType!.Replace("\\", "\\\\").Replace("\"", "\\\"")).Append('"');
+      }
+      sb.Append(");");
     }
     sb.Append("\n  }");
     return sb.ToString();
@@ -1234,12 +1243,14 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
       var isVectorField = attrClassName == VECTOR_FIELD_ATTRIBUTE;
 
-      // Extract ColumnName from named argument if provided
+      // Extract ColumnName (and a declared ColumnType) from the named arguments if provided
       string? columnName = null;
+      string? columnType = null;
       foreach (var namedArg in attribute.NamedArguments) {
         if (namedArg.Key == "ColumnName" && namedArg.Value.Value is string cn) {
           columnName = cn;
-          break;
+        } else if (namedArg.Key == "ColumnType" && namedArg.Value.Value is string ct) {
+          columnType = ct;
         }
       }
 
@@ -1248,7 +1259,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return new PhysicalFieldInfoCompact(
           PropertyName: property.Name,
           ColumnName: columnName,
-          IsVectorField: isVectorField
+          IsVectorField: isVectorField,
+          EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
+          ColumnType: columnType
       );
     }
 

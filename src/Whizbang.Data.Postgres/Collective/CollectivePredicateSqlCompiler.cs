@@ -180,7 +180,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       StringBuilder sql, Dictionary<string, object?> parameters) {
     var value = _evaluateValue(valueExpr);
     var paramName = _uniqueName(parameters, $"{prefix}_{column.PropName.ToLowerInvariant()}");
-    parameters[paramName] = _bind(value, column.Kind);
+    parameters[paramName] = _bind(value, column);
     sql.Append(column.Sql).Append(' ').Append(op).Append(" @").Append(paramName);
   }
 
@@ -198,10 +198,12 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
 
   /// <summary>
   /// A member access the compiler recognized as a column: the SQL that reads it, the property name the
-  /// bound parameter is named after, and what the column is. They travel together because a value is
-  /// bound against all three at once, and a comparison that split them would bind text at a uuid.
+  /// bound parameter is named after, what the column is, and for a physical column its declaration. They travel
+  /// together because a value is bound against all of them at once, and a comparison that split them would bind
+  /// text at a uuid.
   /// </summary>
-  private readonly record struct ResolvedColumn(string Sql, string PropName, ColumnKind Kind);
+  private readonly record struct ResolvedColumn(
+    string Sql, string PropName, ColumnKind Kind, PerspectivePhysicalField? Physical = null);
 
   /// <summary>What a resolved column is, because it decides how a value bound against it is typed.</summary>
   private enum ColumnKind {
@@ -211,18 +213,18 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     /// <summary>The row's <c>id</c>, a real uuid column.</summary>
     Uuid,
 
-    /// <summary>A <c>[PhysicalField]</c> column, typed as its property, so the value binds as itself.</summary>
+    /// <summary>A <c>[PhysicalField]</c> column, so the value binds as the scalar the column stores.</summary>
     Physical,
   }
 
-  // The value to bind against a column of <paramref name="kind"/>. A jsonb extraction is text and takes the
-  // text conversion below. A physical column is typed as its property, so the CLR value binds as itself. The id
+  // The value to bind against <paramref name="column"/>. A jsonb extraction is text and takes the text conversion
+  // below. A physical column binds the scalar its column stores (an enum as its number). The id
   // column is a real uuid: Postgres refuses `uuid = text` outright (42883), so the guid goes through as itself
   // and the driver types the parameter. A guid arriving as text is parsed rather than passed along, because a
   // caller comparing an id to a string means the id.
-  private static object? _bind(object? value, ColumnKind kind) => kind switch {
-    ColumnKind.Physical => value,
-    ColumnKind.Uuid => value switch {
+  private static object? _bind(object? value, in ResolvedColumn column) => column switch {
+    { Physical: { } field } => CollectivePhysicalColumns.ColumnValue(field, value),
+    { Kind: ColumnKind.Uuid } => value switch {
       null => null,
       Guid g => g,
       string text when Guid.TryParse(text, out var parsed) => parsed,
@@ -290,7 +292,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     var i = 0;
     foreach (var v in values) {
       var name = _uniqueName(parameters, $"{prefix}_{item.PropName.ToLowerInvariant()}_{i}");
-      parameters[name] = _bind(v, item.Kind);
+      parameters[name] = _bind(v, item);
       names.Add("@" + name);
       i++;
     }
@@ -360,8 +362,10 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
 
     if (e is MemberExpression { Member: PropertyInfo dprop, Expression: MemberExpression { Member.Name: "Data", Expression: ParameterExpression dp } data }
         && _qualifierFor(dp, ctx) is { } dq
-        && CollectivePhysicalColumns.Resolve(data.Type, dprop.Name, dprop.PropertyType) is { } field) {
-      return new ResolvedColumn(dq + CollectivePhysicalColumns.Quote(field.ColumnName), dprop.Name, ColumnKind.Physical);
+        && CollectivePhysicalColumns.Resolve(data.Type, dprop.Name) is { } field) {
+      CollectivePhysicalColumns.EnsureComparable(data.Type, field);
+      return new ResolvedColumn(
+        dq + CollectivePhysicalColumns.Quote(field.ColumnName), dprop.Name, ColumnKind.Physical, field);
     }
 
     if (e is MemberExpression { Member: PropertyInfo jprop, Expression: MemberExpression { Member.Name: var container, Expression: ParameterExpression jp } }

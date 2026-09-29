@@ -108,7 +108,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
     // field a hook removed. Kept after the spec so hook writes win on the same jsonb path (nested jsonb_set).
     if (hookSetters is not null) {
       foreach (var setter in hookSetters) {
-        visitor.AddConstant(setter.PropertyName, setter.PropertyType, setter.Value);
+        visitor.AddConstant(setter.PropertyName, setter.Value);
       }
     }
     var removed = removedFields ?? new HashSet<string>(StringComparer.Ordinal);
@@ -170,9 +170,9 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
           node.Arguments.Count == 3) {
         var collectionProperty = _extractScalarProperty(_unwrapLambda(node.Arguments[0]));
         var collection = collectionProperty.Name;
-        if (_physical(collectionProperty) is not null) {
-          throw new NotSupportedException(
-            $"UpsertElement on {typeof(TModel).Name}.{collection} targets a physical column; a keyed array is only supported in the document.");
+        var target = _physical(collectionProperty);
+        if (target is { } keyedColumn) {
+          CollectivePhysicalColumns.EnsureKeyedArrayColumn(typeof(TModel), keyedColumn);
         }
         var key = _tryPropertyName(_unwrapLambda(node.Arguments[1]).Body)
           ?? throw new NotSupportedException(
@@ -186,9 +186,19 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
         }
         var paramName = _nextParam(collection);
         Parameters[paramName] = JsonSerializer.Serialize(element, element.GetType(), _jsonOptions);
-        var source = Properties.LastOrDefault(p => p.JsonbPath == collection)?.ValueSql;
-        Properties.Add(new PropertyAssignment(collection,
-          Whizbang.Data.Postgres.Collective.CollectiveElementUpsertSql.ValueSql(collection, key, $"@{paramName}::jsonb", source)));
+        if (target is not { InDocument: false }) {
+          var source = Properties.LastOrDefault(p => p.JsonbPath == collection)?.ValueSql;
+          Properties.Add(new PropertyAssignment(collection,
+            CollectiveElementUpsertSql.ValueSql(collection, key, $"@{paramName}::jsonb", source)));
+        }
+        if (target is { } physical) {
+          // The same keyed upsert, over the jsonb column: it starts from the column (or from this spec's earlier
+          // write to it), so element order, replace-or-append and composition match the document path.
+          var source = Columns.LastOrDefault(c => c.Column == physical.ColumnName)?.ValueSql
+            ?? CollectivePhysicalColumns.Quote(physical.ColumnName);
+          Columns.Add(new ColumnAssignment(collection, physical.ColumnName,
+            CollectiveElementUpsertSql.ValueSql(collection, key, $"@{paramName}::jsonb", source)));
+        }
         return node;
       }
 
@@ -251,8 +261,8 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
 
     // Append a collective apply-hook constant setter: a pre-evaluated value (not an expression), assigned the same
     // way a spec's constant setter is — the jsonb path, the physical column, or both.
-    public void AddConstant(string propertyName, Type propertyType, object? value) =>
-      _addValue(propertyName, CollectivePhysicalColumns.Resolve(typeof(TModel), propertyName, propertyType), value);
+    public void AddConstant(string propertyName, object? value) =>
+      _addValue(propertyName, CollectivePhysicalColumns.Resolve(typeof(TModel), propertyName), value);
 
     // A constant value. A document path binds "@p::jsonb" with the value JSON-serialized; a physical column binds the
     // CLR value as a typed parameter. A field kept in both places gets both, the document path first.
@@ -264,8 +274,14 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
       }
       if (target is { } physical) {
         var paramName = _nextParam(propertyName);
-        Parameters[paramName] = value;
-        Columns.Add(new ColumnAssignment(propertyName, physical.ColumnName, "@" + paramName));
+        if (physical.IsVector) {
+          // The Dapper per-event write sends a vector as its text form for the column to parse; so does this.
+          Parameters[paramName] = CollectivePhysicalColumns.VectorText(value as float[]);
+          Columns.Add(new ColumnAssignment(propertyName, physical.ColumnName, "@" + paramName + "::vector"));
+        } else {
+          Parameters[paramName] = CollectivePhysicalColumns.ColumnValue(physical, value);
+          Columns.Add(new ColumnAssignment(propertyName, physical.ColumnName, "@" + paramName));
+        }
       }
     }
 
@@ -283,7 +299,8 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
         string documentValue;
         string columnValue;
         if (_physical(comparedProperty) is { } compared) {
-          Parameters[paramName] = rhs;
+          CollectivePhysicalColumns.EnsureComparable(typeof(TModel), compared);
+          Parameters[paramName] = CollectivePhysicalColumns.ColumnValue(compared, rhs);
           columnValue = CollectivePhysicalColumns.NullSafeComparison(
             CollectivePhysicalColumns.Quote(compared.ColumnName), op, "@" + paramName);
           documentValue = $"to_jsonb({columnValue})";
@@ -323,7 +340,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
 
     // The physical column a model property is stored in, or null for a document path (generator-emitted metadata).
     private static PerspectivePhysicalField? _physical(PropertyInfo property) =>
-      CollectivePhysicalColumns.Resolve(typeof(TModel), property.Name, property.PropertyType);
+      CollectivePhysicalColumns.Resolve(typeof(TModel), property.Name);
 
     private static Expression _stripConvert(Expression e) {
       while (e is UnaryExpression { NodeType: ExpressionType.Convert } convert) {

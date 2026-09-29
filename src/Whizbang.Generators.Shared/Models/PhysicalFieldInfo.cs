@@ -28,6 +28,10 @@ namespace Whizbang.Generators.Shared.Models;
 /// True when a text field declares <c>IndexKinds.Search</c>: its column gets a trigram index over the
 /// framework's fold, and a <c>Contains</c> on it is folded to match.
 /// </param>
+/// <param name="EnumScalarType">
+/// For an enumeration, the fully qualified CLR name of the scalar its column holds (see
+/// <see cref="PhysicalFieldScalar"/>); null otherwise. The column is typed from it and EF Core converts to it.
+/// </param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Models/PhysicalFieldInfoTests.cs</tests>
 public sealed record PhysicalFieldInfo(
@@ -44,7 +48,8 @@ public sealed record PhysicalFieldInfo(
     int? VectorIndexLists,
     string? ColumnType = null,
     bool IsSplit = false,
-    bool IsSearch = false
+    bool IsSearch = false,
+    string? EnumScalarType = null
 );
 
 /// <summary>

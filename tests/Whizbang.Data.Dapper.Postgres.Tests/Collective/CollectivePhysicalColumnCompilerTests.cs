@@ -31,9 +31,14 @@ public class CollectivePhysicalColumnCompilerTests {
     PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Lane), "lane", FieldStorageMode.Split);
     PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Flag), "flag", FieldStorageMode.Split);
     PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Priority), "prio", FieldStorageMode.Split);
-    PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Cells), "cells", FieldStorageMode.Split);
+    PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Cells), "cells", FieldStorageMode.Split, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Notes), "notes", FieldStorageMode.Split);
     PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Embedding), "embedding", FieldStorageMode.Split, isVector: true);
-    PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Kind), "kind", FieldStorageMode.Split);
+    PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Kind), "kind", FieldStorageMode.Split, scalarType: typeof(int));
+    // Registered without a scalar type (a hand registration): the runtime derives the same scalar.
+    PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Size), "size", FieldStorageMode.Split);
+    PerspectivePhysicalFieldRegistry.Register(typeof(ExtractedModel), nameof(ExtractedModel.Kind), "kind", FieldStorageMode.Extracted, scalarType: typeof(int));
+    PerspectivePhysicalFieldRegistry.Register(typeof(ExtractedModel), nameof(ExtractedModel.TextKind), "text_kind", FieldStorageMode.Extracted, columnType: "text");
     PerspectivePhysicalFieldRegistry.Register(typeof(ExtractedModel), nameof(ExtractedModel.Priority), "priority", FieldStorageMode.Extracted);
     PerspectivePhysicalFieldRegistry.Register(typeof(SiblingModel), nameof(SiblingModel.Lane), "lane", FieldStorageMode.Split);
   }
@@ -169,29 +174,116 @@ public class CollectivePhysicalColumnCompilerTests {
 
   // ── SET: shapes a column cannot take ────────────────────────────────────
 
-  [Test]
-  public async Task Compile_UpsertElementOnPhysicalField_ThrowsNotSupportedAsync() {
-    var cell = new Cell { Key = "k" };
-    var spec = _split(s => s.UpsertElement(m => m.Cells, c => c.Key, cell));
+  // ── SET: keyed arrays in a jsonb column ─────────────────────────────────
 
-    await Assert.That(() => DapperCollectiveSpecCompiler<SplitModel>.Compile(spec, _jsonOptions))
-      .Throws<NotSupportedException>().WithMessageContaining("targets a physical column");
+  [Test]
+  public async Task Compile_UpsertElementOnAJsonbColumn_UpsertsInTheColumnAsync() {
+    var cell = new Cell { Key = "k" };
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.UpsertElement(m => m.Cells, c => c.Key, cell)), _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).StartsWith("\"cells\" = (SELECT CASE WHEN jsonb_typeof(wh_s.a) = 'array'")
+      .Because("A keyed array backed by a jsonb column is upserted in the column, with the same keyed semantics.");
+    await Assert.That(compiled.SqlFragment).EndsWith("FROM (SELECT (\"cells\") AS a) AS wh_s)");
+    await Assert.That(compiled.SqlFragment).DoesNotContain("data =");
+    await Assert.That(compiled.Parameters["set_0_cells"]).IsEqualTo("{\"Key\":\"k\"}");
   }
 
   [Test]
-  public async Task Compile_VectorPhysicalField_ThrowsNotSupportedAsync() {
-    var spec = _split(s => s.SetProperty(m => m.Embedding, (float[]?)null));
+  public async Task Compile_TwoUpsertsOnOneJsonbColumn_ComposeInCallOrderAsync() {
+    var first = new Cell { Key = "a" };
+    var second = new Cell { Key = "b" };
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.UpsertElement(m => m.Cells, c => c.Key, first).UpsertElement(m => m.Cells, c => c.Key, second)), _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).Contains("@set_1_cells::jsonb");
+    await Assert.That(compiled.SqlFragment).Contains("FROM (SELECT ((SELECT CASE")
+      .Because("The second upsert starts from the list the first one produced, as it does on a document path.");
+  }
+
+  [Test]
+  public async Task Compile_UpsertElementOnANonJsonbPhysicalColumn_ThrowsNotSupportedAsync() {
+    var cell = new Cell { Key = "k" };
+    var spec = _split(s => s.UpsertElement(m => m.Notes, c => c.Key, cell));
+
+    await Assert.That(() => DapperCollectiveSpecCompiler<SplitModel>.Compile(spec, _jsonOptions))
+      .Throws<NotSupportedException>().WithMessageContaining("jsonb");
+  }
+
+  // ── SET: vectors ────────────────────────────────────────────────────────
+
+  [Test]
+  public async Task Compile_VectorSetter_BindsTheVectorTextCastToVectorAsync() {
+    var embedding = new[] { 1f, 2.5f, -0.125f };
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.Embedding, embedding)), _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).IsEqualTo("\"embedding\" = @set_0_embedding::vector");
+    await Assert.That(compiled.Parameters["set_0_embedding"]).IsEqualTo("[1,2.5,-0.125]")
+      .Because("The Dapper per-event write sends a vector as its text form; the collective sends the same form.");
+  }
+
+  [Test]
+  public async Task Compile_NullVectorSetter_BindsNullAsync() {
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.Embedding, (float[]?)null)), _jsonOptions);
+
+    await Assert.That(compiled.Parameters["set_0_embedding"]).IsNull();
+  }
+
+  [Test]
+  public async Task Compile_ComputedOverAVector_ThrowsNotSupportedAsync() {
+    var spec = _split(s => s.SetProperty(m => m.IsHot, m => m.Embedding == null));
 
     await Assert.That(() => DapperCollectiveSpecCompiler<SplitModel>.Compile(spec, _jsonOptions))
       .Throws<NotSupportedException>().WithMessageContaining("[VectorField]");
   }
 
-  [Test]
-  public async Task Compile_EnumPhysicalField_ThrowsNotSupportedAsync() {
-    var spec = _split(s => s.SetProperty(m => m.Kind, TicketKind.Bug));
+  // ── SET: enumerations are stored as their underlying number ─────────────
 
-    await Assert.That(() => DapperCollectiveSpecCompiler<SplitModel>.Compile(spec, _jsonOptions))
-      .Throws<NotSupportedException>().WithMessageContaining("enumeration");
+  [Test]
+  public async Task Compile_EnumSetter_BindsTheUnderlyingNumberAsync() {
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.Kind, TicketKind.Bug)), _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).IsEqualTo("\"kind\" = @set_0_kind");
+    await Assert.That(compiled.Parameters["set_0_kind"]).IsTypeOf<int>();
+    await Assert.That(compiled.Parameters["set_0_kind"]).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Compile_EnumWithoutARegisteredScalarType_DerivesTheSameScalarAsync() {
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.Size, TicketSize.Large)), _jsonOptions);
+
+    await Assert.That(compiled.Parameters["set_0_size"]).IsEqualTo((short)2);
+  }
+
+  [Test]
+  public async Task Compile_EnumKeptInBothPlaces_WritesTheNumberToBothAsync() {
+    var compiled = DapperCollectiveSpecCompiler<ExtractedModel>.Compile(
+      new ExtractedSpec(s => s.SetProperty(m => m.Kind, TicketKind.Bug)), _jsonOptions);
+
+    await Assert.That(compiled.Parameters["set_0_kind"]).IsEqualTo("1");
+    await Assert.That(compiled.Parameters["set_1_kind"]).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Compile_EnumInADeclaredColumnType_ThrowsNotSupportedAsync() {
+    var spec = new ExtractedSpec(s => s.SetProperty(m => m.TextKind, TicketKind.Bug));
+
+    await Assert.That(() => DapperCollectiveSpecCompiler<ExtractedModel>.Compile(spec, _jsonOptions))
+      .Throws<NotSupportedException>().WithMessageContaining("declared as text")
+      .Because("An enum in a column whose type the author chose has a stored form the collective cannot know.");
+  }
+
+  [Test]
+  public async Task Compile_ComputedOverAnEnumColumn_ComparesTheNumberAsync() {
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.IsHot, m => m.Kind == TicketKind.Bug)), _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).Contains("(\"kind\" IS NOT DISTINCT FROM @set_0_ishot)");
+    await Assert.That(compiled.Parameters["set_0_ishot"]).IsEqualTo(1);
   }
 
   // ── WHERE: a condition on a physical field reads the column ─────────────
@@ -253,11 +345,25 @@ public class CollectivePhysicalColumnCompilerTests {
   }
 
   [Test]
-  public async Task Where_EnumPhysicalField_ThrowsNotSupportedAsync() {
+  public async Task Where_EnumPhysicalField_ComparesTheUnderlyingNumberAsync() {
     Expression<Func<PerspectiveRow<SplitModel>, bool>> filter = r => r.Data.Kind == TicketKind.Bug;
 
-    await Assert.That(() => CollectivePredicateSqlCompiler<SplitModel>.Compile(filter))
-      .Throws<NotSupportedException>().WithMessageContaining("enumeration");
+    var result = CollectivePredicateSqlCompiler<SplitModel>.Compile(filter);
+
+    await Assert.That(result.SqlFragment).IsEqualTo("\"kind\" = @where_kind");
+    await Assert.That(result.Parameters["where_kind"]).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Where_ContainsOnAnEnumPhysicalField_BindsNumbersAsync() {
+    var kinds = new[] { TicketKind.Task, TicketKind.Bug };
+    Expression<Func<PerspectiveRow<SplitModel>, bool>> filter = r => kinds.Contains(r.Data.Kind);
+
+    var result = CollectivePredicateSqlCompiler<SplitModel>.Compile(filter);
+
+    await Assert.That(result.SqlFragment).IsEqualTo("\"kind\" IN (@where_kind_0, @where_kind_1)");
+    await Assert.That(result.Parameters["where_kind_0"]).IsEqualTo(0);
+    await Assert.That(result.Parameters["where_kind_1"]).IsEqualTo(1);
   }
 
   // ── Shared helpers ──────────────────────────────────────────────────────
@@ -276,6 +382,8 @@ public class CollectivePhysicalColumnCompilerTests {
 
   private enum TicketKind { Task, Bug }
 
+  private enum TicketSize : byte { Small, Medium, Large }
+
   private sealed class Cell {
     public string Key { get; set; } = "";
   }
@@ -287,12 +395,16 @@ public class CollectivePhysicalColumnCompilerTests {
     public bool IsHot { get; }
     public string Title { get; } = "";
     public List<Cell>? Cells { get; }
+    public List<Cell>? Notes { get; }
+    public TicketSize Size { get; }
     public float[]? Embedding { get; }
     public TicketKind Kind { get; }
   }
 
   private sealed class ExtractedModel {
     public int Priority { get; }
+    public TicketKind Kind { get; }
+    public TicketKind TextKind { get; }
   }
 
   private sealed class SiblingModel {

@@ -65,6 +65,24 @@ public class PerspectivePhysicalFieldRegistryTests {
     await Assert.That(field.IsVector).IsTrue();
   }
 
+  private sealed class ScalarModel;
+
+  [Test]
+  public async Task Register_ScalarTypeAndColumnType_AreCarriedAsync() {
+    PerspectivePhysicalFieldRegistry.Register(typeof(ScalarModel), "Kind", "kind", FieldStorageMode.Split, scalarType: typeof(int));
+    PerspectivePhysicalFieldRegistry.Register(typeof(ScalarModel), "Tags", "tags", FieldStorageMode.Split, columnType: "jsonb");
+
+    PerspectivePhysicalFieldRegistry.TryResolve(typeof(ScalarModel), "Kind", out var kind);
+    PerspectivePhysicalFieldRegistry.TryResolve(typeof(ScalarModel), "Tags", out var tags);
+
+    await Assert.That(kind.ScalarType).IsEqualTo(typeof(int))
+      .Because("An enum field carries the scalar its column holds, so every writer binds the same number.");
+    await Assert.That(kind.ColumnType).IsNull();
+    await Assert.That(tags.ColumnType).IsEqualTo("jsonb");
+    await Assert.That(tags.IsJsonbColumn).IsTrue();
+    await Assert.That(kind.IsJsonbColumn).IsFalse();
+  }
+
   [Test]
   public async Task TryResolve_Unregistered_ReturnsFalseAsync() {
     PerspectivePhysicalFieldRegistry.Register(typeof(ExtractedModel), "Priority", "priority", FieldStorageMode.Extracted);

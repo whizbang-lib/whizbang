@@ -284,7 +284,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         VectorDistanceMetric: null,
         VectorIndexType: null,
         VectorIndexLists: null,
-        ColumnType: columnType
+        ColumnType: columnType,
+        EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type)
     );
   }
 
@@ -613,7 +614,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     }
 
     // Normalize the type name by removing global:: and nullable markers
-    var typeName = field.TypeName
+    // An enumeration is stored as its underlying number, so its column is typed from that scalar.
+    var typeName = (field.EnumScalarType ?? field.TypeName)
         .Replace("global::", "")
         .TrimEnd('?');
 

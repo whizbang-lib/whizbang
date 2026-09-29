@@ -208,9 +208,10 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
   /// '{…}' brace literal) and the property name is parameterized, not concatenated. A computed comparison setter
   /// substitutes <c>to_jsonb((data-&gt;'X')::jsonb &lt;op&gt; @p::jsonb)</c> for the plain value — the compared property
   /// is compile-time model metadata (a C# identifier), so it's embedded, not injected. A setter on a
-  /// <c>[PhysicalField]</c> assigns its column from the typed parameter <c>@pc{i}</c> (and the document path too when
-  /// the storage mode keeps both), a comparison over a physical field reads the column null-safely, and when no
-  /// document path changes <c>data</c> is not assigned at all.
+  /// <c>[PhysicalField]</c> assigns its column (and the document path too when the storage mode keeps both): from the
+  /// typed parameter <c>@pc{i}</c> (an enumeration as its underlying number, a vector as a pgvector value), or, for a
+  /// keyed array in a jsonb column, through the same upsert expression. A comparison over a physical field reads the
+  /// column null-safely, and when no document path changes <c>data</c> is not assigned at all.
   /// </summary>
   private static (string SetList, List<KeyValuePair<string, object>> Parameters) _compileSetList(
       List<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments) {
@@ -218,20 +219,21 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     var documentWrites = 0;
     var columns = new List<(string Column, string ValueSql)>();
     var parameters = new Dictionary<string, object>(StringComparer.Ordinal);
-    // The value each property holds so far in this spec: an element upsert starts from it, so two upserts
-    // on one list compose instead of the second rewriting the stored list over the first.
+    // The value each property (and each jsonb column) holds so far in this spec: an element upsert starts from it,
+    // so two upserts on one list compose instead of the second rewriting the stored list over the first.
     var assigned = new Dictionary<string, string>(StringComparer.Ordinal);
+    var assignedColumns = new Dictionary<string, string>(StringComparer.Ordinal);
     for (var i = 0; i < assignments.Count; i++) {
       var a = assignments[i];
       var idx = i.ToString(CultureInfo.InvariantCulture);
-      var target = CollectivePhysicalColumns.Resolve(typeof(TModel), a.PathName, a.PropertyType);
-      // An UpsertElement never targets a physical column: the rewriter refuses it before serializing the element.
+      var target = CollectivePhysicalColumns.Resolve(typeof(TModel), a.PathName);
       // A computed comparison: the boolean over the compared property, as a column value and as a document value.
       string? columnComparison = null;
       string? documentComparison = null;
       if (a.Comparison is { } cmp) {
-        if (CollectivePhysicalColumns.Resolve(typeof(TModel), cmp.ComparedProperty, cmp.ComparedType) is { } compared) {
-          parameters["pc" + idx] = a.Value ?? DBNull.Value;
+        if (CollectivePhysicalColumns.Resolve(typeof(TModel), cmp.ComparedProperty) is { } compared) {
+          CollectivePhysicalColumns.EnsureComparable(typeof(TModel), compared);
+          parameters["pc" + idx] = CollectivePhysicalColumns.ColumnValue(compared, a.Value) ?? DBNull.Value;
           columnComparison = CollectivePhysicalColumns.NullSafeComparison(
             CollectivePhysicalColumns.Quote(compared.ColumnName), cmp.SqlOperator, "@pc" + idx);
           documentComparison = "to_jsonb(" + columnComparison + ")";
@@ -243,15 +245,15 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
         }
       }
       if (target is not { InDocument: false }) {
+        if (a.Comparison is null) {
+          parameters["p" + idx] = a.JsonValue;
+        }
         var valueSql = a switch {
           { ElementKey: { } key } => CollectiveElementUpsertSql.ValueSql(
             a.PathName, key, "@p" + idx + "::jsonb", assigned.GetValueOrDefault(a.PathName)),
           { Comparison: not null } => documentComparison!,
           _ => "@p" + idx + "::jsonb",
         };
-        if (a.Comparison is null) {
-          parameters["p" + idx] = a.JsonValue;
-        }
         parameters["path" + idx] = new[] { a.PathName };  // text[] path
         assigned[a.PathName] = valueSql;
         setExpr.Insert(0, "jsonb_set(")
@@ -259,15 +261,39 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
         documentWrites++;
       }
       if (target is { } physical) {
-        if (a.Comparison is null) {
-          parameters["pc" + idx] = a.Value ?? DBNull.Value;
-        }
-        columns.Add((physical.ColumnName, columnComparison ?? "@pc" + idx));
+        var columnSql = _columnValueSql(a, physical, idx, columnComparison, assignedColumns, parameters);
+        assignedColumns[physical.ColumnName] = columnSql;
+        columns.Add((physical.ColumnName, columnSql));
       }
     }
     var setList = CollectivePhysicalColumns.RenderSetList(documentWrites > 0 ? setExpr.ToString() : null, columns);
     return (setList, [.. parameters]);
   }
+
+  // The new value of a physical column: a computed comparison's boolean, the same keyed upsert a document path uses
+  // (over the jsonb column, from its value so far in this spec), a typed pgvector parameter, or the column scalar
+  // (an enumeration as its underlying number).
+  private static string _columnValueSql(
+      CollectiveSettersRewriter.CollectiveSetterAssignment a, PerspectivePhysicalField physical, string idx,
+      string? columnComparison, Dictionary<string, string> assignedColumns, Dictionary<string, object> parameters) {
+    if (columnComparison is not null) {
+      return columnComparison;
+    }
+    if (a.ElementKey is { } key) {
+      parameters["p" + idx] = a.JsonValue;  // the element, shared with the document path when both are written
+      return CollectiveElementUpsertSql.ValueSql(
+        a.PathName, key, "@p" + idx + "::jsonb",
+        assignedColumns.GetValueOrDefault(physical.ColumnName) ?? CollectivePhysicalColumns.Quote(physical.ColumnName));
+    }
+    object? value = physical.IsVector
+      ? _vector(a.Value)
+      : CollectivePhysicalColumns.ColumnValue(physical, a.Value);
+    parameters["pc" + idx] = value ?? DBNull.Value;
+    return "@pc" + idx;
+  }
+
+  // The per-event upsert binds a vector column as a pgvector value; the collective binds the same.
+  private static Pgvector.Vector? _vector(object? value) => value is float[] vector ? new Pgvector.Vector(vector) : null;
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Collective apply {CollectiveEventId} on {Table} updated {AffectedRows} rows in {Batches} batch(es)")]

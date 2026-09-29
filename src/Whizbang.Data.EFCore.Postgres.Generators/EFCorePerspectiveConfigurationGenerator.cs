@@ -497,7 +497,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         VectorDistanceMetric: null,
         VectorIndexType: null,
         VectorIndexLists: null,
-        ColumnType: columnType
+        ColumnType: columnType,
+        EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type)
     );
   }
 
@@ -661,7 +662,14 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       sb.AppendLine($"      // Physical field: {field.PropertyName}");
       sb.AppendLine($"      entity.Property<{_getCSharpType(field)}>(\"{field.ColumnName}\")");
       sb.AppendLine($"        .HasColumnName(\"{field.ColumnName}\")");
-      sb.AppendLine($"        .HasColumnType(\"{columnType}\");");
+      if (field.EnumScalarType is { } scalar && string.IsNullOrWhiteSpace(field.ColumnType)) {
+        // An enumeration is stored as its underlying number. The conversion is explicit: left to convention,
+        // EF Core picks its enum conversion from the column type, and a text column made it store the name.
+        sb.AppendLine($"        .HasColumnType(\"{columnType}\")");
+        sb.AppendLine($"        .HasConversion<global::{scalar}>();");
+      } else {
+        sb.AppendLine($"        .HasColumnType(\"{columnType}\");");
+      }
       sb.AppendLine();
 
       // Generate index if configured
@@ -711,7 +719,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
 
     // Normalize the type name
-    var typeName = field.TypeName
+    // An enumeration is stored as its underlying number, so its column is typed from that scalar.
+    var typeName = (field.EnumScalarType ?? field.TypeName)
         .Replace("global::", "")
         .TrimEnd('?');
 

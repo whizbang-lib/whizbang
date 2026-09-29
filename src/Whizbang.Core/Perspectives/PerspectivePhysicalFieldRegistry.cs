@@ -34,12 +34,19 @@ public static class PerspectivePhysicalFieldRegistry {
   /// <param name="columnName">The column the property is stored in.</param>
   /// <param name="storageMode">The model's storage mode; <see cref="FieldStorageMode.Split"/> keeps the field out of the document.</param>
   /// <param name="isVector">Whether the field is a <c>[VectorField]</c>.</param>
-  public static void Register(Type modelType, string propertyName, string columnName, FieldStorageMode storageMode, bool isVector = false) {
+  /// <param name="scalarType">
+  /// For an enumeration, the scalar its column holds (the underlying number, widened as
+  /// <see cref="PerspectivePhysicalValues.ColumnScalarType"/> widens it); null otherwise.
+  /// </param>
+  /// <param name="columnType">The column type the author declared with <c>[PhysicalField(ColumnType = …)]</c>, if any.</param>
+  public static void Register(
+      Type modelType, string propertyName, string columnName, FieldStorageMode storageMode, bool isVector = false,
+      Type? scalarType = null, string? columnType = null) {
     ArgumentNullException.ThrowIfNull(modelType);
     ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
     ArgumentException.ThrowIfNullOrWhiteSpace(columnName);
     _fields[(modelType, propertyName)] = new PerspectivePhysicalField(
-      propertyName, columnName, InDocument: storageMode != FieldStorageMode.Split, isVector);
+      propertyName, columnName, InDocument: storageMode != FieldStorageMode.Split, isVector, scalarType, columnType);
   }
 
   /// <summary>The physical field registered for a model property, if there is one.</summary>
@@ -60,4 +67,10 @@ public static class PerspectivePhysicalFieldRegistry {
 /// <see cref="FieldStorageMode.Split"/>), so a write to the column has to write the document path too.
 /// </param>
 /// <param name="IsVector">Whether the field is a <c>[VectorField]</c>.</param>
-public readonly record struct PerspectivePhysicalField(string PropertyName, string ColumnName, bool InDocument, bool IsVector);
+/// <param name="ScalarType">For an enumeration, the scalar its column holds; null otherwise.</param>
+/// <param name="ColumnType">The declared column type, if the author declared one.</param>
+public readonly record struct PerspectivePhysicalField(
+    string PropertyName, string ColumnName, bool InDocument, bool IsVector, Type? ScalarType = null, string? ColumnType = null) {
+  /// <summary>Whether the column is <c>jsonb</c>, the only column type a keyed-array upsert can target.</summary>
+  public bool IsJsonbColumn => string.Equals(ColumnType?.Trim(), "jsonb", StringComparison.OrdinalIgnoreCase);
+}

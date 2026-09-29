@@ -178,7 +178,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       CancellationToken cancellationToken,
       IDictionary<string, object?>? physicalFieldValues = null) {
     // Validated before anything is opened: a column name goes into the statement text.
-    var physical = _physicalColumns(physicalFieldValues);
+    var physical = _physicalColumns(physicalFieldValues, jsonOptions);
     await using var conn = new NpgsqlConnection(connectionString);
     await conn.OpenAsync(cancellationToken);
 
@@ -322,13 +322,14 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   /// One parameter per physical column. A column name must be a plain identifier, since it is written into the
   /// statement unquoted, exactly as the table's DDL declares it.
   /// </summary>
-  private static List<(string Column, NpgsqlParameter Parameter)> _physicalColumns(IDictionary<string, object?>? values) {
+  private static List<(string Column, NpgsqlParameter Parameter)> _physicalColumns(
+      IDictionary<string, object?>? values, JsonSerializerOptions jsonOptions) {
     var columns = new List<(string, NpgsqlParameter)>();
     foreach (var (column, value) in values ?? new Dictionary<string, object?>()) {
       if (!_isPlainIdentifier(column)) {
         throw new ArgumentException($"'{column}' is not a plain column name.", nameof(values));
       }
-      columns.Add((column, _physicalParameter($"p_pf{columns.Count}", value)));
+      columns.Add((column, _physicalParameter($"p_pf{columns.Count}", value, jsonOptions)));
     }
     return columns;
   }
@@ -337,15 +338,20 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     name.Length > 0 && !char.IsAsciiDigit(name[0]) && name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
 
   /// <summary>
-  /// The driver sends the common types natively. An instant is sent in UTC, which is the same instant. Anything
-  /// else (a vector, an enum) is sent as its text form with no declared type, so the column's own type parses
-  /// it, exactly as it would parse a literal.
+  /// The driver sends the common types natively. An instant is sent in UTC, which is the same instant. An
+  /// enumeration is sent as its underlying number, the form its column holds (see
+  /// <see cref="PerspectivePhysicalValues"/>). A collection the JSON options can describe (a keyed list in a jsonb
+  /// column) is sent as its JSON text. Anything else (a vector) is sent as its text form. Both text forms go
+  /// with no declared type, so the column's own type parses them, exactly as it would parse a literal.
   /// </summary>
-  private static NpgsqlParameter _physicalParameter(string name, object? value) => value switch {
+  private static NpgsqlParameter _physicalParameter(string name, object? value, JsonSerializerOptions jsonOptions) => value switch {
     null => new NpgsqlParameter(name, DBNull.Value),
     DateTimeOffset instant => new NpgsqlParameter(name, instant.ToUniversalTime()),
+    Enum => new NpgsqlParameter(name, PerspectivePhysicalValues.ToColumnScalar(value)),
     string or Guid or bool or short or int or long or float or double or decimal
       or DateTime or DateOnly or TimeOnly or TimeSpan or Array => new NpgsqlParameter(name, value),
+    System.Collections.IEnumerable when jsonOptions.TryGetTypeInfo(value.GetType(), out var typeInfo) =>
+      new NpgsqlParameter(name, NpgsqlDbType.Unknown) { Value = JsonSerializer.Serialize(value, typeInfo) },
     _ => new NpgsqlParameter(name, NpgsqlDbType.Unknown) { Value = value.ToString() },
   };
 
