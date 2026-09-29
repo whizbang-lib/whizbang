@@ -3,7 +3,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text.RegularExpressions;
 
 namespace Whizbang.Generators.Shared.Utilities;
 
@@ -33,9 +32,10 @@ namespace Whizbang.Generators.Shared.Utilities;
 public static class TemplateUtilities {
   // CA1861: Prefer static readonly over constant array arguments for better performance
   private static readonly string[] _lineSeparators = ["\r\n", "\r", "\n"];
+  private static readonly char[] _newlineChars = ['\r', '\n'];
   /// <summary>
   /// <para>Replaces a #region block with generated code, preserving indentation.
-  /// Regex pattern matches: #region NAME ... #endregion with any content/whitespace between.</para>
+  /// A string search matches: #region NAME ... #endregion with any content/whitespace between.</para>
   ///
   /// <para>Example:
   /// <code>
@@ -191,19 +191,24 @@ public static class TemplateUtilities {
       string regionName,
       string resourceNamespace = "Whizbang.Generators.Templates.Snippets") {
 
-    var template = GetEmbeddedTemplate(assembly, templateName, resourceNamespace);
+    return ExtractSnippetFrom(GetEmbeddedTemplate(assembly, templateName, resourceNamespace), regionName, templateName);
+  }
 
-    // Pattern to extract content between #region and #endregion
-    var pattern = $@"(\s*)#region\s+{Regex.Escape(regionName)}[^\r\n]*[\r\n]+(.*?)[\r\n]+\s*#endregion";
-
-    // Timeout added to prevent ReDoS attacks (S6444)
-    var match = Regex.Match(template, pattern, RegexOptions.Singleline, TimeSpan.FromSeconds(1));
-    if (!match.Success) {
+  /// <summary>
+  /// Extracts the contents of a #region block from template text already read, as <see cref="ExtractSnippet"/>
+  /// does for an embedded template.
+  /// </summary>
+  /// <param name="template">The template text</param>
+  /// <param name="regionName">The name of the region to extract</param>
+  /// <param name="templateName">The template's name, for the message when the region is not found</param>
+  /// <returns>The code inside the #region block, without region tags or indentation</returns>
+  public static string ExtractSnippetFrom(string template, string regionName, string templateName) {
+    // A linear scan, not a regex. The regex this replaces rescanned the whole template lazily on every call
+    // under a one-second match timeout, and a generator calls this once per type: on a loaded CI runner the
+    // timeout fired, the generator threw RegexMatchTimeoutException, and it emitted nothing at all.
+    if (!_tryFindSnippet(template, regionName, out var rawIndentation, out var content)) {
       return $"// ERROR: Snippet region '{regionName}' not found in {templateName}";
     }
-
-    var rawIndentation = match.Groups[1].Value;
-    var content = match.Groups[2].Value;
 
     // Remove newline characters from captured indentation
     var indentation = rawIndentation.Replace("\r", "").Replace("\n", "");
@@ -211,6 +216,79 @@ public static class TemplateUtilities {
     // Remove the base indentation from all lines
     return RemoveIndentation(content, indentation);
   }
+
+  /// <summary>
+  /// Finds the first <c>#region</c> named <paramref name="regionName"/> and the code inside it. The rules are
+  /// the ones the snippet templates are written to: the whitespace before <c>#region</c> is the indentation,
+  /// the rest of the region line is ignored, and the code runs from the line after it to the line break
+  /// before the first <c>#endregion</c> that starts a line.
+  /// </summary>
+  private static bool _tryFindSnippet(string template, string regionName, out string indentation, out string content) {
+    const string regionMarker = "#region";
+    indentation = "";
+    content = "";
+    var search = 0;
+    int at;
+    while ((at = template.IndexOf(regionMarker, search, StringComparison.Ordinal)) >= 0) {
+      search = at + regionMarker.Length;
+      var lineEnd = _regionLineEnd(template, search, regionName);
+      if (lineEnd < 0) {
+        continue;
+      }
+      // At least one line break ends the region line, so the code can start no earlier than after it.
+      var lineBreak = _snippetEnd(template, lineEnd + 1);
+      if (lineBreak < 0) {
+        return false;
+      }
+      var contentStart = lineEnd;
+      while (contentStart < template.Length && _isNewline(template[contentStart])) {
+        contentStart++;
+      }
+      indentation = template[_whitespaceRunStart(template, at, 0)..at];
+      content = template[Math.Min(contentStart, lineBreak)..lineBreak];
+      return true;
+    }
+    return false;
+  }
+
+  // Where the line of a "#region <regionName>" ends, given the index just past "#region"; -1 when the region is
+  // named something else or the line never ends.
+  private static int _regionLineEnd(string template, int afterMarker, string regionName) {
+    var name = afterMarker;
+    while (name < template.Length && char.IsWhiteSpace(template[name])) {
+      name++;
+    }
+    return name == afterMarker || string.CompareOrdinal(template, name, regionName, 0, regionName.Length) != 0
+      ? -1
+      : template.IndexOfAny(_newlineChars, name + regionName.Length);
+  }
+
+  // The line break that ends a snippet: the first one in the whitespace before the first "#endregion" that starts
+  // a line, searching from <paramref name="earliest"/>; -1 when there is none.
+  private static int _snippetEnd(string template, int earliest) {
+    const string endMarker = "#endregion";
+    var end = template.IndexOf(endMarker, earliest, StringComparison.Ordinal);
+    while (end >= 0) {
+      var runStart = _whitespaceRunStart(template, end, earliest);
+      var lineBreak = template.IndexOfAny(_newlineChars, runStart, end - runStart);
+      if (lineBreak >= 0) {
+        return lineBreak;
+      }
+      end = template.IndexOf(endMarker, end + endMarker.Length, StringComparison.Ordinal);
+    }
+    return -1;
+  }
+
+  // The start of the whitespace run that ends at <paramref name="position"/>, no earlier than <paramref name="floor"/>.
+  private static int _whitespaceRunStart(string template, int position, int floor) {
+    var start = position;
+    while (start > floor && char.IsWhiteSpace(template[start - 1])) {
+      start--;
+    }
+    return start;
+  }
+
+  private static bool _isNewline(char c) => c is '\r' or '\n';
 
   /// <summary>
   /// Removes a specific indentation prefix from each line of code.
