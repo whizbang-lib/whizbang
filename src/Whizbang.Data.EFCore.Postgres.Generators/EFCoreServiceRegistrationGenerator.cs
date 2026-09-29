@@ -925,7 +925,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         VectorIndexLists: null,
         ColumnType: columnType,
         IsSearch: isSearch,
-        EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type)
+        EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
+        EnumMembers: PhysicalFieldScalar.EnumMembers(property.Type)
     );
   }
 
@@ -2337,6 +2338,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__PERSPECTIVE_TABLES_SCHEMA__", perspectiveTablesSchema);
       // Replace PERSPECTIVE_ENTRIES region with per-perspective (name, sql) tuples for hash tracking
       template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_ENTRIES", perspectiveEntriesCode);
+      // One rewrite per enumeration in a physical column, converting a column an earlier release created as text
+      // (the member names) to the number it now holds, applied by the stored-format rewrite phase.
+      template = TemplateUtilities.ReplaceRegion(template, "PHYSICAL_COLUMN_REWRITES",
+        _generatePhysicalColumnRewritesCode(matchingPerspectives, dbContext.Schema));
       // No stored-form rewrite is generated. The template derives it at runtime from the model
       // Entity Framework built and the serializer's metadata, the two things that read a document.
 
@@ -3094,30 +3099,35 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       if (PhysicalColumnSql.Backfill(table, field) is { } backfill) {
         sb.AppendLine(backfill);
       }
-      _appendEnumTextColumnWarning(sb, table, field);
     }
   }
 
+
   /// <summary>
-  /// An enumeration in a physical column is stored as its underlying number. A column created before that, as
-  /// text holding the enum's names, is never altered here: the schema pass raises a warning naming the column and
-  /// the migration to run, and leaves the column as it is.
+  /// The (name, SQL) entries of the generated physical-column rewrites: for each enumeration in a physical column
+  /// (whose type the author did not declare), a call building the rewrite from the enum's members.
   /// </summary>
-  private static void _appendEnumTextColumnWarning(StringBuilder sb, string table, PhysicalFieldInfo field) {
-    if (field.EnumScalarType is null || !string.IsNullOrWhiteSpace(field.ColumnType)) {
-      return;
+  private static string _generatePhysicalColumnRewritesCode(List<PerspectiveModelInfo> perspectives, string schema) {
+    var sb = new StringBuilder();
+    foreach (var perspective in perspectives) {
+      foreach (var field in perspective.PhysicalFields) {
+        if (field.EnumMembers is not { } members || !string.IsNullOrWhiteSpace(field.ColumnType)) {
+          continue;
+        }
+        string[] pairs = members.Length == 0
+          ? []
+          : [.. members.Split(';').Select(m => {
+            var at = m.IndexOf('=');
+            return $"(\"{m.Substring(0, at)}\", \"{m.Substring(at + 1)}\")";
+          })];
+        var enumName = field.TypeName.Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
+        enumName = enumName.Substring(enumName.LastIndexOf('.') + 1);
+        sb.AppendLine($"      (\"enum-column:{perspective.TableName}.{field.ColumnName}\", global::Whizbang.Data.Postgres.EnumColumnRewriteSql.Build("
+          + $"\"{schema}\", \"{perspective.TableName}\", \"{field.ColumnName}\", \"{enumName}\", \"{_getPostgresColumnType(field)}\", "
+          + $"new (string Name, string Value)[] {{ {string.Join(", ", pairs)} }})),");
+      }
     }
-    var type = _getPostgresColumnType(field);
-    var literalTable = table.Replace("'", "''");
-    sb.AppendLine("DO $$ BEGIN");
-    sb.AppendLine($"  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('{literalTable}')");
-    sb.AppendLine($"    AND attname = '{field.ColumnName}' AND NOT attisdropped AND atttypid IN ('text'::regtype, 'varchar'::regtype)) THEN");
-    sb.AppendLine($"    RAISE WARNING 'Whizbang: column {field.ColumnName} of {literalTable} holds the enumeration {field.PropertyName} as text, "
-      + $"but an enumeration in a physical column is now stored as its underlying number, and writes to this column fail until it is migrated. The column is left unchanged. "
-      + $"Migrate it with ALTER TABLE {literalTable} ALTER COLUMN {field.ColumnName} TYPE {type} USING (CASE {field.ColumnName} WHEN ''<name>'' THEN <number> ... END), "
-      + "mapping each stored name to its number.';");
-    sb.AppendLine("  END IF;");
-    sb.AppendLine("END $$;");
+    return sb.ToString();
   }
 
   /// <summary>

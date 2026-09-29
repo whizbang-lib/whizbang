@@ -86,18 +86,23 @@ public class EnumPhysicalFieldGenerationTests {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task ServiceRegistration_EnumColumn_IsAddedAsAnInteger_AndATextColumnIsFlaggedNotAlteredAsync() {
+  public async Task ServiceRegistration_EnumColumn_IsAddedAsAnInteger_AndATextColumnIsRewrittenByTheRewritePhaseAsync() {
     var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(MODEL);
     var sql = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
 
     await Assert.That(sql).Contains("ADD COLUMN IF NOT EXISTS stage INTEGER;");
-    await Assert.That(sql).Contains("RAISE WARNING")
-      .Because("A column created as text before enums were stored as numbers must be flagged, with the migration to run.");
-    await Assert.That(sql).Contains("ALTER COLUMN stage TYPE INTEGER USING");
-    var alterLines = sql.Split('\n').Where(l => l.Contains("ALTER COLUMN stage", StringComparison.Ordinal)).ToList();
-    await Assert.That(alterLines).IsNotEmpty();
-    await Assert.That(alterLines.All(l => l.Contains("RAISE WARNING", StringComparison.Ordinal))).IsTrue()
-      .Because("The migration is only named in the warning; the schema pass never alters an existing column's type itself.");
+    await Assert.That(sql).Contains(
+      "(\"enum-column:wh_per_ticket.stage\", global::Whizbang.Data.Postgres.EnumColumnRewriteSql.Build(\"testapp\", \"wh_per_ticket\", \"stage\", \"Stage\", \"INTEGER\", new (string Name, string Value)[] { (\"Draft\", \"0\"), (\"Open\", \"1\"), (\"Closed\", \"2\") }))")
+      .Because("The generator writes the name-to-number mapping from the enum's own members, for the rewrite phase to apply.");
+    await Assert.That(sql).Contains(
+      "GetPhysicalColumnRewrites()")
+      .Because("The initializer hands the physical-column rewrites to the same stored-format phase as the temporal ones.");
+    await Assert.That(sql).Contains("\"SMALLINT\", new (string Name, string Value)[] { (\"A\", \"0\"), (\"B\", \"1\") }")
+      .Because("A nullable byte-backed enum is converted to its smallint column the same way.");
+    await Assert.That(sql).DoesNotContain("enum-column:wh_per_ticket.tags")
+      .Because("Only an enumeration's column is rewritten.");
+    await Assert.That(sql).DoesNotContain("holds the enumeration")
+      .Because("A text enum column is converted, not flagged for an operator.");
   }
 
   [Test]

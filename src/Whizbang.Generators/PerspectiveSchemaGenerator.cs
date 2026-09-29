@@ -285,7 +285,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         VectorIndexType: null,
         VectorIndexLists: null,
         ColumnType: columnType,
-        EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type)
+        EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
+        EnumMembers: PhysicalFieldScalar.EnumMembers(property.Type)
     );
   }
 

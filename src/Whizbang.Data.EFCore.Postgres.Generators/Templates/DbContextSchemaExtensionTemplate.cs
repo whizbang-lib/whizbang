@@ -193,15 +193,22 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           }
         }
 
-        var rewrites = Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(
-          dbContext.Model,
-          Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options,
-          "__SCHEMA__");
+        // The temporal rewrites derived from the model, then the generated physical-column rewrites (an enum
+        // column an earlier release stored as text is converted to the number it now holds).
+        var rewrites = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Concat(
+          Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(
+            dbContext.Model,
+            Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options,
+            "__SCHEMA__"),
+          GetPhysicalColumnRewrites()));
         await Whizbang.Data.Postgres.CanonicalTemporalRewritePhase.ApplyAsync(
           rewriteConnectionFactory, lockId, rewrites, SCHEMA_COMMAND_TIMEOUT_SECONDS, logger,
           cancellationToken);
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Reported rather than fatal, for the same reason a single failed rewrite is: the index
+      } catch (Exception ex) when (ex is not OperationCanceledException
+          and not Whizbang.Data.Postgres.StoredFormConversionBlockedException) {
+        // A conversion blocked by values it cannot read is the one failure that stops startup: it names the
+        // table, the column and the values. Anything else is reported rather than fatal, for the same reason a
+        // single failed rewrite is: the index
         // built over unconverted rows fails with its own reason, which is a better place to read
         // the problem than a startup that stopped before saying what it was doing.
         logger?.LogWarning(ex,
@@ -1146,6 +1153,19 @@ END $$;
         throw;
       }
     }
+  }
+
+  /// <summary>
+  /// The generated physical-column rewrites, applied by the stored-format rewrite phase: one per enumeration in a
+  /// physical column, converting a column an earlier release created as text (the member names) to the number it
+  /// now holds. Each is idempotent and does nothing once the column is numeric.
+  /// </summary>
+  internal static (string Name, string Sql)[] GetPhysicalColumnRewrites() {
+    return new (string Name, string Sql)[] {
+      #region PHYSICAL_COLUMN_REWRITES
+      // Physical-column rewrites will be embedded here by the source generator
+      #endregion
+    };
   }
 
   /// <summary>

@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.CodeAnalysis;
 
 namespace Whizbang.Generators.Shared.Models;
@@ -29,5 +30,25 @@ public static class PhysicalFieldScalar {
       SpecialType.System_UInt32 or SpecialType.System_Int64 => "System.Int64",
       _ => "System.Decimal",
     };
+  }
+
+  /// <summary>
+  /// An enumeration's members as <c>Name=Value;Name=Value</c>, in declaration order, for the rewrite that converts a
+  /// column of names to numbers; null when <paramref name="type"/> is not an enumeration. A string rather than a
+  /// collection so the record carrying it keeps value equality for the incremental cache.
+  /// </summary>
+  public static string? EnumMembers(ITypeSymbol type) {
+    if (type is INamedTypeSymbol { IsGenericType: true } nullable
+        && nullable.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T) {
+      type = nullable.TypeArguments[0];
+    }
+    if (type.TypeKind != TypeKind.Enum) {
+      return null;
+    }
+    var members = type.GetMembers()
+      .OfType<IFieldSymbol>()
+      .Where(f => f.HasConstantValue)
+      .Select(f => f.Name + "=" + System.Convert.ToString(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture));
+    return string.Join(";", members);
   }
 }

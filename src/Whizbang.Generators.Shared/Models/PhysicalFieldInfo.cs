@@ -32,6 +32,10 @@ namespace Whizbang.Generators.Shared.Models;
 /// For an enumeration, the fully qualified CLR name of the scalar its column holds (see
 /// <see cref="PhysicalFieldScalar"/>); null otherwise. The column is typed from it and EF Core converts to it.
 /// </param>
+/// <param name="EnumMembers">
+/// For an enumeration, its members as <c>Name=Value;…</c> (see <see cref="PhysicalFieldScalar.EnumMembers"/>), from
+/// which the rewrite converting a text column of names to numbers is generated; null otherwise.
+/// </param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Models/PhysicalFieldInfoTests.cs</tests>
 public sealed record PhysicalFieldInfo(
@@ -49,7 +53,8 @@ public sealed record PhysicalFieldInfo(
     string? ColumnType = null,
     bool IsSplit = false,
     bool IsSearch = false,
-    string? EnumScalarType = null
+    string? EnumScalarType = null,
+    string? EnumMembers = null
 );
 
 /// <summary>

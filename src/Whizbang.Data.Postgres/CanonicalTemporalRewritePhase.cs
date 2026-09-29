@@ -135,6 +135,10 @@ public static class CanonicalTemporalRewritePhase {
     connection.Notice += relay;
 
     var applied = 0;
+    // A rewrite that found values it cannot convert (an enum column holding a value that is neither a member
+    // name nor a number) is not reported and passed over like the rest: the framework cannot read that column,
+    // so startup stops once every rewrite that could run has been committed.
+    var blocked = new List<string>();
     string? writer;
     try {
       foreach (var (name, sql) in pending) {
@@ -146,6 +150,10 @@ public static class CanonicalTemporalRewritePhase {
           await command.ExecuteNonQueryAsync(cancellationToken);
           await transaction.ReleaseAsync(SAVEPOINT, cancellationToken);
           applied++;
+        } catch (PostgresException ex) when (ex.SqlState == EnumColumnRewriteSql.BLOCKED_SQL_STATE) {
+          await transaction.RollbackAsync(SAVEPOINT, cancellationToken);
+          await transaction.ReleaseAsync(SAVEPOINT, cancellationToken);
+          blocked.Add(ex.MessageText);
         } catch (Exception ex) when (ex is not OperationCanceledException) {
           // Reported rather than fatal. A rewrite that did not run leaves rows in the older format,
           // and the index built over them fails with its own reason, which is a better place to read
@@ -165,6 +173,10 @@ public static class CanonicalTemporalRewritePhase {
 
     var elapsedMs = (long)timeProvider.GetElapsedTime(started).TotalMilliseconds;
     CanonicalTemporalRewriteLog.Applied(log, applied, pending.Count, lockId, elapsedMs);
+
+    if (blocked.Count > 0) {
+      throw new StoredFormConversionBlockedException(blocked);
+    }
 
     if (writer is not null) {
       // The initializer indexes the rewritten keys as soon as this returns, with a plain CREATE
