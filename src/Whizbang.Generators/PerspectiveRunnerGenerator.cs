@@ -530,6 +530,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // eviction closure without reflection.
     result = TemplateUtilities.ReplaceRegion(result, "STREAM_GROUP_REGISTRATION",
         _buildStreamGroupRegistrations(perspective.StreamGroupSpec, modelTypeName));
+    // Physical fields register turnkey too: the collective apply path reads the column names and storage mode
+    // to send a setter or a condition on a physical property to its column (no reflection at run time).
+    result = TemplateUtilities.ReplaceRegion(result, "PHYSICAL_FIELD_REGISTRATION",
+        _buildPhysicalFieldRegistration(perspective, modelTypeName));
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
@@ -671,6 +675,32 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerStreamGroup{i}() =>\n      global::Whizbang.Core.Perspectives.PerspectiveStreamGroupRegistry.Register(typeof({modelTypeName}), \"{parts[0]}\", {_csharpBool(parts[1] == "1")}, {_csharpBool(parts[2] == "1")}, {_csharpBool(parts[3] == "1")});");
     }
     return string.Join("\n\n  ", registrations);
+  }
+
+  /// <summary>
+  /// Emits the <c>[ModuleInitializer]</c> that registers the model's physical fields in
+  /// <c>PerspectivePhysicalFieldRegistry</c>: one call per field with its column name, the model's storage mode
+  /// and whether it is a vector. Empty when the model has no physical fields.
+  /// </summary>
+  private static string _buildPhysicalFieldRegistration(PerspectiveInfo perspective, string modelTypeName) {
+    if (perspective.PhysicalFields is not { Length: > 0 } fields) {
+      return "";
+    }
+    var mode = perspective.StorageMode switch {
+      1 => "Extracted",
+      2 => "Split",
+      _ => "JsonOnly",
+    };
+    var sb = new StringBuilder();
+    sb.Append("[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerPhysicalFields() {");
+    foreach (var field in fields) {
+      sb.Append("\n    global::Whizbang.Core.Perspectives.PerspectivePhysicalFieldRegistry.Register(typeof(")
+        .Append(modelTypeName).Append("), \"").Append(field.PropertyName).Append("\", \"").Append(field.ColumnName)
+        .Append("\", global::Whizbang.Core.Perspectives.FieldStorageMode.").Append(mode)
+        .Append(", isVector: ").Append(_csharpBool(field.IsVectorField)).Append(");");
+    }
+    sb.Append("\n  }");
+    return sb.ToString();
   }
 
   /// <summary>

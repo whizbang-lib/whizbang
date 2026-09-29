@@ -179,9 +179,21 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       in ResolvedColumn column, string op, Expression valueExpr, string prefix,
       StringBuilder sql, Dictionary<string, object?> parameters) {
     var value = _evaluateValue(valueExpr);
-    var paramName = $"{prefix}_{column.PropName.ToLowerInvariant()}";
+    var paramName = _uniqueName(parameters, $"{prefix}_{column.PropName.ToLowerInvariant()}");
     parameters[paramName] = _bind(value, column.Kind);
     sql.Append(column.Sql).Append(' ').Append(op).Append(" @").Append(paramName);
+  }
+
+  // Two conditions on one property name (an outer row and an EXISTS inner row, or a repeated comparison) must bind
+  // two parameters: reusing the name let the second value overwrite the first.
+  private static string _uniqueName(Dictionary<string, object?> parameters, string name) {
+    var candidate = name;
+    var n = 0;
+    while (parameters.ContainsKey(candidate)) {
+      n++;
+      candidate = name + "_" + n.ToString(CultureInfo.InvariantCulture);
+    }
+    return candidate;
   }
 
   /// <summary>
@@ -198,13 +210,18 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
 
     /// <summary>The row's <c>id</c>, a real uuid column.</summary>
     Uuid,
+
+    /// <summary>A <c>[PhysicalField]</c> column, typed as its property, so the value binds as itself.</summary>
+    Physical,
   }
 
   // The value to bind against a column of <paramref name="kind"/>. A jsonb extraction is text and takes the
-  // text conversion below. The id column is a real uuid: Postgres refuses `uuid = text` outright (42883), so
-  // the guid goes through as itself and the driver types the parameter. A guid arriving as text is parsed
-  // rather than passed along, because a caller comparing an id to a string means the id.
+  // text conversion below. A physical column is typed as its property, so the CLR value binds as itself. The id
+  // column is a real uuid: Postgres refuses `uuid = text` outright (42883), so the guid goes through as itself
+  // and the driver types the parameter. A guid arriving as text is parsed rather than passed along, because a
+  // caller comparing an id to a string means the id.
   private static object? _bind(object? value, ColumnKind kind) => kind switch {
+    ColumnKind.Physical => value,
     ColumnKind.Uuid => value switch {
       null => null,
       Guid g => g,
@@ -272,7 +289,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     var names = new List<string>();
     var i = 0;
     foreach (var v in values) {
-      var name = $"{prefix}_{item.PropName.ToLowerInvariant()}_{i}";
+      var name = _uniqueName(parameters, $"{prefix}_{item.PropName.ToLowerInvariant()}_{i}");
       parameters[name] = _bind(v, item.Kind);
       names.Add("@" + name);
       i++;
@@ -332,12 +349,19 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     sql.Append(')');
   }
 
-  // row.Scope.X → scope->>'X', row.Data.X → data->>'X', row.Id → id — qualified per context (outer/inner).
-  // When the match is a jsonb column, also records the UNqualified path against its table in <paramref name="refs"/>
-  // as an expression-index candidate (§7).
+  // row.Scope.X → scope->>'X', row.Data.X → data->>'X' (or the column itself when X is a [PhysicalField]),
+  // row.Id → id — qualified per context (outer/inner). When the match is a jsonb path, also records the UNqualified
+  // path against its table in <paramref name="refs"/> as an expression-index candidate (§7); a physical column is
+  // indexed by its own declaration, so it is not recorded.
   private static ResolvedColumn? _tryColumn(Expression e, Ctx ctx, List<ReferencedJsonPath> refs) {
     while (e is UnaryExpression { NodeType: ExpressionType.Convert } convert) {
       e = convert.Operand;
+    }
+
+    if (e is MemberExpression { Member: PropertyInfo dprop, Expression: MemberExpression { Member.Name: "Data", Expression: ParameterExpression dp } data }
+        && _qualifierFor(dp, ctx) is { } dq
+        && CollectivePhysicalColumns.Resolve(data.Type, dprop.Name, dprop.PropertyType) is { } field) {
+      return new ResolvedColumn(dq + CollectivePhysicalColumns.Quote(field.ColumnName), dprop.Name, ColumnKind.Physical);
     }
 
     if (e is MemberExpression { Member: PropertyInfo jprop, Expression: MemberExpression { Member.Name: var container, Expression: ParameterExpression jp } }
