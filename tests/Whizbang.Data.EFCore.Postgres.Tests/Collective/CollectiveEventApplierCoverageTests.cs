@@ -65,6 +65,8 @@ public class CollectiveEventApplierCoverageTests {
 
   private sealed record TenantScope(string TenantId) : CollectiveScope {
     public override string ScopeKind => "tenant";
+    /// <inheritdoc/>
+    public override string ScopeIdentity => ScopeKind + ":" + TenantId;
   }
 
   private sealed record Evt(CollectiveScope Scope) : ICollectiveEvent;

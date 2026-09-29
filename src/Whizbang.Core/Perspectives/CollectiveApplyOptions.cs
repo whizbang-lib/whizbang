@@ -44,6 +44,25 @@ public sealed record CollectiveApplyOptions {
   // SHARE lock on first apply per process); that was removed because index creation must never happen in a
   // live path. Cohort filters correlate by PK so need no extra index.
 
+  /// <summary>
+  /// How long a batch waits for the per-scope apply lock before giving up, in seconds.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The lock is held for one batch and released at its commit, so a wait is normally short. Without
+  /// a bound the only limit was <see cref="StatementTimeoutSeconds"/>: a contended wait sat for the
+  /// full statement timeout, the execution strategy then retried the batch, and the retry joined the
+  /// back of the lock queue -- while the work lease, which is renewed only after progress, expired
+  /// underneath it. The work was leased again and the wait counted toward dead-lettering, so
+  /// contention turned into a reshuffling queue and apply latency of many minutes.
+  /// </para>
+  /// <para>
+  /// Bounded, the wait fails in seconds with a named outcome instead, which a caller can tell apart
+  /// from a broken apply. Null restores the old unbounded wait.
+  /// </para>
+  /// </remarks>
+  public int? LockWaitSeconds { get; init; } = 30;
+
   /// <summary>The framework default policy.</summary>
   public static CollectiveApplyOptions Default { get; } = new();
 }

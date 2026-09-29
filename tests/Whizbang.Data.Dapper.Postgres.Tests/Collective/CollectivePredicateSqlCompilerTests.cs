@@ -78,9 +78,32 @@ public class CollectivePredicateSqlCompilerTests {
     var result = CollectivePredicateSqlCompiler<JobModel>.Compile(filter);
 
     await Assert.That(result.SqlFragment).IsEqualTo("id = @where_id");
-    await Assert.That(result.Parameters["where_id"]).IsEqualTo(id.ToString());
+    // The guid itself, not its text. id is a real uuid column, so the driver has to see a Guid and
+    // type the parameter uuid; bound as text Postgres refuses the whole statement with 42883
+    // "operator does not exist: uuid = text". Every other column here is a jsonb ->> extraction,
+    // which IS text, and that is why the text conversion is the default rather than the rule.
+    await Assert.That(result.Parameters["where_id"]).IsEqualTo(id);
     // id is the primary key — never an expression-index candidate.
     await Assert.That(result.ReferencedJsonPaths.Count).IsEqualTo(0);
+  }
+
+  /// <summary>A set of ids reaches the uuid column as guids too, not as their text.</summary>
+  /// <remarks>
+  /// The IN path binds each element separately, so it can be wrong on its own while equality is
+  /// right. Same failure if it is: uuid = text, refused.
+  /// </remarks>
+  [Test]
+  public async Task Compile_IdContains_BindsEachIdAsAGuidAsync() {
+    var first = Guid.NewGuid();
+    var second = Guid.NewGuid();
+    var wanted = new[] { first, second };
+    Expression<Func<PerspectiveRow<JobModel>, bool>> filter = row => wanted.Contains(row.Id);
+
+    var result = CollectivePredicateSqlCompiler<JobModel>.Compile(filter);
+
+    await Assert.That(result.SqlFragment).IsEqualTo("id IN (@where_id_0, @where_id_1)");
+    await Assert.That(result.Parameters["where_id_0"]).IsEqualTo(first);
+    await Assert.That(result.Parameters["where_id_1"]).IsEqualTo(second);
   }
 
   [Test]

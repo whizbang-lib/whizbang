@@ -90,15 +90,46 @@ public class CollectiveEventContractTests {
     await Assert.That(props[0].Name).IsEqualTo(nameof(ICollectiveEvent.Scope));
   }
 
+  /// <summary>
+  /// A scope that adds no instance data gets the kind as its identity, without writing it out.
+  /// </summary>
+  /// <remarks>
+  /// The advisory lock a collective apply takes is keyed by table and scope identity, so a consumer
+  /// implementing <see cref="ICollectiveScope"/> directly has to supply one. The default covers the
+  /// only case where the kind alone is correct -- a scope with nothing in it -- so that a consumer
+  /// whose scope does carry data has to say what makes an instance distinct rather than inheriting
+  /// an identity that collapses every instance onto one lock.
+  /// </remarks>
+  [Test]
+  public async Task ICollectiveScope_AScopeWithNoInstanceData_IdentifiesByItsKindAsync() {
+    ICollectiveScope wholeEstate = new WholeEstateScope();
+
+    await Assert.That(wholeEstate.ScopeIdentity).IsEqualTo("whole-estate")
+      .Because("nothing narrows this scope beyond its kind, so the kind is the whole identity");
+  }
+
   // ── Inline test types ──────────────────────────────────────────────────
 
   private sealed record ArchiveJobsCollectiveEvent(CollectiveScope Scope) : ICollectiveEvent;
 
   private sealed record TenantCollectiveScope(string TenantId) : CollectiveScope {
     public override string ScopeKind => "tenant";
+    /// <inheritdoc/>
+    public override string ScopeIdentity => ScopeKind + ":" + TenantId;
   }
 
   private sealed record GlobalCollectiveScope : CollectiveScope {
     public override string ScopeKind => "global";
+    /// <inheritdoc/>
+    /// <remarks>Nothing narrows this scope beyond its kind, so the kind is the whole identity.</remarks>
+    public override string ScopeIdentity => ScopeKind;
+  }
+
+  /// <summary>
+  /// Implements the interface directly rather than deriving from <see cref="CollectiveScope"/>, which is
+  /// how a consumer's own scope family arrives, and takes the interface's identity default.
+  /// </summary>
+  private sealed class WholeEstateScope : ICollectiveScope {
+    public string ScopeKind => "whole-estate";
   }
 }

@@ -405,12 +405,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var isVersionedTarget = typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel));
     // The ordering guard, written against the incoming metadata: EXCLUDED.metadata in the upsert, the bound
     // parameter in the conditional UPDATE. The unconditional text is byte-identical to what it always was.
-    string guard(string incoming) => isVersionedTarget
-      ? $@"{qualifiedTable}.metadata->>'EventId' IS NULL
-           OR {incoming}->>'EventId' > {qualifiedTable}.metadata->>'EventId'"
-      : $@"{qualifiedTable}.metadata->>'CommitSequence' IS NULL
-           OR {incoming}->>'CommitSequence' IS NULL
-           OR ({incoming}->>'CommitSequence')::bigint >= ({qualifiedTable}.metadata->>'CommitSequence')::bigint";
+    string guard(string incoming) =>
+      Whizbang.Data.Postgres.Perspectives.PerspectiveRowVersionCommands.OrderingGuard(
+        qualifiedTable, incoming, isVersionedTarget);
     var whereClause = $@"
         WHERE {guard("EXCLUDED.metadata")}";
 
@@ -740,11 +737,16 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // changed shape when an operator toggled a setting. This keys off a context's model, which is
     // fixed at startup and cannot vary per write. EF cannot infer a shadow property by convention,
     // so contexts configured without an explicit declaration legitimately have none.
+    // Each column is guarded on its own declaration, and the insert is read from the entry's state
+    // rather than from `existingRow is null`. The two used to be one guard on sys_updated_at that
+    // wrote sys_created_at as well, so a model declaring one and not the other wrote a null into a
+    // NOT NULL column -- and `existingRow is null` is a proxy for "Entity Framework will insert"
+    // that can disagree with what it actually does.
     var rowEntry = context.Entry(row);
+    if (rowEntry.State == EntityState.Added && rowEntry.Metadata.FindProperty("sys_created_at") is not null) {
+      rowEntry.Property("sys_created_at").CurrentValue = now;
+    }
     if (rowEntry.Metadata.FindProperty("sys_updated_at") is not null) {
-      if (existingRow is null) {
-        rowEntry.Property("sys_created_at").CurrentValue = now;
-      }
       rowEntry.Property("sys_updated_at").CurrentValue = now;
     }
 

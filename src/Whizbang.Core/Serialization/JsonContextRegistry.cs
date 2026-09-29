@@ -367,10 +367,17 @@ public static class JsonContextRegistry {
   /// on the transport. The registry's converters are added behind the host's, skipping any type the
   /// host already converts.
   /// </para>
+  /// <para>
+  /// Public because the generated facade calls it. Completing the chain on the framework's read paths
+  /// left a host that uses <c>WhizbangJsonContext.CreateOptions()</c> directly with the four fixed
+  /// contexts and no out-of-order metadata -- the same two failures, reachable through the options the
+  /// generator hands out. The generated <c>CreateOptions()</c> returns its options through here, so one
+  /// implementation answers for both routes rather than two that can drift.
+  /// </para>
   /// </remarks>
   /// <docs>messaging/transports/transport-consumer#unreadable-messages</docs>
   /// <tests>tests/Whizbang.Core.Tests/Serialization/JsonContextRegistryCompleteChainTests.cs</tests>
-  internal static JsonSerializerOptions WithCompleteChain(JsonSerializerOptions? hostOptions) {
+  public static JsonSerializerOptions WithCompleteChain(JsonSerializerOptions? hostOptions) {
     var generation = Generation;
     if (hostOptions is null) {
       var cached = Volatile.Read(ref _completedForNoHostOptions);

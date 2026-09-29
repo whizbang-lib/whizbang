@@ -34,4 +34,23 @@ public interface ICollectiveScope {
   /// shape to avoid collisions.
   /// </summary>
   string ScopeKind { get; }
+
+  /// <summary>
+  /// Everything that distinguishes one instance of this scope from another, as a stable string.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Used where two applies must be told apart rather than merely routed: the advisory lock a
+  /// collective apply takes is keyed by table and by this, so two scopes with the same identity
+  /// serialize against each other and two with different identities do not.
+  /// </para>
+  /// <para>
+  /// It must therefore include every field that makes the scope narrower than its kind -- a tenant
+  /// id, a region, a customer. The kind alone is right only for a scope that has no instance data at
+  /// all, such as a global one, which is why that is the default. Returning the kind from a scope
+  /// that does carry data collapses every instance onto one lock: every tenant's collective applies
+  /// then serialize against each other, one at a time, per table.
+  /// </para>
+  /// </remarks>
+  string ScopeIdentity => ScopeKind;
 }

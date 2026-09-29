@@ -124,7 +124,9 @@ public static class CollectiveEventApplier<TModel> where TModel : class {
     // A stable identity for the scope (includes the tenant), so the per-(table,scope) advisory lock serializes
     // same-scope applies while letting disjoint scopes run concurrently. The record ToString() is
     // compiler-generated (AOT-safe, no reflection) and carries the scope's members (e.g. TenantId).
-    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope;
+    // The scope's identity, not its kind. ToString() is the kind, so this line once read
+    // "tenant:tenant" for every tenant and put them all on one lock per table.
+    var scopeKey = evt.Scope.ScopeIdentity;
 
     // §6: fold this handler's per-apply knob overrides onto the global default (0 = inherit). SerializeApplies
     // stays global — exclusive serialization is not per-handler optional (D4 safety).

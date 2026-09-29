@@ -59,7 +59,14 @@ public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver 
       DefaultIgnoreCondition = global::System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 __CONVERTER_REGISTRATIONS__
-    return options;
+    // Returned through the registry, which keeps every setting and converter above, adds the contexts
+    // registered by other assemblies behind this resolver, and accepts a polymorphic discriminator out of
+    // first position. Without it these four contexts are all a host gets: a type declared in a shared
+    // contracts assembly has no metadata here, and a jsonb column -- which orders keys by length -- can
+    // push an inner $type behind a short key, which options without out-of-order metadata refuse. The
+    // framework's own read paths already complete the chain this way; this is the same call, so the
+    // options a host builds from this facade read every message the framework itself can.
+    return global::Whizbang.Core.Serialization.JsonContextRegistry.WithCompleteChain(options);
   }
 
   /// <summary>

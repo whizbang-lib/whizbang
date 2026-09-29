@@ -7,6 +7,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Perspectives;
 
 namespace Whizbang.Data.Dapper.Postgres;
 
@@ -45,16 +46,34 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   }
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// Implemented rather than left to the interface default, which reports
+  /// <see cref="PerspectiveApplyRead.Unchecked"/> and reads nothing. A store that reports unchecked is
+  /// telling the runner not to condition its write on anything, and a per-stream apply computed from a
+  /// stale read could then overwrite a concurrent collective write here while the same apply was
+  /// refused under Entity Framework.
+  /// </remarks>
+  public async Task<PerspectiveApplyRead> ReadForApplyAsync(
+      Guid streamId, CancellationToken cancellationToken = default) {
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync(cancellationToken);
+    await using var cmd = new NpgsqlCommand(PerspectiveRowVersionCommands.ReadForApplySql(tableName), conn);
+    cmd.Parameters.AddWithValue("id", streamId);
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    return await PerspectiveRowVersionCommands.ReadApplyAsync(reader, cancellationToken);
+  }
+
+  /// <inheritdoc/>
   public Task UpsertAsync(Guid streamId, TModel model, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, new PerspectiveScope(), false, metadata: null, cancellationToken);
+    _upsertCoreAsync(streamId, model, new PerspectiveScope(), false, metadata: null, PerspectiveRowVersion.Unchecked, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertAsync(Guid streamId, TModel model, PerspectiveScope scope, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope, false, metadata: null, cancellationToken);
+    _upsertCoreAsync(streamId, model, scope, false, metadata: null, PerspectiveRowVersion.Unchecked, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertAsync(Guid streamId, TModel model, PerspectiveScope scope, bool forceUpdateScope, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope, forceUpdateScope, metadata: null, cancellationToken);
+    _upsertCoreAsync(streamId, model, scope, forceUpdateScope, metadata: null, PerspectiveRowVersion.Unchecked, cancellationToken);
 
   /// <inheritdoc/>
   /// <remarks>
@@ -68,19 +87,30 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   public Task UpsertAsync(
       Guid streamId, TModel model, PerspectiveScope scope, bool forceUpdateScope,
       PerspectiveMetadata metadata, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope, forceUpdateScope, metadata, cancellationToken);
+    _upsertCoreAsync(streamId, model, scope, forceUpdateScope, metadata, PerspectiveRowVersion.Unchecked, cancellationToken);
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// The checked write. Implemented rather than left to the interface default, whose body drops the
+  /// version and writes unconditionally -- which is the overwrite this exists to refuse.
+  /// </remarks>
+  public Task UpsertAsync(
+      Guid streamId, TModel model, PerspectiveScope scope, bool forceUpdateScope,
+      PerspectiveMetadata metadata, PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default) =>
+    _upsertCoreAsync(streamId, model, scope, forceUpdateScope, metadata, expectedVersion, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertWithPhysicalFieldsAsync(
       Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
       PerspectiveScope? scope = null, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), false, metadata: null, cancellationToken, physicalFieldValues);
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), false, metadata: null, PerspectiveRowVersion.Unchecked, cancellationToken, physicalFieldValues);
 
   /// <inheritdoc/>
   public Task UpsertWithPhysicalFieldsAsync(
       Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
       PerspectiveScope? scope, bool forceUpdateScope, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, metadata: null, cancellationToken, physicalFieldValues);
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, metadata: null, PerspectiveRowVersion.Unchecked, cancellationToken, physicalFieldValues);
 
   /// <inheritdoc/>
   /// <remarks>Implemented explicitly for the same reason as the metadata overload without physical fields:
@@ -88,7 +118,17 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   public Task UpsertWithPhysicalFieldsAsync(
       Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
       PerspectiveScope? scope, bool forceUpdateScope, PerspectiveMetadata metadata, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, metadata, cancellationToken, physicalFieldValues);
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, metadata,
+      PerspectiveRowVersion.Unchecked, cancellationToken, physicalFieldValues);
+
+  /// <inheritdoc/>
+  /// <remarks>The checked write's physical-fields twin: the same guard, with the physical columns in the same statement.</remarks>
+  public Task UpsertWithPhysicalFieldsAsync(
+      Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope, bool forceUpdateScope, PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion, CancellationToken cancellationToken = default) =>
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, metadata,
+      expectedVersion, cancellationToken, physicalFieldValues);
 
   /// <inheritdoc/>
   public async Task<TModel?> GetByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, CancellationToken cancellationToken = default)
@@ -98,17 +138,17 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   /// <inheritdoc/>
   public Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, CancellationToken cancellationToken = default)
       where TPartitionKey : notnull =>
-    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, new PerspectiveScope(), false, metadata: null, cancellationToken);
+    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, new PerspectiveScope(), false, metadata: null, PerspectiveRowVersion.Unchecked, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, PerspectiveScope scope, CancellationToken cancellationToken = default)
       where TPartitionKey : notnull =>
-    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, false, metadata: null, cancellationToken);
+    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, false, metadata: null, PerspectiveRowVersion.Unchecked, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, PerspectiveScope scope, bool forceUpdateScope, CancellationToken cancellationToken = default)
       where TPartitionKey : notnull =>
-    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, forceUpdateScope, metadata: null, cancellationToken);
+    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, forceUpdateScope, metadata: null, PerspectiveRowVersion.Unchecked, cancellationToken);
 
   /// <inheritdoc/>
   public Task FlushAsync(CancellationToken cancellationToken = default) =>
@@ -130,9 +170,11 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       where TPartitionKey : notnull =>
     PurgeAsync(_convertPartitionKeyToGuid(partitionKey), cancellationToken);
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The single implementation behind the perspective-store interface's upsert overload matrix: the row identity and model, the scope decision, the incoming metadata, the expected version and the physical columns. Every overload supplies some subset, so the parameters already are the write; a request type would exist only to be unpacked on the first line.")]
   private async Task _upsertCoreAsync(
       Guid id, TModel model, PerspectiveScope scope, bool forceUpdateScope,
       PerspectiveMetadata? metadata,
+      PerspectiveRowVersion expectedVersion,
       CancellationToken cancellationToken,
       IDictionary<string, object?>? physicalFieldValues = null) {
     // Validated before anything is opened: a column name goes into the statement text.
@@ -194,12 +236,43 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     var physicalValues = string.Concat(physical.Select(p => $", @{p.Parameter.ParameterName}"));
     var physicalSet = string.Concat(physical.Select(p => $",\n        {p.Column} = EXCLUDED.{p.Column}"));
 
-    var sql = $"""
+    // The ordering guard, so an event the row has already moved past is skipped rather than applied
+    // backwards. Written against EXCLUDED.metadata in the upsert forms and against the bound
+    // parameter in the conditional update, the only place the incoming metadata differs.
+    var isVersionedTarget = typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel));
+    string guard(string incoming) =>
+      PerspectiveRowVersionCommands.OrderingGuard(tableName, incoming, isVersionedTarget);
+
+    // A checked write lands only on the version the apply read. An existing row is updated in place
+    // on that exact version -- an UPDATE, not an upsert, so a row deleted meanwhile is not brought
+    // back. A row that was absent is inserted only while it is still absent. Either affects no row
+    // when the row moved, which the refusal below reads as a conflict. The unchecked form is the
+    // statement this store always issued, so the common path still costs one statement.
+    var physicalUpdate = string.Concat(physical.Select(pf => $", {pf.Column} = @{pf.Parameter.ParameterName}"));
+    var insert = $"""
       INSERT INTO {tableName} (id, data, metadata, scope, created_at, updated_at, version{physicalColumns})
       VALUES (@p_id, @p_data::jsonb, @p_metadata::jsonb, @p_scope::jsonb, @p_created, @p_updated, 1{physicalValues})
-      ON CONFLICT (id) DO UPDATE SET
-        {setClause}{physicalSet}
       """;
+    var sql = expectedVersion.State switch {
+      PerspectiveRowVersionState.Present => $"""
+        UPDATE {tableName} SET
+          data = @p_data::jsonb,
+          metadata = @p_metadata::jsonb,
+          updated_at = @p_updated,
+          version = {tableName}.version + @p_versionbump{(forceUpdateScope ? ", scope = @p_scope::jsonb" : "")}{physicalUpdate}
+        WHERE {tableName}.id = @p_id AND {tableName}.xmin = @p_expectedversion
+          AND ({guard("@p_metadata::jsonb")})
+        """,
+      // The separator is explicit: a raw string literal keeps no trailing newline, so concatenating
+      // onto `insert` without one would run ON CONFLICT straight into the VALUES list.
+      PerspectiveRowVersionState.Absent =>
+        insert + "\n      ON CONFLICT (id) DO NOTHING",
+      _ => insert + "\n" + $"""
+        ON CONFLICT (id) DO UPDATE SET
+          {setClause}{physicalSet}
+        WHERE {guard("EXCLUDED.metadata")}
+        """,
+    };
 
     await using var cmd = new NpgsqlCommand(sql, conn);
     cmd.Parameters.AddWithValue("p_id", id);
@@ -213,7 +286,36 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       cmd.Parameters.Add(parameter);
     }
 
-    await cmd.ExecuteNonQueryAsync(cancellationToken);
+    if (expectedVersion.State == PerspectiveRowVersionState.Present) {
+      cmd.Parameters.Add(PerspectiveRowVersionCommands.ExpectedVersionParameter("p_expectedversion", expectedVersion));
+    }
+
+    var affected = await cmd.ExecuteNonQueryAsync(cancellationToken);
+    if (affected == 0 && expectedVersion.IsChecked) {
+      await _explainRefusedWriteAsync(conn, id, expectedVersion, cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// A checked write affected no row. Either the row moved since the apply read it, which is a
+  /// conflict and nothing was written, or it is still at the expected version and the ordering guard
+  /// refused the write, which is the quiet skip it always was.
+  /// </summary>
+  /// <remarks>
+  /// Runs only after a refused write, never on the common path, so a checked write that lands still
+  /// costs the one statement it always did.
+  /// </remarks>
+  private async Task _explainRefusedWriteAsync(
+      NpgsqlConnection conn, Guid streamId, PerspectiveRowVersion expected, CancellationToken cancellationToken) {
+    await using var cmd = new NpgsqlCommand(PerspectiveRowVersionCommands.ReadVersionSql(tableName, lockRow: false), conn);
+    cmd.Parameters.AddWithValue("id", streamId);
+    var actual = await cmd.ExecuteScalarAsync(cancellationToken) is uint xmin
+      ? PerspectiveRowVersion.Of(xmin)
+      : PerspectiveRowVersion.Absent;
+    if (expected.State == PerspectiveRowVersionState.Present && actual == expected) {
+      return;
+    }
+    throw new PerspectiveRowConflictException(typeof(TModel), streamId, expected, actual);
   }
 
   /// <summary>
