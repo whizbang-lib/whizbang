@@ -9,7 +9,8 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// </summary>
 /// <remarks>
 /// Reads each value as the property's own type, which the driver converts natively for everything the store
-/// writes natively. An enum is the exception: the store writes it as its name, so it is parsed back from it.
+/// writes natively. An enum is the exception: its column holds the underlying number (a <c>ulong</c>-backed one as
+/// <c>numeric</c>), which is converted back to the member, and a column still holding names is parsed from them.
 /// </remarks>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperSplitPhysicalFieldReloadTests.cs</tests>
 internal sealed class NpgsqlPhysicalColumnReader(NpgsqlDataReader reader, IReadOnlyList<SplitPhysicalColumn> columns)
@@ -23,9 +24,15 @@ internal sealed class NpgsqlPhysicalColumnReader(NpgsqlDataReader reader, IReadO
     }
     var type = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
     return type.IsEnum
-      ? (T)Enum.Parse(type, reader.GetString(ordinal))
+      ? (T)_enumValue(type, reader.GetValue(ordinal))
       : reader.GetFieldValue<T>(ordinal);
   }
+
+  private static object _enumValue(Type enumType, object stored) => stored switch {
+    string name => Enum.Parse(enumType, name),
+    decimal number => Enum.ToObject(enumType, decimal.ToUInt64(number)),
+    _ => Enum.ToObject(enumType, stored),
+  };
 
   /// <inheritdoc/>
   public float[]? GetVector(string column) {

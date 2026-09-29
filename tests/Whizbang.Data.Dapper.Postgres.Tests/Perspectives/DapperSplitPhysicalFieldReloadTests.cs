@@ -41,7 +41,7 @@ public class DapperSplitPhysicalFieldReloadTests : PostgresTestBase {
       CREATE TABLE {TABLE_NAME} (
         id UUID PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL, scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, version INTEGER NOT NULL,
-        status TEXT, priority INTEGER, tier TEXT, placed_at TIMESTAMPTZ);
+        status TEXT, priority INTEGER, tier INTEGER, placed_at TIMESTAMPTZ);
       """, connection);
     await command.ExecuteNonQueryAsync();
   }
@@ -71,7 +71,7 @@ public class DapperSplitPhysicalFieldReloadTests : PostgresTestBase {
     });
   }
 
-  private async Task<(string? Status, int? Priority, string? Tier, DateTimeOffset? PlacedAt, string? Note)> _readColumnsAsync(Guid streamId) {
+  private async Task<(string? Status, int? Priority, int? Tier, DateTimeOffset? PlacedAt, string? Note)> _readColumnsAsync(Guid streamId) {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
     await using var command = new NpgsqlCommand(
@@ -80,7 +80,7 @@ public class DapperSplitPhysicalFieldReloadTests : PostgresTestBase {
     await using var reader = await command.ExecuteReaderAsync();
     await reader.ReadAsync();
     async Task<T?> field<T>(int ordinal) => await reader.IsDBNullAsync(ordinal) ? default : await reader.GetFieldValueAsync<T>(ordinal);
-    return (await field<string>(0), await field<int?>(1), await field<string>(2), await field<DateTimeOffset?>(3), await field<string>(4));
+    return (await field<string>(0), await field<int?>(1), await field<int?>(2), await field<DateTimeOffset?>(3), await field<string>(4));
   }
 
   private static DapperSplitReloadStatusSetEvent _statusSet(Guid streamId, string status, int priority) => new() {
@@ -114,7 +114,8 @@ public class DapperSplitPhysicalFieldReloadTests : PostgresTestBase {
     await Assert.That(afterSecond.Status).IsEqualTo("active")
       .Because("an event that does not touch a promoted field must not overwrite its column with a default");
     await Assert.That(afterSecond.Priority).IsEqualTo(7);
-    await Assert.That(afterSecond.Tier).IsEqualTo("Gold");
+    await Assert.That(afterSecond.Tier).IsEqualTo((int)DapperSplitReloadTier.Gold)
+      .Because("an enum column holds the member's underlying number");
     await Assert.That(afterSecond.PlacedAt).IsEqualTo(_placedAt);
   }
 
@@ -133,7 +134,7 @@ public class DapperSplitPhysicalFieldReloadTests : PostgresTestBase {
       .Because("a Split field lives only in its column, so the load must read it from there");
     await Assert.That(model.Priority).IsEqualTo(3);
     await Assert.That(model.Tier).IsEqualTo(DapperSplitReloadTier.Gold)
-      .Because("an enum is written as its name and read back from it");
+      .Because("an enum is written as its number and read back from it");
     await Assert.That(model.PlacedAt).IsEqualTo(_placedAt);
     await Assert.That(model.Note).IsEqualTo("first");
   }

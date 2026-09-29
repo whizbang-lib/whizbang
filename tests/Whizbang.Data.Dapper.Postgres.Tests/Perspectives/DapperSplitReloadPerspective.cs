@@ -22,7 +22,7 @@ public class DapperSplitReloadPerspective :
     currentData with { Note = @event.Note };
 }
 
-/// <summary>A promoted enum, which the store writes as its name.</summary>
+/// <summary>A promoted enum, which the store writes as its underlying number.</summary>
 public enum DapperSplitReloadTier { None, Gold }
 
 /// <summary>
