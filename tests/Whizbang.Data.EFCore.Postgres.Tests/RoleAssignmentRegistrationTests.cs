@@ -119,6 +119,33 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
   }
 
   [Test]
+  [Timeout(120000)]
+  public async Task AddWhizbangRoleAssignment_RunsTheHolderLoopAsAHostedService_TheSameInstanceAsync(
+      CancellationToken cancellationToken) {
+    var pod = new Pod();
+    await using var dataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
+    var (services, provider) = await _composeAsync(pod, dataSource, roleAssignmentFirst: true, cancellationToken);
+    await using var owned = provider;
+
+    var holder = provider.GetRequiredService<DutyHolderWorker>();
+    // The hosted-service factories AddWhizbangRoleAssignment registered, invoked as the host would invoke them.
+    // Resolving every hosted service instead would construct the rest of the fixture's workers, which it does not
+    // wire up. A factory lambda is compiled into a closure type nested in the class that declares it.
+    var extensions = typeof(RoleAssignmentServiceCollectionExtensions).FullName!;
+    var hosted = services
+      .Where(d => d.ServiceType == typeof(IHostedService) && d.ImplementationFactory is not null
+        && d.ImplementationFactory.Method.DeclaringType?.FullName?.StartsWith(extensions, StringComparison.Ordinal) == true)
+      .Select(d => d.ImplementationFactory!(provider))
+      .OfType<DutyHolderWorker>()
+      .ToList();
+
+    await Assert.That(hosted).Count().IsEqualTo(1)
+      .Because("the host starts the holder loop once");
+    await Assert.That(hosted[0]).IsSameReferenceAs(holder)
+      .Because("the loop the host runs is the singleton the status and owed-work paths talk to, not a second copy");
+  }
+
+  [Test]
   public async Task AddWhizbangRoleAssignment_RefusesANullCollectionAsync() {
     await Assert.That(() => RoleAssignmentServiceCollectionExtensions.AddWhizbangRoleAssignment(null!))
       .Throws<ArgumentNullException>();
