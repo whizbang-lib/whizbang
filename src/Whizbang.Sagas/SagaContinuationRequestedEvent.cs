@@ -1,3 +1,5 @@
+using Whizbang.Core;
+
 namespace Whizbang.Sagas;
 
 /// <summary>
@@ -28,6 +30,8 @@ public class SagaContinuationRequestedEvent : SagaEventBase, ISagaContinuationRe
   public Guid EntityId { get; set; }
 
   /// <summary>Stream id this request is bound to (the finished saga's stream).</summary>
+  /// <remarks>Stored on this stream; see <see cref="SagaFrameworkEventStreamIds"/>.</remarks>
+  [StreamId]
   public Guid StreamId { get; set; }
 
   /// <summary>Name of the saga that finished.</summary>

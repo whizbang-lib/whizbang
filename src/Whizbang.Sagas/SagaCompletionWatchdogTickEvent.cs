@@ -1,3 +1,5 @@
+using Whizbang.Core;
+
 namespace Whizbang.Sagas;
 
 /// <summary>
@@ -41,8 +43,11 @@ public class SagaCompletionWatchdogTickEvent : SagaEventBase, ISagaCompletionWat
   /// Used by <c>notify_instance_owners</c> (mig 049) to route the elapsed-schedule
   /// wake-up to the saga's owning instance. The mig 049 SQL filters NULL stream_ids
   /// because the NOTIFY path can't deliver to a row with no owning stream, so this
-  /// field MUST be populated when the framework arms the tick.
+  /// field MUST be populated when the framework arms the tick. The tick is stored on this stream, which
+  /// is how the stranded-saga sweep finds a tick still pending for the saga; see
+  /// <see cref="SagaFrameworkEventStreamIds"/>.
   /// </remarks>
+  [StreamId]
   public Guid StreamId { get; set; }
 
   /// <summary>
