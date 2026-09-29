@@ -17,10 +17,7 @@ public static class PhysicalFieldScalar {
   /// when <paramref name="type"/> is not an enumeration (a nullable enumeration counts).
   /// </summary>
   public static string? EnumColumnScalar(ITypeSymbol type) {
-    if (type is INamedTypeSymbol { IsGenericType: true } nullable
-        && nullable.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T) {
-      type = nullable.TypeArguments[0];
-    }
+    type = _unwrapNullable(type);
     if (type.TypeKind != TypeKind.Enum || type is not INamedTypeSymbol { EnumUnderlyingType: { } underlying }) {
       return null;
     }
@@ -38,10 +35,7 @@ public static class PhysicalFieldScalar {
   /// collection so the record carrying it keeps value equality for the incremental cache.
   /// </summary>
   public static string? EnumMembers(ITypeSymbol type) {
-    if (type is INamedTypeSymbol { IsGenericType: true } nullable
-        && nullable.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T) {
-      type = nullable.TypeArguments[0];
-    }
+    type = _unwrapNullable(type);
     if (type.TypeKind != TypeKind.Enum) {
       return null;
     }
@@ -51,4 +45,22 @@ public static class PhysicalFieldScalar {
       .Select(f => f.Name + "=" + System.Convert.ToString(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture));
     return string.Join(";", members);
   }
+
+  /// <summary>
+  /// Whether <paramref name="type"/> is an enumeration marked <c>[Flags]</c> (a nullable one counts), whose stored
+  /// names may be combined (<c>"A, B"</c>) and are converted to the bitwise OR of their values.
+  /// </summary>
+  public static bool IsFlagsEnum(ITypeSymbol type) {
+    type = _unwrapNullable(type);
+    return type.TypeKind == TypeKind.Enum
+      && type.GetAttributes().Any(a => a.AttributeClass is {
+        Name: "FlagsAttribute", ContainingNamespace: { Name: "System", ContainingNamespace.IsGlobalNamespace: true },
+      });
+  }
+
+  private static ITypeSymbol _unwrapNullable(ITypeSymbol type) =>
+    type is INamedTypeSymbol { IsGenericType: true } nullable
+      && nullable.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T
+        ? nullable.TypeArguments[0]
+        : type;
 }

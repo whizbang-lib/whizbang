@@ -11,8 +11,8 @@ namespace Whizbang.Generators.Tests;
 /// describes the column has to agree on that: the schema DDL (both the core schema generator and the EF Core
 /// service registration), the EF Core model (column type plus an explicit number conversion), and the runner's
 /// physical-field registration (which carries the scalar type so a collective binds the same number). An
-/// existing column created as text before this change is never altered: the schema pass warns and names the
-/// migration instead.
+/// existing column created as text before this change is converted by a generated rewrite built from the enum's
+/// members, which for a <c>[Flags]</c> enumeration also decodes combined names.
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 public class EnumPhysicalFieldGenerationTests {
@@ -27,6 +27,7 @@ public class EnumPhysicalFieldGenerationTests {
 
     public enum Stage { Draft, Open, Closed }
     public enum Tiny : byte { A, B }
+    [Flags] public enum Access { None = 0, Read = 1, Write = 2 }
 
     public record TicketEvent : IEvent;
 
@@ -40,6 +41,9 @@ public class EnumPhysicalFieldGenerationTests {
 
       [PhysicalField]
       public Tiny? Size { get; init; }
+
+      [PhysicalField]
+      public Access? Access { get; init; }
 
       [PhysicalField(ColumnType = "jsonb")]
       public System.Collections.Generic.List<string>? Tags { get; init; }
@@ -99,6 +103,11 @@ public class EnumPhysicalFieldGenerationTests {
       .Because("The initializer hands the physical-column rewrites to the same stored-format phase as the temporal ones.");
     await Assert.That(sql).Contains("\"SMALLINT\", new (string Name, string Value)[] { (\"A\", \"0\"), (\"B\", \"1\") }")
       .Because("A nullable byte-backed enum is converted to its smallint column the same way.");
+    await Assert.That(sql).Contains(
+      "(\"enum-column:wh_per_ticket.access\", global::Whizbang.Data.Postgres.EnumColumnRewriteSql.BuildFlags(\"testapp\", \"wh_per_ticket\", \"access\", \"Access\", \"INTEGER\", new (string Name, string Value)[] { (\"None\", \"0\"), (\"Read\", \"1\"), (\"Write\", \"2\") }))")
+      .Because("A [Flags] enumeration's rewrite also decodes combined names (\"Read, Write\") into the bitwise OR.");
+    await Assert.That(sql).DoesNotContain("EnumColumnRewriteSql.BuildFlags(\"testapp\", \"wh_per_ticket\", \"stage\"")
+      .Because("Only an enumeration marked [Flags] gets the combined-name decoding.");
     await Assert.That(sql).DoesNotContain("enum-column:wh_per_ticket.tags")
       .Because("Only an enumeration's column is rewritten.");
     await Assert.That(sql).DoesNotContain("holds the enumeration")

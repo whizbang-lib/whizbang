@@ -36,6 +36,10 @@ namespace Whizbang.Generators.Shared.Models;
 /// For an enumeration, its members as <c>Name=Value;…</c> (see <see cref="PhysicalFieldScalar.EnumMembers"/>), from
 /// which the rewrite converting a text column of names to numbers is generated; null otherwise.
 /// </param>
+/// <param name="EnumIsFlags">
+/// For an enumeration marked <c>[Flags]</c>, true: its stored names may be combined (<c>"A, B"</c>), and the rewrite
+/// converts a combination to the bitwise OR of the members' values.
+/// </param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Models/PhysicalFieldInfoTests.cs</tests>
 public sealed record PhysicalFieldInfo(
@@ -54,7 +58,8 @@ public sealed record PhysicalFieldInfo(
     bool IsSplit = false,
     bool IsSearch = false,
     string? EnumScalarType = null,
-    string? EnumMembers = null
+    string? EnumMembers = null,
+    bool EnumIsFlags = false
 );
 
 /// <summary>

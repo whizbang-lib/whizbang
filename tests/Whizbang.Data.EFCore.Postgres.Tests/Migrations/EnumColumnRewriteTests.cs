@@ -103,12 +103,84 @@ public class EnumColumnRewriteTests : IAsyncDisposable {
       .Because("A column the schema pass has not created yet has nothing to convert.");
   }
 
+  // A [Flags] enumeration, with a composite member, as .NET writes its combinations ("Read, Write").
+  private static readonly (string Name, string Value)[] _access =
+    [("None", "0"), ("Read", "1"), ("Write", "2"), ("Admin", "4"), ("All", "7")];
+
+  private async Task<bool> _applyFlagsAsync() {
+    var rewrite = ("enum-column:wh_per_grant.access",
+      EnumColumnRewriteSql.BuildFlags("public", "wh_per_grant", "access", "Access", "INTEGER", _access));
+    return await CanonicalTemporalRewritePhase.ApplyAsync(() => new NpgsqlConnection(_connectionString), LOCK_ID, [rewrite], TIMEOUT_SECONDS);
+  }
+
+  private Task _createGrantsAsync(string values) =>
+    _executeAsync($"CREATE TABLE wh_per_grant (id int PRIMARY KEY, access text); INSERT INTO wh_per_grant VALUES {values};");
+
+  [Test]
+  public async Task AFlagsColumn_CombinedNames_BecomeTheBitwiseOrOfTheirValuesAsync() {
+    await _createGrantsAsync("(1, 'Read, Write'), (2, 'Write'), (3, 'None'), (4, '5'), (5, NULL), (6, 'Read, Admin'), (7, 'All'), (8, 'Write, All')");
+
+    await _applyFlagsAsync();
+
+    await Assert.That(await _scalarAsync(
+      "SELECT data_type FROM information_schema.columns WHERE table_name = 'wh_per_grant' AND column_name = 'access'"))
+      .IsEqualTo("integer");
+    await Assert.That(await _scalarAsync("SELECT string_agg(coalesce(access::text, 'null'), ',' ORDER BY id) FROM wh_per_grant"))
+      .IsEqualTo("3,2,0,5,null,5,7,7")
+      .Because("A combination becomes the OR of its members, a single name its value, a number is kept and a null stays null.");
+  }
+
+  [Test]
+  public async Task AFlagsColumn_AComponentThatIsNotAMember_StopsStartup_NamingTheValueAsync() {
+    await _createGrantsAsync("(1, 'Read, Write'), (2, 'Read, Delete')");
+
+    var failure = await Assert.That(_applyFlagsAsync).Throws<StoredFormConversionBlockedException>();
+
+    await Assert.That(failure!.Message).Contains("wh_per_grant");
+    await Assert.That(failure.Message).Contains("access");
+    await Assert.That(failure.Message).Contains("Read, Delete");
+    await Assert.That(failure.Message).DoesNotContain("Read, Write")
+      .Because("Only a value with a component that is not a member blocks, and only it is named.");
+    await Assert.That(await _scalarAsync(
+      "SELECT data_type FROM information_schema.columns WHERE table_name = 'wh_per_grant' AND column_name = 'access'"))
+      .IsEqualTo("text")
+      .Because("A conversion that cannot be completed changes nothing.");
+  }
+
+  [Test]
+  public async Task AFlagsColumn_RunningItAgain_ChangesNothingAsync() {
+    await _createGrantsAsync("(1, 'Read, Write'), (2, 'Admin')");
+    await _applyFlagsAsync();
+    await _executeAsync("INSERT INTO wh_per_grant VALUES (3, 6)");
+
+    await Assert.That(await _applyFlagsAsync()).IsTrue();
+
+    await Assert.That(await _scalarAsync("SELECT string_agg(access::text, ',' ORDER BY id) FROM wh_per_grant"))
+      .IsEqualTo("3,4,6")
+      .Because("A column that is already numeric is left alone, and rows written since are untouched.");
+  }
+
+  [Test]
+  public async Task AFlagsColumnOfAUlongEnum_CombinesIntoTheUnsignedNumberAsync() {
+    await _executeAsync(
+      "CREATE TABLE wh_per_wide (id int PRIMARY KEY, bits text); INSERT INTO wh_per_wide VALUES (1, 'Low, High'), (2, 'Low'), (3, 'High');");
+    var rewrite = ("enum-column:wh_per_wide.bits", EnumColumnRewriteSql.BuildFlags(
+      "public", "wh_per_wide", "bits", "Wide", "NUMERIC", [("Low", "1"), ("High", "9223372036854775808")]));
+
+    await CanonicalTemporalRewritePhase.ApplyAsync(() => new NpgsqlConnection(_connectionString), LOCK_ID, [rewrite], TIMEOUT_SECONDS);
+
+    await Assert.That(await _scalarAsync("SELECT string_agg(bits::text, ',' ORDER BY id) FROM wh_per_wide"))
+      .IsEqualTo("9223372036854775809,1,9223372036854775808")
+      .Because("A ulong-backed member above the signed range keeps its unsigned value in the numeric column.");
+  }
+
   [Test]
   public async Task Build_RefusesAnIdentifierOrValueThatIsNotPlainAsync() {
     await Assert.That(() => EnumColumnRewriteSql.Build("public", "t;drop", "c", "E", "INTEGER", _stage)).Throws<ArgumentException>();
     await Assert.That(() => EnumColumnRewriteSql.Build("public", "t", "c", "E", "INTEGER", [("A", "1; drop")])).Throws<ArgumentException>();
     await Assert.That(() => EnumColumnRewriteSql.Build("public", "t", "c", "E", "INTEGER", [("A'", "1")])).Throws<ArgumentException>();
     await Assert.That(() => EnumColumnRewriteSql.Build("public", "t", "c", "E", "INTEGER; x", _stage)).Throws<ArgumentException>();
+    await Assert.That(() => EnumColumnRewriteSql.BuildFlags("public", "t", "c", "E", "INTEGER", [("A", "1; drop")])).Throws<ArgumentException>();
   }
 
   [Test]

@@ -926,7 +926,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ColumnType: columnType,
         IsSearch: isSearch,
         EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
-        EnumMembers: PhysicalFieldScalar.EnumMembers(property.Type)
+        EnumMembers: PhysicalFieldScalar.EnumMembers(property.Type),
+        EnumIsFlags: PhysicalFieldScalar.IsFlagsEnum(property.Type)
     );
   }
 
@@ -3122,7 +3123,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           })];
         var enumName = field.TypeName.Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
         enumName = enumName.Substring(enumName.LastIndexOf('.') + 1);
-        sb.AppendLine($"      (\"enum-column:{perspective.TableName}.{field.ColumnName}\", global::Whizbang.Data.Postgres.EnumColumnRewriteSql.Build("
+        var build = field.EnumIsFlags ? "BuildFlags" : "Build";
+        sb.AppendLine($"      (\"enum-column:{perspective.TableName}.{field.ColumnName}\", global::Whizbang.Data.Postgres.EnumColumnRewriteSql.{build}("
           + $"\"{schema}\", \"{perspective.TableName}\", \"{field.ColumnName}\", \"{enumName}\", \"{_getPostgresColumnType(field)}\", "
           + $"new (string Name, string Value)[] {{ {string.Join(", ", pairs)} }})),");
       }
