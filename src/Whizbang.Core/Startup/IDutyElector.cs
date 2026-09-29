@@ -34,6 +34,20 @@ public interface IDutyGrant : IAsyncDisposable {
   /// the grant lost) instead of throwing.
   /// </summary>
   Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken);
+
+  /// <summary>
+  /// The fencing token for this grant, or <see langword="null"/> when the implementation has none.
+  /// A role-assignment grant carries the assignment's epoch, which exclusive-work SQL presents with
+  /// the holder's instance id (<c>wh_assert_role_epoch</c>) so a stale holder's writes are refused
+  /// by the database rather than trusted client-side. A session-lock grant has no epoch.
+  /// </summary>
+  /// <remarks>
+  /// A default member, so every existing grant implementation keeps compiling and keeps meaning
+  /// what it meant: no fencing token, rather than a made-up one.
+  /// </remarks>
+  /// <docs>proposals/duty-role-assignment</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  long? Epoch => null;
 }
 
 /// <summary>
