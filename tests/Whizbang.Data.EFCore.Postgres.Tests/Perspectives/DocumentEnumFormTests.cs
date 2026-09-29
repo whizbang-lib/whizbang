@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// the column directly) would disagree with the rows already stored.
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields#enum-columns</docs>
+[Category("Shard4")]
 public class DocumentEnumFormTests {
   [Test]
   public async Task PersistenceProfile_Enum_IsWrittenAsItsNumberAsync() {

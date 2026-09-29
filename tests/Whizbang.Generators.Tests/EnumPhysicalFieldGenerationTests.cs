@@ -59,6 +59,46 @@ public class EnumPhysicalFieldGenerationTests {
     }
     """;
 
+  private const string WIDE_MODEL = """
+    using System;
+    using Whizbang.Core;
+    using Whizbang.Core.Perspectives;
+
+    namespace TestApp;
+
+    public enum Counted : uint { A, B }
+    public enum Huge : ulong { A, B }
+
+    public record MeterEvent : IEvent;
+
+    public record MeterModel {
+      [StreamId]
+      public Guid Id { get; init; }
+
+      [PhysicalField]
+      public Counted Counted { get; init; }
+
+      [PhysicalField]
+      public Huge? Huge { get; init; }
+    }
+
+    public class MeterPerspective : IPerspectiveFor<MeterModel, MeterEvent> {
+      public MeterModel Apply(MeterModel currentData, MeterEvent @event) => currentData;
+    }
+    """;
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task SchemaGenerator_UnsignedEnumColumns_WidenToTheNextSignedTypeOrNumericAsync() {
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(WIDE_MODEL);
+    var schema = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs") ?? "";
+
+    await Assert.That(schema).Contains("counted BIGINT")
+      .Because("A uint-backed enum does not fit a signed integer, so it widens to bigint.");
+    await Assert.That(schema).Contains("huge DECIMAL")
+      .Because("No Postgres integer holds every ulong, so a ulong-backed enum is stored as decimal (numeric).");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task SchemaGenerator_EnumColumn_IsTheUnderlyingIntegerTypeAsync() {

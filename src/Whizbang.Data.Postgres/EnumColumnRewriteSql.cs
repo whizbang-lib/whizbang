@@ -127,7 +127,8 @@ public static class EnumColumnRewriteSql {
   // A [Flags] enumeration: a value is one or more member names separated by commas (.NET writes "A, B"), and
   // becomes the bitwise OR of their values. A member name never contains a space, so the spaces are dropped
   // before the value is split. The OR is taken in bigint; a numeric (ulong-backed) column carries its members as
-  // their two's-complement bigint and the result is moved back into the unsigned range. ALTER ... USING cannot
+  // their two's-complement bigint and the result is moved back into the unsigned range. Each value is
+  // parenthesized before the cast: `-9223372036854775808::bigint` casts the positive literal first and overflows. ALTER ... USING cannot
   // hold a subquery, so each member is tested against the split value in turn rather than joined.
   private static (string Unreadable, string Conversion, string Expected) _flagsForm(
       string column, string columnType, IReadOnlyList<(string Name, string Value)> members) {
@@ -140,7 +141,7 @@ public static class EnumColumnRewriteSql {
         ? unchecked((long)ulong.Parse(value, CultureInfo.InvariantCulture)).ToString(CultureInfo.InvariantCulture)
         : value;
       or.Append(" | (CASE WHEN '").Append(name).Append("' = ANY(").Append(components).Append(") THEN ")
-        .Append(bits).Append("::bigint ELSE 0::bigint END)");
+        .Append('(').Append(bits).Append(")::bigint ELSE 0::bigint END)");
     }
     or.Append(')');
     var combined = numeric
