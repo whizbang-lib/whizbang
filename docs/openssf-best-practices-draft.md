@@ -1,8 +1,12 @@
-# OpenSSF Best Practices: passing-level answers (draft)
+# OpenSSF Best Practices: passing-level answers
 
-Draft answers for the **passing** level of the OpenSSF Best Practices badge
-(<https://www.bestpractices.dev/criteria/0>), for pasting into the project's entry at
-<https://www.bestpractices.dev/>. Every claim was checked against the repository, GitHub and the
+The answers entered for the **passing** level of the OpenSSF Best Practices badge (Metal series,
+<https://www.bestpractices.dev/criteria/0>) in the project's entry at <https://www.bestpractices.dev/>.
+This file is the record of what the entry says: when an answer changes on the site, change it here too.
+
+**Status**: registration in progress (started 2026-09-29). Project id: not yet assigned.
+
+Every claim was checked against the repository, GitHub and the
 docs site on 2026-09-27. Criteria are in the order the form presents them; the 67 listed are every
 current passing criterion (retired and future criteria are left out).
 
@@ -11,6 +15,24 @@ Base URLs used below:
 - Repository: `https://github.com/whizbang-lib/whizbang` (default branch `develop`)
 - Docs site: `https://whizba.ng/docs/...` (a single-page app: deep links answer HTTP 404 with a
   redirect shell and render correctly in a browser)
+
+## Project information (General)
+
+| Field | Entered |
+|---|---|
+| Badge series | Metal (passing, silver, gold): the series OpenSSF Scorecard reads |
+| Name | Whizbang |
+| Brief description | A .NET library for event-driven, CQRS and event-sourced applications. Handlers, routing, read models and storage are wired by source generators at compile time: no reflection, Native AOT from day one. |
+| Language | English (en) |
+| Project URL | <https://whizba.ng> |
+| Repository URL | <https://github.com/whizbang-lib/whizbang> |
+| License | MIT |
+| Programming languages | C#, PLpgSQL, PowerShell, JavaScript, Shell (the site's auto-fill also listed TSQL, a misdetection of `.sql` files) |
+| CPE name | none |
+| Other comments | Pre-1.0. Stable releases ship as 0.x.0 on nuget.org under the SoftwareExtravaganza.Whizbang.* package IDs, with alpha builds from develop in between. |
+
+Where the site auto-filled a criterion's justification and the auto-filled text was kept, the row
+below says so and records that text.
 
 ## Fixed before submitting
 
@@ -79,10 +101,10 @@ human review.
 
 | Criterion | Answer | Justification |
 |---|---|---|
-| `repo_public` | Met | Public git repository on GitHub. <https://github.com/whizbang-lib/whizbang> |
-| `repo_track` | Met | Git records who changed what and when; every change lands through a pull request. <https://github.com/whizbang-lib/whizbang/commits/develop> |
+| `repo_public` | Met | Auto-filled text kept: "Repository on GitHub, which provides public git repositories with URLs." |
+| `repo_track` | Met | Auto-filled text kept: "Repository on GitHub, which uses git. git can track the changes, who made them, and when they were made." |
 | `repo_interim` | Met | Interim work is public: `develop` carries every change between releases, and each merge publishes an alpha package. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/RELEASING.md> |
-| `repo_distributed` | Met | Git. |
+| `repo_distributed` | Met | Auto-filled text kept: "Repository on GitHub, which uses git. git is distributed." |
 
 ### Unique version numbering
 
