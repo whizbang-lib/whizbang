@@ -1685,10 +1685,10 @@ public partial class PerspectiveWorker(
     var pendingFailures = _completionStrategy.GetPendingFailures();
 
     foreach (var tc in pendingCompletions) {
-      await _perspectiveCompletionChannel!.EnqueueCursorAsync(tc.Completion, ct).ConfigureAwait(false);
+      await _perspectiveCompletionChannel.EnqueueCursorAsync(tc.Completion, ct).ConfigureAwait(false);
     }
     foreach (var f in pendingFailures.Select(tc => tc.Completion)) {
-      await _failureChannel!.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
+      await _failureChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
         MessageId = f.LastEventId,
         CompletedStatus = MessageProcessingStatus.None,
         Error = f.Error ?? "perspective failed",
@@ -1696,7 +1696,7 @@ public partial class PerspectiveWorker(
       }, ct).ConfigureAwait(false);
     }
     while (_pendingEventCompletions.TryDequeue(out var ec)) {
-      await _perspectiveCompletionChannel!.EnqueueEventWorkIdAsync(ec.EventWorkId, ct).ConfigureAwait(false);
+      await _perspectiveCompletionChannel.EnqueueEventWorkIdAsync(ec.EventWorkId, ct).ConfigureAwait(false);
     }
 
     _completionStrategy.MarkAsSent(pendingCompletions, pendingFailures, DateTimeOffset.UtcNow);
@@ -2544,7 +2544,7 @@ public partial class PerspectiveWorker(
   private async Task _parkLeasedRowsAsync(
       IEnumerable<Guid> workIds, string error, MessageFailureReason reason, CancellationToken ct) {
     foreach (var workId in workIds) {
-      await _failureChannel!.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
+      await _failureChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
         MessageId = workId,
         CompletedStatus = MessageProcessingStatus.None,
         Error = error,
