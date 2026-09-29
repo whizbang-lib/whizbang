@@ -1,6 +1,6 @@
 # Duty role assignment: the advisory lock decides the vote, the row is the role
 
-Status: phase 1 in progress on `feat/966-role-assignment`. Issue #966. Design and requirement mapping:
+Status: phase 1 delivered on `feat/966-role-assignment` (opt-in, green; see section 2.1). Issue #966. Design and requirement mapping:
 docs site `proposals/duty-role-assignment`. This file is the build plan. It records what each phase
 ships, how it is verified, and the decisions made along the way.
 
@@ -59,6 +59,31 @@ both directions, and ten instances racing, where exactly one holder and one epoc
 (`_ageAsync`), which is the same thing as the database clock moving forward, since every comparison
 is `stored < now()`. The grant's renew throttle is driven by `FakeTimeProvider`.
 
+### 2.1 Phase 1 as delivered
+
+- Migration 173 as planned, plus a test that pins the vote lock key's schema scoping (#962).
+- `PgRoleElector` checks the bridge session on **every** verify, not only when renewing. Once the
+  bridge session dies, an old instance can take the session lock, so "held" can no longer be
+  answered from memory.
+- The bridge is unlocked explicitly before its connection is disposed. Disposing a pooled
+  connection returns the session to the pool with the advisory lock still held, and the pool
+  resets the session only when it is next handed out. This was found by the mixed-fleet tests.
+- A renewal that fails for a transient reason answers false without marking the grant lost, since
+  the lease may still be valid, and the next verify asks again. An explicit refusal (a lapsed
+  lease, a wrong epoch, a tombstone) marks it lost for good.
+- The C# status reader (`ReadAssignmentsAsync`) moved to phase 2 with the health component. In
+  phase 1, `wh_role_assignment_status()` is the observable surface.
+- Requirement 8 is tested by terminating every backend of the database and clearing the pools,
+  not by restarting the container. The phase 4 chaos suite restarts the server for real.
+
+Test results: `RoleAssignmentSqlTests` 17, `RoleAssignmentElectorE2ETests` 22,
+`RoleAssignmentRegistrationTests` 3, `RoleAssignmentOptionsTests` 7,
+`DutyShutdownReleaseServiceTests` 4 (Rocks), `DutyGrantContractTests` 1, all passing. The full
+`Whizbang.Core.Tests` suite passes (12,545). The existing duty, capability, rewrite,
+schema-initialization, migrator-staging and migrations suites, and the Dapper schema-initializer
+suite, pass unchanged. New lines in `PgRoleElector` and the registration are at 100% line and
+branch coverage.
+
 ## 3. Phase 2: the acquisition hook and visibility
 
 - A pending-work table keyed by `(role, step)`, written when the work becomes owed and cleared when
@@ -68,7 +93,8 @@ is `stored < now()`. The grant's renew throttle is driven by `FakeTimeProvider`.
   a cadence of one renew interval, is what makes "later" happen. Its liveness comes from the loop
   itself, which is also the loop that renews.
 - `pg_notify('wh_role_released', role)` from `wh_release_role`, so waiters re-vote at once.
-- A health component that reports "role unassigned" as degraded; metrics `whizbang.roles.elections`,
+- `PgRoleElector.ReadAssignmentsAsync` over `wh_role_assignment_status()`, and a health component
+  that reports "role unassigned" as degraded; metrics `whizbang.roles.elections`,
   `whizbang.roles.handoffs{reason}`, `whizbang.roles.lost`, and a gauge of held roles.
 
 ## 4. Phase 3: default and more roles
@@ -103,3 +129,28 @@ is `stored < now()`. The grant's renew throttle is driven by `FakeTimeProvider`.
   tombstones it, and that voids the assignment.
 - **Opt-in for phase 1.** The default registration is untouched, so no existing deployment changes
   behavior until it calls `AddWhizbangRoleAssignment()`.
+- **The contract evolves by one default member.** `IDutyGrant.Epoch` is `long?` with a `null`
+  default, so the fencing token can reach exclusive-work SQL without breaking any implementer.
+  `TryAcquireAsync` keeps its shape, and the three refusals keep their meaning: `cooling_down` and
+  `legacy_holder` are `Contended`, because waiting resolves both.
+- **The fence reads `clock_timestamp()`, not `now()`.** A fenced transaction may have started long
+  before it calls the fence. The vote, renewal and release are single statements, so `now()` is
+  the call time there.
+- **Hand-offs are logged by the winner only.** Exactly one vote produces each epoch, so each
+  hand-off is logged exactly once, with the previous holder and the reason from the row.
+- **A vote that voids a lapsed holder commits the void even when it refuses the caller**, for
+  example during that caller's own cool-down. The vacancy is a fact, and the status surface
+  should show it.
+
+## 7. Open questions (to be filed as `question` issues)
+
+- Long single statements (`VACUUM FULL`, a large migration statement) can outlast a lease, and the
+  loop cannot renew while it waits. Should the lease be sized for them, or should renewal be tied
+  to the duty backend being observed `active` in `pg_stat_activity`?
+- Should a newer-version instance be able to ask a live older holder to drain and hand over?
+- Selection policy for a vacant role: first valid caller (today), newest library version, or
+  longest-lived instance?
+- While bridged, a stuck new holder keeps its session lock. Should a vote winner be allowed to
+  terminate a lapsed bridge holder's session?
+- An outage longer than the lease lapses every holder, which then pays the cool-down although the
+  database was at fault. Should a lapse that coincides with a database outage be exempt?
