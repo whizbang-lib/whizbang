@@ -167,20 +167,20 @@ public sealed class PerspectiveWorkerParallelTests {
     // Release gate immediately so normal runners can complete
     gate.Release(2);
 
-    // Enqueue BEFORE starting the worker. The channel buffers with or without a reader, so this
-    // guarantees all three items are visible to the worker's first batch — which is the whole
-    // point of the test: the throwing group and the normal groups must be in flight TOGETHER.
+    // Enqueue BEFORE starting the worker so all three share the first batch: the throwing group and
+    // the normal groups must be in flight TOGETHER, which is the whole point of the test.
     //
-    // Enqueuing after start left that to chance. A worker that polled between writes could take
-    // the throwing item in a batch by itself, fault, and stop before the normal items were ever
-    // dequeued — so the normal runners never entered and the countdown never completed. The
-    // assertion then reported "normal perspectives did not run" for a scheduling accident rather
-    // than the invariant it exists to protect, which is why it failed only under load.
+    // Sharing the batch was not enough on its own (issue #993). The group body used to rethrow the
+    // runner's failure after handling it, so the fan-out cancelled its token and any normal group
+    // that had not yet passed its first cancellable wait was dropped without running. That only
+    // happened when the throwing group's thread outran a sibling's, which is why this failed only
+    // under load. The failure is now contained in its own group; the deterministic form of the race
+    // is ProcessWorkBatch_WhenTheFirstGroupThrows_TheGroupsAfterItStillRunAsync below.
     await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalA" }, cts.Token);
     await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalB" }, cts.Token);
     await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.ThrowingPerspective" }, cts.Token);
 
-    // Worker will propagate the exception from the throwing perspective
+    // The throwing group's failure is reported and contained; the worker keeps running.
     await worker.StartAsync(cts.Token);
 
     // Wait on the completion signal with the test-lifetime bound.
@@ -193,6 +193,49 @@ public sealed class PerspectiveWorkerParallelTests {
       .Because("Normal perspectives should execute even when one throws");
     await Assert.That(normalRunner.TotalRunCount).IsGreaterThanOrEqualTo(1)
       .Because("At least some normal perspectives should complete despite the throwing one");
+  }
+
+  [Test]
+  [Category("Performance")]
+  public async Task ProcessWorkBatch_WhenTheFirstGroupThrows_TheGroupsAfterItStillRunAsync() {
+    // A group whose runner throws has its failure fully handled inside its own body: recorded,
+    // its rows parked, the failure reported. It must not also end the batch for its siblings.
+    //
+    // With one slot the batch's groups run strictly in order, so a throwing group first is the
+    // deterministic form of the race the sibling test above can only lose under load: if the
+    // failure escapes the group body, the fan-out stops taking groups and the two after it never
+    // start. Wider batches lose the same way, just not every time: the escaping failure cancels the
+    // fan-out's token, and any sibling not yet past its first cancellable wait is dropped.
+    var streamId = Guid.CreateVersion7();
+
+    var allNormalEntered = new CountdownEvent(2);
+    var gate = new SemaphoreSlim(2, 2);
+    var normalRunner = new GatedPerspectiveRunner(allNormalEntered, gate);
+    var registry = new MixedPerspectiveRunnerRegistry(
+      normalRunner,
+      new AlwaysThrowingPerspectiveRunner(),
+      throwingPerspectiveName: "Test.ThrowingPerspective",
+      normalPerspectiveNames: ["Test.NormalA", "Test.NormalB"]);
+
+    var (worker, harness) = _createWorker(new ParallelTestWorkCoordinator(), registry, maxConcurrentPerspectives: 1);
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    // Enqueued before start so all three land in the first batch, throwing group first.
+    await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.ThrowingPerspective" }, cts.Token);
+    await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalA" }, cts.Token);
+    await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalB" }, cts.Token);
+    await worker.StartAsync(cts.Token);
+
+    // The bound only turns a broken worker into a failure instead of a hang; the signal is the
+    // countdown. The failure capture proves the throwing group really ran and was reported.
+    var normalEntered = allNormalEntered.Wait(TimeSpan.FromSeconds(45));
+    await harness.FailureCapture.WaitForCountAsync(1, TimeSpan.FromSeconds(45));
+
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
+
+    await Assert.That(normalEntered).IsTrue()
+      .Because("A group that throws must not stop the groups after it in the same batch");
+    await Assert.That(normalRunner.TotalRunCount).IsEqualTo(2);
   }
 
   #region Helper Methods
