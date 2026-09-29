@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
@@ -201,11 +202,40 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
     if (lockKey is long key) {
       // Exclusive, transaction-scoped: released at this batch's commit (brief hold); serializes same-(table,
       // scope) collective applies across pods while disjoint scopes run concurrently.
-      await using var lockCmd = connection.CreateCommand();
-      lockCmd.Transaction = tx;
-      lockCmd.CommandText = "SELECT pg_advisory_xact_lock(@wb_lock)";
-      _addParameter(lockCmd, "wb_lock", key);
-      await lockCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      //
+      // The wait is bounded, so contention fails in seconds with a name rather than sitting for the whole
+      // statement timeout and surfacing as an indistinguishable timeout. lock_timeout is LOCAL to this
+      // transaction and applies to the lock wait alone, so it does not shorten the statements that follow.
+      var waitSeconds = options.LockWaitSeconds is int configured && configured > 0 ? configured : 0;
+      if (waitSeconds > 0) {
+        await using var timeoutCmd = connection.CreateCommand();
+        timeoutCmd.Transaction = tx;
+        timeoutCmd.CommandText = "SELECT set_config('lock_timeout', @wb_lock_timeout, true)";
+        _addParameter(timeoutCmd, "wb_lock_timeout", (waitSeconds * 1000).ToString(CultureInfo.InvariantCulture));
+        await timeoutCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }
+
+      await using (var lockCmd = connection.CreateCommand()) {
+        lockCmd.Transaction = tx;
+        lockCmd.CommandText = "SELECT pg_advisory_xact_lock(@wb_lock)";
+        _addParameter(lockCmd, "wb_lock", key);
+        try {
+          await lockCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        } catch (PostgresException ex) when (ex.SqlState == "55P03") {
+          // Nothing is wrong with the event or the perspective: another batch holds the lock for this
+          // table and scope. Named so a caller can tell it from a failed apply and neither count an
+          // attempt nor drop the lease.
+          throw new CollectiveApplyLockBusyException(_tableOf(selectSql), waitSeconds, ex);
+        }
+      }
+
+      if (waitSeconds > 0) {
+        // The lock is held; the remaining statements wait for ordinary row locks on the usual terms.
+        await using var clearCmd = connection.CreateCommand();
+        clearCmd.Transaction = tx;
+        clearCmd.CommandText = "SELECT set_config('lock_timeout', '0', true)";
+        await clearCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }
     }
 
     var ids = new List<Guid>();
@@ -245,6 +275,19 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
     foreach (var (name, value) in parameters) {
       _addParameter(cmd, name, value ?? DBNull.Value);
     }
+  }
+
+
+  /// <summary>The table the batch reads, for a message that names where the contention is.</summary>
+  private static string _tableOf(string selectSql) {
+    const string from = " FROM ";
+    var start = selectSql.IndexOf(from, StringComparison.Ordinal);
+    if (start < 0) {
+      return "(unknown)";
+    }
+    var rest = selectSql[(start + from.Length)..].TrimStart();
+    var end = rest.IndexOfAny([' ', '\r', '\n']);
+    return end < 0 ? rest : rest[..end];
   }
 
   private static void _addParameter(DbCommand cmd, string name, object value) {

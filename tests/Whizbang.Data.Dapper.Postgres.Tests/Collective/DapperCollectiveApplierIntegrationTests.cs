@@ -183,6 +183,60 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       .Because("both wanted ids match, and the excluded one does not");
   }
 
+  /// <summary>
+  /// A batch that cannot get the apply lock inside its bounded wait says so by name, quickly.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The wait used to be bounded only by the statement timeout, so contention sat for 180 seconds and
+  /// then surfaced as a timeout -- indistinguishable from an apply that hung on its own account. The
+  /// execution strategy retried, the retry joined the back of the lock queue, and the work lease,
+  /// renewed only after progress, expired underneath it: the work was leased again and the wait
+  /// counted toward dead-lettering.
+  /// </para>
+  /// <para>
+  /// Asserted on the type rather than the message, and on the elapsed time, because both are the
+  /// point: a caller has to be able to tell a busy lock from a broken apply, and it has to find out
+  /// in seconds.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task LockHeldElsewhere_FailsFast_AsABusyLockRatherThanATimeoutAsync(
+      CancellationToken cancellationToken) {
+    await _createTableAsync();
+    var job = Guid.NewGuid();
+    await _seedAsync(job, "t-A", "Active");
+
+    // Hold the exact lock this apply will ask for, on a separate connection, for the whole test.
+    var lockKey = CollectiveApplyLockKey.Compute(TABLE, new TenantCollectiveScope("t-A").ScopeIdentity);
+    using var holder = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    await using var holdTx = await ((Npgsql.NpgsqlConnection)holder).BeginTransactionAsync(cancellationToken);
+    await using (var hold = ((Npgsql.NpgsqlConnection)holder).CreateCommand()) {
+      hold.Transaction = holdTx;
+      hold.CommandText = "SELECT pg_advisory_xact_lock(@k)";
+      hold.Parameters.AddWithValue("k", lockKey);
+      await hold.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var started = System.Diagnostics.Stopwatch.StartNew();
+    var busy = await Assert.That(async () => await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
+        _jobEntry(), new JobPerspective(), new ArchiveEvent { Scope = new TenantCollectiveScope("t-A") },
+        new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings,
+        CollectiveApplyOptions.Default with { LockWaitSeconds = 2 },
+        logger: null, hookRegistry: null))
+      .Throws<CollectiveApplyLockBusyException>()
+      .Because("another batch holds the lock for this table and scope; the apply is not broken");
+    started.Stop();
+
+    await Assert.That(busy!.Table).IsEqualTo(TABLE)
+      .Because("the message names where the contention is, which is the first thing an operator asks");
+    await Assert.That(started.Elapsed).IsLessThan(TimeSpan.FromSeconds(60))
+      .Because("the wait is bounded now; unbounded it sat for the whole statement timeout");
+    await Assert.That(await _statusAsync(job)).IsEqualTo("Active")
+      .Because("a batch that never got the lock applied nothing");
+  }
+
   [Test]
   public async Task Hook_AndWhere_RefinesTheCohortAsync() {
     await _createTableAsync();
