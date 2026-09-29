@@ -151,7 +151,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
 
     var tooSoon = await _electorFor(b).TryAcquireAsync(ROLE, cancellationToken);
     await Assert.That(tooSoon.Refusal).IsEqualTo(DutyRefusal.Contended);
-    await Assert.That(tooSoon.Detail!).Contains(a.InstanceId.ToString());
+    await Assert.That(tooSoon.Detail).Contains(a.InstanceId.ToString());
 
     await _ageAsync(_defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
     var takeover = await _electorFor(b).TryAcquireAsync(ROLE, cancellationToken);
@@ -364,7 +364,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var attempt = await _electorFor(@new, bridge: false).TryAcquireAsync(ROLE, cancellationToken);
 
     await Assert.That(attempt.Refusal).IsEqualTo(DutyRefusal.Contended);
-    await Assert.That(attempt.Detail!).Contains("session-lock");
+    await Assert.That(attempt.Detail).Contains("session-lock");
   }
 
   [Test]
@@ -431,7 +431,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var attempt = await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken);
 
     await Assert.That(attempt.Refusal).IsEqualTo(DutyRefusal.Contended);
-    await Assert.That(attempt.Detail!).Contains("cool");
+    await Assert.That(attempt.Detail).Contains("cool");
   }
 
   [Test]
@@ -550,7 +550,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
   [Timeout(120000)]
   public async Task Metrics_CountElectionsHandoffsLossesReleasesAndHeldRolesAsync(CancellationToken cancellationToken) {
     // Requirement 10.
-    using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    await using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var metrics = new RoleAssignmentMetrics(new WhizbangMetrics(provider.GetRequiredService<IMeterFactory>()));
     using var reader = new MeterReader(metrics.Elections.Meter);
     var time = new FakeTimeProvider();

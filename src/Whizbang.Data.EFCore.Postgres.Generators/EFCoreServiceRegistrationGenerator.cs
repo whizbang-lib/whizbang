@@ -3119,10 +3119,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           ? []
           : [.. members.Split(';').Select(m => {
             var at = m.IndexOf('=');
-            return $"(\"{m.Substring(0, at)}\", \"{m.Substring(at + 1)}\")";
+            return $"(\"{m[..at]}\", \"{m[(at + 1)..]}\")";
           })];
         var enumName = field.TypeName.Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
-        enumName = enumName.Substring(enumName.LastIndexOf('.') + 1);
+        enumName = enumName[(enumName.LastIndexOf('.') + 1)..];
         var build = field.EnumIsFlags ? "BuildFlags" : "Build";
         sb.AppendLine($"      (\"enum-column:{perspective.TableName}.{field.ColumnName}\", global::Whizbang.Data.Postgres.EnumColumnRewriteSql.{build}("
           + $"\"{schema}\", \"{perspective.TableName}\", \"{field.ColumnName}\", \"{enumName}\", \"{_getPostgresColumnType(field)}\", "

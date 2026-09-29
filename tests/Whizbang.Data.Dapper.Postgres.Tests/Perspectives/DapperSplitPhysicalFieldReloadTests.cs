@@ -71,7 +71,9 @@ public class DapperSplitPhysicalFieldReloadTests : PostgresTestBase {
     });
   }
 
-  private async Task<(string? Status, int? Priority, int? Tier, DateTimeOffset? PlacedAt, string? Note)> _readColumnsAsync(Guid streamId) {
+  private sealed record StoredColumns(string? Status, int? Priority, int? Tier, DateTimeOffset? PlacedAt, string? Note);
+
+  private async Task<StoredColumns> _readColumnsAsync(Guid streamId) {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
     await using var command = new NpgsqlCommand(
@@ -80,7 +82,7 @@ public class DapperSplitPhysicalFieldReloadTests : PostgresTestBase {
     await using var reader = await command.ExecuteReaderAsync();
     await reader.ReadAsync();
     async Task<T?> field<T>(int ordinal) => await reader.IsDBNullAsync(ordinal) ? default : await reader.GetFieldValueAsync<T>(ordinal);
-    return (await field<string>(0), await field<int?>(1), await field<int?>(2), await field<DateTimeOffset?>(3), await field<string>(4));
+    return new StoredColumns(await field<string>(0), await field<int?>(1), await field<int?>(2), await field<DateTimeOffset?>(3), await field<string>(4));
   }
 
   private static DapperSplitReloadStatusSetEvent _statusSet(Guid streamId, string status, int priority) => new() {
@@ -178,7 +180,7 @@ public class DapperSplitPhysicalFieldReloadTests : PostgresTestBase {
       CREATE TABLE wh_per_dapper_split_vector (id UUID PRIMARY KEY, data JSONB NOT NULL, embedding REAL[]);
       INSERT INTO wh_per_dapper_split_vector (id, data, embedding) VALUES (@id, '{"Label":"v"}', {{embedding}});
       """, connection);
-    command.Parameters.AddWithValue("id", id);
+    command.Parameters.AddWithValue(nameof(id), id);
     await command.ExecuteNonQueryAsync();
   }
 

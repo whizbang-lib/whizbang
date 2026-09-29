@@ -168,37 +168,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
           upsertDeclaring.GetGenericTypeDefinition() == typeof(ICollectiveSetters<>) &&
           node.Method.Name == "UpsertElement" &&
           node.Arguments.Count == 3) {
-        var collectionProperty = _extractScalarProperty(_unwrapLambda(node.Arguments[0]));
-        var collection = collectionProperty.Name;
-        var target = _physical(collectionProperty);
-        if (target is { } keyedColumn) {
-          CollectivePhysicalColumns.EnsureKeyedArrayColumn(typeof(TModel), keyedColumn);
-        }
-        var key = _tryPropertyName(_unwrapLambda(node.Arguments[1]).Body)
-          ?? throw new NotSupportedException(
-            "UpsertElement's key must be a direct property of the element (c => c.Key); nested or computed keys are not supported.");
-        var element = _evaluateValue(node.Arguments[2])
-          ?? throw new ArgumentException($"UpsertElement on {collection} needs an element; null cannot be keyed.");
-        // The earlier calls in the chain first, so setters are recorded in call order and an upsert can
-        // start from the value an earlier setter gave the same property.
-        if (node.Object is not null) {
-          Visit(node.Object);
-        }
-        var paramName = _nextParam(collection);
-        Parameters[paramName] = JsonSerializer.Serialize(element, element.GetType(), _jsonOptions);
-        if (target is not { InDocument: false }) {
-          var source = Properties.LastOrDefault(p => p.JsonbPath == collection)?.ValueSql;
-          Properties.Add(new PropertyAssignment(collection,
-            CollectiveElementUpsertSql.ValueSql(collection, key, $"@{paramName}::jsonb", source)));
-        }
-        if (target is { } physical) {
-          // The same keyed upsert, over the jsonb column: it starts from the column (or from this spec's earlier
-          // write to it), so element order, replace-or-append and composition match the document path.
-          var source = Columns.LastOrDefault(c => c.Column == physical.ColumnName)?.ValueSql
-            ?? CollectivePhysicalColumns.Quote(physical.ColumnName);
-          Columns.Add(new ColumnAssignment(collection, physical.ColumnName,
-            CollectiveElementUpsertSql.ValueSql(collection, key, $"@{paramName}::jsonb", source)));
-        }
+        _visitUpsertElement(node);
         return node;
       }
 
@@ -227,6 +197,42 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
       }
 
       return base.VisitMethodCall(node);
+    }
+
+    // One UpsertElement call: the element is upserted by key into the document array, the jsonb physical column, or
+    // both, with the same replace-or-append expression.
+    private void _visitUpsertElement(MethodCallExpression node) {
+      var collectionProperty = _extractScalarProperty(_unwrapLambda(node.Arguments[0]));
+      var collection = collectionProperty.Name;
+      var target = _physical(collectionProperty);
+      if (target is { } keyedColumn) {
+        CollectivePhysicalColumns.EnsureKeyedArrayColumn(typeof(TModel), keyedColumn);
+      }
+      var key = _tryPropertyName(_unwrapLambda(node.Arguments[1]).Body)
+        ?? throw new NotSupportedException(
+          "UpsertElement's key must be a direct property of the element (c => c.Key); nested or computed keys are not supported.");
+      var element = _evaluateValue(node.Arguments[2])
+        ?? throw new ArgumentException($"UpsertElement on {collection} needs an element; null cannot be keyed.");
+      // The earlier calls in the chain first, so setters are recorded in call order and an upsert can
+      // start from the value an earlier setter gave the same property.
+      if (node.Object is not null) {
+        Visit(node.Object);
+      }
+      var paramName = _nextParam(collection);
+      Parameters[paramName] = JsonSerializer.Serialize(element, element.GetType(), _jsonOptions);
+      if (target is not { InDocument: false }) {
+        var source = Properties.LastOrDefault(p => p.JsonbPath == collection)?.ValueSql;
+        Properties.Add(new PropertyAssignment(collection,
+          CollectiveElementUpsertSql.ValueSql(collection, key, $"@{paramName}::jsonb", source)));
+      }
+      if (target is { } physical) {
+        // The same keyed upsert, over the jsonb column: it starts from the column (or from this spec's earlier
+        // write to it), so element order, replace-or-append and composition match the document path.
+        var source = Columns.LastOrDefault(c => c.Column == physical.ColumnName)?.ValueSql
+          ?? CollectivePhysicalColumns.Quote(physical.ColumnName);
+        Columns.Add(new ColumnAssignment(collection, physical.ColumnName,
+          CollectiveElementUpsertSql.ValueSql(collection, key, $"@{paramName}::jsonb", source)));
+      }
     }
 
     // A bare lambda is still accepted, but it cannot arrive: SetProperty's parameter is

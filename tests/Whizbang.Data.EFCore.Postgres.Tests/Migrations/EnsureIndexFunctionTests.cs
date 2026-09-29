@@ -232,7 +232,7 @@ public class EnsureIndexFunctionTests {
   [Test]
   public async Task NoIndexOfTheSameMethodMeansNothingToCompareAsync() {
     await Assert.That(await _ensureAsync($"CREATE INDEX IF NOT EXISTS idx_probe_scope ON {QUALIFIED} USING gin (scope)")).IsEqualTo("created");
-    await Assert.That(await _indexesOverAsync("gin (scope)")).IsEquivalentTo(new List<string> { "idx_probe_scope" });
+    await Assert.That(await _indexesOverAsync("gin (scope)")).IsEquivalentTo(["idx_probe_scope"]);
   }
 
   /// <summary>
@@ -246,7 +246,7 @@ public class EnsureIndexFunctionTests {
       $"SELECT {SCHEMA}.wh_ensure_index('CREATE INDEX idx_probe_plain ON {TABLE} (code)')", db);
 
     await Assert.That((string)(await command.ExecuteScalarAsync())!).IsEqualTo("executed");
-    await Assert.That(await _indexesOverAsync("(code)")).IsEquivalentTo(new List<string> { "idx_probe_plain" });
+    await Assert.That(await _indexesOverAsync("(code)")).IsEquivalentTo(["idx_probe_plain"]);
   }
 
   /// <summary>

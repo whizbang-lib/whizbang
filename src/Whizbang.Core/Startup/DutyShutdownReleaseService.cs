@@ -42,7 +42,7 @@ public sealed partial class DutyShutdownReleaseService : IHostedService {
       ILogger<DutyShutdownReleaseService> logger) {
     ArgumentNullException.ThrowIfNull(releasers);
     ArgumentNullException.ThrowIfNull(logger);
-    _releasers = releasers.ToArray();
+    _releasers = [.. releasers];
     _logger = logger;
   }
 

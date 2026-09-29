@@ -55,7 +55,7 @@ namespace TestNamespace {
     var runner = GeneratorTestHelper.GetGeneratedSource(result, "TicketPerspectiveRunner.g.cs");
 
     await Assert.That(runner).IsNotNull();
-    await Assert.That(runner!).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]")
+    await Assert.That(runner).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]")
       .Because("The registration must run without consumer code, like the TTL and row cap registrations.");
     await Assert.That(runner).Contains(
       REGISTER + "typeof(global::TestNamespace.TicketModel), \"Lane\", \"lane\", global::Whizbang.Core.Perspectives.FieldStorageMode.Split, isVector: false);");
@@ -101,7 +101,7 @@ namespace TestNamespace {
     var runner = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
 
     await Assert.That(runner).IsNotNull();
-    await Assert.That(runner!).Contains(
+    await Assert.That(runner).Contains(
       REGISTER + "typeof(global::TestNamespace.OrderModel), \"Status\", \"status\", global::Whizbang.Core.Perspectives.FieldStorageMode.Extracted, isVector: false);");
   }
 
@@ -137,7 +137,7 @@ namespace TestNamespace {
     var runner = GeneratorTestHelper.GetGeneratedSource(result, "CodePerspectiveRunner.g.cs");
 
     await Assert.That(runner).IsNotNull();
-    await Assert.That(runner!).Contains(
+    await Assert.That(runner).Contains(
       REGISTER + "typeof(global::TestNamespace.CodeModel), \"Code\", \"code\", global::Whizbang.Core.Perspectives.FieldStorageMode.JsonOnly, isVector: false);");
   }
 
@@ -170,7 +170,7 @@ namespace TestNamespace {
     var runner = GeneratorTestHelper.GetGeneratedSource(result, "NotePerspectiveRunner.g.cs");
 
     await Assert.That(runner).IsNotNull();
-    await Assert.That(runner!).DoesNotContain("PerspectivePhysicalFieldRegistry")
+    await Assert.That(runner).DoesNotContain("PerspectivePhysicalFieldRegistry")
       .Because("A model with no physical fields has nothing to register.");
   }
 }

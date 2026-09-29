@@ -308,7 +308,7 @@ public class DapperCollectivePhysicalColumnIntegrationTests : PostgresTestBase {
     var document = new TicketModel {
       Title = model.Title,
       IsHot = model.IsHot,
-      Embedding = System.Array.Empty<float>(),
+      Embedding = [],
     };
     var store = new DapperPostgresPerspectiveStore<TicketModel>(ConnectionString, SPLIT_TABLE, _storeJson);
     await store.UpsertWithPhysicalFieldsAsync(id, document, physicalFieldValues, new PerspectiveScope { TenantId = tenant });

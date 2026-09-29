@@ -337,13 +337,17 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     await bridge.DisposeAsync().ConfigureAwait(false);
   }
 
+  // The two calls a tenure makes on its assignment, whole statements so no SQL is assembled at run time.
+  private const string RENEW_ROLE_SQL = "SELECT wh_renew_role(@role, @id, @epoch)";
+  private const string RELEASE_ROLE_SQL = "SELECT wh_release_role(@role, @id, @epoch)";
+
   private static async Task<bool> _callAsync(
-      NotificationConnectionPlan plan, string function, string role, Guid instanceId, long epoch, CancellationToken cancellationToken) {
+      NotificationConnectionPlan plan, string commandText, string role, Guid instanceId, long epoch, CancellationToken cancellationToken) {
     bool answered;
     var connection = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
       await using var cmd = connection.CreateCommand();
-      cmd.CommandText = $"SELECT {function}(@role, @id, @epoch)";
+      cmd.CommandText = commandText;
       cmd.Parameters.AddWithValue(nameof(role), role);
       cmd.Parameters.AddWithValue("id", instanceId);
       cmd.Parameters.AddWithValue(nameof(epoch), epoch);
@@ -360,6 +364,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   /// shutdown.
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001:Types that own disposable fields should be disposable", Justification = "The only disposable field is a SemaphoreSlim used as an async lock; it allocates nothing to release unless AvailableWaitHandle is read, which this type never does.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A private tenure records everything one grant decided (role, epoch, holder, bridge session and key, renewal clock, acquisition time), and is constructed in exactly one place, from the vote that granted it.")]
   private sealed class Tenure(
       PgRoleElector elector,
       NotificationConnectionPlan plan,
@@ -411,7 +416,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       var sendStarted = elector._time.GetTimestamp();
       bool renewed;
       try {
-        renewed = await _callAsync(plan, "wh_renew_role", role, instanceId, epoch, cancellationToken).ConfigureAwait(false);
+        renewed = await _callAsync(plan, RENEW_ROLE_SQL, role, instanceId, epoch, cancellationToken).ConfigureAwait(false);
       } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
         throw;
       } catch (Exception ex) {
@@ -483,7 +488,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
         // lease to lapse, which is the crash path the design already bounds; failing a dispose over
         // it would turn a crash-tolerant design into a shutdown error.
         try {
-          if (await _callAsync(plan, "wh_release_role", role, instanceId, epoch, CancellationToken.None).ConfigureAwait(false)) {
+          if (await _callAsync(plan, RELEASE_ROLE_SQL, role, instanceId, epoch, CancellationToken.None).ConfigureAwait(false)) {
             LogReleased(elector._logger, role, instanceId, epoch);
             elector._metrics?.Released.Add(1, RoleAssignmentMetrics.RoleTag(role));
           }

@@ -69,6 +69,9 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 [SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "EF Core data layer inherently uses reflection for query translation")]
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Adapter is generic over TModel; static factory + execute methods match the pattern of EF Core's own generic-static helpers.")]
 public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class {
+  // The cast a bound JSON text parameter takes to become a jsonb value.
+  private const string JSONB_CAST = "::jsonb";
+
   /// <summary>
   /// Execute the collective-event mutation as a keyset-batched set-based UPDATE, bounded by the apply
   /// <paramref name="options"/>. One raw <c>jsonb_set</c> path serves every mapping (complex-JSON, scalar/
@@ -228,31 +231,18 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       var idx = i.ToString(CultureInfo.InvariantCulture);
       var target = CollectivePhysicalColumns.Resolve(typeof(TModel), a.PathName);
       // A computed comparison: the boolean over the compared property, as a column value and as a document value.
-      string? columnComparison = null;
-      string? documentComparison = null;
-      if (a.Comparison is { } cmp) {
-        if (CollectivePhysicalColumns.Resolve(typeof(TModel), cmp.ComparedProperty) is { } compared) {
-          CollectivePhysicalColumns.EnsureComparable(typeof(TModel), compared);
-          parameters["pc" + idx] = CollectivePhysicalColumns.ColumnValue(compared, a.Value) ?? DBNull.Value;
-          columnComparison = CollectivePhysicalColumns.NullSafeComparison(
-            CollectivePhysicalColumns.Quote(compared.ColumnName), cmp.SqlOperator, "@pc" + idx);
-          documentComparison = "to_jsonb(" + columnComparison + ")";
-        } else {
-          parameters["p" + idx] = a.JsonValue;
-          var comparison = "(data->'" + cmp.ComparedProperty + "')::jsonb " + cmp.SqlOperator + " @p" + idx + "::jsonb";
-          columnComparison = "(" + comparison + ")";
-          documentComparison = "to_jsonb(" + comparison + ")";
-        }
-      }
+      var (columnComparison, documentComparison) = a.Comparison is { } cmp
+        ? _compileComparison(cmp, a, idx, parameters)
+        : ((string?)null, (string?)null);
       if (target is not { InDocument: false }) {
         if (a.Comparison is null) {
           parameters["p" + idx] = a.JsonValue;
         }
         var valueSql = a switch {
           { ElementKey: { } key } => CollectiveElementUpsertSql.ValueSql(
-            a.PathName, key, "@p" + idx + "::jsonb", assigned.GetValueOrDefault(a.PathName)),
+            a.PathName, key, "@p" + idx + JSONB_CAST, assigned.GetValueOrDefault(a.PathName)),
           { Comparison: not null } => documentComparison!,
-          _ => "@p" + idx + "::jsonb",
+          _ => "@p" + idx + JSONB_CAST,
         };
         parameters["path" + idx] = new[] { a.PathName };  // text[] path
         assigned[a.PathName] = valueSql;
@@ -282,7 +272,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     if (a.ElementKey is { } key) {
       parameters["p" + idx] = a.JsonValue;  // the element, shared with the document path when both are written
       return CollectiveElementUpsertSql.ValueSql(
-        a.PathName, key, "@p" + idx + "::jsonb",
+        a.PathName, key, "@p" + idx + JSONB_CAST,
         assignedColumns.GetValueOrDefault(physical.ColumnName) ?? CollectivePhysicalColumns.Quote(physical.ColumnName));
     }
     object? value = physical.IsVector
@@ -294,6 +284,24 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
 
   // The per-event upsert binds a vector column as a pgvector value; the collective binds the same.
   private static Pgvector.Vector? _vector(object? value) => value is float[] vector ? new Pgvector.Vector(vector) : null;
+
+  // A computed comparison setter's boolean, as the column value and as the document value. Over a physical field it
+  // reads the column null-safely and binds the compared value typed (@pc{i}); otherwise it compares the document's
+  // jsonb and binds the value's JSON (@p{i}).
+  private static (string Column, string Document) _compileComparison(
+      CollectiveSettersRewriter.CollectiveComputedComparison cmp, CollectiveSettersRewriter.CollectiveSetterAssignment a,
+      string idx, Dictionary<string, object> parameters) {
+    if (CollectivePhysicalColumns.Resolve(typeof(TModel), cmp.ComparedProperty) is { } compared) {
+      CollectivePhysicalColumns.EnsureComparable(typeof(TModel), compared);
+      parameters["pc" + idx] = CollectivePhysicalColumns.ColumnValue(compared, a.Value) ?? DBNull.Value;
+      var column = CollectivePhysicalColumns.NullSafeComparison(
+        CollectivePhysicalColumns.Quote(compared.ColumnName), cmp.SqlOperator, "@pc" + idx);
+      return (column, "to_jsonb(" + column + ")");
+    }
+    parameters["p" + idx] = a.JsonValue;
+    var comparison = "(data->'" + cmp.ComparedProperty + "')" + JSONB_CAST + " " + cmp.SqlOperator + " @p" + idx + JSONB_CAST;
+    return ("(" + comparison + ")", "to_jsonb(" + comparison + ")");
+  }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Collective apply {CollectiveEventId} on {Table} updated {AffectedRows} rows in {Batches} batch(es)")]

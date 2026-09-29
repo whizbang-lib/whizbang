@@ -674,35 +674,42 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       }
       sb.AppendLine();
 
-      // Generate index if configured
-      if (field.IsIndexed && !field.IsVector) {
-        var indexName = $"ix_{tableName}_{field.ColumnName}";
-        if (field.IsUnique) {
-          sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
-          sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
-          sb.AppendLine("        .IsUnique();");
-        } else {
-          sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
-          sb.AppendLine($"        .HasDatabaseName(\"{indexName}\");");
-        }
-        sb.AppendLine();
-      }
-
-      // Generate vector index if configured
-      if (field.IsVector && field.IsIndexed && field.VectorIndexType != GeneratorVectorIndexType.None) {
-        var indexName = $"ix_{tableName}_{field.ColumnName}_vec";
-        var indexMethod = field.VectorIndexType == GeneratorVectorIndexType.HNSW ? "hnsw" : "ivfflat";
-        var opClass = _getVectorOperatorClass(field.VectorDistanceMetric);
-
-        sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
-        sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
-        sb.AppendLine($"        .HasMethod(\"{indexMethod}\")");
-        sb.AppendLine($"        .HasOperators(\"{opClass}\");");
-        sb.AppendLine();
-      }
+      _appendPhysicalFieldIndexes(sb, field, tableName);
     }
 
     return sb.ToString();
+  }
+
+  /// <summary>
+  /// Appends the index a physical field declares, if any: a plain or unique index, or a vector index.
+  /// </summary>
+  private static void _appendPhysicalFieldIndexes(StringBuilder sb, PhysicalFieldInfo field, string tableName) {
+    // Generate index if configured
+    if (field.IsIndexed && !field.IsVector) {
+      var indexName = $"ix_{tableName}_{field.ColumnName}";
+      if (field.IsUnique) {
+        sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
+        sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
+        sb.AppendLine("        .IsUnique();");
+      } else {
+        sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
+        sb.AppendLine($"        .HasDatabaseName(\"{indexName}\");");
+      }
+      sb.AppendLine();
+    }
+
+    // Generate vector index if configured
+    if (field.IsVector && field.IsIndexed && field.VectorIndexType != GeneratorVectorIndexType.None) {
+      var indexName = $"ix_{tableName}_{field.ColumnName}_vec";
+      var indexMethod = field.VectorIndexType == GeneratorVectorIndexType.HNSW ? "hnsw" : "ivfflat";
+      var opClass = _getVectorOperatorClass(field.VectorDistanceMetric);
+
+      sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
+      sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
+      sb.AppendLine($"        .HasMethod(\"{indexMethod}\")");
+      sb.AppendLine($"        .HasOperators(\"{opClass}\");");
+      sb.AppendLine();
+    }
   }
 
   /// <summary>

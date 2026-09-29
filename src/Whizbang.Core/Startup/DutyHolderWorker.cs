@@ -91,7 +91,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     _time = timeProvider ?? TimeProvider.System;
     // First registration of a (role, key) wins, so a host can override a framework handler by
     // registering its own first.
-    _handlers = new Dictionary<(string, string), IDutyWorkHandler>();
+    _handlers = [];
     foreach (var handler in handlers.Where(h => _options.Manages(h.Role))) {
       _ = _handlers.TryAdd((handler.Role, handler.WorkKey), handler);
     }

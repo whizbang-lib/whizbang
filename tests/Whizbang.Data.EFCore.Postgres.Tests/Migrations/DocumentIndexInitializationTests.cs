@@ -125,10 +125,10 @@ public class DocumentIndexInitializationTests {
     await _initializeAsync(cancellationToken);
 
     await Assert.That(await _indexesAsync(OPTED_OUT, "gin (data)"))
-      .IsEquivalentTo(new List<string> { "idx_document_index_opted_out_data_gin" })
+      .IsEquivalentTo(["idx_document_index_opted_out_data_gin"])
       .Because("dropping an index a production query may use is an operator's decision, never an upgrade's");
     await Assert.That(await _indexesAsync(UNDECLARED, "gin (metadata)"))
-      .IsEquivalentTo(new List<string> { "idx_document_index_undeclared_metadata_gin" });
+      .IsEquivalentTo(["idx_document_index_undeclared_metadata_gin"]);
   }
 
   /// <summary>

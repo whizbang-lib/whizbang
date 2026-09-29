@@ -15,8 +15,8 @@ namespace Whizbang.Generators.Tests;
 /// </summary>
 /// <remarks>
 /// PostgreSQL truncates an identifier longer than 63 bytes rather than refusing it. The exact and the
-/// case-insensitive index of a long property then became one name, and <c>CREATE INDEX IF NOT
-/// EXISTS</c> silently never created the second; a long table name did the same to its
+/// case-insensitive index of a long property then became one name, and
+/// <c>CREATE INDEX IF NOT EXISTS</c> silently never created the second; a long table name did the same to its
 /// <c>created_at</c> and <c>updated_at</c> indexes.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Generators.Shared/Utilities/PostgresIdentifiers.cs</code-under-test>

@@ -36,7 +36,7 @@ public class TemplateSnippetScanTests {
   public async Task EveryRegionOfEveryEmbeddedTemplate_ExtractsExactlyAsTheRegexDidAsync() {
     var compared = 0;
     foreach (var resource in _generatorsAssembly.GetManifestResourceNames().Where(r => r.EndsWith(".cs", StringComparison.Ordinal))) {
-      using var stream = _generatorsAssembly.GetManifestResourceStream(resource)!;
+      await using var stream = _generatorsAssembly.GetManifestResourceStream(resource)!;
       using var reader = new StreamReader(stream);
       var template = await reader.ReadToEndAsync();
       var names = Regex.Matches(template, @"#region\s+(\w+)", RegexOptions.None, TimeSpan.FromMinutes(1))

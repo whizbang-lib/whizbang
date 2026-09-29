@@ -40,8 +40,8 @@ public class RoleAssignmentHealthSourceTests {
       _snapshot("unmanaged", RoleAssignmentState.Vacant));
 
     await Assert.That(health.State).IsEqualTo(ComponentState.Operational);
-    await Assert.That(health.Detail!).Contains(_holder.ToString());
-    await Assert.That(health.Detail!).Contains("epoch 4, 2 owed");
+    await Assert.That(health.Detail).Contains(_holder.ToString());
+    await Assert.That(health.Detail).Contains("epoch 4, 2 owed");
   }
 
   [Test]
@@ -50,7 +50,7 @@ public class RoleAssignmentHealthSourceTests {
       _snapshot(StartupDuties.MAINTAINER, RoleAssignmentState.Vacant, lastReason: "released"));
 
     await Assert.That(health.State).IsEqualTo(ComponentState.Degraded).Because("no holder degrades visibly; it is never Faulted");
-    await Assert.That(health.Detail!).StartsWith("role unassigned: 'maintainer' vacant (last released), 2 owed");
+    await Assert.That(health.Detail).StartsWith("role unassigned: 'maintainer' vacant (last released), 2 owed");
   }
 
   [Test]
@@ -61,8 +61,8 @@ public class RoleAssignmentHealthSourceTests {
     var health = await _reportAsync(options, _snapshot(StartupDuties.MAINTAINER, RoleAssignmentState.Vacant));
 
     await Assert.That(health.State).IsEqualTo(ComponentState.Degraded);
-    await Assert.That(health.Detail!).Contains("'maintainer' vacant (last never held)");
-    await Assert.That(health.Detail!).Contains("'stamper' unassigned (never elected)");
+    await Assert.That(health.Detail).Contains("'maintainer' vacant (last never held)");
+    await Assert.That(health.Detail).Contains("'stamper' unassigned (never elected)");
   }
 
   [Test]
@@ -71,7 +71,7 @@ public class RoleAssignmentHealthSourceTests {
       _snapshot(StartupDuties.MAINTAINER, RoleAssignmentState.Lapsed, voidReason: "evicted"));
 
     await Assert.That(health.State).IsEqualTo(ComponentState.Degraded);
-    await Assert.That(health.Detail!).Contains($"'maintainer' lapsed (evicted) on {_holder}");
+    await Assert.That(health.Detail).Contains($"'maintainer' lapsed (evicted) on {_holder}");
   }
 
   [Test]
@@ -84,7 +84,7 @@ public class RoleAssignmentHealthSourceTests {
       .ReportAsync(CancellationToken.None);
 
     await Assert.That(health.State).IsEqualTo(ComponentState.Degraded);
-    await Assert.That(health.Detail!).Contains("InvalidOperationException");
+    await Assert.That(health.Detail).Contains("InvalidOperationException");
     reader.Verify();
   }
 

@@ -50,7 +50,9 @@ public class SplitPhysicalFieldReloadTests : EFCoreTestBase {
     });
   }
 
-  private async Task<(string? Status, int Priority, string? Note)> _readColumnsAsync(Guid streamId) {
+  private sealed record StoredColumns(string? Status, int Priority, string? Note);
+
+  private async Task<StoredColumns> _readColumnsAsync(Guid streamId) {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
     await using var command = new NpgsqlCommand(
@@ -58,7 +60,7 @@ public class SplitPhysicalFieldReloadTests : EFCoreTestBase {
     command.Parameters.AddWithValue("id", streamId);
     await using var reader = await command.ExecuteReaderAsync();
     await reader.ReadAsync();
-    return (
+    return new StoredColumns(
         await reader.IsDBNullAsync(0) ? null : reader.GetString(0),
         reader.GetInt32(1),
         await reader.IsDBNullAsync(2) ? null : reader.GetString(2));

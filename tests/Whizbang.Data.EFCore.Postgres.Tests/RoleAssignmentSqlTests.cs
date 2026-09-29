@@ -88,7 +88,7 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
              lease_expires_at = lease_expires_at - @by, last_vacated_at = last_vacated_at - @by
        WHERE role = @role
       """;
-    cmd.Parameters.AddWithValue("by", by);
+    cmd.Parameters.AddWithValue(nameof(by), by);
     cmd.Parameters.AddWithValue("role", ROLE);
     await cmd.ExecuteNonQueryAsync(ct);
   }
@@ -453,9 +453,9 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT wh_complete_role_work(@role, @key, @id, @epoch, @listed)";
     cmd.Parameters.AddWithValue("role", ROLE);
-    cmd.Parameters.AddWithValue("key", key);
-    cmd.Parameters.AddWithValue("id", id);
-    cmd.Parameters.AddWithValue("epoch", epoch);
+    cmd.Parameters.AddWithValue(nameof(key), key);
+    cmd.Parameters.AddWithValue(nameof(id), id);
+    cmd.Parameters.AddWithValue(nameof(epoch), epoch);
     cmd.Parameters.AddWithValue("listed", listedOwedAt);
     return (bool)(await cmd.ExecuteScalarAsync(ct))!;
   }
@@ -551,7 +551,7 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
     var a = await _joinAsync(cancellationToken);
     var vote = await _electAsync(a, cancellationToken);
 
-    async Task<(string State, Guid? Holder, long Epoch, long Elections, string? LastReason)> statusAsync() {
+    async Task<AssignmentStatus> statusAsync() {
       await using var conn = await _openAsync(cancellationToken);
       await using var cmd = conn.CreateCommand();
       cmd.CommandText = "SELECT state, holder_instance_id, epoch, election_count, last_vacated_reason, renewed_at "
@@ -559,8 +559,8 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
       cmd.Parameters.AddWithValue("role", ROLE);
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
       await Assert.That(await reader.ReadAsync(cancellationToken)).IsTrue();
-      return (reader.GetString(0), await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetGuid(1), reader.GetInt64(2),
-        reader.GetInt64(3), await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4));
+      return new AssignmentStatus(reader.GetString(0), await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetGuid(1),
+        reader.GetInt64(2), reader.GetInt64(3), await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4));
     }
 
     await _oweAsync("Rewrite", cancellationToken);
@@ -590,4 +590,6 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
     await Assert.That(vacant.Epoch).IsEqualTo(vote.Epoch)
       .Because("vacating keeps the epoch, so the next assignment is always epoch + 1");
   }
+
+  private sealed record AssignmentStatus(string State, Guid? Holder, long Epoch, long Elections, string? LastReason);
 }

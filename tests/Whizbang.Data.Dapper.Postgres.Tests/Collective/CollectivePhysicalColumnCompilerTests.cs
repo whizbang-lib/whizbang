@@ -324,8 +324,12 @@ public class CollectivePhysicalColumnCompilerTests {
   [Test]
   public async Task Where_PhysicalFieldInsideCrossPerspectiveCohort_QualifiesTheSiblingColumnAsync() {
     var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(SiblingModel)] = "wh_per_sibling" });
+    // The fixture registers Lane as a physical column at run time; the analyzer sees only attributes, so it
+    // takes the sibling filter for a whole-document match.
+#pragma warning disable WHIZ308
     Expression<Func<PerspectiveRow<SplitModel>, bool>> filter =
       r => q.Of<SiblingModel>().Any(s => s.Id == r.Id && s.Data.Lane == "hot") && r.Data.Lane == "cold";
+#pragma warning restore WHIZ308
 
     var result = CollectivePredicateSqlCompiler<SplitModel>.Compile(filter, outerTableName: "wh_per_ticket");
 

@@ -427,7 +427,7 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
       Priority = default!,
       Urgent = default!,
       Kind = default!,
-      Embedding = System.Array.Empty<float>(),
+      Embedding = [],
       Tags = default!,
       Title = model.Title,
       IsHot = model.IsHot,
@@ -456,10 +456,13 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
       $"SELECT lane, prio FROM {SPLIT_TABLE} WHERE id = @id", new { id });
   }
 
-  private async Task<(string Text, int Size, string Hash)> _documentAsync(string table, Guid id) {
+  private sealed record StoredDocument(string Text, int Size, string Hash);
+
+  private async Task<StoredDocument> _documentAsync(string table, Guid id) {
     await using var conn = await _openAsync();
-    return await conn.QuerySingleAsync<(string Text, int Size, string Hash)>(
+    var (text, size, hash) = await conn.QuerySingleAsync<(string Text, int Size, string Hash)>(
       $"SELECT data::text, pg_column_size(data), md5(data::text) FROM {table} WHERE id = @id", new { id });
+    return new StoredDocument(text, size, hash);
   }
 
   private async Task<NpgsqlConnection> _openAsync() {
