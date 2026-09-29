@@ -43,6 +43,21 @@ public abstract record CollectiveScope : ICollectiveScope {
   /// <inheritdoc/>
   public abstract string ScopeKind { get; }
 
+  /// <inheritdoc/>
+  /// <remarks>
+  /// Abstract here rather than defaulted, deliberately. The interface defaults it to the kind for a
+  /// scope with no instance data, and a scope that derives from this base almost always has some --
+  /// so stating it is the point. A tenant scope that inherited the default put every tenant on one
+  /// advisory lock per table, and nothing said so: applies still completed, one tenant at a time,
+  /// until the waiters hit a command timeout. A scope with genuinely nothing to add returns
+  /// <see cref="ScopeKind"/>, and says as much where it does.
+  /// </remarks>
+  public abstract string ScopeIdentity { get; }
+
   /// <summary>The discriminator, which is also what a scope reads as in logs and diagnostics.</summary>
+  /// <remarks>
+  /// The kind alone, not the scope's identity. Do not build a key from this -- see
+  /// <see cref="ScopeIdentity"/>, which exists because a key was built from this.
+  /// </remarks>
   public sealed override string ToString() => ScopeKind;
 }

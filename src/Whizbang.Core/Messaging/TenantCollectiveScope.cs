@@ -23,4 +23,8 @@ public sealed record TenantCollectiveScope(string TenantId) : CollectiveScope {
   /// renaming this string is a breaking change.
   /// </summary>
   public override string ScopeKind => "tenant";
+
+  /// <inheritdoc/>
+  /// <remarks>The tenant is what makes one of these narrower than the kind, so it is what the identity adds.</remarks>
+  public override string ScopeIdentity => ScopeKind + ":" + TenantId;
 }

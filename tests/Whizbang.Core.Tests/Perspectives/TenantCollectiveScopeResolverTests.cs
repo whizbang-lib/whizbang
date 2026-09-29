@@ -169,6 +169,9 @@ public class TenantCollectiveScopeResolverTests {
 
   private sealed record CustomScope : CollectiveScope {
     public override string ScopeKind => "custom-other";
+    /// <inheritdoc/>
+    /// <remarks>Nothing narrows this scope beyond its kind, so the kind is the whole identity.</remarks>
+    public override string ScopeIdentity => ScopeKind;
   }
 
   private static PerspectiveRow<JobModel> _row(string? tenantId) =>

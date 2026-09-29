@@ -10,6 +10,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Data.Dapper.Postgres.Collective;
+using Whizbang.Data.Postgres.Collective;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 
@@ -128,6 +129,112 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
 
     await Assert.That(await _statusAsync(job)).IsEqualTo("Active")
       .Because("RemoveSetter(Status) drops the spec's Status=\"Archived\" setter — Status stays its seeded value.");
+  }
+
+  /// <summary>
+  /// A predicate on the row id runs against the real uuid column.
+  /// </summary>
+  /// <remarks>
+  /// The unit tests assert what the compiler binds; only a real column can say whether Postgres
+  /// accepts it. Bound as text this is 42883 "operator does not exist: uuid = text" and the whole
+  /// statement is refused, which is why the assertion here is that rows come back at all.
+  /// </remarks>
+  [Test]
+  public async Task IdPredicate_RunsAgainstTheRealUuidColumnAsync() {
+    await _createTableAsync();
+    var wanted = Guid.NewGuid();
+    var other = Guid.NewGuid();
+    await _seedAsync(wanted, "t-A", "Active");
+    await _seedAsync(other, "t-A", "Active");
+
+    var where = CollectivePredicateSqlCompiler<JobModel>.Compile(
+      row => row.Id == wanted, outerTableName: TABLE);
+
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    var found = (await conn.QueryAsync<Guid>(
+      $"SELECT id FROM {TABLE} WHERE {where.SqlFragment}",
+      new DynamicParameters(where.Parameters))).ToList();
+
+    await Assert.That(found).IsEquivalentTo([wanted])
+      .Because("the id column is uuid, so the bound guid has to reach it as a uuid and select its row");
+  }
+
+  /// <summary>A set of ids runs against the real uuid column too.</summary>
+  [Test]
+  public async Task IdContainsPredicate_RunsAgainstTheRealUuidColumnAsync() {
+    await _createTableAsync();
+    var first = Guid.NewGuid();
+    var second = Guid.NewGuid();
+    var excluded = Guid.NewGuid();
+    await _seedAsync(first, "t-A", "Active");
+    await _seedAsync(second, "t-A", "Active");
+    await _seedAsync(excluded, "t-A", "Active");
+    var wanted = new[] { first, second };
+
+    var where = CollectivePredicateSqlCompiler<JobModel>.Compile(
+      row => wanted.Contains(row.Id), outerTableName: TABLE);
+
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    var found = (await conn.QueryAsync<Guid>(
+      $"SELECT id FROM {TABLE} WHERE {where.SqlFragment}",
+      new DynamicParameters(where.Parameters))).ToList();
+
+    await Assert.That(found.Count).IsEqualTo(2)
+      .Because("both wanted ids match, and the excluded one does not");
+  }
+
+  /// <summary>
+  /// A batch that cannot get the apply lock inside its bounded wait says so by name, quickly.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The wait used to be bounded only by the statement timeout, so contention sat for 180 seconds and
+  /// then surfaced as a timeout -- indistinguishable from an apply that hung on its own account. The
+  /// execution strategy retried, the retry joined the back of the lock queue, and the work lease,
+  /// renewed only after progress, expired underneath it: the work was leased again and the wait
+  /// counted toward dead-lettering.
+  /// </para>
+  /// <para>
+  /// Asserted on the type rather than the message, and on the elapsed time, because both are the
+  /// point: a caller has to be able to tell a busy lock from a broken apply, and it has to find out
+  /// in seconds.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task LockHeldElsewhere_FailsFast_AsABusyLockRatherThanATimeoutAsync(
+      CancellationToken cancellationToken) {
+    await _createTableAsync();
+    var job = Guid.NewGuid();
+    await _seedAsync(job, "t-A", "Active");
+
+    // Hold the exact lock this apply will ask for, on a separate connection, for the whole test.
+    var lockKey = CollectiveApplyLockKey.Compute(TABLE, new TenantCollectiveScope("t-A").ScopeIdentity);
+    using var holder = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    await using var holdTx = await ((Npgsql.NpgsqlConnection)holder).BeginTransactionAsync(cancellationToken);
+    await using (var hold = ((Npgsql.NpgsqlConnection)holder).CreateCommand()) {
+      hold.Transaction = holdTx;
+      hold.CommandText = "SELECT pg_advisory_xact_lock(@k)";
+      hold.Parameters.AddWithValue("k", lockKey);
+      await hold.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var started = System.Diagnostics.Stopwatch.StartNew();
+    var busy = await Assert.That(async () => await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
+        _jobEntry(), new JobPerspective(), new ArchiveEvent { Scope = new TenantCollectiveScope("t-A") },
+        new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings,
+        CollectiveApplyOptions.Default with { LockWaitSeconds = 2 },
+        logger: null, hookRegistry: null))
+      .Throws<CollectiveApplyLockBusyException>()
+      .Because("another batch holds the lock for this table and scope; the apply is not broken");
+    started.Stop();
+
+    await Assert.That(busy!.Table).IsEqualTo(TABLE)
+      .Because("the message names where the contention is, which is the first thing an operator asks");
+    await Assert.That(started.Elapsed).IsLessThan(TimeSpan.FromSeconds(60))
+      .Because("the wait is bounded now; unbounded it sat for the whole statement timeout");
+    await Assert.That(await _statusAsync(job)).IsEqualTo("Active")
+      .Because("a batch that never got the lock applied nothing");
   }
 
   [Test]

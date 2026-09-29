@@ -341,6 +341,9 @@ public class DapperCollectiveUnitTests {
 
   private sealed record OtherScope : CollectiveScope {
     public override string ScopeKind => "other";
+    /// <inheritdoc/>
+    /// <remarks>Nothing narrows this scope beyond its kind, so the kind is the whole identity.</remarks>
+    public override string ScopeIdentity => ScopeKind;
   }
 
   // ── DapperCollectiveEventExecutor ──────────────────────────────────────

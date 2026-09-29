@@ -30,4 +30,17 @@ public enum SagaStatus {
 
   /// <summary>Transient marker after a <c>SagaResetEvent</c>; not a resting state.</summary>
   Reset = 5,
+
+  /// <summary>
+  /// The watchdog gave up: the saga stalled with nothing left to resolve, and is not coming back on
+  /// its own.
+  /// </summary>
+  /// <remarks>
+  /// A resting state, and distinct from <see cref="Failed"/>: nothing failed, the saga simply stopped
+  /// making progress and the watchdog stopped waiting. Recorded so the stranded-saga sweep leaves it
+  /// alone -- before this it stayed merely incomplete, was re-armed once per
+  /// <c>StrandedSagaRearmInterval</c>, and published its abandonment again each time. An operator can
+  /// still re-drive it explicitly, through the reset path.
+  /// </remarks>
+  Abandoned = 6,
 }

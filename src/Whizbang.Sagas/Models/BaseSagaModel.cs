@@ -159,6 +159,35 @@ public class BaseSagaModel {
   }
 
   /// <summary>
+  /// Records that the watchdog abandoned this saga. Returns <c>true</c> iff the transition fired.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Called from the perspective that applies <c>SagaCompletionAbandonedEvent</c>, as
+  /// <see cref="TryComplete"/> and <see cref="TryFailFast"/> are called for their events. Without it
+  /// the abandonment lived only in the published event: the saga stayed incomplete, the stranded
+  /// sweep re-armed it once per interval, and it published its abandonment again every time.
+  /// </para>
+  /// <para>
+  /// Guarded to the two states a saga can be abandoned from. An already-terminal saga is left as it
+  /// is -- abandoning a completed saga would lose the completion, and abandoning an abandoned one is
+  /// the repeat this exists to stop. That guard is also what makes the transition idempotent, so a
+  /// re-applied event records nothing new.
+  /// </para>
+  /// </remarks>
+  /// <param name="timestamp">When the watchdog gave up.</param>
+  /// <returns>Whether this call was the one that recorded it.</returns>
+  public bool TryAbandon(DateTimeOffset timestamp) {
+    if (Status is not (SagaStatus.Pending or SagaStatus.Running)) {
+      return false;
+    }
+
+    Status = SagaStatus.Abandoned;
+    UpdatedAt = timestamp;
+    return true;
+  }
+
+  /// <summary>
   /// Updates the total-items count, typically by a downstream saga
   /// receiving the real count from an upstream completion. The
   /// <see cref="TryComplete"/> guard on <see cref="TotalItems"/> &lt;= 0

@@ -88,6 +88,12 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   private readonly PassiveCounter<long> _skippedCounter;
   private readonly IReadOnlySet<string> _absorbedNamespaces;
   private readonly IEventMarkerResolver _markerResolver;
+  // The tag attributes this host has a hook for. A tagged event is work for this host only where
+  // one of these is the tag it carries.
+  private readonly HashSet<Type> _hookedTagAttributes;
+  // Keyed by payload type name, rebuilt when a late module initializer registers more tags.
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _tagWork = new(StringComparer.Ordinal);
+  private int _tagWorkGeneration = -1;
 
   // Reason+type pairs already surfaced at Information. Value is unused — this is a set.
   private readonly System.Collections.Concurrent.ConcurrentDictionary<(MessageDiscardReason, string), byte> _seenDiscards = new();
@@ -115,17 +121,22 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// recognize composite payload types (which never have receptors — their consumers are the inner
   /// events, addressable only after fan-out) and keep them. Optional — when null, composites are
   /// not exempted (legacy behavior).</param>
+  /// <param name="coreOptions">Supplies the host's tag hooks, so an event whose only reason to exist
+  /// here is a tag this host acts on is kept rather than dropped for having no receptor. Optional —
+  /// when null, a tag is no reason to keep anything, which is the behavior that shipped.</param>
   public MessageDiscardPolicy(
       IReceptorRegistryQuery registry,
       ILogger<MessageDiscardPolicy> logger,
       Meter meter,
       IOptions<RoutingOptions> routingOptions,
-      IEventMarkerResolver markerResolver) {
+      IEventMarkerResolver markerResolver,
+      Configuration.WhizbangCoreOptions? coreOptions = null) {
     _registry = registry ?? throw new ArgumentNullException(nameof(registry));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     ArgumentNullException.ThrowIfNull(meter);
     _markerResolver = markerResolver;
     _absorbedNamespaces = routingOptions.Value.AbsorbedNamespaces;
+    _hookedTagAttributes = coreOptions?.Tags.HookRegistrations.Select(h => h.AttributeType).ToHashSet() ?? [];
     _skippedCounter = meter.CreatePassiveCounter<long>(
       COUNTER_NAME,
       unit: "{message}",
@@ -149,7 +160,8 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     }
     // Keep the message if a consumer exists OR its namespace is absorbed (persist-for-later, even with no
     // consumer). Absorbed events still reach the inbox → the unconditional event-store write captures them.
-    if (_hasAnyConsumer(payloadClrType) || _isAbsorbedNamespace(payloadClrType)) {
+    if (_hasAnyConsumer(payloadClrType) || _isAbsorbedNamespace(payloadClrType)
+        || _isTagWorkForThisHost(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
     return new MessageDiscardDecision(
@@ -182,7 +194,7 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     if (_isCompositeType(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
-    return _hasAnyConsumer(payloadClrType)
+    return _hasAnyConsumer(payloadClrType) || _isTagWorkForThisHost(payloadClrType)
       ? new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None)
       : new MessageDiscardDecision(
           ShouldDiscard: true,
@@ -202,6 +214,59 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchSkipGateTests.cs:EvaluateReceive_EnvelopeWrappedName_WhosePayloadHasAConsumer_IsKeptAsync</tests>
   private bool _hasAnyConsumer(string payloadClrType) =>
     _registry.HasAnyConsumer(EventTypeMatchingHelper.ExtractInnerPayloadTypeName(payloadClrType));
+
+  /// <summary>
+  /// True when this host has a tag hook for a tag the payload type carries, wherever that tag was
+  /// declared.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A receptor and a perspective are not the only reasons a host wants an event. A host whose job
+  /// is to send the notification a tag declares consumes the event by acting on the tag, and had
+  /// nothing else to show for it: the gate asked the generated consumer registry, which lists what
+  /// the generator scanned for this host, so a tag declared in a shared contracts assembly counted
+  /// for nothing. The host dropped the event on arrival and the notification was never sent, with
+  /// nothing logged above Debug.
+  /// </para>
+  /// <para>
+  /// The tag registry is per-assembly and aggregated across every loaded one, so it answers for the
+  /// contracts assembly too. Both halves are required: the type carries the tag, and this host has
+  /// a hook for it. A tag no hook here acts on is somebody else's work and still drops.
+  /// </para>
+  /// <para>
+  /// Asked per received message, so the answer is cached per payload type and thrown away when the
+  /// registry grows -- a module initializer in a lazily loaded assembly can add tags after the
+  /// first message has already been judged.
+  /// </para>
+  /// </remarks>
+  private bool _isTagWorkForThisHost(string payloadClrType) {
+    if (_hookedTagAttributes.Count == 0) {
+      return false;
+    }
+
+    var generation = Tags.MessageTagRegistry.Count;
+    if (Volatile.Read(ref _tagWorkGeneration) != generation) {
+      _tagWork.Clear();
+      Volatile.Write(ref _tagWorkGeneration, generation);
+    }
+
+    var payload = EventTypeMatchingHelper.ExtractInnerPayloadTypeName(payloadClrType);
+    if (_tagWork.TryGetValue(payload, out var known)) {
+      return known;
+    }
+
+    var hookedTypes = Tags.MessageTagRegistry.GetAllTags()
+      .Where(tag => _hookedTagAttributes.Contains(tag.AttributeType))
+      .Select(tag => tag.MessageType);
+    var isWork = EventTypeMatchingHelper.IsEventType(payload, hookedTypes);
+
+    // Bounded for the reason the discard throttle is: a pathological type string must not turn a
+    // cache into a leak.
+    if (_tagWork.Count < MAX_TRACKED_DISCARD_KEYS) {
+      _tagWork[payload] = isWork;
+    }
+    return isWork;
+  }
 
   /// <inheritdoc />
   public MessageDiscardDecision EvaluateOutbox(string payloadClrType) {

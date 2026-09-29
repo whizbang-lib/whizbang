@@ -37,12 +37,23 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// it as a metric.
 /// </para>
 /// <para>
-/// <strong>Determinism:</strong> the predicate is re-evaluated at apply
-/// time against the projection state at that point in the event sequence.
-/// Because event-sourcing guarantees the projection state is fully
-/// determined by the event log up to that point, the result is
-/// deterministic — and reflects the logically correct outcome, not the
-/// original execution's possibly-wrong (e.g. out-of-order delivery) one.
+/// <strong>Determinism, and its limit:</strong> the predicate is re-evaluated at apply time against
+/// the projection state as it stands when the batch runs. Given a fixed order of applies the result
+/// is determined by that order — but <strong>the order is not guaranteed between collectives</strong>,
+/// and this paragraph used to claim otherwise.
+/// </para>
+/// <para>
+/// Each collective event carries its own stream id and so becomes its own sink stream, and sink
+/// streams on different instances apply in parallel. The per-scope advisory lock serializes two
+/// applies to the same table and scope; it does not order them. Two collectives therefore apply in
+/// whatever order they finish, not in commit order.
+/// </para>
+/// <para>
+/// That is invisible to a collective whose setters are idempotent or commutative, and wrong for one
+/// that expresses "latest wins" as a set-based flip -- <c>IsActive = (Id == e.Chosen)</c> across a
+/// family of rows, where an older collective landing after a newer one leaves the wrong row active.
+/// A consumer writing that shape needs ordering the framework does not yet provide; see #963, which
+/// proposes an opt-in ordering key routing collectives that share it through one ordered sink.
 /// </para>
 /// <para>
 /// AOT: matches Whizbang.Data.EFCore.Postgres's established pattern of
@@ -243,9 +254,33 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     if (lockKey is long key) {
       // Exclusive, transaction-scoped: released at this batch's commit (brief hold), so standard applies and
       // the next collective batch proceed between batches; blocks other collective applies to the same key.
-      await dbContext.Database.ExecuteSqlRawAsync(
-        "SELECT pg_advisory_xact_lock(@wb_lock)",
-        [_param("wb_lock", key)], cancellationToken).ConfigureAwait(false);
+      //
+      // The wait is bounded, so contention fails in seconds with a name rather than sitting for the whole
+      // statement timeout and surfacing as an indistinguishable timeout. lock_timeout is LOCAL to this
+      // transaction and applies to the lock wait alone, so it does not shorten the statements that follow.
+      if (options.LockWaitSeconds is int waitSeconds && waitSeconds > 0) {
+        await dbContext.Database.ExecuteSqlRawAsync(
+          "SELECT set_config('lock_timeout', @wb_lock_timeout, true)",
+          [_param("wb_lock_timeout", (waitSeconds * 1000).ToString(CultureInfo.InvariantCulture))],
+          cancellationToken).ConfigureAwait(false);
+        try {
+          await dbContext.Database.ExecuteSqlRawAsync(
+            "SELECT pg_advisory_xact_lock(@wb_lock)",
+            [_param("wb_lock", key)], cancellationToken).ConfigureAwait(false);
+        } catch (Exception ex) when (CollectiveApplyContention.IsLockTimeout(ex)) {
+          // Nothing is wrong with the event or the perspective: another batch holds the lock for this
+          // table and scope. Named so a caller can tell it from a failed apply and neither count an
+          // attempt nor drop the lease.
+          throw new CollectiveApplyLockBusyException(CollectiveApplyContention.TableOf(selectSql), waitSeconds, ex);
+        }
+        // The lock is held; the remaining statements wait for ordinary row locks on the usual terms.
+        await dbContext.Database.ExecuteSqlRawAsync(
+          "SELECT set_config('lock_timeout', '0', true)", [], cancellationToken).ConfigureAwait(false);
+      } else {
+        await dbContext.Database.ExecuteSqlRawAsync(
+          "SELECT pg_advisory_xact_lock(@wb_lock)",
+          [_param("wb_lock", key)], cancellationToken).ConfigureAwait(false);
+      }
     }
 
     var selectParams = new List<Npgsql.NpgsqlParameter>(where.Parameters.Count + 1);

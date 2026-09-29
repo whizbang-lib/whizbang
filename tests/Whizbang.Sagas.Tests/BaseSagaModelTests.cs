@@ -167,6 +167,81 @@ public class BaseSagaModelTests {
     await Assert.That(saga.CompletedByItemIdentifier).IsEqualTo("item-4");
   }
 
+  // ── TryAbandon ───────────────────────────────────────────────────────
+
+  /// <summary>The watchdog's decision is recorded, from either state a saga can be abandoned from.</summary>
+  /// <param name="from">The state the saga was in.</param>
+  [Test]
+  [Arguments(SagaStatus.Pending)]
+  [Arguments(SagaStatus.Running)]
+  public async Task TryAbandon_FromAnInFlightState_RecordsItAsync(SagaStatus from) {
+    var ts = DateTimeOffset.Parse("2026-06-22T10:30:00Z", System.Globalization.CultureInfo.InvariantCulture);
+    var saga = new BaseSagaModel { Status = from, TotalItems = 5, CompletedItems = 2 };
+
+    var result = saga.TryAbandon(ts);
+
+    await Assert.That(result).IsTrue();
+    await Assert.That(saga.Status).IsEqualTo(SagaStatus.Abandoned)
+      .Because("without this the abandonment lived only in the published event, and the sweep re-armed "
+             + "the saga once per interval and published it again");
+    await Assert.That(saga.UpdatedAt).IsEqualTo(ts);
+    await Assert.That(saga.CompletedAt).IsNull()
+      .Because("nothing completed -- the saga stopped making progress, which is not the same thing");
+  }
+
+  /// <summary>Abandoning it a second time records nothing, which is what makes a re-applied event safe.</summary>
+  [Test]
+  public async Task TryAbandon_WhenAlreadyAbandoned_ReturnsFalseAsync() {
+    var first = DateTimeOffset.Parse("2026-06-22T10:30:00Z", System.Globalization.CultureInfo.InvariantCulture);
+    var saga = new BaseSagaModel { Status = SagaStatus.Running };
+    saga.TryAbandon(first);
+
+    var again = saga.TryAbandon(first.AddHours(1));
+
+    await Assert.That(again).IsFalse()
+      .Because("the repeat is the thing this exists to stop; the second apply records nothing new");
+    await Assert.That(saga.UpdatedAt).IsEqualTo(first)
+      .Because("a no-op transition must not move the timestamp, or every sweep would look like activity");
+  }
+
+  /// <summary>A finished saga is not abandoned, whichever way it finished.</summary>
+  /// <remarks>
+  /// A watchdog tick can arrive after the saga completed -- that is the ordinary race the tick is
+  /// idempotent for. Abandoning a completed saga would lose the completion.
+  /// </remarks>
+  /// <param name="terminal">The state it finished in.</param>
+  [Test]
+  [Arguments(SagaStatus.Completed)]
+  [Arguments(SagaStatus.CompletedWithFailures)]
+  [Arguments(SagaStatus.Failed)]
+  public async Task TryAbandon_WhenAlreadyFinished_LeavesItAloneAsync(SagaStatus terminal) {
+    var saga = new BaseSagaModel { Status = terminal };
+
+    var result = saga.TryAbandon(DateTimeOffset.UtcNow);
+
+    await Assert.That(result).IsFalse();
+    await Assert.That(saga.Status).IsEqualTo(terminal)
+      .Because("a tick arriving after the end is ordinary; it must not overwrite how the saga ended");
+  }
+
+  /// <summary>An operator can still re-drive an abandoned saga.</summary>
+  /// <remarks>
+  /// Abandoning is a resting state, not a locked one. The reset path sets Reset and the saga runs
+  /// again from there, so the status records what happened without deciding that nothing more can.
+  /// </remarks>
+  [Test]
+  public async Task TryAbandon_ThenReset_RunsAgainAsync() {
+    var saga = new BaseSagaModel { Status = SagaStatus.Running, TotalItems = 3 };
+    saga.TryAbandon(DateTimeOffset.UtcNow);
+
+    // What the reset path does: back to a non-terminal state.
+    saga.Status = SagaStatus.Reset;
+    saga.MarkRunningIfPending(DateTimeOffset.UtcNow);
+
+    await Assert.That(saga.Status).IsNotEqualTo(SagaStatus.Abandoned)
+      .Because("an abandoned saga is re-drivable by an operator; the status is a record, not a lock");
+  }
+
   // ── UpdateTotalItems ─────────────────────────────────────────────────
 
   [Test]

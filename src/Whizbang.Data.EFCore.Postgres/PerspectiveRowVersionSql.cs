@@ -7,6 +7,7 @@ using NpgsqlTypes;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -62,23 +63,12 @@ internal static class PerspectiveRowVersionSql {
   /// </summary>
   internal static async Task<PerspectiveApplyRead> ReadForApplyAsync(
       DbContext context, string qualifiedTable, Guid id, CancellationToken cancellationToken) {
-    var sql = "SELECT xmin, metadata->>'EventId', metadata->>'EventType', metadata->>'CommitSequence' FROM "
-      + qualifiedTable + " WHERE id = @id";
-    return await _withCommandAsync(context, sql, id, async command => {
-      await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-      if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-        return new PerspectiveApplyRead(PerspectiveRowVersion.Absent, null);
-      }
-      var metadata = new PerspectiveMetadata {
-        EventId = await _textAsync(reader, 1, cancellationToken).ConfigureAwait(false) ?? string.Empty,
-        EventType = await _textAsync(reader, 2, cancellationToken).ConfigureAwait(false) ?? string.Empty,
-        CommitSequence = await _textAsync(reader, 3, cancellationToken).ConfigureAwait(false) is { } sequence
-          ? long.Parse(sequence, NumberStyles.Integer, CultureInfo.InvariantCulture)
-          : null,
-      };
-      var xmin = await reader.GetFieldValueAsync<uint>(0, cancellationToken).ConfigureAwait(false);
-      return new PerspectiveApplyRead(PerspectiveRowVersion.Of(xmin), metadata);
-    }, cancellationToken).ConfigureAwait(false);
+    // The statement and the mapping are the shared ones, so both drivers read a version the same way.
+    return await _withCommandAsync(context, PerspectiveRowVersionCommands.ReadForApplySql(qualifiedTable), id,
+      async command => {
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        return await PerspectiveRowVersionCommands.ReadApplyAsync(reader, cancellationToken).ConfigureAwait(false);
+      }, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -88,8 +78,8 @@ internal static class PerspectiveRowVersionSql {
   /// </summary>
   internal static Task<PerspectiveRowVersion> ReadVersionAsync(
       DbContext context, string qualifiedTable, Guid id, bool lockRow, CancellationToken cancellationToken) {
-    var sql = "SELECT xmin FROM " + qualifiedTable + " WHERE id = @id" + (lockRow ? " FOR UPDATE" : string.Empty);
-    return _withCommandAsync(context, sql, id, async command =>
+    return _withCommandAsync(context, PerspectiveRowVersionCommands.ReadVersionSql(qualifiedTable, lockRow), id,
+      async command =>
       await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is uint xmin
         ? PerspectiveRowVersion.Of(xmin)
         : PerspectiveRowVersion.Absent,
@@ -101,10 +91,7 @@ internal static class PerspectiveRowVersionSql {
   /// version stored its unsigned value.
   /// </summary>
   internal static NpgsqlParameter ExpectedVersionParameter(string name, PerspectiveRowVersion expected) =>
-    new(name, NpgsqlDbType.Xid) { Value = (uint)expected.Value };
-
-  private static async ValueTask<string?> _textAsync(DbDataReader reader, int ordinal, CancellationToken cancellationToken) =>
-    await reader.IsDBNullAsync(ordinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(ordinal);
+    PerspectiveRowVersionCommands.ExpectedVersionParameter(name, expected);
 
   private static async Task<T> _withCommandAsync<T>(
       DbContext context, string sql, Guid id, Func<DbCommand, Task<T>> body, CancellationToken cancellationToken) {

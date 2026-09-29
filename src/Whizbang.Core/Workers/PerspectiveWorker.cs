@@ -288,7 +288,8 @@ public partial class PerspectiveWorker(
   // wake task whenever a channel or the idle timeout wins the race, and a semaphore queued one
   // more stale waiter per abandoned iteration (108,992 in one long-running instance) while
   // Release() went to the oldest of them, so a real signal could be swallowed. WakeSignal hands the
-  // same pending task back on every iteration and completes exactly that one.
+  // same pending task back on every iteration, and its signal stays raised until the loop consumes
+  // it, so a signal landing while every loop is busy still wakes the next iteration.
   private readonly Whizbang.Core.Async.WakeSignal _perspectiveWake = new();
   private bool _perspectiveSignalSubscribed;
 
@@ -616,9 +617,9 @@ public partial class PerspectiveWorker(
         : Math.Max(_options.PollingIntervalMilliseconds, _options.NotifyHealthyPollingIntervalMilliseconds);
       var idleTimeout = Task.Delay(pollMs, stoppingToken);
       // WaitAsync returns the SAME pending task while a wait is outstanding, so an iteration that
-      // ends on a channel or the timeout leaves no extra waiter behind (#728); the next Set() wakes
-      // this one task, and a Set() that lands while the loop is busy completes it ahead of the next
-      // WhenAny so the wake is coalesced, never lost.
+      // ends on a channel or the timeout leaves no extra waiter behind (#728). The signal is a level:
+      // a Set() that lands while the loop is busy stays raised until the Consume() below, so the next
+      // WhenAny returns at once even though the waiter it completed had already been abandoned.
       var perspectiveSignal = _perspectiveNotificationListener.IsConfigured
         ? _perspectiveWake.WaitAsync(stoppingToken)
         : new TaskCompletionSource<bool>().Task;   // never completes when no listener
@@ -632,6 +633,10 @@ public partial class PerspectiveWorker(
       if (!awake || stoppingToken.IsCancellationRequested) {
         break;
       }
+
+      // Awake, and about to look: lower the signal before draining, so any signal raised from here
+      // on wakes the next iteration rather than being taken as already served by this one.
+      _perspectiveWake.Consume();
 
       // Drain whatever is currently queued on both channels (non-blocking after the wait).
       var workBatch = new List<PerspectiveWork>(_options.MaxStreamsPerBatch);
@@ -1680,10 +1685,10 @@ public partial class PerspectiveWorker(
     var pendingFailures = _completionStrategy.GetPendingFailures();
 
     foreach (var tc in pendingCompletions) {
-      await _perspectiveCompletionChannel!.EnqueueCursorAsync(tc.Completion, ct).ConfigureAwait(false);
+      await _perspectiveCompletionChannel.EnqueueCursorAsync(tc.Completion, ct).ConfigureAwait(false);
     }
     foreach (var f in pendingFailures.Select(tc => tc.Completion)) {
-      await _failureChannel!.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
+      await _failureChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
         MessageId = f.LastEventId,
         CompletedStatus = MessageProcessingStatus.None,
         Error = f.Error ?? "perspective failed",
@@ -1691,7 +1696,7 @@ public partial class PerspectiveWorker(
       }, ct).ConfigureAwait(false);
     }
     while (_pendingEventCompletions.TryDequeue(out var ec)) {
-      await _perspectiveCompletionChannel!.EnqueueEventWorkIdAsync(ec.EventWorkId, ct).ConfigureAwait(false);
+      await _perspectiveCompletionChannel.EnqueueEventWorkIdAsync(ec.EventWorkId, ct).ConfigureAwait(false);
     }
 
     _completionStrategy.MarkAsSent(pendingCompletions, pendingFailures, DateTimeOffset.UtcNow);
@@ -2539,7 +2544,7 @@ public partial class PerspectiveWorker(
   private async Task _parkLeasedRowsAsync(
       IEnumerable<Guid> workIds, string error, MessageFailureReason reason, CancellationToken ct) {
     foreach (var workId in workIds) {
-      await _failureChannel!.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
+      await _failureChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
         MessageId = workId,
         CompletedStatus = MessageProcessingStatus.None,
         Error = error,

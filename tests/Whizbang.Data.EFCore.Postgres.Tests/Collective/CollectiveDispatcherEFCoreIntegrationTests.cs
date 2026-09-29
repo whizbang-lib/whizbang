@@ -17,6 +17,7 @@ using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Serialization;
 using Whizbang.Data.EFCore.Postgres.Collective;
 using Whizbang.Data.EFCore.Postgres.Functions;
+using Whizbang.Data.Postgres.Collective;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
@@ -1288,6 +1289,81 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("b")
       .Because("The apply still runs correctly without the lock.");
   }
+
+  /// <summary>A batch that cannot get its apply lock says so, in seconds, and applies nothing.</summary>
+  /// <remarks>
+  /// <para>
+  /// Nothing is wrong with the event or the perspective: another batch holds the lock for the same table
+  /// and scope, and this one arrived while it did. Reported as a failure, the caller counts an attempt,
+  /// moves the work toward dead-lettering and loses its lease -- none of which a busy lock warrants.
+  /// </para>
+  /// <para>
+  /// Before the wait was bounded the two could not be told apart: the wait sat for the whole statement
+  /// timeout and surfaced as a timeout, indistinguishable from an apply that hung on its own account.
+  /// Asserted on the type and on the elapsed time because both are the point.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task DispatchAsync_WhenAnotherBatchHoldsTheLock_FailsFastAsABusyLockAsync(
+      CancellationToken cancellationToken) {
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-lockbusy", tag: "before");
+
+    // Hold the exact lock this apply will ask for, on a separate connection, for the whole test.
+    var lockKey = CollectiveApplyLockKey.Compute(
+      "wh_per_collective_cells", new TenantCollectiveScope("t-lockbusy").ScopeIdentity);
+    await using var holder = new NpgsqlConnection(_connectionString);
+    await holder.OpenAsync(cancellationToken);
+    await using var holdTx = await holder.BeginTransactionAsync(cancellationToken);
+    await using (var hold = holder.CreateCommand()) {
+      hold.Transaction = holdTx;
+      hold.CommandText = "SELECT pg_advisory_xact_lock(@k)";
+      hold.Parameters.AddWithValue("k", lockKey);
+      await hold.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var started = Stopwatch.StartNew();
+    var busy = await Assert.That(async () =>
+        await _buildSetTagDispatcher(new CollectiveApplyOptions { LockWaitSeconds = 2 }).DispatchAsync(
+          evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lockbusy"), Tag = "after" },
+          collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: cancellationToken))
+      .Throws<CollectiveApplyLockBusyException>()
+      .Because("another batch holds the lock for this table and scope; the apply is not broken");
+    started.Stop();
+
+    await Assert.That(busy!.Table).IsEqualTo("wh_per_collective_cells")
+      .Because("the message names where the contention is, which is the first thing an operator asks");
+    await Assert.That(busy.WaitedSeconds).IsEqualTo(2);
+    await Assert.That(started.Elapsed).IsLessThan(TimeSpan.FromSeconds(60))
+      .Because("the wait is bounded now; unbounded it sat for the whole statement timeout");
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("before")
+      .Because("a batch that never got the lock applied nothing");
+  }
+
+  /// <summary>With no wait configured the apply waits as it always did, and narrows nothing.</summary>
+  /// <remarks>
+  /// The bound is opt-out, and opting out has to mean the behavior that shipped before it: take the lock
+  /// and wait. Setting <c>lock_timeout</c> anyway -- to 0, or at all -- would either change how the
+  /// statements after the lock behave or leave the session carrying a setting nobody asked for.
+  /// </remarks>
+  [Test]
+  public async Task DispatchAsync_WithNoWaitBound_TakesTheLockWithoutTouchingLockTimeoutAsync() {
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-nobound", tag: "before");
+    _capturedSql.Clear();
+
+    await _buildSetTagDispatcher(new CollectiveApplyOptions { LockWaitSeconds = null }).DispatchAsync(
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-nobound"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
+
+    await Assert.That(_capturedSql.Any(c => c.Contains("pg_advisory_xact_lock", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("opting out of the bound is not opting out of the lock");
+    await Assert.That(_capturedSql.Any(c => c.Contains("lock_timeout", StringComparison.OrdinalIgnoreCase))).IsFalse()
+      .Because("with no bound configured the apply must not set lock_timeout at all");
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
+      .Because("the apply still runs; only the wait is unbounded");
+  }
+
 
   // ── §7: index creation is a STARTUP concern, never in the apply hot path ──────────────────────────
 

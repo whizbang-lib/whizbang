@@ -66,6 +66,8 @@ public class DeadLetterRecoveryWorkerTests {
     // every existing test's fetch returns immediately, unchanged.
     public bool BlockFetchUntilCanceled { get; set; }
     public TaskCompletionSource FetchStartedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    /// <summary>Awaited by every fetch with its 1-based ordinal, so a test can hold one scan in flight.</summary>
+    public Func<int, Task>? FetchGate { get; set; }
     public async Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) {
       FetchedBatchSizes.Enqueue(maxCount);
       _fetchCount++;
@@ -73,6 +75,9 @@ public class DeadLetterRecoveryWorkerTests {
       if (_fetchCount == 1) { FirstFetchSignal.TrySetResult(); } else if (_fetchCount == 2) { SecondFetchSignal.TrySetResult(); }
       if (FetchThrowsOnFirstCall && _fetchCount == 1) {
         throw new InvalidOperationException("simulated scan failure");
+      }
+      if (FetchGate is not null) {
+        await FetchGate(_fetchCount).ConfigureAwait(false);
       }
       if (BlockFetchUntilCanceled) {
         FetchStartedSignal.TrySetResult();
@@ -554,6 +559,47 @@ public class DeadLetterRecoveryWorkerTests {
     await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await Assert.That(svc.RecoverCalls).Contains(entry.DeadLetterId)
       .Because("the one signal must reach the iteration the loop is actually awaiting");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// A signal raised while a scan is in flight must wake the next wait. The scan followed a
+  /// backstop timeout, so the waiter from the previous wait was parked and abandoned; the signal
+  /// used to complete that waiter and clear it, the next wait parked a fresh one, and the loop slept
+  /// until the following backstop.
+  /// </summary>
+  [Test]
+  public async Task NotificationListener_SignalDuringAScanAfterABackstop_WakesTheNextWaitAsync() {
+    var listener = new FakeNotificationListener();
+    var clock = new ManualTimeProvider();
+    var (worker, svc) = _newWorker(
+      new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50 },
+      listener: listener,
+      timeProvider: clock);
+    var entry = _entry(MessageFailureReason.Throttled, recoveryAttempts: 0);
+    var scanTwoRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    svc.FetchGate = ordinal => ordinal == 2 ? scanTwoRelease.Task : Task.CompletedTask;
+    svc.FetchBatches.Enqueue([]);       // scan 1: startup
+    svc.FetchBatches.Enqueue([]);       // scan 2: the backstop, held in flight while the signal lands
+    svc.FetchBatches.Enqueue([entry]);  // scan 3: the one the signal must produce
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(5));
+    await clock.TimerRegistered(1).WaitAsync(TimeSpan.FromSeconds(5));
+    clock.Advance(TimeSpan.FromMinutes(60));
+    await svc.FetchSignal(2).WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Act: exactly one signal while scan 2 is in flight, then let the scan finish.
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    scanTwoRelease.TrySetResult();
+
+    // Assert: scan 3 runs without another backstop and recovers the entry.
+    await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(svc.RecoverCalls).Contains(entry.DeadLetterId)
+      .Because("a signal raised during a scan must wake the next wait, not an abandoned one");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

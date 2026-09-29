@@ -124,6 +124,31 @@ public static class SagaApplyHelper {
   }
 
   /// <summary>
+  /// Record that the watchdog abandoned the saga, from the perspective that applies
+  /// <c>SagaCompletionAbandonedEvent</c>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// No item is involved, which is what distinguishes this from the three above: nothing failed and
+  /// nothing completed. The saga stopped making progress with nothing left to resolve, and the
+  /// watchdog stopped waiting for it.
+  /// </para>
+  /// <para>
+  /// Wiring this is what stops the stranded-saga sweep re-arming the saga once per
+  /// <c>StrandedSagaRearmInterval</c> and publishing its abandonment again each time. A saga whose
+  /// perspective does not apply the event stays merely incomplete and keeps being re-armed, exactly
+  /// as before -- the framework publishes the event but cannot record it on a model it does not own.
+  /// </para>
+  /// </remarks>
+  /// <param name="saga">The saga model the perspective holds.</param>
+  /// <param name="timestamp">When the watchdog gave up, from the event.</param>
+  /// <returns>Whether this call was the one that recorded it.</returns>
+  public static bool TrackAbandoned(BaseSagaModel saga, DateTimeOffset timestamp) {
+    ArgumentNullException.ThrowIfNull(saga);
+    return saga.TryAbandon(timestamp);
+  }
+
+  /// <summary>
   /// Find-or-create item, mark <see cref="SagaItemState.Failed"/>, bump
   /// <see cref="BaseSagaModel.FailedItems"/> under
   /// <see cref="SagaItemModel.IsTerminal"/> guard, then call

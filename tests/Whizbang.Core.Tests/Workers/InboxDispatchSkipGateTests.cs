@@ -46,6 +46,83 @@ public class InboxDispatchSkipGateTests {
       => inner.Log(logLevel, eventId, state, exception, formatter);
   }
 
+  // A tag declared where this host's generator never scanned: the tag registry answers for it,
+  // which is what a shared contracts assembly looks like from the gate's side, while the consumer
+  // registry does not list the type at all.
+  [System.AttributeUsage(System.AttributeTargets.Class)]
+  private sealed class ContractsNotifyTagAttribute : Whizbang.Core.Attributes.MessageTagAttribute;
+
+  private sealed record TaggedInContractsEvent : IEvent;
+
+  private sealed class ForeignAssemblyTagRegistry : Whizbang.Core.Tags.IMessageTagRegistry {
+    public IEnumerable<Whizbang.Core.Tags.MessageTagRegistration> GetTagsFor(Type messageType)
+      => messageType == typeof(TaggedInContractsEvent) ? GetAllTags() : [];
+
+    public IEnumerable<Whizbang.Core.Tags.MessageTagRegistration> GetAllTags() => [
+      new Whizbang.Core.Tags.MessageTagRegistration {
+        MessageType = typeof(TaggedInContractsEvent),
+        AttributeType = typeof(ContractsNotifyTagAttribute),
+        Tag = "notify",
+        PayloadBuilder = static _ => default,
+        AttributeFactory = static () => new ContractsNotifyTagAttribute { Tag = "notify" },
+      },
+    ];
+  }
+
+  private sealed class NoOpTagHook : Whizbang.Core.Tags.IMessageTagHook<ContractsNotifyTagAttribute> {
+    public ValueTask<System.Text.Json.JsonElement?> OnTaggedMessageAsync(
+        Whizbang.Core.Tags.TagContext<ContractsNotifyTagAttribute> context, CancellationToken ct)
+      => ValueTask.FromResult<System.Text.Json.JsonElement?>(null);
+  }
+
+  private static MessageDiscardPolicy _policyWithTagHooks(bool withHook, string meterName) {
+    var core = new Whizbang.Core.Configuration.WhizbangCoreOptions();
+    if (withHook) {
+      core.Tags.UseHook<ContractsNotifyTagAttribute, NoOpTagHook>();
+    }
+    return new MessageDiscardPolicy(
+      registry: new TestRegistry(),                      // nothing consumes it
+      logger: NullLogger<MessageDiscardPolicy>.Instance,
+      meter: new Meter(meterName),
+      routingOptions: Options.Create(new RoutingOptions()),
+      markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      coreOptions: core);
+  }
+
+  /// <summary>
+  /// An event this host keeps only because it acts on a tag the event carries is kept, and the same
+  /// event is dropped by a host that acts on no such tag.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A receptor and a perspective are not the only reasons a host wants an event. A host whose job
+  /// is to send the notification a tag declares consumes it by acting on the tag -- and the gate
+  /// asked only the generated consumer registry, which lists what the generator scanned for this
+  /// host. A tag declared in a shared contracts assembly counted for nothing, so the host that was
+  /// meant to send the notification dropped the event on arrival, sent nothing, and logged nothing
+  /// above Debug.
+  /// </para>
+  /// <para>
+  /// Both halves are asserted because either alone would be wrong: keeping every tagged event would
+  /// keep other hosts' work as well, and keeping none is the defect.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task Gates_TaggedEventWithNoConsumer_KeptWhereThisHostActsOnTheTagAsync() {
+    Whizbang.Core.Tags.MessageTagRegistry.Register(new ForeignAssemblyTagRegistry(), priority: 100);
+    var wireName = typeof(TaggedInContractsEvent).AssemblyQualifiedName!;
+
+    var acting = _policyWithTagHooks(withHook: true, "Whizbang.Tests.InboxDispatchSkipGateTests.Tag1");
+    await Assert.That(acting.EvaluateReceive(wireName, "topic", "sub").ShouldDiscard).IsFalse()
+      .Because("this host's whole reason for the event is the tag it carries, wherever the tag was declared");
+    await Assert.That(acting.EvaluateInbox(wireName).ShouldDiscard).IsFalse()
+      .Because("the inbox gate drops for the same reason the receive gate does, so it needs the same answer");
+
+    var notActing = _policyWithTagHooks(withHook: false, "Whizbang.Tests.InboxDispatchSkipGateTests.Tag2");
+    await Assert.That(notActing.EvaluateReceive(wireName, "topic", "sub").ShouldDiscard).IsTrue()
+      .Because("a tag no hook here acts on is another host's work, and keeping it would keep everything");
+  }
+
   [Test]
   public async Task ShouldSkipInbox_TypeNoLongerInRegistry_RecordsSkip_AndReturnsTrueAsync() {
     var registry = new TestRegistry();  // empty

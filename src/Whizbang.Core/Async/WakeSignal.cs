@@ -1,7 +1,8 @@
 namespace Whizbang.Core.Async;
 
 /// <summary>
-/// A coalescing, single-consumer wake signal that never leaves an abandoned waiter behind.
+/// A coalescing, level-triggered wake signal for poll loops that never leaves an abandoned waiter
+/// behind and never loses a signal.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -14,9 +15,20 @@ namespace Whizbang.Core.Async;
 /// <para>
 /// Here at most one waiter exists. Repeated <see cref="WaitAsync"/> calls while a wait is pending
 /// return the same task, so a loop that abandons the task for another wake source simply asks again
-/// on the next iteration without queuing a second waiter. <see cref="Set"/> completes that one task,
-/// or records a single pending signal when nobody is waiting, so a signal raised while the loop is
-/// busy still wakes the next iteration. Cancellation clears the waiter.
+/// on the next iteration without queuing a second waiter. Cancellation clears the waiter.
+/// </para>
+/// <para>
+/// The signal is a level, not an edge. <see cref="Set"/> raises it and completes the parked waiter,
+/// and it stays raised until the loop calls <see cref="Consume"/>; until then every
+/// <see cref="WaitAsync"/> returns a completed task. A signal that lands while the loop is busy
+/// therefore wakes the next iteration even when the waiter it completed was one the loop had already
+/// abandoned for another wake source. Completing that waiter and forgetting the signal, as an
+/// edge-triggered design does, let the next iteration park a fresh waiter and sleep through it.
+/// </para>
+/// <para>
+/// A loop calls <see cref="Consume"/> once it is awake and before it looks for work, so a signal
+/// raised after that point wakes the following iteration. Repeated signals before the consume
+/// coalesce into one wake.
 /// </para>
 /// </remarks>
 /// <tests>tests/Whizbang.Core.Tests/Async/WakeSignalTests.cs</tests>
@@ -24,7 +36,7 @@ internal sealed class WakeSignal {
   private readonly Lock _gate = new();
   private TaskCompletionSource<bool>? _waiter;
   private CancellationTokenRegistration _waiterCancellation;
-  private bool _pendingSignal;
+  private bool _signaled;
 
   /// <summary>Number of waiters currently parked. Always 0 or 1, never more.</summary>
   public int PendingWaiters {
@@ -35,39 +47,47 @@ internal sealed class WakeSignal {
     }
   }
 
-  /// <summary>True when a signal arrived while nobody was waiting; the next wait completes at once.</summary>
+  /// <summary>True when a signal was raised and not yet consumed; every wait completes at once until then.</summary>
   public bool HasPendingSignal {
     get {
       lock (_gate) {
-        return _pendingSignal;
+        return _signaled;
       }
     }
   }
 
   /// <summary>
-  /// Wakes the pending waiter. When nobody is waiting, records one pending signal; further calls
-  /// before the next wait coalesce into that one.
+  /// Raises the signal and wakes the pending waiter, if any. The signal stays raised until
+  /// <see cref="Consume"/>; further calls before then coalesce into it.
   /// </summary>
   public void Set() {
-    TaskCompletionSource<bool> toComplete;
+    TaskCompletionSource<bool>? toComplete;
     CancellationTokenRegistration registration;
     lock (_gate) {
-      if (_waiter is null) {
-        _pendingSignal = true;
-        return;
-      }
+      _signaled = true;
       toComplete = _waiter;
       registration = _waiterCancellation;
       _waiter = null;
       _waiterCancellation = default;
     }
     registration.Dispose();
-    toComplete.TrySetResult(true);
+    toComplete?.TrySetResult(true);
   }
 
   /// <summary>
-  /// Returns a task that completes on the next <see cref="Set"/>, or immediately when a signal is
-  /// already pending. While a wait is pending, further calls return that same task instead of
+  /// Lowers the signal once the loop is awake and about to look for work. Called before the work is
+  /// examined, so a signal raised after this point wakes the following iteration. A parked waiter is
+  /// left in place.
+  /// </summary>
+  public void Consume() {
+    lock (_gate) {
+      _signaled = false;
+    }
+  }
+
+  /// <summary>
+  /// Returns a task that completes on the next <see cref="Set"/>, or a completed task while the
+  /// signal is raised. While a wait is pending, further calls return that same task instead of
   /// queuing another waiter. The token of the call that created the waiter governs its cancellation.
   /// </summary>
   public Task WaitAsync(CancellationToken cancellationToken) {
@@ -75,8 +95,7 @@ internal sealed class WakeSignal {
       return Task.FromCanceled(cancellationToken);
     }
     lock (_gate) {
-      if (_pendingSignal) {
-        _pendingSignal = false;
+      if (_signaled) {
         return Task.CompletedTask;
       }
       if (_waiter is not null) {

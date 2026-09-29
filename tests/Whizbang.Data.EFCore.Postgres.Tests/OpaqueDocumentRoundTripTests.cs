@@ -101,6 +101,13 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
         entity.Property(e => e.CreatedAt).HasColumnName("created_at");
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
+        // Declared because this table requires them: sys_created_at and sys_updated_at are NOT NULL
+        // with no default. The upsert stamps them as shadow properties, which it can only do for a
+        // model that declares them, while the atomic path writes them in its own statement. So a
+        // write here succeeded or failed with 23502 by which path it took -- the intermittent
+        // failure in #961. A generated context declares them; this hand-written one now does too.
+        entity.Property<DateTime>("sys_created_at");
+        entity.Property<DateTime>("sys_updated_at");
       });
   }
 
