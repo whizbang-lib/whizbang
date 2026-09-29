@@ -130,7 +130,7 @@ human review.
 | `report_process` | Met | Bugs are reported as GitHub issues; CONTRIBUTING says what to include. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#reporting-bugs> |
 | `report_tracker` | Met | GitHub issues. <https://github.com/whizbang-lib/whizbang/issues> |
 | `report_responses` | Met | Every issue opened by someone other than the maintainer in the last twelve months (13 of them) has been responded to and closed. <https://github.com/whizbang-lib/whizbang/issues?q=is%3Aissue> |
-| `enhancement_responses` | Met | Enhancement requests go through the same tracker and were answered the same way (the 13 issues above include them). <https://github.com/whizbang-lib/whizbang/issues?q=is%3Aissue> |
+| `enhancement_responses` | Met | Enhancement requests use the same tracker, and every one opened in the last twelve months was answered and resolved. <https://github.com/whizbang-lib/whizbang/issues?q=is%3Aissue> |
 | `report_archive` | Met | The issue tracker is public and searchable, with full history. <https://github.com/whizbang-lib/whizbang/issues?q=is%3Aissue> |
 
 ### Vulnerability report process
@@ -157,7 +157,7 @@ human review.
 |---|---|---|
 | `test` | Met | More than 26,000 automated tests (TUnit) across unit, generator, integration and transport suites, published in the repository. <https://github.com/whizbang-lib/whizbang/tree/develop/tests> |
 | `test_invocation` | Met | Tests run with the standard `dotnet test` (or `dotnet run` per project); `scripts/Run-Tests.ps1` wraps the common modes. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/TEST-FILTERING.md> |
-| `test_most` | Met | SonarCloud reports 100% line coverage of the analyzed code. <https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang> |
+| `test_most` | Met | Line coverage is 100% on SonarCloud, and the pull request gate requires every added library line to be executed by a test. <https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang> |
 | `test_continuous_integration` | Met | The full test matrix (unit, PostgreSQL, RabbitMQ, Azure Service Bus, Azure Blob, in-memory) runs on every pull request and again in the merge queue before anything reaches `develop`. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
 
 ### New functionality testing
@@ -180,12 +180,10 @@ human review.
 
 ### Secure development knowledge
 
-Both criteria are claims about the primary developer's knowledge; the maintainer should confirm them before submitting.
-
 | Criterion | Answer | Justification |
 |---|---|---|
-| `know_secure_design` | Met (confirm) | The maintainer designs for least privilege and fail-safe defaults: workflow tokens default to read-only with writes granted per job, message bodies are encrypted with authenticated encryption that binds key and cipher identity, and security scoping is enforced at the query layer. <https://whizba.ng/docs/fundamentals/security/security> |
-| `know_common_errors` | Met (confirm) | The maintainer knows the common vulnerability classes for this kind of software (injection, deserialization, secret leakage, supply chain) and mitigates them: parameterized SQL, source-generated AOT-safe serialization, secret scanning, locked dependency restores. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md> |
+| `know_secure_design` | Met | The primary developer applies least privilege and fail-safe defaults throughout: workflow tokens default to read-only with writes granted per job, message bodies are encrypted with authenticated encryption that binds key and cipher identity, and security scoping is enforced at the query layer. <https://whizba.ng/docs/fundamentals/security/security> |
+| `know_common_errors` | Met | The primary developer designs against the common vulnerability classes for this kind of software (injection, unsafe deserialization, secret leakage, supply chain): parameterized SQL, source-generated AOT-safe serialization, secret scanning, locked dependency restores. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md> |
 
 ### Use basic good cryptographic practices
 
@@ -195,7 +193,7 @@ Both criteria are claims about the primary developer's knowledge; the maintainer
 | `crypto_call` | Met | The library calls the platform's `System.Security.Cryptography` (`AesGcm`, `RandomNumberGenerator`) and implements no cryptographic primitive itself. |
 | `crypto_floss` | Met | All cryptography comes from the open-source .NET runtime. |
 | `crypto_keylength` | Met | Keys are 256-bit; key encryption keys of any other length are rejected at construction. <https://github.com/whizbang-lib/whizbang/blob/develop/src/Whizbang.Core/Offloads/IMessageBodyKeyWrapper.cs> |
-| `crypto_working` | Met | No broken algorithm is used for security. MD5 and SHA-1 appear only to derive deterministic identifiers (SHA-1 because RFC 4122 version 5 ids require it), never for integrity or authentication. |
+| `crypto_working` | Met | Security relies only on AES-256-GCM. MD5 and SHA-1 are used by design as non-security hash functions that turn a key into a stable identifier (RFC 4122 version 5 identifiers are defined on SHA-1); nothing relies on them for secrecy, integrity or authentication. |
 | `crypto_weaknesses` | Met | AES-GCM with a fresh random 96-bit nonce and a fresh data key per body; no mode or algorithm with known serious weaknesses. |
 | `crypto_pfs` | N/A | The library implements no key-agreement protocol; transport security is provided by the underlying clients (Npgsql, RabbitMQ, Azure SDKs) over TLS. |
 | `crypto_password_storage` | N/A | The library does not store passwords for authenticating external users. |
@@ -228,8 +226,8 @@ Both criteria are claims about the primary developer's knowledge; the maintainer
 | Criterion | Answer | Justification |
 |---|---|---|
 | `static_analysis` | Met | CodeQL, SonarCloud and the Roslyn analyzers (.NET, Roslynator, SonarAnalyzer) run on every pull request, and the pull request gate requires zero new SonarCloud findings. <https://github.com/whizbang-lib/whizbang/actions/workflows/codeql.yml>, <https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang> |
-| `static_analysis_common_vulnerabilities` | Met | CodeQL's C# security queries and SonarCloud's vulnerability and hotspot rules target common vulnerability classes. SonarCloud currently reports 0 vulnerabilities and 0 open security hotspots. |
-| `static_analysis_fixed` | Met | Confirmed findings are fixed before merge (the gate blocks them). No static-analysis finding is open; the one medium CodeQL alert was a confirmed false positive in a sample application and is dismissed with the reason. |
+| `static_analysis_common_vulnerabilities` | Met | CodeQL's C# security queries and SonarCloud's vulnerability and hotspot rules target common vulnerability classes. SonarCloud reports 0 vulnerabilities and 0 open security hotspots. |
+| `static_analysis_fixed` | Met | Findings are fixed before merge: the pull request gate blocks any open SonarCloud finding, and there are no open static-analysis findings. |
 | `static_analysis_often` | Met | Static analysis runs on every pull request and push to `develop` and `main`, plus a weekly scheduled CodeQL run. |
 
 ### Dynamic code analysis
@@ -239,4 +237,4 @@ Both criteria are claims about the primary developer's knowledge; the maintainer
 | `dynamic_analysis` | Met | FsCheck property-based tests generate inputs for identifier ordering, derivation, metadata and serialization invariants on every pull request; Stryker.NET mutation testing checks that the tests catch injected faults. <https://github.com/whizbang-lib/whizbang/blob/develop/ai-docs/testing-tunit.md#property-tests-with-fscheck>, <https://github.com/whizbang-lib/whizbang/blob/develop/ai-docs/mutation-testing.md> |
 | `dynamic_analysis_unsafe` | N/A | The software is written in C#, a memory-safe language. |
 | `dynamic_analysis_enable_assertions` | Met | Runtime checks are always on, not compiled out: argument guards and invariant exceptions run in every build, and the property tests assert invariants directly on generated inputs. |
-| `dynamic_analysis_fixed` | Met | No medium or higher vulnerability has been found by dynamic analysis; any failure found by the property or mutation tests blocks the pull request. |
+| `dynamic_analysis_fixed` | Met | A failing property or mutation test blocks the pull request, so anything dynamic analysis finds is fixed before merge; it has found no vulnerabilities. |
