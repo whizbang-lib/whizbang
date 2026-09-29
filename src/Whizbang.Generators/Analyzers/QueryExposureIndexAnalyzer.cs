@@ -30,9 +30,19 @@ namespace Whizbang.Generators.Analyzers;
 /// is in the compilation being built, and it is where an author can act; the model may be in a
 /// referenced assembly with no source to squiggle.
 /// </para>
+/// <para>
+/// Filtering is the second thing a request can compose, and it matters for a different index. An
+/// equality or <c>in</c> filter on a field with no index of its own compiles to a whole-document
+/// match, answered only by the index over the whole document. A model exposed to request-composed
+/// filtering that declares <c>[PerspectiveQueries(MatchOnAnyField = false)]</c> while it still has
+/// such fields is reported (WHIZ307), and one that declares nothing is noted (WHIZ308), on the same
+/// surface and for the same reason: no source shows the filter.
+/// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz306</docs>
+/// <docs>operations/diagnostics/whiz307</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Analyzers/QueryExposureIndexAnalyzerTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Analyzers/QueryExposureDocumentMatchTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
   /// <summary>
@@ -48,7 +58,11 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-      [SortableExposureDiscovery.SortableFieldsHaveNoIndex];
+      [
+        SortableExposureDiscovery.SortableFieldsHaveNoIndex,
+        PerspectiveQueriesDiscovery.WholeDocumentMatchHasNoIndex,
+        PerspectiveQueriesDiscovery.WholeDocumentMatchReliesOnDefault,
+      ];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
@@ -63,13 +77,13 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
   /// <summary>A lens declaration: the attribute is on the type, the model is in its interface.</summary>
   private static void _analyzeLens(SymbolAnalysisContext context) {
     var type = (INamedTypeSymbol)context.Symbol;
-
-    if (!SortableExposureDiscovery.AllowsOrdering(_exposureOf(type, context))) {
+    var exposure = _exposureOf(type, context);
+    if (exposure == 0) {
       return;
     }
 
     foreach (var model in SortableExposureDiscovery.ModelsOfLens(type)) {
-      _report(context, type, model);
+      _reportExposure(context, type, model, exposure);
     }
   }
 
@@ -90,13 +104,64 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
   /// cover and a claim that the code handles a case it has never seen.
   /// </remarks>
   private static void _analyzeQueryMember(SymbolAnalysisContext context, ITypeSymbol returned) {
-    if (!SortableExposureDiscovery.AllowsOrdering(_exposureOf(context.Symbol, context))) {
+    var exposure = _exposureOf(context.Symbol, context);
+    if (exposure == 0) {
       return;
     }
 
     if (SortableExposureDiscovery.ModelOfQueryable(returned) is { } model) {
-      _report(context, context.Symbol, model);
+      _reportExposure(context, context.Symbol, model, exposure);
     }
+  }
+
+  /// <summary>Each question the exposure raises, for one model it reaches.</summary>
+  private static void _reportExposure(SymbolAnalysisContext context, ISymbol surface, INamedTypeSymbol model, int exposure) {
+    if (SortableExposureDiscovery.AllowsOrdering(exposure)) {
+      _report(context, surface, model);
+    }
+
+    if (SortableExposureDiscovery.AllowsFiltering(exposure)) {
+      _reportDocumentMatch(context, surface, model);
+    }
+  }
+
+  /// <summary>
+  /// A model a request can filter, checked against what it declares about whole-document matches.
+  /// </summary>
+  /// <remarks>
+  /// Only the fields nothing accounts for can reach a whole-document match: a field with an ordered
+  /// index of its own keeps that index for equality and for <c>in</c>, a promoted field is a column,
+  /// and a model that records a decision wholesale has made one. So the same list WHIZ306 reports is
+  /// the list that decides this, and an empty one means there is nothing to say.
+  /// </remarks>
+  private static void _reportDocumentMatch(SymbolAnalysisContext context, ISymbol surface, INamedTypeSymbol model) {
+    var declared = PerspectiveQueriesDiscovery.From(model).AnyField;
+    if (declared == DocumentMatchDeclaration.On) {
+      return;
+    }
+
+    var unattributed = SortableExposureDiscovery.UnattributedFields(model);
+    if (unattributed.Length == 0) {
+      return;
+    }
+
+    var subject = $"An equality or 'in' filter a request composes on '{model.Name}' ({string.Join(", ", unattributed)})";
+    var location = surface.Locations.FirstOrDefault() ?? Location.None;
+
+    context.ReportDiagnostic(declared == DocumentMatchDeclaration.Off
+      ? Diagnostic.Create(
+          PerspectiveQueriesDiscovery.WholeDocumentMatchHasNoIndex,
+          location,
+          subject,
+          $"'{model.Name}' declares [PerspectiveQueries(MatchOnAnyField = false)]",
+          "Mark each field a request can filter on [Indexed], declare MatchOnAnyField = true, or record the "
+            + "decision with [SuppressIndexAdvisory(\"reason\")]")
+      : Diagnostic.Create(
+          PerspectiveQueriesDiscovery.WholeDocumentMatchReliesOnDefault,
+          location,
+          subject,
+          model.Name,
+          "; a request can name any of these fields, so the index is only replaced by indexing each of them"));
   }
 
   private static int _exposureOf(ISymbol symbol, SymbolAnalysisContext context) {

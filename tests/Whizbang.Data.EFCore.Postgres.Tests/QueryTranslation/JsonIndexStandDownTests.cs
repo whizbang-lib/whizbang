@@ -178,6 +178,42 @@ public class JsonIndexStandDownTests {
         + "that does");
   }
 
+  /// <summary>
+  /// A set filter on a field with a btree of its own stands down too, so its index answers
+  /// <c>= ANY</c> rather than the planner being sent to the whole-document index.
+  /// </summary>
+  /// <remarks>
+  /// This is the shape a request-composed <c>in</c> filter produces. A model that declares
+  /// <c>[PerspectiveQueries(MatchOnAnyField = false)]</c> has no whole-document index, so before this
+  /// the filter read every row even though the field it named was indexed.
+  /// </remarks>
+  [Test]
+  public async Task ABtreeIndexedField_InASetFilter_IsNotCompiledToContainmentAsync() {
+    await using var db = _newContext();
+    var ranks = new List<int> { 1, 2 };
+
+    var sql = db.Set<PerspectiveRow<StandDownModel>>()
+      .Where(r => ranks.Contains(r.Data.Rank))
+      .ToQueryString();
+
+    await Assert.That(sql).DoesNotContain("@>", StringComparison.Ordinal)
+      .Because("the field's own index answers the set filter, and the whole-document index may not exist");
+    await Assert.That(sql).Contains("data ->> 'Rank'", StringComparison.Ordinal);
+  }
+
+  /// <summary>A set filter on an undeclared field still reaches the whole-document index.</summary>
+  [Test]
+  public async Task AnUndeclaredField_InASetFilter_StillReachesContainmentAsync() {
+    await using var db = _newContext();
+    var values = new List<string> { "a", "b" };
+
+    var sql = db.Set<PerspectiveRow<StandDownModel>>()
+      .Where(r => values.Contains(r.Data.Plain))
+      .ToQueryString();
+
+    await Assert.That(sql).Contains("@>", StringComparison.Ordinal);
+  }
+
   /// <summary>An undeclared field behaves exactly as it did before any of this existed.</summary>
   [Test]
   public async Task AnUndeclaredField_IsUnaffectedAsync() {
