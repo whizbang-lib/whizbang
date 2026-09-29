@@ -211,7 +211,7 @@ human review.
 | Criterion | Answer | Justification |
 |---|---|---|
 | `vulnerabilities_fixed_60_days` | Met | No open Dependabot alerts and no unpatched public vulnerabilities of medium or higher severity; Dependabot and a weekly OSV supply-chain scan watch for new ones. <https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml> |
-| `vulnerabilities_critical_fixed` | Met | Same process; vulnerable dependencies are fixed as soon as they are reported (the most recent was a transitive SSH.NET version, pinned in PR #910). <https://github.com/whizbang-lib/whizbang/pull/910> |
+| `vulnerabilities_critical_fixed` | Met | Same process; vulnerable dependencies are fixed as soon as they are reported. The most recent was in a library the integration-test tooling pulls in, which no shipped package depends on; the test projects were pinned to its patched version in PR #910. <https://github.com/whizbang-lib/whizbang/pull/910> |
 
 ### Other security issues
 
