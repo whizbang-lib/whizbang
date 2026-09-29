@@ -88,10 +88,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // refuses a discard-close of any stream it consumes. Empty for resumable (unmarked) perspectives.
   #endregion
 
+  #region PHYSICAL_FIELD_REGISTRATION
+  // Generated: a model with [PhysicalField]/[VectorField] properties registers each column and the model's
+  // storage mode via a [ModuleInitializer], so a collective apply can write and filter the column without
+  // reflection. Empty when the model has no physical fields.
+  #endregion
+
   #region STREAM_GROUP_REGISTRATION
   // Generated: each [StreamGroup] membership registers via a [ModuleInitializer] (key + the
   // Announce/Follow/Bridge dials) so the maintenance cascade computes the eviction closure without
   // reflection. Empty for perspectives that joined no group — untouchable by cascades.
+  #endregion
+
+  #region SPLIT_PHYSICAL_FIELD_REGISTRATION
+  // Generated: a Split model registers its promoted columns via a [ModuleInitializer], with the code that
+  // copies them into a model loaded from its document, so the store can read back the fields the document
+  // never holds (issue #977). Empty for every other storage mode.
   #endregion
 
   private readonly IServiceProvider _serviceProvider;

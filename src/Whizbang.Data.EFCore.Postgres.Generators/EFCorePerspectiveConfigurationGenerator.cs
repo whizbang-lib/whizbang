@@ -497,7 +497,10 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         VectorDistanceMetric: null,
         VectorIndexType: null,
         VectorIndexLists: null,
-        ColumnType: columnType
+        ColumnType: columnType,
+        EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
+        EnumMembers: PhysicalFieldScalar.EnumMembers(property.Type),
+        EnumIsFlags: PhysicalFieldScalar.IsFlagsEnum(property.Type)
     );
   }
 
@@ -661,38 +664,52 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       sb.AppendLine($"      // Physical field: {field.PropertyName}");
       sb.AppendLine($"      entity.Property<{_getCSharpType(field)}>(\"{field.ColumnName}\")");
       sb.AppendLine($"        .HasColumnName(\"{field.ColumnName}\")");
-      sb.AppendLine($"        .HasColumnType(\"{columnType}\");");
+      if (field.EnumScalarType is { } scalar && string.IsNullOrWhiteSpace(field.ColumnType)) {
+        // An enumeration is stored as its underlying number. The conversion is explicit: left to convention,
+        // EF Core picks its enum conversion from the column type, and a text column made it store the name.
+        sb.AppendLine($"        .HasColumnType(\"{columnType}\")");
+        sb.AppendLine($"        .HasConversion<global::{scalar}>();");
+      } else {
+        sb.AppendLine($"        .HasColumnType(\"{columnType}\");");
+      }
       sb.AppendLine();
 
-      // Generate index if configured
-      if (field.IsIndexed && !field.IsVector) {
-        var indexName = $"ix_{tableName}_{field.ColumnName}";
-        if (field.IsUnique) {
-          sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
-          sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
-          sb.AppendLine("        .IsUnique();");
-        } else {
-          sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
-          sb.AppendLine($"        .HasDatabaseName(\"{indexName}\");");
-        }
-        sb.AppendLine();
-      }
-
-      // Generate vector index if configured
-      if (field.IsVector && field.IsIndexed && field.VectorIndexType != GeneratorVectorIndexType.None) {
-        var indexName = $"ix_{tableName}_{field.ColumnName}_vec";
-        var indexMethod = field.VectorIndexType == GeneratorVectorIndexType.HNSW ? "hnsw" : "ivfflat";
-        var opClass = _getVectorOperatorClass(field.VectorDistanceMetric);
-
-        sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
-        sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
-        sb.AppendLine($"        .HasMethod(\"{indexMethod}\")");
-        sb.AppendLine($"        .HasOperators(\"{opClass}\");");
-        sb.AppendLine();
-      }
+      _appendPhysicalFieldIndexes(sb, field, tableName);
     }
 
     return sb.ToString();
+  }
+
+  /// <summary>
+  /// Appends the index a physical field declares, if any: a plain or unique index, or a vector index.
+  /// </summary>
+  private static void _appendPhysicalFieldIndexes(StringBuilder sb, PhysicalFieldInfo field, string tableName) {
+    // Generate index if configured
+    if (field.IsIndexed && !field.IsVector) {
+      var indexName = $"ix_{tableName}_{field.ColumnName}";
+      if (field.IsUnique) {
+        sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
+        sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
+        sb.AppendLine("        .IsUnique();");
+      } else {
+        sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
+        sb.AppendLine($"        .HasDatabaseName(\"{indexName}\");");
+      }
+      sb.AppendLine();
+    }
+
+    // Generate vector index if configured
+    if (field.IsVector && field.IsIndexed && field.VectorIndexType != GeneratorVectorIndexType.None) {
+      var indexName = $"ix_{tableName}_{field.ColumnName}_vec";
+      var indexMethod = field.VectorIndexType == GeneratorVectorIndexType.HNSW ? "hnsw" : "ivfflat";
+      var opClass = _getVectorOperatorClass(field.VectorDistanceMetric);
+
+      sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
+      sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
+      sb.AppendLine($"        .HasMethod(\"{indexMethod}\")");
+      sb.AppendLine($"        .HasOperators(\"{opClass}\");");
+      sb.AppendLine();
+    }
   }
 
   /// <summary>
@@ -711,7 +728,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
 
     // Normalize the type name
-    var typeName = field.TypeName
+    // An enumeration is stored as its underlying number, so its column is typed from that scalar.
+    var typeName = (field.EnumScalarType ?? field.TypeName)
         .Replace("global::", "")
         .TrimEnd('?');
 

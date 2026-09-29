@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Shared.Models;
 
@@ -73,54 +74,18 @@ public static class CompositeIndexSql {
     return _withinIdentifierLimit(derived);
   }
 
-  /// <summary>PostgreSQL's identifier limit, in bytes.</summary>
-  private const int IDENTIFIER_LIMIT = 63;
-
   /// <summary>
   /// <paramref name="name"/> shortened to fit an identifier, with a stable suffix when it had to be.
   /// </summary>
   /// <remarks>
-  /// <para>
   /// A composite's derived name concatenates every property it covers, so it reaches the limit far
   /// sooner than a single-property name does. PostgreSQL does not refuse an over-long identifier --
   /// it truncates it -- so two composites over different properties with a long shared prefix would
   /// arrive as one name, and <c>CREATE INDEX IF NOT EXISTS</c> would quietly skip the second. The
-  /// author would have declared two indexes and been given one, with nothing said.
-  /// </para>
-  /// <para>
-  /// The suffix is a hash of the whole undecorated name, so it is stable for a given declaration
-  /// and different for declarations that would otherwise collide. Naming the index explicitly
-  /// avoids all of this and is the better answer when the name matters to something outside the
-  /// model.
-  /// </para>
+  /// scheme is <see cref="PostgresIdentifiers.WithinLimit"/>, shared with every other index name the
+  /// schema derives.
   /// </remarks>
-  private static string _withinIdentifierLimit(string name) {
-    if (name.Length <= IDENTIFIER_LIMIT) {
-      return name;
-    }
-
-    var suffix = $"_{_stableHash(name):x8}";
-
-    // A range rather than Substring's two arguments; the project targets the generator's
-    // netstandard2.0, where string.Concat has no span overload, so this stays a string.
-    return name[..(IDENTIFIER_LIMIT - suffix.Length)] + suffix;
-  }
-
-  /// <summary>A hash that is the same on every run.</summary>
-  /// <remarks>
-  /// FNV-1a rather than <c>string.GetHashCode</c>, which is randomized per process: a generator has
-  /// to emit identical output for identical input, or every build looks like a change to the
-  /// incremental cache and to anything comparing generated files.
-  /// </remarks>
-  private static uint _stableHash(string value) {
-    var hash = 2166136261u;
-
-    foreach (var c in value) {
-      hash = (hash ^ c) * 16777619u;
-    }
-
-    return hash;
-  }
+  private static string _withinIdentifierLimit(string name) => PostgresIdentifiers.WithinLimit(name);
 
   /// <summary>The statement creating this index, idempotent so the schema pass can run every start.</summary>
   /// <param name="index">The declaration.</param>

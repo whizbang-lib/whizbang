@@ -33,9 +33,20 @@ namespace Whizbang.Generators.Analyzers;
 /// decision in review; the same attribute also stands down the runtime index advisory, which a
 /// <c>#pragma</c> would not.
 /// </para>
+/// <para>
+/// The same walk answers a second question for the filters it does not report. An equality filter
+/// that compiles to a whole-document match is answered only by the index over the whole document,
+/// and <c>[PerspectiveQueries]</c> on the model decides whether the schema builds it: WHIZ307 warns
+/// when the declaration leaves the match without one (including any match on the row's metadata,
+/// whose index is off unless declared), and WHIZ308 notes a match that relies on the index only
+/// because the model has not declared either way.
+/// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz302</docs>
+/// <docs>operations/diagnostics/whiz307</docs>
+/// <docs>operations/diagnostics/whiz308</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFilterIndexAnalyzerTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Analyzers/DocumentMatchIndexAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   // Diagnostic IDs: WHIZ300-399 reserved for perspective validation
@@ -43,6 +54,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
 
   private const string PERSPECTIVE_ROW_PREFIX = "Whizbang.Core.Lenses.PerspectiveRow<";
   private const string DATA_PROPERTY = "Data";
+  private const string METADATA_PROPERTY = "Metadata";
   private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string STREAM_ID_ATTRIBUTE = "Whizbang.Core.StreamIdAttribute";
@@ -127,7 +139,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-      [FilteredFieldHasNoIndex];
+      [FilteredFieldHasNoIndex, PerspectiveQueriesDiscovery.WholeDocumentMatchHasNoIndex, PerspectiveQueriesDiscovery.WholeDocumentMatchReliesOnDefault];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
@@ -142,8 +154,9 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   private static void _analyzeMemberAccess(SyntaxNodeAnalysisContext context) {
     var node = (MemberAccessExpressionSyntax)context.Node;
 
-    // Only `<row>.Data.<Field>` is interesting: the row's own columns are not model JSON.
-    var model = _modelBehindDataAccess(context, node.Expression);
+    // Only `<row>.Data.<Field>` and `<row>.Metadata.<Field>` are interesting: the row's own columns
+    // are not documents.
+    var (model, document) = _documentBehindAccess(context, node.Expression);
     if (model is null) {
       return;
     }
@@ -152,7 +165,17 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    if (_isIndexBacked(field) || !_decidesWhichRowsAreRead(node) || _containmentCanServe(node, field)) {
+    if (string.Equals(document, METADATA_PROPERTY, StringComparison.Ordinal)) {
+      _checkMetadataMatch(context, node, field, model);
+      return;
+    }
+
+    if (_isIndexBacked(field) || !_decidesWhichRowsAreRead(node)) {
+      return;
+    }
+
+    if (_containmentCanServe(node, field) || _isSetMembership(context, node, field)) {
+      _checkWholeDocumentMatch(context, node, field, model);
       return;
     }
 
@@ -307,28 +330,173 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>
-  /// Resolves <paramref name="expression"/> as <c>PerspectiveRow&lt;TModel&gt;.Data</c> and returns
-  /// TModel, or null when the expression is anything else.
+  /// A whole-document match on the model's document: reported when the model declared its queries
+  /// never match that way, and noted when it declared nothing.
   /// </summary>
-  private static INamedTypeSymbol? _modelBehindDataAccess(SyntaxNodeAnalysisContext context, ExpressionSyntax expression) {
+  /// <remarks>
+  /// <para>
+  /// Asked only after the field is known to have no index of its own, to sit in a filter, and to
+  /// compile to a match, which are the three things that make the whole-document index the only one
+  /// that can answer it. A declared index answering the comparison settles it the other way: the
+  /// runtime stands the whole-document match down for that field and uses the declared index.
+  /// </para>
+  /// <para>
+  /// A model stored as one serialized value has no mapped path into its fields, so there is no
+  /// match to answer, and WHIZ302 already says what does work there.
+  /// </para>
+  /// </remarks>
+  private static void _checkWholeDocumentMatch(
+      SyntaxNodeAnalysisContext context, MemberAccessExpressionSyntax node, IPropertySymbol field, INamedTypeSymbol model) {
+    var declared = PerspectiveQueriesDiscovery.From(model).AnyField;
+    if (declared == DocumentMatchDeclaration.On
+        || _declaredIndexServes(node, field)
+        || MappedPathDiscovery.MustStoreOpaquely(model)
+        || _isSuppressed(field, model, context.Compilation.Assembly)) {
+      return;
+    }
+
+    var name = TypeNameUtilities.MinimallyQualified(model);
+    var diagnostic = declared == DocumentMatchDeclaration.Off
+      ? Diagnostic.Create(
+          PerspectiveQueriesDiscovery.WholeDocumentMatchHasNoIndex,
+          node.Name.GetLocation(),
+          $"This filter on '{name}.{field.Name}'",
+          $"'{name}' declares [PerspectiveQueries(MatchOnAnyField = false)]",
+          "Mark the field [Indexed] for an index of its own, declare MatchOnAnyField = true, or record the decision "
+            + "with [SuppressIndexAdvisory(\"reason\")]")
+      : Diagnostic.Create(
+          PerspectiveQueriesDiscovery.WholeDocumentMatchReliesOnDefault,
+          node.Name.GetLocation(),
+          $"This filter on '{name}.{field.Name}'",
+          name,
+          ", or mark the field [Indexed] so the filter no longer needs it");
+
+    context.ReportDiagnostic(diagnostic);
+  }
+
+  /// <summary>
+  /// Whether this field is the value tested by a set-membership filter,
+  /// <c>values.Contains(r.Data.Field)</c> or <c>Enumerable.Contains(values, r.Data.Field)</c>, that the
+  /// query translation compiles into a whole-document match against a set of documents.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The same conditions as the translation's own, which is the counterpart this has to agree with:
+  /// the candidates are an array or a <c>List&lt;T&gt;</c> of exactly the field's type, and the type is
+  /// one the set helper has an overload for. Anything else keeps the <c>IN</c> form, which is an
+  /// extraction and WHIZ302's business. This is also the shape a request-composed <c>in</c> filter
+  /// produces, so getting it right here is what keeps a hand-written one and a composed one reported
+  /// alike.
+  /// </para>
+  /// <para>
+  /// Only reached for a member directly on the document, because the walk that found the model
+  /// started from <c>&lt;row&gt;.Data</c> one step to the left, which is the only depth the helper
+  /// can express. A negation stands it down, as it does for equality.
+  /// </para>
+  /// </remarks>
+  private static bool _isSetMembership(
+      SyntaxNodeAnalysisContext context, MemberAccessExpressionSyntax node, IPropertySymbol field) {
+    if (node.Parent is not ArgumentSyntax { Parent: ArgumentListSyntax { Parent: InvocationExpressionSyntax invocation } arguments } argument
+        || invocation.Expression is not MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Contains" } call
+        || _isUnderNegation(node)) {
+      return false;
+    }
+
+    // The instance form names the candidates as the receiver; the static form as the first argument,
+    // with the field as the second.
+    var candidates = arguments.Arguments.Count switch {
+      1 => call.Expression,
+      2 when arguments.Arguments[1] == argument => arguments.Arguments[0].Expression,
+      _ => null,
+    };
+    if (candidates is null) {
+      return false;
+    }
+
+    var element = _setElementType(field.Type);
+    if (element is null) {
+      return false;
+    }
+
+    return context.SemanticModel.GetTypeInfo(candidates, context.CancellationToken).Type switch {
+      IArrayTypeSymbol array => SymbolEqualityComparer.Default.Equals(array.ElementType, element),
+      INamedTypeSymbol { IsGenericType: true } list =>
+        TypeNameUtilities.IsNamed(list.OriginalDefinition, "System.Collections.Generic.List<T>")
+        && SymbolEqualityComparer.Default.Equals(list.TypeArguments[0], element),
+      _ => false,
+    };
+  }
+
+  /// <summary>
+  /// The element type the set helper compares a field of this type as, or null when it has no
+  /// overload for it. Mirrors <c>JsonbContainment.SetOverloadFor</c>: text, identifiers, and 32- and
+  /// 64-bit integers, with a nullable field compared as its underlying type.
+  /// </summary>
+  private static ITypeSymbol? _setElementType(ITypeSymbol type) {
+    var bare = type is INamedTypeSymbol { IsGenericType: true, ConstructedFrom.SpecialType: SpecialType.System_Nullable_T } nullable
+      ? nullable.TypeArguments[0]
+      : type;
+
+    return bare.SpecialType is SpecialType.System_String or SpecialType.System_Int32 or SpecialType.System_Int64
+        || string.Equals(TypeNameUtilities.Display(bare), "System.Guid", StringComparison.Ordinal)
+      ? bare
+      : null;
+  }
+
+  /// <summary>
+  /// A whole-document match on the row's metadata, reported unless the model asked for the metadata
+  /// index.
+  /// </summary>
+  /// <remarks>
+  /// The metadata document is the framework's own, so no field in it can declare an index, and the
+  /// only index that answers a match on it is the one over the whole document, built only for
+  /// <c>MatchOnMetadata = true</c>.
+  /// </remarks>
+  private static void _checkMetadataMatch(
+      SyntaxNodeAnalysisContext context, MemberAccessExpressionSyntax node, IPropertySymbol field, INamedTypeSymbol model) {
+    if (!_decidesWhichRowsAreRead(node)
+        || !_containmentCanServe(node, field)
+        || PerspectiveQueriesDiscovery.From(model).BuildsMetadataIndex
+        || _isSuppressed(field, model, context.Compilation.Assembly)) {
+      return;
+    }
+
+    var name = TypeNameUtilities.MinimallyQualified(model);
+    context.ReportDiagnostic(Diagnostic.Create(
+      PerspectiveQueriesDiscovery.WholeDocumentMatchHasNoIndex,
+      node.Name.GetLocation(),
+      $"This filter on '{METADATA_PROPERTY}.{field.Name}'",
+      $"'{name}' does not declare [PerspectiveQueries(MatchOnMetadata = true)]",
+      "Declare MatchOnMetadata = true to build the metadata index, or record the decision with "
+        + "[SuppressIndexAdvisory(\"reason\")]"));
+  }
+
+  /// <summary>
+  /// Resolves <paramref name="expression"/> as <c>PerspectiveRow&lt;TModel&gt;.Data</c> or
+  /// <c>.Metadata</c> and returns TModel with the document's name, or a null model when the
+  /// expression is anything else.
+  /// </summary>
+  private static (INamedTypeSymbol? Model, string? Document) _documentBehindAccess(
+      SyntaxNodeAnalysisContext context, ExpressionSyntax expression) {
     if (expression is not MemberAccessExpressionSyntax) {
-      return null;
+      return (null, null);
     }
 
-    if (context.SemanticModel.GetSymbolInfo(expression, context.CancellationToken).Symbol is not IPropertySymbol data) {
-      return null;
+    if (context.SemanticModel.GetSymbolInfo(expression, context.CancellationToken).Symbol is not IPropertySymbol document) {
+      return (null, null);
     }
 
-    if (!string.Equals(data.Name, DATA_PROPERTY, StringComparison.Ordinal)) {
-      return null;
+    if (!string.Equals(document.Name, DATA_PROPERTY, StringComparison.Ordinal)
+        && !string.Equals(document.Name, METADATA_PROPERTY, StringComparison.Ordinal)) {
+      return (null, null);
     }
 
-    var row = data.ContainingType;
+    var row = document.ContainingType;
     if (row is null || !TypeNameUtilities.Display(row).StartsWith(PERSPECTIVE_ROW_PREFIX, StringComparison.Ordinal)) {
-      return null;
+      return (null, null);
     }
 
-    return row.TypeArguments.Length == 1 ? row.TypeArguments[0] as INamedTypeSymbol : null;
+    return (row.TypeArguments.Length == 1 ? row.TypeArguments[0] as INamedTypeSymbol : null, document.Name);
   }
 
   /// <summary>

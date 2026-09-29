@@ -1030,8 +1030,8 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
-  /// Test that schema extensions include GIN indexes for JSONB columns.
-  /// GIN indexes enable efficient LINQ queries on JSONB data (containment, key lookups, path expressions).
+  /// Test that schema extensions include GIN indexes for the data and scope documents, and none for
+  /// metadata unless a model declares it matches on metadata.
   /// </summary>
   [Test]
   public async Task Generator_SchemaExtensions_IncludesGinIndexesForJsonbColumnsAsync() {
@@ -1072,15 +1072,17 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Should include GIN indexes for all JSONB columns
+    // A model that declares nothing keeps the data and scope document indexes. The metadata one is
+    // built only for [PerspectiveQueries(MatchOnMetadata = true)]; see
+    // PerspectiveDocumentIndexGenerationTests for each declaration.
     // GIN indexes use "USING gin (column)" syntax
     await Assert.That(sourceText).Contains("USING gin (data)");
-    await Assert.That(sourceText).Contains("USING gin (metadata)");
+    await Assert.That(sourceText).DoesNotContain("USING gin (metadata)");
     await Assert.That(sourceText).Contains("USING gin (scope)");
 
     // Should have index names following convention
     await Assert.That(sourceText).Contains("_data_gin");
-    await Assert.That(sourceText).Contains("_metadata_gin");
+    await Assert.That(sourceText).DoesNotContain("_metadata_gin");
     await Assert.That(sourceText).Contains("_scope_gin");
   }
 

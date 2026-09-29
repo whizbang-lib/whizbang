@@ -287,6 +287,15 @@ public static class SortableExposureDiscovery {
     (exposure & (EXPOSURE_ORDERING | EXPOSURE_EXPRESSION)) != 0;
 
   /// <summary>
+  /// Whether an exposure lets a request choose which rows are returned, which is how a composed
+  /// equality or <c>in</c> filter reaches a whole-document match.
+  /// </summary>
+  /// <param name="exposure">The combined exposure.</param>
+  /// <returns><c>true</c> when filtering or an arbitrary expression is on offer.</returns>
+  public static bool AllowsFiltering(int exposure) =>
+    (exposure & (EXPOSURE_FILTERING | EXPOSURE_EXPRESSION)) != 0;
+
+  /// <summary>
   /// The model's fields that a request could order by and that nothing has accounted for.
   /// </summary>
   /// <param name="modelType">The perspective's model type.</param>

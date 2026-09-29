@@ -28,6 +28,18 @@ namespace Whizbang.Generators.Shared.Models;
 /// True when a text field declares <c>IndexKinds.Search</c>: its column gets a trigram index over the
 /// framework's fold, and a <c>Contains</c> on it is folded to match.
 /// </param>
+/// <param name="EnumScalarType">
+/// For an enumeration, the fully qualified CLR name of the scalar its column holds (see
+/// <see cref="PhysicalFieldScalar"/>); null otherwise. The column is typed from it and EF Core converts to it.
+/// </param>
+/// <param name="EnumMembers">
+/// For an enumeration, its members as <c>Name=Value;…</c> (see <see cref="PhysicalFieldScalar.EnumMembers"/>), from
+/// which the rewrite converting a text column of names to numbers is generated; null otherwise.
+/// </param>
+/// <param name="EnumIsFlags">
+/// For an enumeration marked <c>[Flags]</c>, true: its stored names may be combined (<c>"A, B"</c>), and the rewrite
+/// converts a combination to the bitwise OR of the members' values.
+/// </param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Models/PhysicalFieldInfoTests.cs</tests>
 public sealed record PhysicalFieldInfo(
@@ -44,7 +56,10 @@ public sealed record PhysicalFieldInfo(
     int? VectorIndexLists,
     string? ColumnType = null,
     bool IsSplit = false,
-    bool IsSearch = false
+    bool IsSearch = false,
+    string? EnumScalarType = null,
+    string? EnumMembers = null,
+    bool EnumIsFlags = false
 );
 
 /// <summary>
