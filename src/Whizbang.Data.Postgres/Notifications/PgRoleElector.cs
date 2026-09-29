@@ -48,7 +48,8 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentElectorE2ETests.cs</tests>
-public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutdown {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001:Types that own disposable fields should be disposable", Justification = "The only disposable field is a SemaphoreSlim used as an async lock; it allocates nothing to release unless AvailableWaitHandle is read, which this type never does.")]
+public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutdown, IRoleAssignmentReader {
   private readonly WhizbangNotificationOptions _options;
   private readonly RoleAssignmentOptions _roleOptions;
   private readonly IConfiguration _configuration;
@@ -58,7 +59,9 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   private readonly INotificationConnectionStringFallback? _connectionStringFallback;
   private readonly INotificationDataSource? _notificationDataSource;
   private readonly TimeProvider _time;
-  private readonly ConcurrentDictionary<PgRoleGrant, byte> _outstanding = new();
+  private readonly RoleAssignmentMetrics? _metrics;
+  private readonly ConcurrentDictionary<string, Tenure> _tenures = new(StringComparer.Ordinal);
+  private readonly SemaphoreSlim _acquireGate = new(1, 1);
 
   /// <summary>Creates the elector.</summary>
   /// <param name="options">Notification options: where the coordination connection comes from.</param>
@@ -70,6 +73,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   /// <param name="connectionStringFallback">Optional connection-string fallback.</param>
   /// <param name="notificationDataSource">Optional dedicated data source.</param>
   /// <param name="timeProvider">Optional clock for the renew throttle; the system clock when null.</param>
+  /// <param name="metrics">Optional meters.</param>
   /// <exception cref="ArgumentNullException">A required argument is null.</exception>
   /// <exception cref="ArgumentOutOfRangeException">The role options describe an unworkable lease.</exception>
   /// <exception cref="InvalidOperationException">The role options name the migrator duty.</exception>
@@ -83,7 +87,8 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       ILogger<PgRoleElector> logger,
       INotificationConnectionStringFallback? connectionStringFallback = null,
       INotificationDataSource? notificationDataSource = null,
-      TimeProvider? timeProvider = null) {
+      TimeProvider? timeProvider = null,
+      RoleAssignmentMetrics? metrics = null) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(roleOptions);
@@ -101,6 +106,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     _connectionStringFallback = connectionStringFallback;
     _notificationDataSource = notificationDataSource;
     _time = timeProvider ?? TimeProvider.System;
+    _metrics = metrics;
   }
 
   /// <inheritdoc />
@@ -117,13 +123,71 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   /// </summary>
   /// <param name="cancellationToken">The host's stop token.</param>
   public async Task ReleaseAllAsync(CancellationToken cancellationToken) {
-    foreach (var grant in _outstanding.Keys) {
+    foreach (var tenure in _tenures.Values) {
       cancellationToken.ThrowIfCancellationRequested();
-      await grant.DisposeAsync().ConfigureAwait(false);
+      await tenure.ReleaseAsync().ConfigureAwait(false);
     }
   }
 
+  /// <summary>
+  /// A role this elector already holds is answered from its tenure (verified, which renews it when
+  /// due), so one process never holds two tenures of one assignment. Serialized, so two callers
+  /// asking at once cannot both vote.
+  /// </summary>
   private async Task<DutyAttempt> _voteAsync(string role, CancellationToken cancellationToken) {
+    await _acquireGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+    try {
+      if (_tenures.TryGetValue(role, out var tenure) && await tenure.VerifyAsync(cancellationToken).ConfigureAwait(false)) {
+        return DutyAttempt.Granted(tenure.OpenHandle());
+      }
+      return await _voteFreshAsync(role, cancellationToken).ConfigureAwait(false);
+    } finally {
+      _acquireGate.Release();
+    }
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<RoleAssignmentSnapshot>> ReadAssignmentsAsync(CancellationToken cancellationToken) {
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    var snapshots = new List<RoleAssignmentSnapshot>();
+    var connection = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
+    await using (connection.ConfigureAwait(false)) {
+      await using var cmd = connection.CreateCommand();
+      cmd.CommandText = "SELECT role, state, holder_instance_id, epoch, assigned_at, renewed_at, lease_remaining, election_count, "
+        + "void_reason, last_holder_instance_id, last_vacated_at, last_vacated_reason, pending_work FROM wh_role_assignment_status()";
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        snapshots.Add(new RoleAssignmentSnapshot(
+          reader.GetString(0),
+          _state(reader.GetString(1)),
+          await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(2),
+          reader.GetInt64(3),
+          await _instantAsync(reader, 4, cancellationToken).ConfigureAwait(false),
+          await _instantAsync(reader, 5, cancellationToken).ConfigureAwait(false),
+          await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? null : reader.GetTimeSpan(6),
+          reader.GetInt64(7),
+          await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(8),
+          await reader.IsDBNullAsync(9, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(9),
+          await _instantAsync(reader, 10, cancellationToken).ConfigureAwait(false),
+          await reader.IsDBNullAsync(11, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(11),
+          reader.GetInt64(12)));
+      }
+    }
+    return snapshots;
+  }
+
+  /// <summary>The SQL state names map one to one; <c>vacant</c> is the last arm because the function emits nothing else.</summary>
+  private static RoleAssignmentState _state(string state) => state switch {
+    "held" => RoleAssignmentState.Held,
+    "lapsed" => RoleAssignmentState.Lapsed,
+    _ => RoleAssignmentState.Vacant,
+  };
+
+  private static async Task<DateTimeOffset?> _instantAsync(NpgsqlDataReader reader, int ordinal, CancellationToken cancellationToken) =>
+    await reader.IsDBNullAsync(ordinal, cancellationToken).ConfigureAwait(false) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(ordinal, cancellationToken).ConfigureAwait(false);
+
+  private async Task<DutyAttempt> _voteFreshAsync(string role, CancellationToken cancellationToken) {
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
     if (!plan.IsAvailable) {
@@ -187,10 +251,18 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
         // logged exactly once. The vote records the previous holder and its reason together.
         LogHandOff(_logger, role, previous, vote.VoidReason!, instanceId, vote.Epoch);
       }
+      if (vote.Outcome == "granted") {
+        _metrics?.Elections.Add(1, RoleAssignmentMetrics.RoleTag(role));
+        if (vote.PreviousHolder is not null) {
+          _metrics?.Handoffs.Add(1, RoleAssignmentMetrics.RoleTag(role),
+            new KeyValuePair<string, object?>(RoleAssignmentMetrics.REASON_TAG, vote.VoidReason));
+        }
+      }
       LogAcquired(_logger, role, instanceId, vote.Epoch);
-      var grant = new PgRoleGrant(this, plan, role, vote.Epoch, instanceId, bridge, legacyKey, sendStarted, _time.GetUtcNow());
-      _outstanding[grant] = 0;
-      return DutyAttempt.Granted(grant);
+      var tenure = new Tenure(this, plan, role, vote.Epoch, instanceId, bridge, legacyKey, sendStarted, _time.GetUtcNow());
+      _tenures[role] = tenure;
+      _metrics?.Held.Add(1, RoleAssignmentMetrics.RoleTag(role));
+      return DutyAttempt.Granted(tenure.OpenHandle());
     }
 
     if (vote.Outcome == "refused") {
@@ -280,7 +352,15 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     return answered;
   }
 
-  private sealed class PgRoleGrant(
+  /// <summary>
+  /// This instance's hold on one assignment. Every <see cref="TryAcquireAsync"/> for a role this
+  /// instance already holds returns another handle on the same tenure instead of voting again, so
+  /// the holder loop and a startup step can hold the role at the same time without one of them
+  /// releasing it under the other: the role is released when the last handle is disposed, or on
+  /// shutdown.
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001:Types that own disposable fields should be disposable", Justification = "The only disposable field is a SemaphoreSlim used as an async lock; it allocates nothing to release unless AvailableWaitHandle is read, which this type never does.")]
+  private sealed class Tenure(
       PgRoleElector elector,
       NotificationConnectionPlan plan,
       string role,
@@ -289,23 +369,28 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       NpgsqlConnection? bridge,
       long legacyKey,
       long renewedAtTimestamp,
-      DateTimeOffset acquiredAt) : IDutyGrant {
+      DateTimeOffset acquiredAt) {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private long _renewedAtTimestamp = renewedAtTimestamp;
-    private bool _lost;
-    private bool _disposed;
+    private int _handles;
+    private bool _over;
 
-    public string Duty => role;
+    public string Role => role;
+    public long Epoch => epoch;
     public DateTimeOffset AcquiredAt => acquiredAt;
-    public long? Epoch => epoch;
 
-    public async Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) {
-      // The gate only serializes this grant's own calls (the bridge connection cannot run two
+    public Handle OpenHandle() {
+      _ = Interlocked.Increment(ref _handles);
+      return new Handle(this);
+    }
+
+    public async Task<bool> VerifyAsync(CancellationToken cancellationToken) {
+      // The gate only serializes this tenure's own calls (the bridge connection cannot run two
       // commands at once), and is held for one round trip at most; the caller's token reaches the
       // round trip itself.
       await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
       try {
-        if (_lost || _disposed) {
+        if (_over) {
           return false;
         }
         // The bridge is checked on every verify, not throttled: the moment its session dies, an old
@@ -345,7 +430,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
 
     /// <summary>
     /// While bridged, the session lock is what keeps an old instance from acting, so a bridge
-    /// session that has died means the grant is lost, not merely unconfirmed.
+    /// session that has died means the tenure is lost, not merely unconfirmed.
     /// </summary>
     private async Task<bool> _bridgeAliveAsync(CancellationToken cancellationToken) {
       if (bridge is null) {
@@ -365,41 +450,68 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     }
 
     private async Task _loseAsync(Exception? cause) {
-      _lost = true;
       LogGrantLost(elector._logger, role, instanceId, epoch, cause);
-      await _closeBridgeAsync().ConfigureAwait(false);
+      elector._metrics?.Lost.Add(1, RoleAssignmentMetrics.RoleTag(role));
+      await _endAsync().ConfigureAwait(false);
     }
 
-    private async Task _closeBridgeAsync() {
+    /// <summary>Ends the tenure once: it stops being this elector's, and the bridge closes.</summary>
+    private async Task _endAsync() {
+      _over = true;
+      _ = elector._tenures.TryRemove(new KeyValuePair<string, Tenure>(role, this));
+      elector._metrics?.Held.Add(-1, RoleAssignmentMetrics.RoleTag(role));
       if (bridge is not null) {
         await _releaseBridgeAsync(bridge, legacyKey).ConfigureAwait(false);
       }
     }
 
-    public async ValueTask DisposeAsync() {
+    /// <summary>A handle closed; the last one releases the role.</summary>
+    public async Task HandleClosedAsync() {
+      if (Interlocked.Decrement(ref _handles) == 0) {
+        await ReleaseAsync().ConfigureAwait(false);
+      }
+    }
+
+    /// <summary>Releases the role at once, whatever handles remain. Idempotent.</summary>
+    public async Task ReleaseAsync() {
       await _gate.WaitAsync().ConfigureAwait(false);
       try {
-        if (_disposed) {
+        if (_over) {
           return;
         }
-        _disposed = true;
-        _ = elector._outstanding.TryRemove(this, out _);
-        if (!_lost) {
 #pragma warning disable CA1031, RCS1075 // best-effort clean release: an unreachable database leaves the
-          // lease to lapse, which is the crash path the design already bounds; failing a dispose over
-          // it would turn a crash-tolerant design into a shutdown error.
-          try {
-            if (await _callAsync(plan, "wh_release_role", role, instanceId, epoch, CancellationToken.None).ConfigureAwait(false)) {
-              LogReleased(elector._logger, role, instanceId, epoch);
-            }
-          } catch (Exception ex) {
-            LogReleaseFailed(elector._logger, role, instanceId, ex);
+        // lease to lapse, which is the crash path the design already bounds; failing a dispose over
+        // it would turn a crash-tolerant design into a shutdown error.
+        try {
+          if (await _callAsync(plan, "wh_release_role", role, instanceId, epoch, CancellationToken.None).ConfigureAwait(false)) {
+            LogReleased(elector._logger, role, instanceId, epoch);
+            elector._metrics?.Released.Add(1, RoleAssignmentMetrics.RoleTag(role));
           }
-#pragma warning restore CA1031, RCS1075
-          await _closeBridgeAsync().ConfigureAwait(false);
+        } catch (Exception ex) {
+          LogReleaseFailed(elector._logger, role, instanceId, ex);
         }
+#pragma warning restore CA1031, RCS1075
+        await _endAsync().ConfigureAwait(false);
       } finally {
         _gate.Release();
+      }
+    }
+  }
+
+  /// <summary>One holder's handle on a tenure: what <see cref="TryAcquireAsync"/> returns.</summary>
+  private sealed class Handle(Tenure tenure) : IDutyGrant {
+    private int _disposed;
+
+    public string Duty => tenure.Role;
+    public DateTimeOffset AcquiredAt => tenure.AcquiredAt;
+    public long? Epoch => tenure.Epoch;
+
+    public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) =>
+      Volatile.Read(ref _disposed) == 1 ? Task.FromResult(false) : tenure.VerifyAsync(cancellationToken);
+
+    public async ValueTask DisposeAsync() {
+      if (Interlocked.Exchange(ref _disposed, 1) == 0) {
+        await tenure.HandleClosedAsync().ConfigureAwait(false);
       }
     }
   }

@@ -32,6 +32,11 @@
 --              detected by the vote, which voids the assignment and records why. Rows are never
 --              deleted; a release or a void sets the holder to NULL and keeps the epoch.
 --
+--              Pending duty work (wh_role_pending_work) is owed by any instance and completed only
+--              by the current holder under the fence, so work interrupted by a hand-off is finished by
+--              the next holder, exactly once. A release NOTIFYs wh_role_released so waiters re-vote
+--              at once instead of on their next poll.
+--
 --              Not part of the bootstrap closure: nothing votes for a role before migrations run.
 --              The migrator duty stays on the session-lock elector for that reason.
 -- Dependencies: 010 (wh_service_instances)
@@ -304,6 +309,7 @@ $$;
 --
 -- <docs>proposals/duty-role-assignment</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:Release_VacatesAtOnce_WithNoCooldownForTheReleaserAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:Release_NotifiesWaiters_SoTheyReVoteAtOnceAsync</tests>
 -- ============================================================================
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_release_role(
   p_role TEXT,
@@ -327,6 +333,10 @@ BEGIN
     RETURN FALSE;
   END IF;
   PERFORM __SCHEMA__.release_capability(p_instance_id, p_role);
+  -- Delivered at commit. Waiters re-vote at once rather than on their next poll. The payload is
+  -- the role alone, so a same-named role in another schema of this database wakes a waiter that
+  -- then finds the role still held: a spurious re-vote costs one read.
+  PERFORM pg_notify('wh_role_released', p_role);
   RETURN TRUE;
 END;
 $$;
@@ -372,6 +382,128 @@ END;
 $$;
 
 -- ============================================================================
+-- wh_role_pending_work — duty work that is owed ("pending until done").
+-- Any instance may owe work for a role; only the current holder completes it,
+-- under the fence. Completion deletes the row only when nobody re-owed it after
+-- the holder listed it, so a need that arises mid-run is never lost.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_role_pending_work (
+  role               TEXT        NOT NULL,
+  work_key           TEXT        NOT NULL,
+  first_owed_at      TIMESTAMPTZ NOT NULL,
+  last_owed_at       TIMESTAMPTZ NOT NULL,
+  attempts           INTEGER     NOT NULL DEFAULT 0,
+  last_attempt_at    TIMESTAMPTZ,
+  last_attempt_epoch BIGINT,
+  last_error         TEXT,
+  PRIMARY KEY (role, work_key)
+);
+
+COMMENT ON TABLE __SCHEMA__.wh_role_pending_work IS
+'Duty work owed to whichever instance holds the role. Owed by any instance (wh_owe_role_work), completed
+only by the current holder under the epoch fence (wh_complete_role_work), so work interrupted by a
+hand-off is finished by the next holder, exactly once. A row exists exactly while the work is pending.';
+
+-- ============================================================================
+-- wh_owe_role_work — record that p_work_key is owed for p_role. Idempotent: owing
+-- again moves last_owed_at, which keeps a completion that listed the row earlier
+-- from deleting the newer need.
+--
+-- <docs>proposals/duty-role-assignment</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:OweRoleWork_IsIdempotent_AndReOwingKeepsFirstOwedAtAsync</tests>
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_owe_role_work(p_role TEXT, p_work_key TEXT)
+RETURNS VOID
+LANGUAGE plpgsql
+SET timezone = 'UTC'
+AS $$
+BEGIN
+  INSERT INTO __SCHEMA__.wh_role_pending_work AS w (role, work_key, first_owed_at, last_owed_at)
+  VALUES (p_role, p_work_key, clock_timestamp(), clock_timestamp())
+  ON CONFLICT (role, work_key) DO UPDATE SET last_owed_at = clock_timestamp();
+END;
+$$;
+
+-- ============================================================================
+-- wh_owed_role_work — the work owed for p_role, oldest first. due is false while a
+-- failed attempt is backing off: p_retry_base doubled per failed attempt, capped
+-- at one hour, all in database time.
+--
+-- <docs>proposals/duty-role-assignment</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:OwedRoleWork_BacksOffAFailedAttempt_InDatabaseTimeAsync</tests>
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_owed_role_work(p_role TEXT, p_retry_base INTERVAL)
+RETURNS TABLE(
+  work_key TEXT,
+  first_owed_at TIMESTAMPTZ,
+  last_owed_at TIMESTAMPTZ,
+  attempts INTEGER,
+  last_error TEXT,
+  due BOOLEAN
+)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT w.work_key, w.first_owed_at, w.last_owed_at, w.attempts, w.last_error,
+         w.last_attempt_at IS NULL
+           OR w.last_attempt_at + LEAST(p_retry_base * power(2, LEAST(w.attempts - 1, 12)), INTERVAL '1 hour') <= now()
+    FROM __SCHEMA__.wh_role_pending_work w
+   WHERE w.role = p_role
+   ORDER BY w.first_owed_at, w.work_key
+$$;
+
+-- ============================================================================
+-- wh_complete_role_work — the holder finished p_work_key. Fenced: raises WHF01
+-- unless (instance, epoch) holds the role, so a holder that lost the role mid-run
+-- cannot mark the work done. Deletes only when last_owed_at <= p_listed_owed_at,
+-- i.e. nobody owed it again after the holder listed it.
+--
+-- <docs>proposals/duty-role-assignment</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:CompleteRoleWork_IsFenced_AndKeepsWorkReOwedDuringTheRunAsync</tests>
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_complete_role_work(
+  p_role TEXT, p_work_key TEXT, p_instance_id UUID, p_epoch BIGINT, p_listed_owed_at TIMESTAMPTZ
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+SET timezone = 'UTC'
+AS $$
+BEGIN
+  PERFORM __SCHEMA__.wh_assert_role_epoch(p_role, p_instance_id, p_epoch);
+  DELETE FROM __SCHEMA__.wh_role_pending_work w
+   WHERE w.role = p_role AND w.work_key = p_work_key AND w.last_owed_at <= p_listed_owed_at;
+  RETURN FOUND;
+END;
+$$;
+
+-- ============================================================================
+-- wh_fail_role_work — the holder's attempt at p_work_key failed; the work stays
+-- owed and backs off. Fenced like completion.
+--
+-- <docs>proposals/duty-role-assignment</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:OwedRoleWork_BacksOffAFailedAttempt_InDatabaseTimeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:FailRoleWork_IsFencedAsync</tests>
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_fail_role_work(
+  p_role TEXT, p_work_key TEXT, p_instance_id UUID, p_epoch BIGINT, p_error TEXT
+) RETURNS VOID
+LANGUAGE plpgsql
+SET timezone = 'UTC'
+AS $$
+BEGIN
+  PERFORM __SCHEMA__.wh_assert_role_epoch(p_role, p_instance_id, p_epoch);
+  UPDATE __SCHEMA__.wh_role_pending_work w
+     SET attempts = w.attempts + 1,
+         last_attempt_at = now(),
+         last_attempt_epoch = p_epoch,
+         last_error = p_error
+   WHERE w.role = p_role AND w.work_key = p_work_key;
+END;
+$$;
+
+-- The return type gained pending_work, so an earlier definition is dropped first.
+SELECT __SCHEMA__.drop_all_overloads('wh_role_assignment_status');
+
+-- ============================================================================
 -- wh_role_assignment_status — one row per role, for health, metrics and the
 -- operator: state is held, lapsed (a holder whose assignment is no longer valid,
 -- before the next vote records it) or vacant. void_reason says why a lapsed one is.
@@ -393,7 +525,8 @@ RETURNS TABLE(
   void_reason TEXT,
   last_holder_instance_id UUID,
   last_vacated_at TIMESTAMPTZ,
-  last_vacated_reason TEXT
+  last_vacated_reason TEXT,
+  pending_work BIGINT
 )
 LANGUAGE sql
 STABLE
@@ -415,7 +548,8 @@ AS $$
          a.void_reason,
          a.last_holder_instance_id,
          a.last_vacated_at,
-         a.last_vacated_reason
+         a.last_vacated_reason,
+         (SELECT count(*) FROM __SCHEMA__.wh_role_pending_work w WHERE w.role = a.role)
     FROM (
       SELECT r.*,
              CASE WHEN r.holder_instance_id IS NULL THEN NULL

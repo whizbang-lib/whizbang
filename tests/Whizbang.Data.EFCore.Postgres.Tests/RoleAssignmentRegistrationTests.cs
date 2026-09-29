@@ -42,6 +42,12 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     };
   }
 
+  private sealed class Step(string name, string capability) : IStartupStep {
+    public StartupStepDescriptor Descriptor { get; } = new() { Name = name, RequiredCapability = capability };
+    public ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) =>
+      ValueTask.FromResult(new StartupStepReport(StartupStepOutcome.Completed));
+  }
+
   private async Task<(ServiceCollection Services, ServiceProvider Provider)> _composeAsync(Pod pod, NpgsqlDataSource dataSource, bool roleAssignmentFirst, CancellationToken ct) {
     await using (var ctx = CreateDbContext()) {
       var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
@@ -51,6 +57,8 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     services.AddLogging();
     services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection([]).Build());
     services.AddSingleton<IServiceInstanceProvider>(pod);
+    services.AddSingleton<IStartupStep>(new Step("Rewrite", StartupDuties.MAINTAINER));
+    services.AddSingleton<IStartupStep>(new Step("Everywhere", StartupCapabilities.EVERY_INSTANCE));
     if (roleAssignmentFirst) {
       services.AddWhizbangRoleAssignment(o => o.HoldLegacySessionLock = false);
     }
@@ -89,6 +97,18 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     await migrator.Grant.DisposeAsync();
 
     await Assert.That(provider.GetServices<IReleasesDutiesOnShutdown>().Single()).IsSameReferenceAs(elector);
+    await Assert.That(provider.GetRequiredService<IRoleAssignmentReader>()).IsSameReferenceAs(elector);
+    await Assert.That(provider.GetRequiredService<IPendingDutyWorkStore>()).IsTypeOf<PgPendingDutyWorkStore>();
+    await Assert.That(services.Count(d => d.ServiceType == typeof(Whizbang.Core.Health.IWhizbangHealthSource)
+        && d.ImplementationType == typeof(Whizbang.Core.Health.RoleAssignmentHealthSource))).IsEqualTo(1);
+    var health = ActivatorUtilities.CreateInstance<Whizbang.Core.Health.RoleAssignmentHealthSource>(provider);
+    await Assert.That((await health.ReportAsync(cancellationToken)).State).IsEqualTo(Whizbang.Core.Health.ComponentState.Operational)
+      .Because("this instance holds the maintainer role right now");
+    var holder = provider.GetRequiredService<DutyHolderWorker>();
+    await Assert.That(holder.Roles).IsEquivalentTo([StartupDuties.MAINTAINER])
+      .Because("a duty-bound startup step becomes owed work for its role; an every-instance step does not");
+    await Assert.That(services.Count(d => d.ServiceType == typeof(IHostedService) && d.ImplementationFactory is not null
+        && d.Lifetime == ServiceLifetime.Singleton)).IsGreaterThan(0);
     await Assert.That(services.Count(d => d.ServiceType == typeof(IHostedService)
         && d.ImplementationType == typeof(DutyShutdownReleaseService))).IsEqualTo(1);
     var release = new DutyShutdownReleaseService(

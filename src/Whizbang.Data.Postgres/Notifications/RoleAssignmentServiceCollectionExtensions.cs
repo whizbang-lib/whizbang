@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Health;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Startup;
@@ -39,6 +40,10 @@ public static class RoleAssignmentServiceCollectionExtensions {
       return services;
     }
 
+    services.AddMetrics();
+    services.TryAddSingleton<WhizbangMetrics>();
+    services.TryAddSingleton<RoleAssignmentMetrics>();
+
     // The session-lock elector, as a concrete service: the role elector's delegate.
     services.TryAddSingleton<PgDutyElector>();
     services.AddSingleton(sp => new PgRoleElector(
@@ -49,7 +54,32 @@ public static class RoleAssignmentServiceCollectionExtensions {
       sp.GetRequiredService<PgDutyElector>(),
       sp.GetRequiredService<ILogger<PgRoleElector>>(),
       sp.GetService<INotificationConnectionStringFallback>(),
+      sp.GetService<INotificationDataSource>(),
+      metrics: sp.GetRequiredService<RoleAssignmentMetrics>()));
+    services.AddSingleton<IRoleAssignmentReader>(sp => sp.GetRequiredService<PgRoleElector>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IWhizbangHealthSource, RoleAssignmentHealthSource>());
+
+    // Pending duty work, and the holder loop that runs it: a skipped duty step is owed to the role
+    // (the startup pipeline resolves this store), and whichever instance holds the role runs it.
+    services.TryAddSingleton<IPendingDutyWorkStore>(sp => new PgPendingDutyWorkStore(
+      sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>(),
+      sp.GetRequiredService<IOptions<RoleAssignmentOptions>>(),
+      sp.GetRequiredService<IConfiguration>(),
+      sp.GetRequiredService<IServiceInstanceProvider>(),
+      sp.GetService<INotificationConnectionStringFallback>(),
       sp.GetService<INotificationDataSource>()));
+    services.AddSingleton(sp => new DutyHolderWorker(
+      sp.GetRequiredService<IDutyElector>(),
+      sp.GetRequiredService<IPendingDutyWorkStore>(),
+      [.. sp.GetServices<IDutyWorkHandler>(),
+       .. sp.GetServices<IStartupStep>()
+         .Where(step => step.Descriptor.RequiredCapability != StartupCapabilities.EVERY_INSTANCE)
+         .Select(step => new StartupStepDutyWork(step, sp.GetService<IStartupPipelineState>()))],
+      sp.GetRequiredService<IOptions<RoleAssignmentOptions>>(),
+      sp.GetRequiredService<ILogger<DutyHolderWorker>>(),
+      sp.GetService<ISharedNotifyConnection>(),
+      sp.GetRequiredService<RoleAssignmentMetrics>()));
+    services.AddHostedService(sp => sp.GetRequiredService<DutyHolderWorker>());
 
     // Replaces whatever elector is registered, the null default or the session-lock elector. A
     // later AddWhizbangPostgresNotifications only displaces null defaults, so it leaves this in place.

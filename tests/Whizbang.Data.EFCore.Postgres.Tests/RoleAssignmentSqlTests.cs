@@ -410,6 +410,128 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  public async Task Release_NotifiesWaiters_SoTheyReVoteAtOnceAsync(CancellationToken cancellationToken) {
+    var a = await _joinAsync(cancellationToken);
+    var vote = await _electAsync(a, cancellationToken);
+    await using var listener = await _openAsync(cancellationToken);
+    string? payload = null;
+    listener.Notification += (_, e) => payload = e.Channel == "wh_role_released" ? e.Payload : payload;
+    await using (var listen = listener.CreateCommand()) {
+      listen.CommandText = "LISTEN wh_role_released";
+      await listen.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    await _releaseAsync(a, vote.Epoch, cancellationToken);
+    var delivered = await listener.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+
+    await Assert.That(delivered).IsTrue().Because("the release commits its NOTIFY with it");
+    await Assert.That(payload).IsEqualTo(ROLE);
+  }
+
+  private async Task _oweAsync(string key, CancellationToken ct) =>
+    await _executeAsync("SELECT wh_owe_role_work(@role, @key)", ct, ("role", ROLE), ("key", key));
+
+  private sealed record Owed(string Key, DateTime FirstOwedAt, DateTime LastOwedAt, int Attempts, string? LastError, bool Due);
+
+  private async Task<List<Owed>> _owedAsync(CancellationToken ct, TimeSpan? retryBase = null) {
+    await using var conn = await _openAsync(ct);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT work_key, first_owed_at, last_owed_at, attempts, last_error, due FROM wh_owed_role_work(@role, @base)";
+    cmd.Parameters.AddWithValue("role", ROLE);
+    cmd.Parameters.AddWithValue("base", retryBase ?? TimeSpan.FromSeconds(30));
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    var rows = new List<Owed>();
+    while (await reader.ReadAsync(ct)) {
+      rows.Add(new Owed(reader.GetString(0), reader.GetDateTime(1), reader.GetDateTime(2), reader.GetInt32(3),
+        await reader.IsDBNullAsync(4, ct) ? null : reader.GetString(4), reader.GetBoolean(5)));
+    }
+    return rows;
+  }
+
+  private async Task<bool> _completeAsync(Guid id, long epoch, string key, DateTime listedOwedAt, CancellationToken ct) {
+    await using var conn = await _openAsync(ct);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT wh_complete_role_work(@role, @key, @id, @epoch, @listed)";
+    cmd.Parameters.AddWithValue("role", ROLE);
+    cmd.Parameters.AddWithValue("key", key);
+    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue("epoch", epoch);
+    cmd.Parameters.AddWithValue("listed", listedOwedAt);
+    return (bool)(await cmd.ExecuteScalarAsync(ct))!;
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task OweRoleWork_IsIdempotent_AndReOwingKeepsFirstOwedAtAsync(CancellationToken cancellationToken) {
+    await _oweAsync("Rewrite", cancellationToken);
+    var first = (await _owedAsync(cancellationToken)).Single();
+    await _oweAsync("Rewrite", cancellationToken);
+    await _oweAsync("Other", cancellationToken);
+
+    var owed = await _owedAsync(cancellationToken);
+    await Assert.That(owed.Select(o => o.Key)).IsEquivalentTo(["Rewrite", "Other"]);
+    var again = owed.Single(o => o.Key == "Rewrite");
+    await Assert.That(again.FirstOwedAt).IsEqualTo(first.FirstOwedAt)
+      .Because("how long work has been owed is measured from the first time anyone owed it");
+    await Assert.That(again.LastOwedAt).IsGreaterThan(first.LastOwedAt);
+    await Assert.That(again.Due).IsTrue();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task CompleteRoleWork_IsFenced_AndKeepsWorkReOwedDuringTheRunAsync(CancellationToken cancellationToken) {
+    var a = await _joinAsync(cancellationToken);
+    var b = await _joinAsync(cancellationToken);
+    var vote = await _electAsync(a, cancellationToken);
+    await _oweAsync("Rewrite", cancellationToken);
+    var listed = (await _owedAsync(cancellationToken)).Single();
+
+    // Someone owes it again while the holder is running it: that newer need must survive.
+    await _oweAsync("Rewrite", cancellationToken);
+    await Assert.That(await _completeAsync(a, vote.Epoch, "Rewrite", listed.LastOwedAt, cancellationToken)).IsFalse();
+    var relisted = (await _owedAsync(cancellationToken)).Single();
+    await Assert.That(await _completeAsync(a, vote.Epoch, "Rewrite", relisted.LastOwedAt, cancellationToken)).IsTrue();
+    await Assert.That(await _owedAsync(cancellationToken)).IsEmpty();
+
+    await _oweAsync("Rewrite", cancellationToken);
+    var owed = (await _owedAsync(cancellationToken)).Single();
+    await Assert.That(async () => await _completeAsync(b, vote.Epoch, "Rewrite", owed.LastOwedAt, cancellationToken))
+      .Throws<PostgresException>().Because("only the holder, at its epoch, may mark duty work done");
+    await Assert.That(await _owedAsync(cancellationToken)).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task OwedRoleWork_BacksOffAFailedAttempt_InDatabaseTimeAsync(CancellationToken cancellationToken) {
+    var a = await _joinAsync(cancellationToken);
+    var vote = await _electAsync(a, cancellationToken);
+    await _oweAsync("Rewrite", cancellationToken);
+
+    await _executeAsync("SELECT wh_fail_role_work(@role, 'Rewrite', @id, @epoch, 'table locked')", cancellationToken,
+      ("role", ROLE), ("id", a), ("epoch", vote.Epoch));
+    var failed = (await _owedAsync(cancellationToken)).Single();
+    await Assert.That(failed.Attempts).IsEqualTo(1);
+    await Assert.That(failed.LastError).IsEqualTo("table locked");
+    await Assert.That(failed.Due).IsFalse().Because("a failed attempt backs off before the holder tries again");
+
+    await _executeAsync("UPDATE wh_role_pending_work SET last_attempt_at = last_attempt_at - interval '31 seconds'", cancellationToken);
+    await Assert.That((await _owedAsync(cancellationToken)).Single().Due).IsTrue();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task FailRoleWork_IsFencedAsync(CancellationToken cancellationToken) {
+    var a = await _joinAsync(cancellationToken);
+    var vote = await _electAsync(a, cancellationToken);
+    await _oweAsync("Rewrite", cancellationToken);
+
+    await Assert.That(async () => await _executeAsync("SELECT wh_fail_role_work(@role, 'Rewrite', @id, @epoch, 'x')", cancellationToken,
+      ("role", ROLE), ("id", a), ("epoch", vote.Epoch + 1))).Throws<PostgresException>();
+    await Assert.That((await _owedAsync(cancellationToken)).Single().Attempts).IsEqualTo(0);
+  }
+
+  [Test]
+  [Timeout(60000)]
   public async Task VoteLockKey_CarriesThisSchemasTableOid_SoItIsSchemaScopedByConstructionAsync(CancellationToken cancellationToken) {
     // Issue #962: a role's vote in one schema must never wait on the same role in another. The
     // key's high half is the oid of this schema's table, which no other schema's table shares.
@@ -439,6 +561,15 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
       await Assert.That(await reader.ReadAsync(cancellationToken)).IsTrue();
       return (reader.GetString(0), await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetGuid(1), reader.GetInt64(2),
         reader.GetInt64(3), await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4));
+    }
+
+    await _oweAsync("Rewrite", cancellationToken);
+    await using (var pendingConn = await _openAsync(cancellationToken)) {
+      await using var pending = pendingConn.CreateCommand();
+      pending.CommandText = "SELECT pending_work FROM wh_role_assignment_status() WHERE role = @role";
+      pending.Parameters.AddWithValue("role", ROLE);
+      await Assert.That((long)(await pending.ExecuteScalarAsync(cancellationToken))!).IsEqualTo(1L)
+        .Because("the status surface says how much duty work is waiting for the holder");
     }
 
     var held = await statusAsync();

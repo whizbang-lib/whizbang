@@ -1,4 +1,6 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -286,10 +288,9 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     time.Advance(_defaults.RenewInterval);
 
     await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsTrue();
-    var again = await elector.TryAcquireAsync(ROLE, cancellationToken);
+    var again = await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken);
     await Assert.That(again.Grant!.Epoch).IsEqualTo(grant.Epoch)
       .Because("the first vote after reconnect re-validates the row and finds the same live assignment");
-    await again.Grant.DisposeAsync();
     await grant.DisposeAsync();
   }
 
@@ -423,11 +424,11 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
   [Timeout(120000)]
   public async Task CoolingDown_TheLapsedInstance_IsContendedWithTheReasonAsync(CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
-    var elector = _electorFor(a);
-    _ = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    _ = (await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
     await _ageAsync(_defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
 
-    var attempt = await elector.TryAcquireAsync(ROLE, cancellationToken);
+    // The same instance after a restart: a fresh elector with no tenure of its own.
+    var attempt = await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken);
 
     await Assert.That(attempt.Refusal).IsEqualTo(DutyRefusal.Contended);
     await Assert.That(attempt.Detail!).Contains("cool");
@@ -475,6 +476,138 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
 
     await Assert.That(attempt.Refusal).IsEqualTo(DutyRefusal.Unavailable);
     await Assert.That(((IDutyElector)elector).IsConfigured).IsTrue();
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task TwoHoldersInOneProcess_ShareOneTenure_AndTheLastHandleReleasesAsync(CancellationToken cancellationToken) {
+    // The holder loop and a startup step both hold the role on one instance: neither may release
+    // it under the other.
+    var a = await _joinAsync(cancellationToken);
+    var b = await _joinAsync(cancellationToken);
+    var elector = _electorFor(a);
+    var loop = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    var step = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    await Assert.That(step.Epoch).IsEqualTo(loop.Epoch).Because("a second acquisition is a handle, not a second vote");
+
+    await step.DisposeAsync();
+    await Assert.That(await loop.VerifyStillHeldAsync(cancellationToken)).IsTrue();
+    await Assert.That(await step.VerifyStillHeldAsync(cancellationToken)).IsFalse().Because("a closed handle holds nothing");
+    await Assert.That(await _fencedWriteAsync(a.InstanceId, loop.Epoch!.Value, cancellationToken)).IsTrue();
+    await Assert.That((await _electorFor(b).TryAcquireAsync(ROLE, cancellationToken)).Refusal).IsEqualTo(DutyRefusal.Contended);
+
+    await loop.DisposeAsync();
+    await Assert.That((await _electorFor(b).TryAcquireAsync(ROLE, cancellationToken)).Grant).IsNotNull()
+      .Because("the last handle released the role");
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task ALostTenure_IsNotReused_TheNextAcquisitionVotesAgainAsync(CancellationToken cancellationToken) {
+    var time = new FakeTimeProvider();
+    var a = await _joinAsync(cancellationToken);
+    var elector = _electorFor(a, time: time);
+    var first = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    await _executeAsync("UPDATE wh_role_assignments SET epoch = epoch + 10 WHERE role = @role", cancellationToken, ("role", ROLE));
+    time.Advance(_defaults.RenewInterval);
+
+    var again = await elector.TryAcquireAsync(ROLE, cancellationToken);
+
+    await Assert.That(await first.VerifyStillHeldAsync(cancellationToken)).IsFalse();
+    await Assert.That(again.Grant!.Epoch).IsEqualTo(first.Epoch + 10)
+      .Because("the old tenure is gone; a fresh vote adopts whatever the row says this instance holds");
+    await again.Grant.DisposeAsync();
+  }
+
+  private sealed class MeterReader : IDisposable {
+    private readonly MeterListener _listener = new();
+    private readonly List<(string Name, long Value, Dictionary<string, object?> Tags)> _seen = [];
+    public MeterReader(Meter meter) {
+      _listener.InstrumentPublished = (instrument, l) => {
+        if (instrument.Meter == meter) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      };
+      _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => {
+        var dict = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var tag in tags) {
+          dict[tag.Key] = tag.Value;
+        }
+        _seen.Add((instrument.Name, value, dict));
+      });
+      _listener.Start();
+    }
+    public long Total(string name, string? tag = null, object? value = null) {
+      _seen.Clear();
+      _listener.RecordObservableInstruments();
+      return _seen.Where(s => s.Name == name && (tag is null || (s.Tags.TryGetValue(tag, out var v) && Equals(v, value))))
+        .Sum(s => s.Value);
+    }
+    public void Dispose() => _listener.Dispose();
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task Metrics_CountElectionsHandoffsLossesReleasesAndHeldRolesAsync(CancellationToken cancellationToken) {
+    // Requirement 10.
+    using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    var metrics = new RoleAssignmentMetrics(new WhizbangMetrics(provider.GetRequiredService<IMeterFactory>()));
+    using var reader = new MeterReader(metrics.Elections.Meter);
+    var time = new FakeTimeProvider();
+    var a = await _joinAsync(cancellationToken);
+    var b = await _joinAsync(cancellationToken);
+    PgRoleElector withMetrics(Pod pod) => new(
+      Options.Create(_notificationOptions()), Options.Create(new RoleAssignmentOptions()),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(), pod, _legacyFor(pod),
+      NullLogger<PgRoleElector>.Instance, timeProvider: time, metrics: metrics);
+
+    var first = (await withMetrics(a).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    await Assert.That(reader.Total("whizbang.roles.held")).IsEqualTo(1);
+    await first.DisposeAsync();
+    var second = (await withMetrics(b).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    await _ageAsync(_defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
+    time.Advance(_defaults.RenewInterval);
+    await Assert.That(await second.VerifyStillHeldAsync(cancellationToken)).IsFalse();
+
+    await Assert.That(reader.Total("whizbang.roles.elections")).IsEqualTo(2);
+    await Assert.That(reader.Total("whizbang.roles.handoffs", RoleAssignmentMetrics.REASON_TAG, "released")).IsEqualTo(1);
+    await Assert.That(reader.Total("whizbang.roles.released")).IsEqualTo(1);
+    await Assert.That(reader.Total("whizbang.roles.lost")).IsEqualTo(1);
+    await Assert.That(reader.Total("whizbang.roles.held")).IsEqualTo(0);
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task ReadAssignments_ReportsHolderEpochStateAndOwedWorkAsync(CancellationToken cancellationToken) {
+    // Requirements 9 and 10 through the C# reader.
+    var a = await _joinAsync(cancellationToken);
+    var elector = _electorFor(a);
+    await Assert.That(await elector.ReadAssignmentsAsync(cancellationToken)).IsEmpty();
+
+    var grant = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    await _executeAsync("SELECT wh_owe_role_work(@role, 'Rewrite')", cancellationToken, ("role", ROLE));
+    var held = (await elector.ReadAssignmentsAsync(cancellationToken)).Single();
+    await Assert.That(held.State).IsEqualTo(RoleAssignmentState.Held);
+    await Assert.That(held.HolderInstanceId).IsEqualTo(a.InstanceId);
+    await Assert.That(held.Epoch).IsEqualTo(grant.Epoch!.Value);
+    await Assert.That(held.AssignedAt).IsNotNull();
+    await Assert.That(held.RenewedAt).IsNotNull();
+    await Assert.That(held.LeaseRemaining).IsNotNull();
+    await Assert.That(held.ElectionCount).IsEqualTo(1L);
+    await Assert.That(held.PendingWork).IsEqualTo(1L);
+
+    await _ageAsync(_defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
+    var lapsed = (await elector.ReadAssignmentsAsync(cancellationToken)).Single();
+    await Assert.That(lapsed.State).IsEqualTo(RoleAssignmentState.Lapsed);
+    await Assert.That(lapsed.VoidReason).IsEqualTo("lapsed");
+
+    await _ageAsync(-(_defaults.Lease + TimeSpan.FromSeconds(1)), cancellationToken);
+    await grant.DisposeAsync();
+    var vacant = (await elector.ReadAssignmentsAsync(cancellationToken)).Single(s => s.Role == ROLE);
+    await Assert.That(vacant.State).IsEqualTo(RoleAssignmentState.Vacant);
+    await Assert.That(vacant.LastHolderInstanceId).IsEqualTo(a.InstanceId);
+    await Assert.That(vacant.LastVacatedAt).IsNotNull();
+    await Assert.That(vacant.LastVacatedReason).IsEqualTo("released");
   }
 
   [Test]
