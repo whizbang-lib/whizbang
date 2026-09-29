@@ -37,12 +37,23 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// it as a metric.
 /// </para>
 /// <para>
-/// <strong>Determinism:</strong> the predicate is re-evaluated at apply
-/// time against the projection state at that point in the event sequence.
-/// Because event-sourcing guarantees the projection state is fully
-/// determined by the event log up to that point, the result is
-/// deterministic — and reflects the logically correct outcome, not the
-/// original execution's possibly-wrong (e.g. out-of-order delivery) one.
+/// <strong>Determinism, and its limit:</strong> the predicate is re-evaluated at apply time against
+/// the projection state as it stands when the batch runs. Given a fixed order of applies the result
+/// is determined by that order — but <strong>the order is not guaranteed between collectives</strong>,
+/// and this paragraph used to claim otherwise.
+/// </para>
+/// <para>
+/// Each collective event carries its own stream id and so becomes its own sink stream, and sink
+/// streams on different instances apply in parallel. The per-scope advisory lock serializes two
+/// applies to the same table and scope; it does not order them. Two collectives therefore apply in
+/// whatever order they finish, not in commit order.
+/// </para>
+/// <para>
+/// That is invisible to a collective whose setters are idempotent or commutative, and wrong for one
+/// that expresses "latest wins" as a set-based flip -- <c>IsActive = (Id == e.Chosen)</c> across a
+/// family of rows, where an older collective landing after a newer one leaves the wrong row active.
+/// A consumer writing that shape needs ordering the framework does not yet provide; see #963, which
+/// proposes an opt-in ordering key routing collectives that share it through one ordered sink.
 /// </para>
 /// <para>
 /// AOT: matches Whizbang.Data.EFCore.Postgres's established pattern of
