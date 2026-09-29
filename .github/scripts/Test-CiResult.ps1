@@ -18,7 +18,8 @@
                     yields, must be green here.
       fast-forward  ff-validated: a queue run over a tree its PR run already built, tested and analyzed.
       reused        queue-validated: a develop push or release cut whose tree the queue (or PR) run tested.
-                    Build, verify-rebuild and reupload-reports must all be green.
+                    Build, verify-rebuild and reupload-reports must all be green; build is not required
+                    when the change detector found no code (a docs-only merge builds nothing).
       docs-only     a push or PR whose change detector found only inert paths.
       tested here   anything else: build, all six suites and Quality must be green. A skip fails.
 
@@ -128,7 +129,11 @@ function Get-CiVerdict {
     }
     'reused' {
       $why = 'reusing another run''s results needs this run''s own build and proof'
-      & $require 'build' $why
+      # A docs-only merge skips the build by design: there is nothing to build, and the tree it would
+      # prove is the one the queue already tested. The rebuild check and the reports still must be green.
+      if ((Get-NeedOutput -Needs $NeedsTable -Job 'changes' -Name 'code') -eq 'true') {
+        & $require 'build' $why
+      }
       & $require 'verify-rebuild' $why
       & $require 'reupload-reports' $why
     }
