@@ -148,7 +148,10 @@ The perspective worker, in both the drain path and the channel path:
 2. counts `whizbang.perspective.read_failures{perspective_name, reason=stored_form_unreadable}`;
 3. reports every leased row of the group through `IFailureChannel` as `WorkCategory.PerspectiveEvent`
    with `MessageFailureReason.SerializationError`, so `process_perspective_event_failures` records the
-   failure, schedules the retry with backoff and the dead-letter check reads the counter;
+   failure, schedules the retry with backoff and the dead-letter check reads the counter. The function
+   counts one failure per lease: a claim re-offers a leased row, so one stream can be drained twice at
+   once and both drains report the same lease's failure; the second finds the row failed and not leased
+   again, and changes nothing (issue #987);
 4. the `perspective-stored-forms` health component (`StoredFormHealthSource`) reports Degraded with the
    count while any are remembered.
 

@@ -96,6 +96,44 @@ public class PerspectiveFailureCounterSqlTests : EFCoreTestBase {
     await Assert.That(reader.GetString(2)).IsEqualTo("true").Because("the lease is released for the retry");
   }
 
+  /// <summary>
+  /// One failed lease counts once, however many times it is reported; the next lease's failure counts again.
+  /// </summary>
+  /// <remarks>
+  /// A claim re-offers a row it leased until the row completes or fails, so one stream can be queued for two
+  /// drains that both fetch the leased row before either has applied it. Both applies fail, and both report
+  /// the one lease's failure. Counting both advanced the backoff two steps and brought a row to the
+  /// dead-letter threshold in half the retries it names (issue #987). The first report releases the lease
+  /// and sets the Failed bit; a report that finds the row failed and not leased again since is the same
+  /// failure.
+  /// </remarks>
+  [Test]
+  public async Task RecordedFailure_ReportedTwiceForOneLease_CountsOnce_AndTheNextLeaseCountsAgainAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var instance = (Guid)TrackedGuid.New();
+    var (streamId, workId) = await _seedPendingRowAsync(conn);
+    await _callGetStreamEventsAsync(conn, instance, streamId);
+
+    await _recordRuntimeFailureAsync(conn, workId);
+    await _recordRuntimeFailureAsync(conn, workId);
+
+    var (_, failures) = await _readCountersAsync(conn, workId);
+    await Assert.That(failures).IsEqualTo(1)
+      .Because("the second report is the same lease's failure, reported by a duplicate drain");
+
+    await using (var due = conn.CreateCommand()) {
+      due.CommandText = "UPDATE wh_perspective_events SET scheduled_for = NOW() - INTERVAL '1 second' WHERE event_work_id = @work";
+      due.Parameters.AddWithValue("work", workId);
+      await due.ExecuteNonQueryAsync();
+    }
+    await _callGetStreamEventsAsync(conn, instance, streamId);
+    await _recordRuntimeFailureAsync(conn, workId);
+
+    var (_, afterRetry) = await _readCountersAsync(conn, workId);
+    await Assert.That(afterRetry).IsEqualTo(2).Because("the retry is a new lease, and its failure is a new failure");
+  }
+
   [Test]
   public async Task GetStreamEvents_SurfacesFailures_ForTheDeadLetterDecisionAsync() {
     await using var dbContext = CreateDbContext();
@@ -179,6 +217,14 @@ public class PerspectiveFailureCounterSqlTests : EFCoreTestBase {
     cmd.CommandText = "SELECT process_perspective_event_failures(@failures::jsonb, NOW())";
     cmd.Parameters.AddWithValue("failures",
       $$"""[{"EventWorkId":"{{workId}}","CompletedStatus":0,"Error":"{{error}}","FailureReason":1}]""");
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static async Task _recordRuntimeFailureAsync(NpgsqlConnection conn, Guid workId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT process_perspective_event_failures(@failures::jsonb, NOW())";
+    cmd.Parameters.AddWithValue("failures",
+      $$"""[{"MessageId":"{{workId}}","CompletedStatus":0,"Error":"stored form unreadable","Reason":3}]""");
     await cmd.ExecuteNonQueryAsync();
   }
 
