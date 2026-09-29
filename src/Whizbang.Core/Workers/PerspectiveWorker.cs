@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -1230,7 +1229,6 @@ public partial class PerspectiveWorker(
         Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
         await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
         _markAffinityHeld(gateEntry, "standard");
-        Exception? cursorFailure = null;
         try {
           await using var groupScope = _scopeFactory.CreateAsyncScope();
           var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
@@ -1358,12 +1356,13 @@ public partial class PerspectiveWorker(
               _metrics?.EventsProcessed.Add(processedEvents.Count);
             }
           } catch (Exception ex) when (ex is not OperationCanceledException) {
-            // Captured rather than rethrown here. A rethrow from an async catch that also awaits
-            // makes the compiler hoist this handler out of the IL catch region and rewrite
-            // `throw;` as a capture-and-throw; the brace's sequence point then lands on
-            // state-machine cleanup that nothing reaches. Throwing after the block keeps the same
-            // order — record, park, report, release the gate, propagate — with no unreachable line.
-            cursorFailure = ex;
+            // Contained here, never rethrown. This handler is the group's whole failure treatment:
+            // the failure is recorded, the group's rows are parked and the cursor failure is
+            // reported. Letting it out as well made the fan-out cancel its token and stop taking
+            // groups, so every sibling group in the batch that had not yet passed its first
+            // cancellable wait (the affinity gate above) was dropped without running, and the
+            // successful groups' PostLifecycle was skipped with the rest of the batch. One poison
+            // perspective starved every other perspective that shared its batch (issue #993).
             var leasedRows = group.Select(w => w.WorkId).Where(id => id != Guid.Empty).Distinct().ToList();
             var storedForm = await _tryRecordStoredFormFailureAsync(ex, streamId, perspectiveName, leasedRows, ct);
             if (storedForm is null) {
@@ -1389,10 +1388,6 @@ public partial class PerspectiveWorker(
           _markAffinityReleased(gateEntry);
           gateEntry.Semaphore.Release();
           _sweepIdleStreamAffinityGatesIfDue();
-        }
-
-        if (cursorFailure is not null) {
-          ExceptionDispatchInfo.Capture(cursorFailure).Throw();
         }
       });
 
