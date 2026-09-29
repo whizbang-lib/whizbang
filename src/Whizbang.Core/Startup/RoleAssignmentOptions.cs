@@ -46,6 +46,12 @@ public sealed class RoleAssignmentOptions {
   /// </summary>
   public bool HoldLegacySessionLock { get; set; } = true;
 
+  /// <summary>
+  /// How long owed duty work backs off after a failed attempt, doubled per further failure and
+  /// capped at one hour. Default 30 seconds.
+  /// </summary>
+  public TimeSpan OwedWorkRetryBase { get; set; } = TimeSpan.FromSeconds(30);
+
   /// <summary>The duties held by assignment. Default: <see cref="StartupDuties.MAINTAINER"/>.</summary>
   public ISet<string> Roles { get; } = new HashSet<string>(StringComparer.Ordinal) { StartupDuties.MAINTAINER };
 
@@ -60,7 +66,7 @@ public sealed class RoleAssignmentOptions {
 
   /// <summary>Throws when the options describe a configuration that cannot work.</summary>
   /// <exception cref="ArgumentOutOfRangeException">A non-positive renew interval, fewer than two
-  /// renewals per lease, or a negative cool-down.</exception>
+  /// renewals per lease, a negative cool-down, or a non-positive retry base.</exception>
   /// <exception cref="InvalidOperationException"><see cref="Roles"/> names the migrator duty.</exception>
   public void Validate() {
     if (RenewInterval <= TimeSpan.Zero) {
@@ -72,6 +78,9 @@ public sealed class RoleAssignmentOptions {
     }
     if (CooldownAfterLapse < TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(CooldownAfterLapse), CooldownAfterLapse, "The cool-down cannot be negative.");
+    }
+    if (OwedWorkRetryBase <= TimeSpan.Zero) {
+      throw new ArgumentOutOfRangeException(nameof(OwedWorkRetryBase), OwedWorkRetryBase, "The retry base must be positive.");
     }
     if (Roles.Contains(StartupDuties.MIGRATOR)) {
       throw new InvalidOperationException(

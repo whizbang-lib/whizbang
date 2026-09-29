@@ -67,6 +67,14 @@ public class RoleAssignmentOptionsTests {
   }
 
   [Test]
+  public async Task Validate_RefusesANonPositiveOwedWorkRetryBaseAsync() {
+    var options = new RoleAssignmentOptions { OwedWorkRetryBase = TimeSpan.Zero };
+
+    await Assert.That(new RoleAssignmentOptions().OwedWorkRetryBase).IsEqualTo(TimeSpan.FromSeconds(30));
+    await Assert.That(options.Validate).Throws<ArgumentOutOfRangeException>();
+  }
+
+  [Test]
   public async Task Validate_RefusesTheMigratorDutyAsync() {
     var options = new RoleAssignmentOptions();
     options.Roles.Add(StartupDuties.MIGRATOR);

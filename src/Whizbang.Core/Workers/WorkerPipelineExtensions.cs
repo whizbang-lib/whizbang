@@ -218,7 +218,9 @@ public static class WorkerPipelineExtensions {
       // The storage driver supplies the elector; the null default reports IsConfigured false and a
       // duty degrades to a shared capability — survivable only because the framework's exclusive
       // steps are individually idempotent and separately guarded.
-      sp.GetRequiredService<Whizbang.Core.Startup.IDutyElector>()));
+      sp.GetRequiredService<Whizbang.Core.Startup.IDutyElector>(),
+      // Registered only with role assignment: a skipped duty step is then owed to the holder.
+      sp.GetService<Whizbang.Core.Startup.IPendingDutyWorkStore>()));
     services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineWorker>());
 
