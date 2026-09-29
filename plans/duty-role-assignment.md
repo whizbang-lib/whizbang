@@ -1,6 +1,6 @@
 # Duty role assignment: the advisory lock decides the vote, the row is the role
 
-Status: phase 1 delivered on `feat/966-role-assignment` (opt-in, green; see section 2.1). Issue #966. Design and requirement mapping:
+Status: phases 1 and 2 delivered on `feat/966-role-assignment`, opt-in, shipping as one PR (see sections 2.1 and 3.1). Issue #966. Design and requirement mapping:
 docs site `proposals/duty-role-assignment`. This file is the build plan. It records what each phase
 ships, how it is verified, and the decisions made along the way.
 
@@ -97,6 +97,57 @@ branch coverage.
   that reports "role unassigned" as degraded; metrics `whizbang.roles.elections`,
   `whizbang.roles.handoffs{reason}`, `whizbang.roles.lost`, and a gauge of held roles.
 
+### 3.1 Phase 2 as delivered
+
+- **Schema:** added to migration 173 in place rather than as a new file, because 173 has not been
+  released and ships in the same PR. `wh_role_pending_work` is keyed by `(role, work_key)` and has
+  `wh_owe_role_work`, `wh_owed_role_work` (with a `due` flag: the retry base doubled per failure,
+  capped at one hour, in database time), and the fenced `wh_complete_role_work` and
+  `wh_fail_role_work`. `wh_release_role` now sends `NOTIFY wh_role_released`, and
+  `wh_role_assignment_status()` gained `pending_work`, dropped and recreated because its return
+  type changed.
+- **Pending until done:** completion presents the `last_owed_at` it listed and deletes only when
+  nobody owed the work again since, so a need that arises mid-run is never lost. Completion and
+  failure are fenced by `(holder, epoch)`, so a holder interrupted by a hand-off can neither mark
+  the work done nor record against it.
+- **Core:** `IPendingDutyWorkStore`, `PendingDutyWork`, `DutyWorkCompletion`, `IDutyWorkHandler`,
+  `DutyWorkResult` (done / not done / deferred), `IRoleAssignmentReader`,
+  `RoleAssignmentSnapshot`, `RoleAssignmentState`, `RoleAssignmentMetrics`,
+  `RoleAssignmentHealthSource` (component `roles`), `DutyHolderWorker` (the acquisition hook) and
+  `StartupStepDutyWork` (a duty-bound startup step as owed work). `RoleAssignmentOptions` gained
+  `OwedWorkRetryBase`.
+- **The rolling-deploy gap is closed.** `StartupPipelineRunner` takes an `IPendingDutyWorkStore`
+  (a required parameter with a `NullPendingDutyWorkStore` default registered with the framework
+  defaults and displaced by the Postgres store; the three-argument constructor is kept): a `Skip`
+  step it skipped as a non-holder is owed to the duty. The holder
+  loop wins the role when the old holder stops, and runs the step once.
+- **One tenure per role per process.** `PgRoleElector` now hands out a handle on a shared tenure
+  when this instance already holds the role, so the holder loop and a startup step can hold it at
+  the same time; the last handle to close releases it. Without this, the step's dispose would have
+  released the role under the loop.
+- **A fence refusal drops the grant at once.** When completing or failing owed work is refused, the
+  loop lets the grant go instead of trusting its throttled "still held" answer until the next
+  renewal.
+- **Status reader:** `PgRoleElector.ReadAssignmentsAsync`. **Metrics:** elections, hand-offs by
+  reason, losses, releases, a held-roles up/down counter, and owed-work runs by outcome.
+- **Registration:** `AddWhizbangRoleAssignment()` now also wires the store (which the pipeline
+  runner picks up), the holder loop as a hosted service, the health source, the reader and the
+  metrics.
+
+Tests added: `RoleAssignmentSqlTests` +5 (22 in total), `RoleAssignmentElectorE2ETests` +4 (26),
+`PendingDutyWorkE2ETests` 4, `DutyHolderWorkerTests` 18, `StartupStepDutyWorkTests` 7,
+`RoleAssignmentHealthSourceTests` 7 (Rocks), `RoleAssignmentMetricsTests` 2,
+`StartupPipelineRunnerOweTests` 3, and `RoleAssignmentOptionsTests` +1. The E2E tests include the
+rolling-deploy gap end to end, and work interrupted by a hand-off completing exactly once with the
+stale holder's write refused.
+
+**Reversible defaults** chosen rather than designing around the open questions (#968):
+first-valid-caller selection; no drain or hand-off to a newer version; the cool-down applies after
+any lapse, including one caused by a database outage; while bridged, a stalled holder blocks
+takeover until its session dies; work that outlasts a lease is allowed to lapse (it is fenced and
+re-run by the next holder, so it must be idempotent). Each is one option or one SQL predicate to
+change.
+
 ## 4. Phase 3: default and more roles
 
 - `AddWhizbangRoleAssignment()` becomes the default in the notification stack, still bridged.
@@ -141,6 +192,20 @@ branch coverage.
 - **A vote that voids a lapsed holder commits the void even when it refuses the caller**, for
   example during that caller's own cool-down. The vacancy is a fact, and the status surface
   should show it.
+- **Phase 2 extends migration 173 in place.** It is unreleased and ships in the same PR, so one
+  feature is one migration. The status function is dropped and recreated because its return type
+  changed, which keeps a development database that ran the phase 1 text working.
+- **Owed work for a duty not held by assignment is not recorded**, since nothing would run it.
+- **A step that is disabled owes nothing**, and a step owed while this instance's own pipeline is
+  still running is deferred (not failed), so the holder loop never blocks and its lease keeps
+  moving.
+- **The payload of the release NOTIFY is the role alone.** A same-named role in another schema of
+  the same database causes a spurious wake, which costs one read.
+- **No new optional injected parameters.** The repo's ratchet (`CompositionSatisfiabilityTests`)
+  forbids them, so the runner's store is a required parameter with a null default, and the holder
+  loop's notify connection is required and nullable, passed explicitly at every site.
+- **The `roles` health component is Degraded, never Faulted**, both when a role is unassigned and
+  when its read fails: restarting this instance would not give the role a holder.
 
 ## 7. Open questions (to be filed as `question` issues)
 
