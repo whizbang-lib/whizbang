@@ -260,4 +260,49 @@ public class SagaApplyHelperTests {
     await Assert.That(items[0].FailedAt).IsEqualTo(_ts.AddMinutes(-5))
       .Because("the first failure is the one that happened — a replay must not restamp it");
   }
+
+  // ── TrackAbandoned ───────────────────────────────────────────────────
+
+  /// <summary>The watchdog's decision reaches the perspective, so the sweep stops re-arming the saga.</summary>
+  /// <remarks>
+  /// No item is involved, which is what distinguishes this from the three above: nothing failed and
+  /// nothing completed. A perspective that does not apply the event leaves the saga merely incomplete,
+  /// and the stranded-saga sweep re-arms it and publishes its abandonment again once per interval.
+  /// </remarks>
+  [Test]
+  public async Task TrackAbandoned_AnInFlightSaga_RecordsItAsync() {
+    var saga = new BaseSagaModel { Status = SagaStatus.Running, TotalItems = 10, CompletedItems = 3 };
+
+    var recorded = SagaApplyHelper.TrackAbandoned(saga, _ts);
+
+    await Assert.That(recorded).IsTrue();
+    await Assert.That(saga.Status).IsEqualTo(SagaStatus.Abandoned);
+    await Assert.That(saga.UpdatedAt).IsEqualTo(_ts)
+      .Because("the timestamp is the watchdog's, from the event, not the moment the apply ran");
+    await Assert.That(saga.CompletedItems).IsEqualTo(3)
+      .Because("no item is involved -- abandoning the saga neither completes nor fails one");
+  }
+
+  /// <summary>A re-applied abandonment records nothing, which is what makes the apply idempotent.</summary>
+  [Test]
+  public async Task TrackAbandoned_Twice_RecordsItOnceAsync() {
+    var saga = new BaseSagaModel { Status = SagaStatus.Running };
+    SagaApplyHelper.TrackAbandoned(saga, _ts);
+
+    var again = SagaApplyHelper.TrackAbandoned(saga, _ts.AddHours(1));
+
+    await Assert.That(again).IsFalse()
+      .Because("the caller learns this apply was not the one that recorded it, and can stay quiet");
+    await Assert.That(saga.UpdatedAt).IsEqualTo(_ts)
+      .Because("a no-op must not move the timestamp, or every sweep would look like activity");
+  }
+
+  [Test]
+  public async Task TrackAbandoned_WithNoSaga_SaysWhichArgumentAsync() {
+    // The helpers are called from generated Apply methods; a null here is a wiring mistake, and it
+    // should read as one rather than as a NullReferenceException from inside the model.
+    await Assert.That(() => SagaApplyHelper.TrackAbandoned(null!, _ts))
+      .Throws<ArgumentNullException>();
+  }
+
 }

@@ -267,11 +267,11 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
           await dbContext.Database.ExecuteSqlRawAsync(
             "SELECT pg_advisory_xact_lock(@wb_lock)",
             [_param("wb_lock", key)], cancellationToken).ConfigureAwait(false);
-        } catch (Exception ex) when (_isLockTimeout(ex)) {
+        } catch (Exception ex) when (CollectiveApplyContention.IsLockTimeout(ex)) {
           // Nothing is wrong with the event or the perspective: another batch holds the lock for this
           // table and scope. Named so a caller can tell it from a failed apply and neither count an
           // attempt nor drop the lease.
-          throw new CollectiveApplyLockBusyException(_tableOf(selectSql), waitSeconds, ex);
+          throw new CollectiveApplyLockBusyException(CollectiveApplyContention.TableOf(selectSql), waitSeconds, ex);
         }
         // The lock is held; the remaining statements wait for ordinary row locks on the usual terms.
         await dbContext.Database.ExecuteSqlRawAsync(
@@ -312,32 +312,6 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
     // ids came back ordered by id ASC, so the last one is the batch's greatest id — the next cursor.
     return (count, ids[^1]);
-  }
-
-
-  /// <summary>
-  /// True when <paramref name="ex"/> is PostgreSQL refusing a lock wait that ran past
-  /// <c>lock_timeout</c> (SQLSTATE 55P03), at whatever depth the provider wrapped it.
-  /// </summary>
-  private static bool _isLockTimeout(Exception ex) {
-    for (var inner = ex; inner is not null; inner = inner.InnerException) {
-      if (inner is Npgsql.PostgresException { SqlState: "55P03" }) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// <summary>The table the batch reads, for a message that names where the contention is.</summary>
-  private static string _tableOf(string selectSql) {
-    const string from = " FROM ";
-    var start = selectSql.IndexOf(from, StringComparison.Ordinal);
-    if (start < 0) {
-      return "(unknown)";
-    }
-    var rest = selectSql[(start + from.Length)..].TrimStart();
-    var end = rest.IndexOfAny([' ', '\r', '\n']);
-    return end < 0 ? rest : rest[..end];
   }
 
   private static Npgsql.NpgsqlParameter _param(string name, object value) => new(name, value);

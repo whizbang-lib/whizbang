@@ -154,20 +154,20 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   private static void _compileComparison(
       BinaryExpression cmp, string op, Ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
       List<ReferencedJsonPath> refs) {
-    var leftIsCol = _tryColumn(cmp.Left, ctx, refs, out var leftSql, out var leftProp, out var leftKind);
-    var rightIsCol = _tryColumn(cmp.Right, ctx, refs, out var rightSql, out var rightProp, out var rightKind);
+    var left = _tryColumn(cmp.Left, ctx, refs);
+    var right = _tryColumn(cmp.Right, ctx, refs);
 
-    if (leftIsCol && rightIsCol) {
+    if (left is { } correlatedLeft && right is { } correlatedRight) {
       // Column <op> column → a correlation (e.g. s.id = wh_per_job.id). No parameter.
-      sql.Append(leftSql).Append(' ').Append(op).Append(' ').Append(rightSql);
+      sql.Append(correlatedLeft.Sql).Append(' ').Append(op).Append(' ').Append(correlatedRight.Sql);
       return;
     }
-    if (leftIsCol) {
-      _appendColumnCompareValue(leftSql!, leftProp!, leftKind, op, cmp.Right, prefix, sql, parameters);
+    if (left is { } leftColumn) {
+      _appendColumnCompareValue(leftColumn, op, cmp.Right, prefix, sql, parameters);
       return;
     }
-    if (rightIsCol) {
-      _appendColumnCompareValue(rightSql!, rightProp!, rightKind, op, cmp.Left, prefix, sql, parameters);
+    if (right is { } rightColumn) {
+      _appendColumnCompareValue(rightColumn, op, cmp.Left, prefix, sql, parameters);
       return;
     }
     throw new NotSupportedException(
@@ -176,13 +176,20 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   }
 
   private static void _appendColumnCompareValue(
-      string columnSql, string propName, ColumnKind kind, string op, Expression valueExpr, string prefix,
+      in ResolvedColumn column, string op, Expression valueExpr, string prefix,
       StringBuilder sql, Dictionary<string, object?> parameters) {
     var value = _evaluateValue(valueExpr);
-    var paramName = $"{prefix}_{propName.ToLowerInvariant()}";
-    parameters[paramName] = _bind(value, kind);
-    sql.Append(columnSql).Append(' ').Append(op).Append(" @").Append(paramName);
+    var paramName = $"{prefix}_{column.PropName.ToLowerInvariant()}";
+    parameters[paramName] = _bind(value, column.Kind);
+    sql.Append(column.Sql).Append(' ').Append(op).Append(" @").Append(paramName);
   }
+
+  /// <summary>
+  /// A member access the compiler recognized as a column: the SQL that reads it, the property name the
+  /// bound parameter is named after, and what the column is. They travel together because a value is
+  /// bound against all three at once, and a comparison that split them would bind text at a uuid.
+  /// </summary>
+  private readonly record struct ResolvedColumn(string Sql, string PropName, ColumnKind Kind);
 
   /// <summary>What a resolved column is, because it decides how a value bound against it is typed.</summary>
   private enum ColumnKind {
@@ -254,7 +261,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
         $"Object={(mc.Object is null ? "null" : mc.Object.Type.Name)}, Args={mc.Arguments.Count} [{arg0}, {arg1}].");
     }
 
-    if (!_tryColumn(itemExpr, ctx, refs, out var itemSql, out var itemProp, out var itemKind)) {
+    if (_tryColumn(itemExpr, ctx, refs) is not { } item) {
       throw new NotSupportedException(
         "Contains is only supported as <values>.Contains(row.Data.X / row.Scope.X) — the item must be a column field.");
     }
@@ -265,13 +272,13 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     var names = new List<string>();
     var i = 0;
     foreach (var v in values) {
-      var name = $"{prefix}_{itemProp!.ToLowerInvariant()}_{i}";
-      parameters[name] = _bind(v, itemKind);
+      var name = $"{prefix}_{item.PropName.ToLowerInvariant()}_{i}";
+      parameters[name] = _bind(v, item.Kind);
       names.Add("@" + name);
       i++;
     }
 
-    sql.Append(itemSql).Append(" IN (").Append(names.Count == 0 ? "NULL" : string.Join(", ", names)).Append(')');
+    sql.Append(item.Sql).Append(" IN (").Append(names.Count == 0 ? "NULL" : string.Join(", ", names)).Append(')');
   }
 
   // q.Of<TOther>().Any(s => s.Id == r.Id && …) → EXISTS (SELECT 1 FROM <TOther table> s WHERE …).
@@ -328,12 +335,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   // row.Scope.X → scope->>'X', row.Data.X → data->>'X', row.Id → id — qualified per context (outer/inner).
   // When the match is a jsonb column, also records the UNqualified path against its table in <paramref name="refs"/>
   // as an expression-index candidate (§7).
-  private static bool _tryColumn(
-      Expression e, Ctx ctx, List<ReferencedJsonPath> refs, out string? columnSql, out string? propName,
-      out ColumnKind kind) {
-    columnSql = null;
-    propName = null;
-    kind = ColumnKind.JsonText;
+  private static ResolvedColumn? _tryColumn(Expression e, Ctx ctx, List<ReferencedJsonPath> refs) {
     while (e is UnaryExpression { NodeType: ExpressionType.Convert } convert) {
       e = convert.Operand;
     }
@@ -346,8 +348,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       // (matches EF's own translation for the native path). The PARAMETER name stays the property name.
       var jsonKey = jprop.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? jprop.Name;
       var unqualified = $"{col}->>'{jsonKey}'";
-      columnSql = $"{jq}{unqualified}";
-      propName = jprop.Name;
+      var columnSql = $"{jq}{unqualified}";
       // Attribute the path to its table (outer vs. EXISTS-inner) so the index lands on the right relation.
       // Null table (Compile called without an outer table name) → skip: can't build the DDL, so no candidate.
       string? table = null;
@@ -359,18 +360,15 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       if (table is not null) {
         refs.Add(new ReferencedJsonPath(table, unqualified));
       }
-      return true;
+      return new ResolvedColumn(columnSql, jprop.Name, ColumnKind.JsonText);
     }
 
     if (e is MemberExpression { Member: PropertyInfo { Name: "Id" }, Expression: ParameterExpression ip }
         && _qualifierFor(ip, ctx) is { } iq) {
-      columnSql = $"{iq}id";
-      propName = "id";
-      kind = ColumnKind.Uuid;
-      return true;
+      return new ResolvedColumn($"{iq}id", "id", ColumnKind.Uuid);
     }
 
-    return false;
+    return null;
   }
 
   // The SQL qualifier ("" / "{outerTable}." / "{alias}.") for a row param, or null if it isn't a known one.

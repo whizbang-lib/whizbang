@@ -42,7 +42,7 @@ public class DapperPerspectiveRowVersionTests : PostgresTestBase {
     const string createSql = $"CREATE TABLE IF NOT EXISTS {TABLE} (" +
         "id UUID PRIMARY KEY, data JSONB NOT NULL, " +
         "metadata JSONB NOT NULL DEFAULT '{}'::jsonb, scope JSONB NOT NULL DEFAULT '{}'::jsonb, " +
-        "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), " +
+        "assigned_to TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), " +
         "version INT NOT NULL DEFAULT 1)";
     await using (var cmd = new NpgsqlCommand(createSql, conn)) {
       await cmd.ExecuteNonQueryAsync(cancellationToken);
@@ -69,13 +69,24 @@ public class DapperPerspectiveRowVersionTests : PostgresTestBase {
 
   private static DapperPostgresPerspectiveStoreTests.TestModel _model(string name) => new() { Name = name };
 
-  private async Task<string?> _nameAsync(Guid id, CancellationToken cancellationToken) {
+  private async Task<string?> _nameAsync(Guid streamId, CancellationToken cancellationToken) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync(cancellationToken);
     await using var cmd = new NpgsqlCommand($"SELECT data->>'Name' FROM {TABLE} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue("id", streamId);
     return await cmd.ExecuteScalarAsync(cancellationToken) as string;
   }
+
+  private async Task<string?> _assignedToAsync(Guid streamId, CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await using var cmd = new NpgsqlCommand($"SELECT assigned_to FROM {TABLE} WHERE id = @id", conn);
+    cmd.Parameters.AddWithValue("id", streamId);
+    return await cmd.ExecuteScalarAsync(cancellationToken) as string;
+  }
+
+  private static Dictionary<string, object?> _physical(string assignedTo) =>
+    new() { ["assigned_to"] = assignedTo };
 
   /// <summary>The read reports an absent row, then the row's version and the metadata beside it.</summary>
   [Test]
@@ -207,4 +218,55 @@ public class DapperPerspectiveRowVersionTests : PostgresTestBase {
     await Assert.That(await _nameAsync(id, cancellationToken)).IsEqualTo("second")
       .Because("a caller that passes no version is asking for the write this store always did");
   }
+
+  /// <summary>A checked write that also sets physical columns is guarded like any other.</summary>
+  /// <remarks>
+  /// The physical-fields path builds its own statement, with the promoted columns in the same write, so
+  /// it can carry the guard or drop it independently of the plain path. Dropped, a perspective with a
+  /// promoted column is exactly the one that silently went back to overwriting concurrent writes.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task UpsertWithPhysicalFields_OnTheCurrentVersion_LandsAsync(CancellationToken cancellationToken) {
+    var store = _store();
+    var id = Guid.NewGuid();
+    await store.UpsertWithPhysicalFieldsAsync(
+      id, _model("first"), _physical("ops"), new PerspectiveScope(), false, _metadata(1), cancellationToken);
+
+    var read = await store.ReadForApplyAsync(id, cancellationToken);
+    await store.UpsertWithPhysicalFieldsAsync(
+      id, _model("second"), _physical("support"), new PerspectiveScope(), false, _metadata(2),
+      read.Version, cancellationToken);
+
+    await Assert.That(await _nameAsync(id, cancellationToken)).IsEqualTo("second")
+      .Because("nothing moved between the read and the write, so the write is the one that lands");
+    await Assert.That(await _assignedToAsync(id, cancellationToken)).IsEqualTo("support")
+      .Because("the promoted column is written in the same statement, so it lands with the model");
+  }
+
+  /// <summary>The same write on a version something else moved past is refused, columns and all.</summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task UpsertWithPhysicalFields_OnAStaleVersion_IsRefused_AndWritesNothingAsync(
+      CancellationToken cancellationToken) {
+    var store = _store();
+    var id = Guid.NewGuid();
+    await store.UpsertWithPhysicalFieldsAsync(
+      id, _model("first"), _physical("ops"), new PerspectiveScope(), false, _metadata(1), cancellationToken);
+    var stale = (await store.ReadForApplyAsync(id, cancellationToken)).Version;
+
+    // Somebody else writes: xmin moves, and the version above is now history.
+    await store.UpsertWithPhysicalFieldsAsync(
+      id, _model("collective"), _physical("collective"), new PerspectiveScope(), false, _metadata(2),
+      cancellationToken);
+
+    await Assert.That(async () => await store.UpsertWithPhysicalFieldsAsync(
+        id, _model("stale"), _physical("stale"), new PerspectiveScope(), false, _metadata(3),
+        stale, cancellationToken))
+      .Throws<PerspectiveRowConflictException>()
+      .Because("the apply computed its model from a row that has since moved, so the write must not land");
+    await Assert.That(await _assignedToAsync(id, cancellationToken)).IsEqualTo("collective")
+      .Because("a refused write writes nothing -- the promoted column is not half-applied either");
+  }
+
 }

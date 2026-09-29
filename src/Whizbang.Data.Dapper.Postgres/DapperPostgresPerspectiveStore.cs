@@ -170,6 +170,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       where TPartitionKey : notnull =>
     PurgeAsync(_convertPartitionKeyToGuid(partitionKey), cancellationToken);
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The single implementation behind the perspective-store interface's upsert overload matrix: the row identity and model, the scope decision, the incoming metadata, the expected version and the physical columns. Every overload supplies some subset, so the parameters already are the write; a request type would exist only to be unpacked on the first line.")]
   private async Task _upsertCoreAsync(
       Guid id, TModel model, PerspectiveScope scope, bool forceUpdateScope,
       PerspectiveMetadata? metadata,
@@ -305,16 +306,16 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   /// costs the one statement it always did.
   /// </remarks>
   private async Task _explainRefusedWriteAsync(
-      NpgsqlConnection conn, Guid id, PerspectiveRowVersion expected, CancellationToken cancellationToken) {
+      NpgsqlConnection conn, Guid streamId, PerspectiveRowVersion expected, CancellationToken cancellationToken) {
     await using var cmd = new NpgsqlCommand(PerspectiveRowVersionCommands.ReadVersionSql(tableName, lockRow: false), conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue("id", streamId);
     var actual = await cmd.ExecuteScalarAsync(cancellationToken) is uint xmin
       ? PerspectiveRowVersion.Of(xmin)
       : PerspectiveRowVersion.Absent;
     if (expected.State == PerspectiveRowVersionState.Present && actual == expected) {
       return;
     }
-    throw new PerspectiveRowConflictException(typeof(TModel), id, expected, actual);
+    throw new PerspectiveRowConflictException(typeof(TModel), streamId, expected, actual);
   }
 
   /// <summary>
