@@ -633,8 +633,13 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   public virtual async Task<int> ArmStrandedSagasAsync(ISagaWakeLookup wakes, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(wakes);
 
+    // An abandoned saga is not coming back on its own, which is what abandoning it decided. Re-arming
+    // it once per interval published its abandonment again each time and told an operator nothing new.
+    // Re-driving it is an explicit act, through the reset path.
     var candidates = (await LoadIncompleteSagasAsync(cancellationToken).ConfigureAwait(false))
-      .Where(c => !c.Saga.CompletionEventDispatched && c.Saga.TotalItems > 0)
+      .Where(c => !c.Saga.CompletionEventDispatched
+               && c.Saga.TotalItems > 0
+               && c.Saga.Status != SagaStatus.Abandoned)
       .ToList();
     if (candidates.Count == 0) {
       return 0;

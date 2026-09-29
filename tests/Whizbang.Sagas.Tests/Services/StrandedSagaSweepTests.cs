@@ -37,7 +37,7 @@ public class StrandedSagaSweepTests {
 
   private static Guid _id(int n) => Guid.Parse($"00000000-0000-0000-0000-{n:D12}");
 
-  private static BaseSagaModel _saga(Guid id, DateTimeOffset updatedAt, int total = 3, bool dispatched = false, int completed = 0, int failed = 0) =>
+  private static BaseSagaModel _saga(Guid id, DateTimeOffset updatedAt, int total = 3, bool dispatched = false, int completed = 0, int failed = 0, SagaStatus status = SagaStatus.Running) =>
     new() {
       Id = id,
       SagaName = SAGA_NAME,
@@ -47,6 +47,7 @@ public class StrandedSagaSweepTests {
       CompletionEventDispatched = dispatched,
       CompletedItems = completed,
       FailedItems = failed,
+      Status = status,
     };
 
   private static SagaItemModel _item(Guid sagaId, string id, SagaItemState state, DateTimeOffset updatedAt) =>
@@ -150,6 +151,47 @@ public class StrandedSagaSweepTests {
     await Assert.That(armed).IsEqualTo(0);
     await Assert.That(wakes.Asked).IsEmpty()
       .Because("a saga that completed, or never had items, has nothing to wake");
+  }
+
+  /// <summary>An abandoned saga is left alone, and is not even asked about.</summary>
+  /// <remarks>
+  /// Abandoning a saga is the decision that it is not coming back on its own. Re-arming it once per
+  /// StrandedSagaRearmInterval published SagaCompletionAbandonedEvent again each time, which told an
+  /// operator nothing new and made the event's count meaningless as a signal. Asserted on the wake
+  /// lookup as well as the arm count, because a saga excluded from the candidate set should cost no
+  /// query either.
+  /// </remarks>
+  [Test]
+  public async Task Sweep_SkipsAnAbandonedSaga_WithoutAskingAboutItAsync() {
+    var old = _ago(TimeSpan.FromHours(2));
+    var wakes = new FixedWakes(new HashSet<Guid>());
+    var svc = new SweptSagaService(new RecordingEmitter(), _repoIdleSince(_id(11), old), [
+      new IncompleteSaga(_saga(_id(11), old, status: SagaStatus.Abandoned), TENANT)]);
+
+    var armed = await svc.ArmStrandedSagasAsync(wakes, CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(0)
+      .Because("the watchdog already gave up on it; re-arming re-publishes the abandonment");
+    await Assert.That(wakes.Asked).IsEmpty()
+      .Because("a saga that is out of the candidate set should not cost a wake lookup");
+  }
+
+  /// <summary>A still-running saga beside an abandoned one is still swept.</summary>
+  /// <remarks>The exclusion has to be per saga, or one abandoned saga would stall the sweep for the rest.</remarks>
+  [Test]
+  public async Task Sweep_ArmsARunningSaga_BesideAnAbandonedOneAsync() {
+    var old = _ago(TimeSpan.FromHours(2));
+    var wakes = new FixedWakes(new HashSet<Guid>());
+    var svc = new SweptSagaService(new RecordingEmitter(), _repoIdleSince(_id(12), old), [
+      new IncompleteSaga(_saga(_id(12), old), TENANT),
+      new IncompleteSaga(_saga(_id(13), old, status: SagaStatus.Abandoned), TENANT)]);
+
+    var armed = await svc.ArmStrandedSagasAsync(wakes, CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(1)
+      .Because("the running saga is still stranded and still wants a tick");
+    await Assert.That(wakes.Asked[0]).IsEquivalentTo([_id(12)])
+      .Because("only the running one is a candidate");
   }
 
   [Test]
