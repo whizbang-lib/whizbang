@@ -107,7 +107,7 @@ job fails it on every path. The rules are `.github/scripts/Test-CiResult.ps1`, t
 |---|---|---|
 | yielded | a release PR, or the main push after one (`release-pr`) | the yielded-to run's own `Gate · CI result` ends green (the gate waits for it, up to 90 minutes), and Quality is green here |
 | fast-forward | a queue run over a tree its PR run covered (`ff-validated`) | `ff-validated` succeeded (it already required the PR run green, Quality included) |
-| reused | a develop push or release cut (`queue-validated`) | `Build · Compile`, `Build · Verify rebuild matches the tested build` and `Report · Republish the tested run's coverage` all green |
+| reused | a develop push or release cut (`queue-validated`) | `Build · Verify rebuild matches the tested build` and `Report · Republish the tested run's coverage` green, plus `Build · Compile` unless the change detector found no code (a docs-only merge builds nothing) |
 | docs-only | a push or PR whose change detector found only inert paths | `Plan · Detect changes` succeeded and said so |
 | tested here | everything else | build, all six suites and Quality green; **a skip fails** (Quality may skip only on a Dependabot PR) |
 

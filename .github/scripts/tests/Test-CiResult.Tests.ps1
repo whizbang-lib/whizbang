@@ -124,6 +124,20 @@ Describe 'reused (queue-validated)' {
     Skip-Job $n @($job)
     (Get-CiVerdict -NeedsTable $n -EventName push).Pass | Should -BeFalse
   }
+
+  # A docs-only merge reaches develop on this path too: the queue validated its tree, and the change
+  # detector found no code, so the build is skipped by design. Requiring it failed every such merge.
+  It 'passes a docs-only push whose build was skipped because nothing needed building' {
+    $n['changes'].outputs.code = 'false'; Skip-Job $n @('build', 'pack')
+    $v = Get-CiVerdict -NeedsTable $n -EventName push
+    $v.Path | Should -Be 'reused'
+    $v.Pass | Should -BeTrue
+  }
+
+  It 'still fails a docs-only push when <job> did not run' -ForEach @(@{ job = 'verify-rebuild' }, @{ job = 'reupload-reports' }) {
+    $n['changes'].outputs.code = 'false'; Skip-Job $n @('build', $job)
+    (Get-CiVerdict -NeedsTable $n -EventName push).Pass | Should -BeFalse
+  }
 }
 
 Describe 'fast-forward (ff-validated)' {
