@@ -87,6 +87,16 @@ internal static class PerspectiveRowVersionSql {
   }
 
   /// <summary>
+  /// Read one stored document column of the row as text, or null when there is no row or the column is null.
+  /// Used only to explain a read that already failed (<see cref="Perspectives.MappedDocumentReadFailure"/>).
+  /// </summary>
+  internal static Task<string?> ReadDocumentTextAsync(
+      DbContext context, string qualifiedTable, string column, Guid id, CancellationToken cancellationToken) =>
+    _withCommandAsync(context, $"SELECT {PgIdentifier.Quote(column)}::text FROM {qualifiedTable} WHERE id = @id", id,
+      async command => await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string,
+      cancellationToken);
+
+  /// <summary>
   /// The parameter a conditional write binds its expected version to. <c>xmin</c> is an <c>xid</c>; the
   /// version stored its unsigned value.
   /// </summary>

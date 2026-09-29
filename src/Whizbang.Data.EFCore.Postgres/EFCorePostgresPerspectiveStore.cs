@@ -65,24 +65,23 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// hydrated as it was tracked, by the lens hydrator a shared context can carry, and is returned as it is:
   /// its columns are no longer on an entry to read.
   /// </para>
+  /// <para>
+  /// Both reads go through <see cref="_readRowAsync"/>, so a document EF Core cannot materialize is reported
+  /// with its path either way (issue #985).
+  /// </para>
   /// </remarks>
   private async Task<TModel?> _loadAsync(Guid id, CancellationToken cancellationToken) {
-    var rows = _context.Set<PerspectiveRow<TModel>>();
     if (!SplitPhysicalFieldRegistry.TryGet<TModel>(out var split)) {
-      var document = await rows.AsNoTracking()
-          .OrderBy(r => r.Id)
-          .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
+      var document = await _readRowAsync(id, tracked: false, cancellationToken);
       return PerspectiveDataCoalescer.CoalescedData(document); // WORKAROUND(dotnet/efcore#38625)
     }
 
-    var held = rows.Local.FirstOrDefault(r => r.Id == id);
+    var held = _context.Set<PerspectiveRow<TModel>>().Local.FirstOrDefault(r => r.Id == id);
     if (held is not null && _context.Entry(held).State == EntityState.Unchanged) {
       _context.Entry(held).State = EntityState.Detached;
     }
 
-    var row = await rows
-        .OrderBy(r => r.Id)
-        .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
+    var row = await _readRowAsync(id, tracked: true, cancellationToken);
     // Unchanged is a row this read materialized. A held row with a pending change came back as it is, and
     // stays tracked for its write.
     var entry = row is null ? null : _context.Entry(row);
@@ -92,6 +91,40 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     }
 
     return PerspectiveDataCoalescer.CoalescedData(row); // WORKAROUND(dotnet/efcore#38625)
+  }
+
+  /// <summary>
+  /// Reads one row, explaining a failed read of its stored documents as the refusal it is.
+  /// </summary>
+  /// <remarks>
+  /// Entity Framework's materializer raises a bare reader error, with no path, for a stored value of
+  /// the wrong JSON type. <see cref="Perspectives.MappedDocumentReadFailure"/> finds the value and
+  /// raises it as a <see cref="System.Text.Json.JsonException"/>, which is what lets the worker
+  /// classify the stream as holding a stored document no reader takes, announce it once with the path,
+  /// and park it. Any other failure is rethrown as it was raised. A Split model is read
+  /// <paramref name="tracked"/>, so its promoted columns are on the entry to copy from.
+  /// </remarks>
+  private async Task<PerspectiveRow<TModel>?> _readRowAsync(Guid id, bool tracked, CancellationToken cancellationToken) {
+    PerspectiveRow<TModel>? row = null;
+    Exception? failure = null;
+    try {
+      var rows = _context.Set<PerspectiveRow<TModel>>();
+      row = await (tracked ? rows : rows.AsNoTracking())
+          .OrderBy(r => r.Id)
+          .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
+    } catch (Exception raised) when (Perspectives.MappedDocumentReadFailure.MayBeDocumentRead(raised)) {
+      // Explained after the catch rather than inside it: an await in a catch that also rethrows makes the
+      // compiler move the handler out of the catch region, and the rethrow's sequence point lands where
+      // nothing reaches it.
+      failure = raised;
+    }
+    var explained = failure is null
+        ? null
+        : await Perspectives.MappedDocumentReadFailure.ExplainAsync<TModel>(_context, id, failure, cancellationToken);
+    // Awaiting a faulted task rethrows through ExceptionDispatchInfo, so a failure the document does not
+    // explain keeps the stack it was raised with.
+    await (failure is null ? Task.CompletedTask : Task.FromException(explained ?? failure));
+    return row;
   }
 
   /// <inheritdoc/>
