@@ -132,7 +132,7 @@ public class EnsureIndexFunctionTests {
     var outcome = await _ensureAsync($"CREATE INDEX IF NOT EXISTS idx_ensure_probe_scope_tenant ON {QUALIFIED} ((scope->>'t'));");
 
     await Assert.That(outcome).IsEqualTo($"equivalent:idx_{TABLE}_scope_t");
-    await Assert.That(await _indexesOverAsync("(scope ->> 't'::text)")).IsEquivalentTo(new List<string> { $"idx_{TABLE}_scope_t" });
+    await Assert.That(await _indexesOverAsync("(scope ->> 't'::text)")).IsEquivalentTo([$"idx_{TABLE}_scope_t"]);
   }
 
   /// <summary>

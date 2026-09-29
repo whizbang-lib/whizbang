@@ -151,8 +151,8 @@ public class DocumentIndexInitializationTests {
     await _initializeAsync(cancellationToken);
 
     await Assert.That(await _indexesAsync(UNDECLARED, "(scope ->> 't'::text)"))
-      .IsEquivalentTo(new List<string> { $"idx_{UNDECLARED}_scope_t" });
+      .IsEquivalentTo([$"idx_{UNDECLARED}_scope_t"]);
     await Assert.That(await _indexesAsync(UNDECLARED, "(data ->> 'Status'::text)"))
-      .IsEquivalentTo(new List<string> { $"idx_{UNDECLARED}_data_status" });
+      .IsEquivalentTo([$"idx_{UNDECLARED}_data_status"]);
   }
 }
