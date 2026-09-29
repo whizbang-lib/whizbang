@@ -71,7 +71,7 @@ human review.
 | `sites_https` | Met | The repository (GitHub), docs site (`https://whizba.ng`, HTTP redirects to HTTPS) and packages (nuget.org) are served over HTTPS only. |
 | `discussion` | Met | GitHub Discussions (Q&A, Ideas, Announcements) plus issues and pull requests: searchable, addressable by URL, open to new participants, no proprietary client needed. <https://github.com/whizbang-lib/whizbang/discussions> |
 | `english` | Met | All documentation, code comments and issue discussion are in English (US spelling is a documented standard). |
-| `maintained` | Met | Actively developed: over a thousand commits reached `develop` in September 2026, and stable releases shipped on 2026-09-22, 09-23, 09-26 and 09-27. <https://github.com/whizbang-lib/whizbang/releases> |
+| `maintained` | Met | Actively developed: pull requests merge into `develop` most days, and stable releases shipped on 2026-09-22, 09-23, 09-26 and 09-27. <https://github.com/whizbang-lib/whizbang/releases> |
 
 ## Change Control
 
