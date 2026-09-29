@@ -71,6 +71,7 @@ exclusive work checks it with wh_assert_role_epoch. Never deleted, so the epoch 
 -- outcome, because the row, not the lock, is the authority.
 --
 -- <docs>proposals/duty-role-assignment</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:VoteLockKey_CarriesThisSchemasTableOid_SoItIsSchemaScopedByConstructionAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:Elect_VacantRole_GrantsEpochOne_WithALeaseInDatabaseTime_AndRecordsTheCapabilityAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:Elect_AfterTheHoldersLeaseLapses_VoidsIt_AndGrantsTheNextEpochAsync</tests>
 -- ============================================================================
@@ -150,6 +151,7 @@ $$;
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:Elect_VacantRole_GrantsEpochOne_WithALeaseInDatabaseTime_AndRecordsTheCapabilityAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:Elect_AfterTheHoldersLeaseLapses_VoidsIt_AndGrantsTheNextEpochAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentSqlTests.cs:Elect_ByALapsedHolder_WithinTheCooldown_IsRefused_ButAnotherInstanceIsGrantedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentElectorE2ETests.cs:TenInstancesRacing_ExactlyOneHolderAndOneEpochActAsync</tests>
 -- ============================================================================
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_elect_role(
   p_role TEXT,

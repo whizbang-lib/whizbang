@@ -410,6 +410,20 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  public async Task VoteLockKey_CarriesThisSchemasTableOid_SoItIsSchemaScopedByConstructionAsync(CancellationToken cancellationToken) {
+    // Issue #962: a role's vote in one schema must never wait on the same role in another. The
+    // key's high half is the oid of this schema's table, which no other schema's table shares.
+    var sameAsTableOid = await _scalarBoolAsync("""
+      SELECT ((_role_vote_lock_key(@role) >> 32) & 4294967295) = 'wh_role_assignments'::regclass::oid::bigint
+         AND (_role_vote_lock_key(@role) & 4294967295) = (hashtext(@role)::bigint & 4294967295)
+         AND _role_vote_lock_key(@role) <> _role_vote_lock_key('migrator')
+      """, cancellationToken, ("role", ROLE));
+
+    await Assert.That(sameAsTableOid).IsTrue();
+  }
+
+  [Test]
+  [Timeout(60000)]
   public async Task Status_ReportsHeldLapsedAndVacant_WithEpochAndElectionCountAsync(CancellationToken cancellationToken) {
     // Requirements 9 and 10: "no holder" is visible, and so are holder, epoch, renewal and count.
     var a = await _joinAsync(cancellationToken);
