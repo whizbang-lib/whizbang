@@ -15,10 +15,11 @@ namespace Whizbang.Data.Postgres.Collective;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Interleave.</strong> Each collective event is its own single-event stream. During a rebuild this
-/// loads the tenant's collective events for the model being rebuilt and merges them into the stream's event
-/// list, then the runner's existing <c>OrderByMessageId</c> places them chronologically among the per-stream
-/// events — exactly where they were applied live. Tenant scoping is essential: a collective for global template
+/// <strong>Interleave.</strong> A collective event is its own single-event stream unless it carries an ordering
+/// key, in which case it shares its key's stream. During a rebuild this loads the tenant's collective events for
+/// the model being rebuilt and merges them into the stream's event list, <c>OrderByMessageId</c> places them
+/// chronologically among the per-stream events, and the collectives sharing a stream are then put in commit order
+/// among themselves, the order the live sink applied them in. Tenant scoping is essential: a collective for global template
 /// G in tenant A must never fold into tenant B's row for the same G.
 /// </para>
 /// <para>
@@ -90,27 +91,72 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     // Type.FullName — match that format so the filter finds the collective streams.
     var typeNames = collectiveTypes.ConvertAll(TypeNameFormatter.Format);
 
-    var streamIds = await _toListAsync(
+    // Each collective's stream and commit position: the stream says which collectives share an ordering key, the
+    // position says the order the live sink applied them in.
+    var positions = await _toListAsync(
       _eventStoreQuery.Query
         .Where(r => typeNames.Contains(r.EventType) && r.Scope!.TenantId == tenantId)
-        .Select(r => r.StreamId)
-        .Distinct(),
+        .Select(r => new CollectivePosition(r.StreamId, r.Id, r.CommitSequence)),
       cancellationToken).ConfigureAwait(false);
-    if (streamIds.Count == 0) {
+    if (positions.Count == 0) {
       return streamEvents;
     }
 
     var merged = new List<MessageEnvelope<IEvent>>(streamEvents);
-    foreach (var streamId in streamIds) {
+    var byStream = new List<List<MessageEnvelope<IEvent>>>();
+    foreach (var streamId in positions.Select(p => p.StreamId).Distinct()) {
+      var collectives = new List<MessageEnvelope<IEvent>>();
       await foreach (var envelope in _eventStore
           .ReadPolymorphicAsync(streamId, null, collectiveTypes, cancellationToken)
           .Where(e => e.Payload is ICollectiveEvent)
           .ConfigureAwait(false)) {
-        merged.Add(envelope);
+        collectives.Add(envelope);
+      }
+      merged.AddRange(collectives);
+      byStream.Add(collectives);
+    }
+
+    var ordered = merged.OrderByMessageId().ToList();
+    _putSharedStreamsInCommitOrder(ordered, byStream, positions);
+    return ordered;
+  }
+
+  /// <summary>
+  /// Collectives that share an ordering key share a stream, and the live sink applied that stream in commit order
+  /// (<c>wh_collective_sink_queue</c>: <c>commit_sequence</c>, an unstamped event last, <c>event_id</c> breaking the
+  /// tie). An event id is minted before commit, so two of them can have ids in the opposite order; left in id order
+  /// the replay would fold the earlier commit last and end where live did not. They change places among themselves
+  /// only, in the slots their ids gave them, so every other event keeps its place in the fold.
+  /// </summary>
+  private static void _putSharedStreamsInCommitOrder(
+      List<MessageEnvelope<IEvent>> ordered, List<List<MessageEnvelope<IEvent>>> byStream, List<CollectivePosition> positions) {
+    var commitSequence = new Dictionary<Guid, long?>();
+    foreach (var position in positions) {
+      commitSequence.TryAdd(position.EventId, position.CommitSequence);
+    }
+
+    foreach (var collectives in byStream.Where(c => c.Count > 1)) {
+      var members = new HashSet<Guid>(collectives.Select(e => e.MessageId.Value));
+      var slots = new List<int>();
+      for (var i = 0; i < ordered.Count; i++) {
+        if (members.Contains(ordered[i].MessageId.Value)) {
+          slots.Add(i);
+        }
+      }
+      var inCommitOrder = collectives
+        .OrderBy(e => commitSequence.GetValueOrDefault(e.MessageId.Value) is null)
+        .ThenBy(e => commitSequence.GetValueOrDefault(e.MessageId.Value))
+        // Postgres orders a uuid by its text; .NET's Guid order differs, so the tie-break compares the text too.
+        .ThenBy(e => e.MessageId.Value.ToString(), StringComparer.Ordinal)
+        .ToList();
+      for (var i = 0; i < slots.Count; i++) {
+        ordered[slots[i]] = inCommitOrder[i];
       }
     }
-    return [.. merged.OrderByMessageId()];
   }
+
+  /// <summary>Where one collective sits: its stream, its id and its commit sequence.</summary>
+  private sealed record CollectivePosition(Guid StreamId, Guid EventId, long? CommitSequence);
 
   /// <inheritdoc/>
   public object ApplyInMemory(Type modelType, object currentModel, Guid streamId, IEvent collectiveEvent) {

@@ -75,4 +75,40 @@ public class CollectiveApplyContentionTests {
     await Assert.That(CollectiveApplyContention.TableOf(null)).IsEqualTo("(unknown)")
       .Because("same reason: there is nothing to parse and still a refusal to report");
   }
+
+  // ── Waiting again for the lock (#964) ───────────────────────────────────
+
+  [Test]
+  public async Task WaitingForTheLock_WithoutAProgressCallback_StillWaitsAgainAsync() {
+    var attempts = 0;
+    var result = await CollectiveApplyContention.WaitingForTheLockAsync(
+      () => ++attempts < 3
+        ? Task.FromException<int>(new Whizbang.Core.Perspectives.CollectiveApplyLockBusyException("wh_per_t", 1))
+        : Task.FromResult(42),
+      Whizbang.Core.Perspectives.CollectiveApplyOptions.Default with { LockWaitRenewals = 2 },
+      onProgress: null, CancellationToken.None);
+
+    await Assert.That(result).IsEqualTo(42);
+    await Assert.That(attempts).IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task WaitingForTheLock_OtherFailures_AreNotWaitedOnAsync() {
+    var attempts = 0;
+    await Assert.That(async () => await CollectiveApplyContention.WaitingForTheLockAsync<int>(
+        () => { attempts++; throw new InvalidOperationException("broken apply"); },
+        Whizbang.Core.Perspectives.CollectiveApplyOptions.Default, onProgress: null, CancellationToken.None))
+      .Throws<InvalidOperationException>();
+    await Assert.That(attempts).IsEqualTo(1).Because("only a busy lock is waited on again; a broken apply is a failure");
+  }
+
+  [Test]
+  public async Task WaitingForTheLock_NullArguments_ThrowAsync() {
+    await Assert.That(async () => await CollectiveApplyContention.WaitingForTheLockAsync<int>(
+        null!, Whizbang.Core.Perspectives.CollectiveApplyOptions.Default, null, CancellationToken.None))
+      .Throws<ArgumentNullException>();
+    await Assert.That(async () => await CollectiveApplyContention.WaitingForTheLockAsync(
+        () => Task.FromResult(1), null!, null, CancellationToken.None))
+      .Throws<ArgumentNullException>();
+  }
 }

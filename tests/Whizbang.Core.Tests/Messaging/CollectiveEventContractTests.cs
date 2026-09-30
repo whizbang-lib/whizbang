@@ -78,16 +78,19 @@ public class CollectiveEventContractTests {
   }
 
   [Test]
-  public async Task ICollectiveEvent_ContractIsMinimal_OnlyScopeAsync() {
-    // Document the deliberate constraint: ICollectiveEvent has exactly
-    // ONE property — Scope. No MatchedStreamIds, no MaxExpandedInnersAllowed,
-    // no audit pointer. The event IS the descriptor. Adding properties
-    // here is a substantial design decision (and a wire-format change).
-    var props = typeof(ICollectiveEvent).GetProperties();
+  public async Task ICollectiveEvent_ContractIsMinimal_ScopeAndAnOptionalOrderingKeyAsync() {
+    // Document the deliberate constraint: ICollectiveEvent carries its Scope and, since #963, an optional
+    // OrderingKey. No MatchedStreamIds, no MaxExpandedInnersAllowed, no audit pointer. The event IS the
+    // descriptor; the key only says which collectives are ordered against each other, and it has a default
+    // so an implementer need not declare it. Adding properties here is a substantial design decision (and a
+    // wire-format change).
+    var props = typeof(ICollectiveEvent).GetProperties().OrderBy(p => p.Name, StringComparer.Ordinal).ToList();
 
-    await Assert.That(props.Length).IsEqualTo(1)
+    await Assert.That(props.Select(p => p.Name)).IsEquivalentTo(
+      [nameof(ICollectiveEvent.OrderingKey), nameof(ICollectiveEvent.Scope)])
       .Because("The whole point of the scope-level-determinism design is that the event carries only its scope payload. Adding properties to this contract reopens questions we've already settled.");
-    await Assert.That(props[0].Name).IsEqualTo(nameof(ICollectiveEvent.Scope));
+    await Assert.That(props[0].GetMethod!.IsAbstract).IsFalse()
+      .Because("The ordering key is opt-in: an existing collective compiles unchanged and is unordered.");
   }
 
   /// <summary>

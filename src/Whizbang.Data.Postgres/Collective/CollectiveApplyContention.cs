@@ -1,4 +1,5 @@
 using Npgsql;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.Postgres.Collective;
 
@@ -37,6 +38,40 @@ public static class CollectiveApplyContention {
       }
     }
     return false;
+  }
+
+  /// <summary>
+  /// Runs one batch, waiting again for its apply lock after each bounded wait that ends without it (#964): up to
+  /// <see cref="CollectiveApplyOptions.LockWaitRenewals"/> more times, reporting progress through
+  /// <paramref name="onProgress"/> before each so the caller renews its work lease while it waits. When every wait is
+  /// used up the refusal is rethrown with the total time waited.
+  /// </summary>
+  /// <typeparam name="T">What the batch returns.</typeparam>
+  /// <param name="batch">One attempt at the batch, in a transaction of its own.</param>
+  /// <param name="options">The apply options; their renewal count bounds the waiting.</param>
+  /// <param name="onProgress">The caller's progress callback, the one it renews its lease from; may be null.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>What the batch returned once it held the lock.</returns>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:LockHeldThroughEveryRenewal_GivesUpAsBusyAsync</tests>
+  public static async Task<T> WaitingForTheLockAsync<T>(
+      Func<Task<T>> batch, CollectiveApplyOptions options,
+      Func<CancellationToken, ValueTask>? onProgress, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(batch);
+    ArgumentNullException.ThrowIfNull(options);
+    var waits = 0;
+    while (true) {
+      try {
+        return await batch().ConfigureAwait(false);
+      } catch (CollectiveApplyLockBusyException) when (waits < options.LockWaitRenewals) {
+        waits++;
+        if (onProgress is not null) {
+          await onProgress(cancellationToken).ConfigureAwait(false);
+        }
+      } catch (CollectiveApplyLockBusyException busy) when (waits > 0) {
+        throw new CollectiveApplyLockBusyException(busy.Table, busy.WaitedSeconds * (waits + 1), busy.InnerException);
+      }
+    }
   }
 
   /// <summary>The table a batch's SELECT reads, for a message that names where the contention is.</summary>

@@ -223,7 +223,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     var busy = await Assert.That(async () => await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
         _jobEntry(), new JobPerspective(), new ArchiveEvent { Scope = new TenantCollectiveScope("t-A") },
         new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings,
-        CollectiveApplyOptions.Default with { LockWaitSeconds = 2 },
+        CollectiveApplyOptions.Default with { LockWaitSeconds = 2, LockWaitRenewals = 0 },
         logger: null, hookRegistry: null))
       .Throws<CollectiveApplyLockBusyException>()
       .Because("another batch holds the lock for this table and scope; the apply is not broken");
@@ -235,6 +235,79 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       .Because("the wait is bounded now; unbounded it sat for the whole statement timeout");
     await Assert.That(await _statusAsync(job)).IsEqualTo("Active")
       .Because("a batch that never got the lock applied nothing");
+  }
+
+  /// <summary>
+  /// A batch waiting for its apply lock keeps its work lease (#964): each bounded wait that ends without the lock
+  /// reports progress, which is what renews the lease, and the batch waits again. Once the lock is free it applies.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task LockHeldElsewhere_RenewsTheLeaseWhileItWaits_ThenAppliesAsync(CancellationToken cancellationToken) {
+    await _createTableAsync();
+    var job = Guid.NewGuid();
+    await _seedAsync(job, "t-A", "Active");
+    var lockKey = CollectiveApplyLockKey.Compute(TABLE, new TenantCollectiveScope("t-A").ScopeIdentity);
+    using var holder = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    var holdTx = await ((Npgsql.NpgsqlConnection)holder).BeginTransactionAsync(cancellationToken);
+    await using (var hold = ((Npgsql.NpgsqlConnection)holder).CreateCommand()) {
+      hold.Transaction = holdTx;
+      hold.CommandText = "SELECT pg_advisory_xact_lock(@k)";
+      hold.Parameters.AddWithValue("k", lockKey);
+      await hold.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var reports = 0;
+    await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
+      _jobEntry(), new JobPerspective(), new ArchiveEvent { Scope = new TenantCollectiveScope("t-A") },
+      new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings,
+      CollectiveApplyOptions.Default with { LockWaitSeconds = 1, LockWaitRenewals = 3 },
+      logger: null, hookRegistry: null,
+      onBatchApplied: async ct => {
+        // The first report is the renewal after the first wait: release the lock, deterministically, there.
+        if (Interlocked.Increment(ref reports) == 1) {
+          await holdTx.CommitAsync(ct);
+        }
+      },
+      cancellationToken: cancellationToken);
+    await holdTx.DisposeAsync();
+
+    await Assert.That(reports).IsEqualTo(2)
+      .Because("one report renewed the lease during the wait, and one reported the batch that then applied");
+    await Assert.That(await _statusAsync(job)).IsEqualTo("Archived")
+      .Because("once the lock was free the batch applied, with no failure and no second lease in between");
+  }
+
+  /// <summary>A batch whose lock stays held through every renewal gives up as busy, having waited every slice.</summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task LockHeldThroughEveryRenewal_GivesUpAsBusyAsync(CancellationToken cancellationToken) {
+    await _createTableAsync();
+    var job = Guid.NewGuid();
+    await _seedAsync(job, "t-A", "Active");
+    var lockKey = CollectiveApplyLockKey.Compute(TABLE, new TenantCollectiveScope("t-A").ScopeIdentity);
+    using var holder = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    await using var holdTx = await ((Npgsql.NpgsqlConnection)holder).BeginTransactionAsync(cancellationToken);
+    await using (var hold = ((Npgsql.NpgsqlConnection)holder).CreateCommand()) {
+      hold.Transaction = holdTx;
+      hold.CommandText = "SELECT pg_advisory_xact_lock(@k)";
+      hold.Parameters.AddWithValue("k", lockKey);
+      await hold.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var reports = 0;
+    var busy = await Assert.That(async () => await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
+        _jobEntry(), new JobPerspective(), new ArchiveEvent { Scope = new TenantCollectiveScope("t-A") },
+        new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings,
+        CollectiveApplyOptions.Default with { LockWaitSeconds = 1, LockWaitRenewals = 2 },
+        logger: null, hookRegistry: null,
+        onBatchApplied: _ => { Interlocked.Increment(ref reports); return ValueTask.CompletedTask; },
+        cancellationToken: cancellationToken))
+      .Throws<CollectiveApplyLockBusyException>();
+
+    await Assert.That(reports).IsEqualTo(2).Because("the lease was renewed after each wait but the last");
+    await Assert.That(busy!.WaitedSeconds).IsEqualTo(3).Because("three one-second waits");
+    await Assert.That(await _statusAsync(job)).IsEqualTo("Active");
   }
 
   [Test]
