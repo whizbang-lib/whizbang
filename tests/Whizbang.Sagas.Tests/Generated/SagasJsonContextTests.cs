@@ -117,4 +117,82 @@ public class SagasJsonContextTests {
     await Assert.That(round.StreamId).IsEqualTo(original.StreamId);
     await Assert.That(round.RescheduleCount).IsEqualTo(original.RescheduleCount);
   }
+
+  // ── The continuation request (#1001) ─────────────────────────────────────
+  //
+  // Published by BaseSagaService.CompleteSagaAsync when a finished saga declared a continuation, so it
+  // crosses the same outbox, transport and inbox boundaries as the tick, and needs the same four layers.
+
+  private static SagaContinuationRequestedEvent _continuation() => new() {
+    SagaName = "EnrichImport",
+    EntityId = Guid.CreateVersion7(),
+    StreamId = Guid.CreateVersion7(),
+    ParentSagaName = "BulkImport",
+    ParentSagaId = Guid.CreateVersion7(),
+    ParentFinalStatus = SagaStatus.CompletedWithFailures,
+  };
+
+  /// <summary>
+  /// The stored and wire forms of the continuation's type name both resolve: the short form the
+  /// outbox and event store keep, and the assembly-qualified form the dispatcher and lifecycle pass.
+  /// </summary>
+  /// <param name="fullyQualified">Whether to ask with the assembly-qualified name.</param>
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task ContinuationRequest_ResolvesByItsWireNameAsync(bool fullyQualified) {
+    var name = fullyQualified
+      ? typeof(SagaContinuationRequestedEvent).AssemblyQualifiedName!
+      : "Whizbang.Sagas.SagaContinuationRequestedEvent, Whizbang.Sagas";
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(name, options);
+
+    await Assert.That(typeInfo).IsNotNull()
+      .Because("a transport or the inbox resolves the payload by its stored name; unresolved, the continuation is never started");
+    await Assert.That(typeInfo!.Type).IsEqualTo(typeof(SagaContinuationRequestedEvent));
+  }
+
+  /// <summary>The continuation is a derived type of both message bases, for polymorphic reads.</summary>
+  [Test]
+  public async Task ContinuationRequest_IsRegisteredAsADerivedTypeOfIEventAndIMessageAsync() {
+    await Assert.That(JsonContextRegistry.GetRegisteredDerivedTypes<IEvent>()).Contains(typeof(SagaContinuationRequestedEvent));
+    await Assert.That(JsonContextRegistry.GetRegisteredDerivedTypes<IMessage>()).Contains(typeof(SagaContinuationRequestedEvent));
+  }
+
+  /// <summary>
+  /// A continuation serialized as the outbox stores it comes back, through its stored type name, with
+  /// every field the continuation's receptor reads.
+  /// </summary>
+  [Test]
+  public async Task ContinuationRequest_RoundTripsThroughItsStoredTypeNameAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var original = _continuation();
+
+    var stored = System.Text.Json.JsonSerializer.SerializeToElement(original, options.GetTypeInfo(typeof(SagaContinuationRequestedEvent)));
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(TypeNameFormatter.Format(typeof(SagaContinuationRequestedEvent)), options)!;
+    var round = (SagaContinuationRequestedEvent?)System.Text.Json.JsonSerializer.Deserialize(stored, typeInfo);
+
+    await Assert.That(round).IsNotNull();
+    await Assert.That(round!.SagaName).IsEqualTo(original.SagaName);
+    await Assert.That(round.EntityId).IsEqualTo(original.EntityId);
+    await Assert.That(round.StreamId).IsEqualTo(original.StreamId);
+    await Assert.That(round.ParentSagaName).IsEqualTo(original.ParentSagaName);
+    await Assert.That(round.ParentSagaId).IsEqualTo(original.ParentSagaId);
+    await Assert.That(round.ParentFinalStatus).IsEqualTo(original.ParentFinalStatus);
+  }
+
+  /// <summary>A continuation read back as an <see cref="IEvent"/>, as the event store reads it, keeps its type.</summary>
+  [Test]
+  public async Task ContinuationRequest_RoundTripsAsAnIEventAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var eventInfo = JsonContextRegistry.GetPolymorphicTypeInfo<IEvent>(options)!;
+    var original = _continuation();
+
+    var json = System.Text.Json.JsonSerializer.Serialize<IEvent>(original, eventInfo);
+    var round = System.Text.Json.JsonSerializer.Deserialize(json, eventInfo);
+
+    await Assert.That(round).IsTypeOf<SagaContinuationRequestedEvent>();
+    await Assert.That(((SagaContinuationRequestedEvent)round!).ParentSagaId).IsEqualTo(original.ParentSagaId);
+  }
 }
