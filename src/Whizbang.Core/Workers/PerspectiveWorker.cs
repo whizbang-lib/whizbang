@@ -226,6 +226,17 @@ public partial class PerspectiveWorker(
   // entries idle for longer than IdleEvictionWindow whose semaphore is
   // currently free. The sweep cost is amortized over real work — no thread
   // is ever woken just to GC the dictionary.
+  // Collective sink rows this pod holds that could not apply because a collective ahead of them in their stream's queue
+  // was not in the same run (#963). Two collectives sharing a key can be claimed together and split across consumer
+  // loops; the stream's affinity gate serializes the two runs but does not order them. When the later one gets the
+  // gate first it has to wait, and without this it waited out its whole lease although the run holding the head
+  // followed at once. The next sink run on the stream takes these over while their lease is still this pod's, so they
+  // apply right behind the head, in queue order. Keyed by stream; each row carries the deadline after which it is no
+  // longer assumed to be this pod's, and is then left to be re-offered as before.
+  private readonly ConcurrentDictionary<Guid, Dictionary<Guid, DateTimeOffset>> _collectiveSinkHeldBack = new();
+
+  /// <summary>How many sink streams have a row held back right now (#963); read by tests of the map's bound.</summary>
+  internal int HeldBackSinkStreamCount => _collectiveSinkHeldBack.Count;
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), StreamAffinityGateEntry> _streamAffinityGates = new();
   private readonly PerspectiveStreamAffinityOptions _streamAffinityOptions = streamAffinityOptions.Value;
   private long _lastStreamAffinitySweepTicks = DateTimeOffset.UtcNow.Ticks;
@@ -3241,6 +3252,8 @@ public partial class PerspectiveWorker(
       Guid[] sinkWorkIds,
       CancellationToken cancellationToken) {
 
+    sinkWorkIds = _takeHeldBackSinkRows(streamId, sinkWorkIds);
+
     // Drain re-offer during the completion-flush window: a prior dispatch already completed these
     // rows (they sit in the processed-event cache until the DB acks their DELETE) but the refetch
     // still sees them and the cursor read may not reflect the advance yet — without this guard the
@@ -3414,6 +3427,9 @@ public partial class PerspectiveWorker(
     }
 
     var queued = new HashSet<Guid>(pending.Select(e => e.EventWorkId));
+    // Held rows behind one this run does not hold wait for the run that holds it, which is usually this pod's next.
+    _settleHeldBackSinkRows(streamId, sinkWorkIds,
+      [.. sinkWorkIds.Where(id => queued.Contains(id) && !head.Exists(e => e.EventWorkId == id))]);
     if (head.Count == 0 && sinkWorkIds.Any(queued.Contains)) {
       LogCollectiveSinkWaitingItsTurn(_logger, streamId, pending[0].EventId);
       return null;
@@ -3479,6 +3495,64 @@ public partial class PerspectiveWorker(
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogErrorProcessingPerspectiveCursor(_logger, ex, CollectiveRouting.SINK_PERSPECTIVE_NAME, streamId);
         _metrics?.Errors.Add(1);
+      }
+    }
+  }
+
+  /// <summary>
+  /// The run's sink rows plus the rows an earlier run on this stream held back (#963) whose lease is still this pod's.
+  /// Called under the stream's affinity gate, so no other sink run on the stream is between this and the settle.
+  /// </summary>
+  private Guid[] _takeHeldBackSinkRows(Guid streamId, Guid[] sinkWorkIds) {
+    if (!_collectiveSinkHeldBack.TryGetValue(streamId, out var heldBack)) {
+      return sinkWorkIds;
+    }
+    var now = _timeProvider.GetUtcNow();
+    lock (heldBack) {
+      return [.. sinkWorkIds.Concat(heldBack.Where(kv => kv.Value > now).Select(kv => kv.Key)).Distinct()];
+    }
+  }
+
+  /// <summary>
+  /// Records which of this run's sink rows are still waiting behind a collective the run did not hold (#963), for the
+  /// next sink run on the stream; every other row of the run applied or was completed and is forgotten. A row keeps the
+  /// deadline it was first held back with, the one a lease handle would get then, so it is taken over only while no
+  /// other instance can have claimed it. Expired rows of every stream are dropped here, which bounds the map by the
+  /// streams that have a row waiting right now.
+  /// </summary>
+  private static Guid[] _expired(Dictionary<Guid, DateTimeOffset> rows, DateTimeOffset now) =>
+    [.. rows.Where(kv => kv.Value <= now).Select(kv => kv.Key)];
+
+  private void _settleHeldBackSinkRows(Guid streamId, Guid[] runWorkIds, Guid[] stillWaiting) {
+    var now = _timeProvider.GetUtcNow();
+    if (stillWaiting.Length == 0) {
+      if (_collectiveSinkHeldBack.TryGetValue(streamId, out var existing)) {
+        lock (existing) {
+          foreach (var workId in runWorkIds.Concat(_expired(existing, now))) {
+            existing.Remove(workId);
+          }
+          if (existing.Count == 0) {
+            _collectiveSinkHeldBack.TryRemove(new KeyValuePair<Guid, Dictionary<Guid, DateTimeOffset>>(streamId, existing));
+          }
+        }
+      }
+      return;
+    }
+    foreach (var (key, rows) in _collectiveSinkHeldBack) {
+      lock (rows) {
+        if (key != streamId && rows.Values.All(deadline => deadline <= now)) {
+          _collectiveSinkHeldBack.TryRemove(new KeyValuePair<Guid, Dictionary<Guid, DateTimeOffset>>(key, rows));
+        }
+      }
+    }
+    var deadline = now + TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds - _leaseHandleOptions.LeaseGraceSeconds));
+    var held = _collectiveSinkHeldBack.GetOrAdd(streamId, static _ => []);
+    lock (held) {
+      foreach (var workId in runWorkIds.Except(stillWaiting).Concat(_expired(held, now))) {
+        held.Remove(workId);
+      }
+      foreach (var workId in stillWaiting) {
+        held.TryAdd(workId, deadline);
       }
     }
   }
