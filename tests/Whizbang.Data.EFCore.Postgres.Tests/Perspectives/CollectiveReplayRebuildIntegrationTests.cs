@@ -45,7 +45,7 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
 
     services.AddScoped<IPerspectiveStore<RebuildBalanceModel>>(sp =>
         new EFCorePostgresPerspectiveStore<RebuildBalanceModel>(
-            sp.GetRequiredService<WorkCoordinationDbContext>(), "rebuild_balance"));
+            sp.GetRequiredService<WorkCoordinationDbContext>(), "wh_per_rebuild_balance"));
 
     services.AddScoped<RebuildBalancePerspective>();
     services.AddScoped<RebuildBalanceCollectiveHandler>();

@@ -61,7 +61,7 @@ public class RekeyThroughRebuildTests : EFCoreTestBase {
     services.AddScoped<IPerspectiveStore<RekeyTestModel>>(sp =>
         new EFCorePostgresPerspectiveStore<RekeyTestModel>(
             sp.GetRequiredService<WorkCoordinationDbContext>(),
-            "rekey_test"));
+            "wh_per_rekey_test"));
 
     services.AddScoped<RekeyThroughRebuildPerspective>();
 
