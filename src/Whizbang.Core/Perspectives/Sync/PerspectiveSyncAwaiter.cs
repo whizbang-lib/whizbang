@@ -324,7 +324,7 @@ public sealed partial class PerspectiveSyncAwaiter(
     var token = waitCts.Token;
     var eventId = inquiry.EventId;
     // Registered before the first read, so an apply committed between the read and the wait is not missed.
-    Task? appliedHere = eventId is { } known ? _whenAppliedHereAsync(known, inquiry.PerspectiveName, token) : null;
+    Task? appliedHere = _whenAppliedHereOrNull(eventId, inquiry.PerspectiveName, token);
     var reread = _firstLedgerReread;
     try {
       while (true) {
@@ -332,12 +332,10 @@ public sealed partial class PerspectiveSyncAwaiter(
         var nextRead = Task.Delay(reread, _timeProvider, token);
         var status = await _coordinator.GetAppliedEventStatusAsync(inquiry with { EventId = eventId }, token);
         if (status is null) {
-          return requireLedger ? await _appliedWithoutLedgerAsync(appliedHere, inquiry, stopwatch, syncActivity) : null;
+          return await _appliedWithoutLedgerAsync(requireLedger, appliedHere, inquiry, stopwatch, syncActivity);
         }
         if (status.Value.IsSettled) {
-          return _appliedResult(
-            status.Value.State == AppliedEventState.Applied ? SyncOutcome.Synced : SyncOutcome.NoPendingEvents,
-            inquiry, stopwatch, syncActivity);
+          return _appliedResult(_settledOutcome(status.Value.State), inquiry, stopwatch, syncActivity);
         }
         if (appliedHere is null && status.Value.EventId is { } resolved) {
           eventId = resolved;
@@ -346,7 +344,7 @@ public sealed partial class PerspectiveSyncAwaiter(
         if (await _appliedBeforeRereadAsync(appliedHere, nextRead)) {
           return _appliedResult(SyncOutcome.Synced, inquiry, stopwatch, syncActivity);
         }
-        reread = reread * 2 < _maxLedgerReread ? reread * 2 : _maxLedgerReread;
+        reread = _nextReread(reread);
       }
     } catch (OperationCanceledException) when (!ct.IsCancellationRequested) {
       LogSyncWaitTimedOut(_logger, inquiry.PerspectiveName, 1, stopwatch.ActiveElapsed.TotalMilliseconds);
@@ -361,8 +359,15 @@ public sealed partial class PerspectiveSyncAwaiter(
   /// The wait when the coordinator cannot read the ledger: the in-process signal alone answers, which needs the
   /// event's id; an event named only by stream position cannot be resolved without the ledger.
   /// </summary>
-  private async Task<SyncResult> _appliedWithoutLedgerAsync(
-      Task? appliedHere, AppliedEventInquiry inquiry, IActiveStopwatch stopwatch, Activity? syncActivity) {
+  /// <remarks>
+  /// Returns <see langword="null"/> when the caller does not require the ledger (the explicit-id stream wait), so it
+  /// keeps its previous behavior.
+  /// </remarks>
+  private async Task<SyncResult?> _appliedWithoutLedgerAsync(
+      bool requireLedger, Task? appliedHere, AppliedEventInquiry inquiry, IActiveStopwatch stopwatch, Activity? syncActivity) {
+    if (!requireLedger) {
+      return null;
+    }
     if (appliedHere is null) {
       throw new NotSupportedException(
         $"{_coordinator.GetType().Name} cannot read the applied-event ledger, so an event named by stream "
@@ -371,6 +376,18 @@ public sealed partial class PerspectiveSyncAwaiter(
     await appliedHere;
     return _appliedResult(SyncOutcome.Synced, inquiry, stopwatch, syncActivity);
   }
+
+  /// <summary>The in-process applied signal for an event named by id; none yet for one named by stream position.</summary>
+  private Task? _whenAppliedHereOrNull(Guid? eventId, string perspectiveName, CancellationToken token) =>
+    eventId is { } known ? _whenAppliedHereAsync(known, perspectiveName, token) : null;
+
+  /// <summary>A settled event was applied, or had nothing to apply.</summary>
+  private static SyncOutcome _settledOutcome(AppliedEventState state) =>
+    state == AppliedEventState.Applied ? SyncOutcome.Synced : SyncOutcome.NoPendingEvents;
+
+  /// <summary>The next ledger re-read interval: doubled, up to the ceiling.</summary>
+  private static TimeSpan _nextReread(TimeSpan reread) =>
+    reread * 2 < _maxLedgerReread ? reread * 2 : _maxLedgerReread;
 
   /// <summary>True when the in-process applied signal came first; false when it is time to read the ledger again.</summary>
   private static async Task<bool> _appliedBeforeRereadAsync(Task? appliedHere, Task nextRead) {
