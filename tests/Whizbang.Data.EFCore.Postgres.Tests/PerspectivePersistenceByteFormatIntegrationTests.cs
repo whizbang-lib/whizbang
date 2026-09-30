@@ -42,9 +42,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class PerspectivePersistenceByteFormatIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task PathOneWrite_ProducesJsonSemanticallyEquivalentToEFWriteAsync() {
-    // Arrange — write an Order through the standard EF strategy.
+    // Arrange — write an Order through the Entity Framework path, chosen on this strategy instance.
     await using var context = CreateDbContext();
-    var strategy = new PostgresUpsertStrategy();
+    var strategy = new EntityFrameworkPathUpsertStrategy();
     var testId = Guid.CreateVersion7();
 
     var order = new Order {

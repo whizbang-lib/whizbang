@@ -19,9 +19,10 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 /// options rather than two that have to agree.
 /// </para>
 /// <para>
-/// Built as the upsert has always built them: the cross-assembly union under the persistence
-/// profile, a caller-supplied resolver as a fallback, and the registered modifiers re-applied over
-/// the finished chain. Reused until the registry changes, because a set of options carries the
+/// Built from the serialization registry alone: the cross-assembly union under the persistence
+/// profile, which every assembly's generated contexts join from their own module initializers.
+/// Nothing else can contribute to it or clear it, so which options a document is written with
+/// never depends on what ran before. Reused until the registry changes, because a set of options carries the
 /// serializer's metadata cache and rebuilding per call throws it away; rebuilt when the registry
 /// changes, because an assembly loaded late registers its contexts late and a set built before
 /// that cannot resolve what it brought.
@@ -33,32 +34,22 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 public static class PerspectiveDocumentSerialization {
   private static readonly Lock _gate = new();
   private static long _builtForGeneration = -1;
-  private static Func<JsonSerializerOptions>? _builtForProvider;
   private static JsonSerializerOptions? _built;
 
   /// <summary>
-  /// The options for every perspective document, folding in the atomic upsert's caller-supplied
-  /// provider when one is configured.
+  /// The options for every perspective document: the registry's union under the persistence profile.
   /// </summary>
-  public static JsonSerializerOptions Options => Resolve(BaseUpsertStrategy.PathOnePersistenceOptionsProvider);
-
-  /// <summary>
-  /// The options for a perspective document, with a caller-supplied provider folded in behind the
-  /// profile's union.
-  /// </summary>
-  /// <param name="userProvider">The caller's options, or <see langword="null"/> for the union alone.</param>
-  /// <returns>Options reused across calls until the registry or the provider changes.</returns>
-  public static JsonSerializerOptions Resolve(Func<JsonSerializerOptions>? userProvider) {
-    var generation = JsonContextRegistry.Generation;
-    lock (_gate) {
-      if (_built is not null && _builtForGeneration == generation && ReferenceEquals(_builtForProvider, userProvider)) {
+  /// <remarks>Reused across calls until <see cref="JsonContextRegistry.Generation"/> moves.</remarks>
+  public static JsonSerializerOptions Options {
+    get {
+      var generation = JsonContextRegistry.Generation;
+      lock (_gate) {
+        if (_built is null || _builtForGeneration != generation) {
+          _built = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
+          _builtForGeneration = generation;
+        }
         return _built;
       }
-
-      _built = _build(userProvider);
-      _builtForGeneration = generation;
-      _builtForProvider = userProvider;
-      return _built;
     }
   }
 
@@ -91,26 +82,4 @@ public static class PerspectiveDocumentSerialization {
       ?? throw new JsonException($"A stored {typeof(T).Name} document was null, which no document is");
 
   private static JsonTypeInfo<T> _typeInfo<T>() => (JsonTypeInfo<T>)Options.GetTypeInfo(typeof(T));
-
-  private static JsonSerializerOptions _build(Func<JsonSerializerOptions>? userProvider) {
-    var union = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
-    var user = userProvider?.Invoke();
-    if (user?.TypeInfoResolver is null) {
-      return union;
-    }
-
-    // Union first (object-mode WhizbangId + all registered persistence contexts), user options as a
-    // fallback for anything the union doesn't cover. User converters are intentionally NOT copied:
-    // the persistence profile deliberately omits the scalar WhizbangId converters so object-mode
-    // wins.
-    //
-    // The finished chain is re-wrapped with the registered modifiers. The union already carries
-    // them, but they were attached to the union's own resolver: a type the user's resolver is the
-    // first to answer for would otherwise be serialized without them.
-    var chain = JsonTypeInfoResolver.Combine(union.TypeInfoResolver!, user.TypeInfoResolver);
-
-    return new JsonSerializerOptions(union) {
-      TypeInfoResolver = JsonContextRegistry.WithRegisteredModifiers(chain, SerializationProfile.Persistence),
-    };
-  }
 }

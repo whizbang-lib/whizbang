@@ -33,6 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 public class ReconcileRewindScenarioTests : EFCoreTestBase {
 
   private const string PERSPECTIVE = "action_test";
+  private const string TABLE = "wh_per_action_test";
 
   private static async Task<IPerspectiveRunner> CreateRunnerAsync(
       IEventStore eventStore,
@@ -145,7 +146,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
       new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 }, 200, origin, 300));
 
     await using (var ctx = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, PERSPECTIVE);
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, TABLE);
       var runner = await CreateRunnerAsync(stamped, ps);
       var live = await runner.RunAsync(streamId, PERSPECTIVE, null, CancellationToken.None);
       await Assert.That(live.EventsProcessed).IsEqualTo(2);
@@ -162,7 +163,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     await eventStore.AppendAsync(streamId, straggler);
 
     await using (var ctx2 = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, PERSPECTIVE);
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, TABLE);
       var runner = await CreateRunnerAsync(stamped, ps);
       var result = await runner.RunWithEventsAsync(
         streamId, PERSPECTIVE, newerId, [straggler], CancellationToken.None);
@@ -176,7 +177,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     // straggler's id slots below the cursor — proven by ReconcileRewindDeclarationSqlTests) —
     // the worker's RewindRequired routing then invokes exactly this call.
     await using (var ctx3 = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx3, PERSPECTIVE);
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx3, TABLE);
       var runner = await CreateRunnerAsync(stamped, ps);
       var rewound = await runner.RewindAndRunAsync(streamId, PERSPECTIVE, backfilledOldId, 300, CancellationToken.None);
       await Assert.That(rewound.EventsProcessed).IsEqualTo(3)
@@ -213,7 +214,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
       new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 }, 200, origin, 200));
 
     await using (var ctx = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, PERSPECTIVE);
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, TABLE);
       var runner = await CreateRunnerAsync(stamped, ps);
       _ = await runner.RunAsync(streamId, PERSPECTIVE, null, CancellationToken.None);
     }
@@ -223,7 +224,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     await eventStore.AppendAsync(streamId, initializer);
 
     await using (var ctx2 = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, PERSPECTIVE);
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, TABLE);
       var runner = await CreateRunnerAsync(stamped, ps);
       var result = await runner.RunWithEventsAsync(
         streamId, PERSPECTIVE, newerId, [initializer], CancellationToken.None);
@@ -234,7 +235,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     // transient arrival-order state by replaying origin order: Init (oseq 100) → Updated
     // (oseq 200).
     await using (var ctx3 = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx3, PERSPECTIVE);
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx3, TABLE);
       var runner = await CreateRunnerAsync(stamped, ps);
       _ = await runner.RewindAndRunAsync(streamId, PERSPECTIVE, backfilledInitId, 300, CancellationToken.None);
     }
@@ -267,7 +268,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     await eventStore.AppendAsync(streamId, _envelope(createdId,
       new ActionTestCreatedEvent { StreamId = streamId, Name = "Once", Value = 5 }, 100));
     await using (var ctx = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, PERSPECTIVE);
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, TABLE);
       var runner = await CreateRunnerAsync(stamped, ps);
       _ = await runner.RunAsync(streamId, PERSPECTIVE, null, CancellationToken.None);
     }
@@ -277,7 +278,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     await eventStore.AppendAsync(streamId, bundleChild);
 
     await using (var ctx2 = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, PERSPECTIVE);
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, TABLE);
       var runner = await CreateRunnerAsync(stamped, ps);
       var first = await runner.RunWithEventsAsync(
         streamId, PERSPECTIVE, createdId, [bundleChild], CancellationToken.None);
@@ -294,7 +295,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
 
     // The transport redelivers the SAME composite (at-least-once): identical child envelope.
     await using (var ctx3 = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx3, PERSPECTIVE);
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx3, TABLE);
       var runner = await CreateRunnerAsync(stamped, ps);
       var second = await runner.RunWithEventsAsync(
         streamId, PERSPECTIVE, createdId, [bundleChild], CancellationToken.None);
@@ -338,7 +339,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
       new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 }, 200));
 
     await using var ctx = CreateDbContext();
-    var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, PERSPECTIVE);
+    var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, TABLE);
     var runner = await CreateRunnerAsync(stamped, ps);
 
     // No snapshot exists → the rewind replays the whole stream from zero.
@@ -385,7 +386,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
       new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 50 }, 300, origin, 150));
 
     await using var ctx = CreateDbContext();
-    var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, PERSPECTIVE);
+    var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, TABLE);
     var runner = await CreateRunnerAsync(stamped, ps);
 
     var result = await runner.RewindAndRunAsync(

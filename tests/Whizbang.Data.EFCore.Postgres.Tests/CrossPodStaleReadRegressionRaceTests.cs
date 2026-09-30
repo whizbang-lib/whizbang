@@ -51,24 +51,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("Regression")]
 [Category("Storage")]
-// Mutates the process-wide BaseUpsertStrategy.PathOnePersistenceOptionsProvider — serialize against the
-// other persistence tests so it can't flip the provider mid-seed (the cross-test static race).
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
-  [After(Test)]
-  public Task ClearPathOneProviderAsync() {
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = null;
-    return Task.CompletedTask;
-  }
-
-  private static void EnableAtomicPath() {
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>
-      PerspectivePersistenceJsonContext.CreateOptions(
-        MessageJsonContext.Default,
-        global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
-  }
-
   private static PerspectiveMetadata Meta(string eventType) =>
     new() {
       EventType = eventType,
@@ -104,7 +89,6 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
   /// </summary>
   [Test]
   public async Task StaleSecondWriter_RegressesTerminalRowToEarlierState_StoreFailsToProtectAsync() {
-    EnableAtomicPath();
     var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
@@ -161,7 +145,6 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
   /// </summary>
   [Test]
   public async Task RunningFirstThenCompletedSecond_RowEndsAtCompleted_NoRegressionAsync() {
-    EnableAtomicPath();
     var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
@@ -206,7 +189,6 @@ public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
   /// </summary>
   [Test]
   public async Task ProductionStrand_LargeItemBatchOneItemRegressedAndLeftAtRunningAsync() {
-    EnableAtomicPath();
     var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();

@@ -219,7 +219,12 @@ public class FullLinqSupportTests : IAsyncDisposable {
   }
 
   private async Task _seedTestDataAsync() {
-    var strategy = new PostgresUpsertStrategy();
+    // Seeded through the Entity Framework path, chosen on this strategy instance (#967). This hand-built
+    // context maps the document with ToJson and no persistence-profile converter, so it reads only the form
+    // Entity Framework writes; the atomic path writes the canonical temporal form, which a production context
+    // reads through PerspectiveDocumentSerialization.ConverterFor. What is under test here is LINQ
+    // translation, not the write path.
+    var strategy = new EntityFrameworkPathUpsertStrategy();
 
     var testOrders = new[] {
       new CustomerOrder {
