@@ -987,6 +987,23 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  /// <docs>fundamentals/perspectives/perspective-sync#applied-ledger</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperAppliedEventStatusTests.cs</tests>
+  public async ValueTask<Whizbang.Core.Perspectives.Sync.AppliedEventStatus?> GetAppliedEventStatusAsync(
+    Whizbang.Core.Perspectives.Sync.AppliedEventInquiry inquiry, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(inquiry);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var row = await __scope.Connection.QuerySingleAsync<AppliedStatusRow>(
+      "SELECT event_id AS EventId, state AS State FROM wh_perspective_applied_status(@Name::text, @EventId::uuid, @StreamId::uuid, @Version::integer)",
+      new { Name = inquiry.PerspectiveName, inquiry.EventId, inquiry.StreamId, Version = inquiry.StreamPosition });
+    return new Whizbang.Core.Perspectives.Sync.AppliedEventStatus(
+      (Whizbang.Core.Perspectives.Sync.AppliedEventState)row.State, row.EventId);
+  }
+
+  private sealed record AppliedStatusRow(Guid? EventId, short State);
+
+  /// <inheritdoc />
   public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

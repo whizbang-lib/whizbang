@@ -2390,6 +2390,12 @@ public partial class PerspectiveWorker(
 
         if (filteredEvents.Count > 0) {
           var processedEventIds = filteredEvents.ConvertAll(e => e.MessageId.Value);
+          // Only a committed apply marks the events applied: a waiter for an event from another service
+          // reads this as "the read model has it", which a failure must never claim (#959). Marked before
+          // the processed release, so anything that observes the release has seen the mark decided.
+          if (result.Status == PerspectiveProcessingStatus.Completed) {
+            _syncEventTracker.MarkApplied(processedEventIds, perspectiveName);
+          }
           _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
         }
 
@@ -3829,6 +3835,10 @@ public partial class PerspectiveWorker(
           perspectiveName, streamId, processedEventIds.Count, string.Join(", ", processedEventIds));
       }
 #pragma warning restore CA1848
+      // Marked applied before the processed release (#959; see the drain-mode site). Only a committed apply
+      // reaches here with events: they are loaded for a Completed result alone, and the collective sink, which
+      // marks under its own name, reports only an apply that committed.
+      _syncEventTracker.MarkApplied(processedEventIds, perspectiveName);
       _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
     } else if (_logger.IsEnabled(LogLevel.Debug)) {
 #pragma warning disable CA1848

@@ -574,6 +574,63 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
+  public async Task DrainMode_ACommittedApply_MarksItsEventsAppliedAsync() {
+    // #959: a waiter for an event that arrived from another service wakes on this mark, so it is made
+    // for a committed apply and names the events the runner applied.
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7())]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("applied"))]);
+    var tracker = new SyncEventTracker();
+    var (worker, harness, _) = _createWorker(
+      coordinator, eventStore, _registry(new DrainRunner()), configure: opts => opts.DrainLoopMaxIterations = 1,
+      syncEventTracker: tracker);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await tracker.WhenAppliedAsync(eventId, PERSPECTIVE, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(tracker.RecentlyAppliedCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task DrainMode_ARunnerReportingFailure_MarksNothingAppliedAsync() {
+    // The event is released to sync waiters as before (MarkProcessedByPerspective), but nothing claims the
+    // read model has it: an applied-event waiter keeps waiting.
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7())]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("failed"))]);
+    var tracker = new SyncEventTracker();
+    tracker.TrackEvent(typeof(DrainDeepEvent), eventId, streamId, PERSPECTIVE);
+    var runner = new DrainRunner { CompletionStatus = PerspectiveProcessingStatus.Failed };
+    var (worker, harness, _) = _createWorker(
+      coordinator, eventStore, _registry(runner), configure: opts => opts.DrainLoopMaxIterations = 1,
+      syncEventTracker: tracker);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    // The processed release follows the applied decision on the same path, so once it is observed the
+    // decision has been made.
+    var released = await tracker.WaitForPerspectiveEventsAsync([eventId], PERSPECTIVE, TimeSpan.FromSeconds(20));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(released).IsTrue();
+    await Assert.That(tracker.RecentlyAppliedCount).IsEqualTo(0)
+      .Because("a failed apply must never read as applied");
+  }
+
+  [Test]
   public async Task DrainMode_FiveEventBatchWithDebugLogging_AppliesAllEventsAsync() {
     // Arrange — >= 5 events with Debug logging enabled exercises the PERF breakdown branch.
     var streamId = Guid.CreateVersion7();
@@ -837,7 +894,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
       IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
       PerspectiveMetrics? metrics = null,
-      StoredFormFailureRegistry? storedFormFailures = null) {
+      StoredFormFailureRegistry? storedFormFailures = null,
+      ISyncEventTracker? syncEventTracker = null) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
@@ -880,7 +938,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
         : new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: registry,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
-      syncEventTracker: new SyncEventTracker(),
+      syncEventTracker: syncEventTracker ?? new SyncEventTracker(),
       logger: logger ?? NullLogger<PerspectiveWorker>.Instance,
       snapshotStore: NullPerspectiveSnapshotStore.Instance,
       streamLocker: NullPerspectiveStreamLocker.Instance,
@@ -1087,6 +1145,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     /// <summary>Runs immediately before <see cref="RunWithEventsException"/> is thrown.</summary>
     public Action? BeforeThrow { get; init; }
     public bool BlockUntilCanceled { get; init; }
+    /// <summary>The status every completion reports; a runner may report a failure without throwing.</summary>
+    public PerspectiveProcessingStatus CompletionStatus { get; init; } = PerspectiveProcessingStatus.Completed;
     public ConcurrentQueue<List<Guid>> ReceivedBatches { get; } = new();
     public ConcurrentQueue<Guid?> ObservedCursors { get; } = new();
     public ConcurrentQueue<(Guid TriggerEventId, long? CommitSequence)> RewindCalls { get; } = new();
@@ -1141,7 +1201,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
       _firstRunWithEvents.TrySetResult();
       var lastEventId = events.Count > 0 ? events[^1].MessageId.Value : Guid.Empty;
-      return _completed(streamId, perspectiveName, lastEventId);
+      return _completed(streamId, perspectiveName, lastEventId) with { Status = CompletionStatus };
     }
 
 

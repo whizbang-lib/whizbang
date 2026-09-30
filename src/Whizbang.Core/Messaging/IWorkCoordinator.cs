@@ -524,6 +524,24 @@ public interface IWorkCoordinator {
       $"{GetType().Name} does not implement ResolveSyncInquiriesAsync.");
 
   /// <summary>
+  /// Reads the applied-event ledger: whether a perspective has applied an event, named by its id or by its
+  /// stream and position in the local event store. A collective event counts as applied for any perspective
+  /// once the collective sink has applied it. Read-only.
+  /// </summary>
+  /// <param name="inquiry">The perspective and the event.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// Where the event stands, or <see langword="null"/> when this coordinator cannot read the ledger (the
+  /// default), in which case a waiter falls back to the in-process applied signal.
+  /// </returns>
+  /// <docs>fundamentals/perspectives/perspective-sync#applied-ledger</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterAppliedTests.cs:DefaultCoordinatorMember_CannotReadTheLedgerAsync</tests>
+  ValueTask<Perspectives.Sync.AppliedEventStatus?> GetAppliedEventStatusAsync(
+    Perspectives.Sync.AppliedEventInquiry inquiry,
+    CancellationToken cancellationToken = default)
+    => ValueTask.FromResult<Perspectives.Sync.AppliedEventStatus?>(null);
+
+  /// <summary>
   /// Gathers expensive statistics (COUNT queries) for observability gauges.
   /// Called periodically (~every 60 ticks), NOT on every tick. Single source of truth
   /// for queue depth metrics that are too expensive for the hot path.
