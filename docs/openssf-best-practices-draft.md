@@ -93,7 +93,7 @@ human review.
 | `sites_https` | Met | The repository (GitHub), docs site (`https://whizba.ng`, HTTP redirects to HTTPS) and packages (nuget.org) are served over HTTPS only. |
 | `discussion` | Met | GitHub Discussions (Q&A, Ideas, Announcements) plus issues and pull requests: searchable, addressable by URL, open to new participants, no proprietary client needed. <https://github.com/whizbang-lib/whizbang/discussions> |
 | `english` | Met | All documentation, code comments and issue discussion are in English (US spelling is a documented standard). |
-| `maintained` | Met | Actively developed: pull requests merge into `develop` most days, and stable releases shipped on 2026-09-22, 09-23, 09-26 and 09-27. <https://github.com/whizbang-lib/whizbang/releases> |
+| `maintained` | Met | Actively developed: pull requests merge into `develop` most days, and stable releases ship regularly; the releases page lists each one with its date. <https://github.com/whizbang-lib/whizbang/releases> |
 
 ## Change Control
 
@@ -111,8 +111,8 @@ human review.
 | Criterion | Answer | Justification |
 |---|---|---|
 | `version_unique` | Met | Every release gets a unique version, decided once by GitVersion from the highest tag and kept identical from preview to publish to tag. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/RELEASING.md#how-the-version-is-decided> |
-| `version_semver` | Met | Versions follow Semantic Versioning `MAJOR.MINOR.PATCH` with prerelease suffixes (`0.2601.0`, `0.2452.0-alpha.2`); the changelog states SemVer adherence. <https://github.com/whizbang-lib/whizbang/blob/develop/CHANGELOG.md> |
-| `version_tags` | Met | Each release is tagged in git (`v0.2601.0`, ...). <https://github.com/whizbang-lib/whizbang/tags> |
+| `version_semver` | Met | Versions follow Semantic Versioning `MAJOR.MINOR.PATCH`, with prerelease suffixes `-alpha.N`, `-beta.N` and `-rc.N`; the changelog states SemVer adherence. <https://github.com/whizbang-lib/whizbang/blob/develop/CHANGELOG.md> |
+| `version_tags` | Met | Each release is tagged in git as `vMAJOR.MINOR.PATCH`. <https://github.com/whizbang-lib/whizbang/tags> |
 
 ### Release notes
 
