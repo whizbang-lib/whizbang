@@ -332,16 +332,7 @@ public sealed partial class PerspectiveSyncAwaiter(
         var nextRead = Task.Delay(reread, _timeProvider, token);
         var status = await _coordinator.GetAppliedEventStatusAsync(inquiry with { EventId = eventId }, token);
         if (status is null) {
-          if (!requireLedger) {
-            return null;
-          }
-          if (appliedHere is null) {
-            throw new NotSupportedException(
-              $"{_coordinator.GetType().Name} cannot read the applied-event ledger, so an event named by stream "
-              + "position cannot be resolved. Name the event by id, or use a work coordinator that reads the ledger.");
-          }
-          await appliedHere;
-          return _appliedResult(SyncOutcome.Synced, inquiry, stopwatch, syncActivity);
+          return requireLedger ? await _appliedWithoutLedgerAsync(appliedHere, inquiry, stopwatch, syncActivity) : null;
         }
         if (status.Value.IsSettled) {
           return _appliedResult(
@@ -352,9 +343,7 @@ public sealed partial class PerspectiveSyncAwaiter(
           eventId = resolved;
           appliedHere = _whenAppliedHereAsync(resolved, inquiry.PerspectiveName, token);
         }
-        var woke = await Task.WhenAny(appliedHere ?? nextRead, nextRead);
-        await woke;
-        if (woke == appliedHere) {
+        if (await _appliedBeforeRereadAsync(appliedHere, nextRead)) {
           return _appliedResult(SyncOutcome.Synced, inquiry, stopwatch, syncActivity);
         }
         reread = reread * 2 < _maxLedgerReread ? reread * 2 : _maxLedgerReread;
@@ -366,6 +355,28 @@ public sealed partial class PerspectiveSyncAwaiter(
       // Releases the in-process waiters this wait registered; disposing alone would leave them registered.
       await waitCts.CancelAsync();
     }
+  }
+
+  /// <summary>
+  /// The wait when the coordinator cannot read the ledger: the in-process signal alone answers, which needs the
+  /// event's id; an event named only by stream position cannot be resolved without the ledger.
+  /// </summary>
+  private async Task<SyncResult> _appliedWithoutLedgerAsync(
+      Task? appliedHere, AppliedEventInquiry inquiry, IActiveStopwatch stopwatch, Activity? syncActivity) {
+    if (appliedHere is null) {
+      throw new NotSupportedException(
+        $"{_coordinator.GetType().Name} cannot read the applied-event ledger, so an event named by stream "
+        + "position cannot be resolved. Name the event by id, or use a work coordinator that reads the ledger.");
+    }
+    await appliedHere;
+    return _appliedResult(SyncOutcome.Synced, inquiry, stopwatch, syncActivity);
+  }
+
+  /// <summary>True when the in-process applied signal came first; false when it is time to read the ledger again.</summary>
+  private static async Task<bool> _appliedBeforeRereadAsync(Task? appliedHere, Task nextRead) {
+    var woke = await Task.WhenAny(appliedHere ?? nextRead, nextRead);
+    await woke;
+    return woke == appliedHere;
   }
 
   /// <summary>Completes when this process applies the event for the perspective, or for the collective sink.</summary>

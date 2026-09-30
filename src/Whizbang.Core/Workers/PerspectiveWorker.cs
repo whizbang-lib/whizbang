@@ -3291,24 +3291,13 @@ public partial class PerspectiveWorker(
       streamId, CollectiveRouting.SINK_PERSPECTIVE_NAME, cancellationToken).ConfigureAwait(false);
     var lastProcessedEventId = checkpoint?.LastEventId;
 
-    // #963: the stream's queue, in commit order, when the engine provides one. Collectives sharing an ordering key
-    // share this stream, and the queue is what keeps them in line; without it the stream is read after its cursor.
-    var queue = await workCoordinator.FetchCollectiveSinkQueueAsync(streamId, cancellationToken).ConfigureAwait(false);
-    List<MessageEnvelope<IEvent>> collectiveEnvelopes;
-    Guid[] completedWorkIds = sinkWorkIds;
-    if (queue is not null) {
-      var batch = await _takeCollectiveQueueHeadAsync(
-        queue, sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
-      if (batch is null) {
-        return;
-      }
-      (collectiveEnvelopes, completedWorkIds) = batch.Value;
-    } else {
-      var events = await eventStore.GetEventsBetweenPolymorphicAsync(
-        streamId, lastProcessedEventId, Guid.Empty, typeProvider.GetEventTypes(), cancellationToken)
-        .ConfigureAwait(false);
-      collectiveEnvelopes = events.Where(e => e.Payload is ICollectiveEvent).ToList();
+    var batch = await _loadCollectiveSinkBatchAsync(
+      workCoordinator, eventStore, typeProvider, streamId, sinkWorkIds, lastProcessedEventId, cancellationToken)
+      .ConfigureAwait(false);
+    if (batch is null) {
+      return;
     }
+    var (collectiveEnvelopes, completedWorkIds) = batch.Value;
     if (collectiveEnvelopes.Count == 0) {
       // No collective event to dispatch, yet the sink rows were leased — the cursor already advanced
       // past them (a prior run applied the event and advanced the cursor without completing the row,
@@ -3328,14 +3317,7 @@ public partial class PerspectiveWorker(
       var collectiveEvent = (ICollectiveEvent)envelope.Payload;
       try {
         await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session,
-          onBatchApplied: async ct => {
-            // A tenant-wide collective apply can span many batches and outlive the sink work item's
-            // lease — renewing on every reported batch keeps the lease tracking the apply's true
-            // duration, so the (idempotent) work is not re-offered mid-apply.
-            foreach (var workId in sinkWorkIds) {
-              await _leaseRenewalChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, workId, ct).ConfigureAwait(false);
-            }
-          },
+          onBatchApplied: ct => _renewSinkLeasesAsync(sinkWorkIds, ct),
           cancellationToken: cancellationToken)
           .ConfigureAwait(false);
       } catch (CollectiveApplyLockBusyException busy) when (!_options.CollectiveLockBusyCountsAsFailure) {
@@ -3396,6 +3378,37 @@ public partial class PerspectiveWorker(
     // a failed apply returns above, so we never signal completion for an apply that did not happen.
     await _fireCollectivePostApplyLifecycleAsync(scope, streamId, collectiveEnvelopes, cancellationToken)
       .ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Renews the sink rows' leases after each committed batch of a collective apply. A tenant-wide collective apply can
+  /// span many batches and outlive the sink work item's lease; renewing on every reported batch keeps the lease
+  /// tracking the apply's true duration, so the (idempotent) work is not re-offered mid-apply.
+  /// </summary>
+  private async ValueTask _renewSinkLeasesAsync(Guid[] sinkWorkIds, CancellationToken ct) {
+    foreach (var workId in sinkWorkIds) {
+      await _leaseRenewalChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, workId, ct).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
+  /// The collectives this sink run applies and the work rows it completes when they do, or null when the run has to
+  /// wait its turn. #963: the stream's queue, in commit order, when the engine provides one. Collectives sharing an
+  /// ordering key share this stream, and the queue is what keeps them in line; without it the stream is read after
+  /// its cursor.
+  /// </summary>
+  private async Task<(List<MessageEnvelope<IEvent>> Envelopes, Guid[] WorkIds)?> _loadCollectiveSinkBatchAsync(
+      IWorkCoordinator workCoordinator, IEventStore eventStore, IEventTypeProvider typeProvider, Guid streamId,
+      Guid[] sinkWorkIds, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+    var queue = await workCoordinator.FetchCollectiveSinkQueueAsync(streamId, cancellationToken).ConfigureAwait(false);
+    if (queue is not null) {
+      return await _takeCollectiveQueueHeadAsync(
+        queue, sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
+    }
+    var events = await eventStore.GetEventsBetweenPolymorphicAsync(
+      streamId, lastProcessedEventId, Guid.Empty, typeProvider.GetEventTypes(), cancellationToken)
+      .ConfigureAwait(false);
+    return ([.. events.Where(e => e.Payload is ICollectiveEvent)], sinkWorkIds);
   }
 
   /// <summary>

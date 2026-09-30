@@ -8,26 +8,20 @@ namespace Whizbang.Sagas.Services;
 /// <see cref="IDispatcher"/>. Registered automatically by
 /// <see cref="SagaServiceCollectionExtensions.AddWhizbangSagas"/>.
 /// </summary>
-public sealed class DispatcherSagaEventEmitter : ISagaEventEmitter {
+/// <remarks>
+/// The primary constructor reads and releases claims in <c>claims</c>, the store <c>PublishOnceAsync</c> claims in;
+/// the container chooses it whenever a claim store is registered. <c>claims</c> may be <see langword="null"/>.
+/// </remarks>
+/// <param name="dispatcher">The dispatcher to publish through.</param>
+/// <param name="claims">The claim store, or <see langword="null"/> for none.</param>
+public sealed class DispatcherSagaEventEmitter(IDispatcher dispatcher, IClaimedEmissionStore? claims) : ISagaEventEmitter {
 
-  private readonly IDispatcher _dispatcher;
-  private readonly IClaimedEmissionStore? _claims;
+  private readonly IDispatcher _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+  private readonly IClaimedEmissionStore? _claims = claims;
 
   /// <summary>An emitter over <paramref name="dispatcher"/> with no claim store to read or release claims in.</summary>
   /// <param name="dispatcher">The dispatcher to publish through.</param>
   public DispatcherSagaEventEmitter(IDispatcher dispatcher) : this(dispatcher, claims: null) {
-  }
-
-  /// <summary>
-  /// An emitter over <paramref name="dispatcher"/> that reads and releases claims in
-  /// <paramref name="claims"/>, the store <c>PublishOnceAsync</c> claims in. The container chooses this
-  /// constructor whenever a claim store is registered.
-  /// </summary>
-  /// <param name="dispatcher">The dispatcher to publish through.</param>
-  /// <param name="claims">The claim store, or <see langword="null"/> for none.</param>
-  public DispatcherSagaEventEmitter(IDispatcher dispatcher, IClaimedEmissionStore? claims) {
-    _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
-    _claims = claims;
   }
 
   public async Task PublishAsync<TEvent>(TEvent eventData) where TEvent : IEvent {

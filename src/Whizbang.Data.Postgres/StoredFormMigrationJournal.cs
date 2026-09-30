@@ -131,7 +131,7 @@ public static class StoredFormMigrationJournal {
 
     var sb = new StringBuilder();
     sb.Append("State".PadRight(10)).Append("Migration".PadRight(nameWidth)).Append("Table".PadRight(tableWidth))
-      .Append("Rows".PadLeft(8)).Append("  ").Append("Applied".PadRight(21)).Append("Settled").AppendLine();
+      .Append("Rows".PadLeft(8)).Append("  ").Append("Applied".PadRight(21)).AppendLine("Settled");
     foreach (var s in statuses) {
       var line = s.State.ToString().PadRight(10) + s.Name.PadRight(nameWidth) + s.Table.PadRight(tableWidth)
         + s.RowsConverted.ToString(CultureInfo.InvariantCulture).PadLeft(8) + "  "

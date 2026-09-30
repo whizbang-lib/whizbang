@@ -3013,29 +3013,15 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static void _appendPromotedFieldIndexes(
       StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema, string shortName) {
     var table = $"{quotedSchema}.{perspective.TableName}";
-    var trigram = new List<string>();
+    var trigram = perspective.PhysicalFields
+      .Where(f => f.IsSearch && !f.IsVector)
+      .Select(f => JsonIndexSql.ColumnSearchStatement(f.ColumnName, table, shortName))
+      .ToList();
     var plain = new List<string>();
-
-    foreach (var field in perspective.PhysicalFields.Where(f => f.IsSearch && !f.IsVector)) {
-      trigram.Add(JsonIndexSql.ColumnSearchStatement(field.ColumnName, table, shortName));
-    }
 
     if (!perspective.PromotedIndexes.IsDefaultOrEmpty) {
       foreach (var index in perspective.PromotedIndexes) {
-        if (perspective.PhysicalFields.FirstOrDefault(f => !f.IsVector && f.PropertyName == index.PropertyName) is not { } field) {
-          continue;
-        }
-        foreach (var drop in JsonIndexSql.DropDocumentIndexStatements(index, table, shortName)) {
-          sb.AppendLine(drop);
-        }
-        foreach (var statement in JsonIndexSql.ColumnCreateStatements(index, field.ColumnName, table, shortName)) {
-          var target = statement.IndexOf("gin_trgm_ops", StringComparison.Ordinal) >= 0 ? trigram : plain;
-          // The plain btree of an [Indexed] field is emitted with the other physical-field indexes.
-          var isFieldBtree = field.IsIndexed && !index.CaseInsensitive && target == plain;
-          if (!isFieldBtree && !target.Contains(statement)) {
-            target.Add(statement);
-          }
-        }
+        _collectPromotedIndex(sb, perspective, index, table, shortName, trigram, plain);
       }
     }
 
@@ -3049,6 +3035,36 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
     foreach (var statement in plain) {
       sb.AppendLine(PerspectiveIndexSql.Ensure(statement, quotedSchema));
+    }
+  }
+
+  /// <summary>
+  /// One promoted declaration: appends the drops of its document indexes, and collects the column indexes that
+  /// replace them, the trigram ones apart because they need the extension. The plain btree of an
+  /// <c>[Indexed]</c> field is emitted with the other physical-field indexes, so it is not collected again.
+  /// </summary>
+  private static void _collectPromotedIndex(
+      StringBuilder sb, PerspectiveModelInfo perspective, JsonIndexInfo index, string table, string shortName,
+      List<string> trigram, List<string> plain) {
+    if (perspective.PhysicalFields.FirstOrDefault(f => !f.IsVector && f.PropertyName == index.PropertyName) is not { } field) {
+      return;
+    }
+    foreach (var drop in JsonIndexSql.DropDocumentIndexStatements(index, table, shortName)) {
+      sb.AppendLine(drop);
+    }
+    var fieldBtreeEmittedElsewhere = field.IsIndexed && !index.CaseInsensitive;
+    foreach (var statement in JsonIndexSql.ColumnCreateStatements(index, field.ColumnName, table, shortName)) {
+      if (statement.IndexOf("gin_trgm_ops", StringComparison.Ordinal) >= 0) {
+        _addOnce(trigram, statement);
+      } else if (!fieldBtreeEmittedElsewhere) {
+        _addOnce(plain, statement);
+      }
+    }
+  }
+
+  private static void _addOnce(List<string> statements, string statement) {
+    if (!statements.Contains(statement)) {
+      statements.Add(statement);
     }
   }
 
@@ -3221,24 +3237,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _generateStoredFormMigrationsCode(
       IReadOnlyList<PerspectiveModelInfo> perspectives, string schema, ImmutableArray<StoredFormMigrationClassInfo> customMigrations) {
-    const string STEP = "global::Whizbang.Data.Postgres.StoredFormStep.";
     var sb = new StringBuilder();
     foreach (var perspective in perspectives.GroupBy(p => p.TableName).Select(g => g.First()).OrderBy(p => p.TableName, StringComparer.Ordinal)) {
       foreach (var form in perspective.StoredForms) {
-        var steps = new List<string>();
-        var field = form.ColumnProperty is null
-          ? null
-          : perspective.PhysicalFields.FirstOrDefault(f => !f.IsVector && f.PropertyName == form.ColumnProperty);
-        if (field?.IsSplit != true) {
-          steps.Add(form.DocumentStep);
-        }
-        if (field is not null && form.ColumnAction == StoredFormColumnAction.Retype) {
-          steps.Add($"{STEP}RetypeColumn(\"{field.ColumnName}\", \"{_getPostgresColumnType(field)}\", {form.ColumnNumber}, {form.ColumnEnumNames})");
-        } else if (field is not null && form.ColumnAction == StoredFormColumnAction.Rename && form.PreviousColumn != field.ColumnName) {
-          steps.Add($"{STEP}RenameColumn(\"{form.PreviousColumn}\", \"{field.ColumnName}\")");
-        }
         sb.AppendLine($"      global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"{schema}\", \"{perspective.TableName}\", "
-          + $"\"{perspective.TableName}.{form.NameSuffix}\", {string.Join(", ", steps)}),");
+          + $"\"{perspective.TableName}.{form.NameSuffix}\", {string.Join(", ", _storedFormSteps(perspective, form))}),");
       }
       foreach (var custom in customMigrations
           .Where(m => m.Problem is null && m.ModelTypeName == perspective.ModelTypeName)
@@ -3247,6 +3250,30 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
     return sb.ToString();
+  }
+
+  /// <summary>
+  /// The steps of one generated stored-form migration: the document step, unless the field lives only in its column
+  /// (a Split model), then the column's retype or rename when the declaration is on a physical field.
+  /// </summary>
+  private static List<string> _storedFormSteps(PerspectiveModelInfo perspective, StoredFormInfo form) {
+    const string STEP = "global::Whizbang.Data.Postgres.StoredFormStep.";
+    var field = form.ColumnProperty is null
+      ? null
+      : perspective.PhysicalFields.FirstOrDefault(f => !f.IsVector && f.PropertyName == form.ColumnProperty);
+    var steps = new List<string>();
+    if (field?.IsSplit != true) {
+      steps.Add(form.DocumentStep);
+    }
+    if (field is null) {
+      return steps;
+    }
+    if (form.ColumnAction == StoredFormColumnAction.Retype) {
+      steps.Add($"{STEP}RetypeColumn(\"{field.ColumnName}\", \"{_getPostgresColumnType(field)}\", {form.ColumnNumber}, {form.ColumnEnumNames})");
+    } else if (form.ColumnAction == StoredFormColumnAction.Rename && form.PreviousColumn != field.ColumnName) {
+      steps.Add($"{STEP}RenameColumn(\"{form.PreviousColumn}\", \"{field.ColumnName}\")");
+    }
+    return steps;
   }
 
   /// <summary>

@@ -123,38 +123,51 @@ public static class StoredFormDiscovery {
     }
 
     foreach (var removed in type.GetAttributes().Where(a => TypeNameUtilities.IsNamed(a.AttributeClass, STORED_FORM_REMOVED))) {
-      var relative = removed.ConstructorArguments.Length > 0 ? removed.ConstructorArguments[0].Value as string : null;
-      var path = prefix + relative;
-      if (collection is not null) {
-        walk.Problem(INSIDE_COLLECTION, path, $"it is inside an element of the collection {collection}");
-      } else if (!_isPath(relative)) {
-        walk.Problem(CANNOT_GENERATE, path, "the removed path is not a property key (keys separated by dots)");
-      } else {
-        walk.Migrations.Add(new StoredFormInfo(3, $"{path}:removed", $"{STEP}Remove({_literal(path)})"));
-      }
+      _removal(walk, removed, prefix, collection);
     }
 
     foreach (var property in _properties(type)) {
       var path = prefix + property.Name;
-      var declaration = property.GetAttributes().FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, STORED_FORM));
-      if (declaration is not null) {
-        if (collection is not null) {
-          walk.Problem(INSIDE_COLLECTION, path, $"it is inside an element of the collection {collection}");
-        } else {
-          _declare(walk, property, path, declaration, topLevel: depth == 0);
-        }
-      }
-
-      if (_elementOf(property.Type) is { } element) {
-        if (_isComplex(_unwrap(element))) {
-          _walk(walk, _unwrap(element), path + "[].", depth + 1, collection ?? path);
-        }
-      } else if (_isComplex(_unwrap(property.Type))) {
-        _walk(walk, _unwrap(property.Type), path + ".", depth + 1, collection);
-      }
+      _declaration(walk, property, path, depth, collection);
+      _descend(walk, property, path, depth, collection);
     }
 
     walk.OnPath.Remove(key);
+  }
+
+  private static void _removal(Walk walk, AttributeData removed, string prefix, string? collection) {
+    var relative = removed.ConstructorArguments.Length > 0 ? removed.ConstructorArguments[0].Value as string : null;
+    var path = prefix + relative;
+    if (collection is not null) {
+      walk.Problem(INSIDE_COLLECTION, path, $"it is inside an element of the collection {collection}");
+    } else if (!_isPath(relative)) {
+      walk.Problem(CANNOT_GENERATE, path, "the removed path is not a property key (keys separated by dots)");
+    } else {
+      walk.Migrations.Add(new StoredFormInfo(3, $"{path}:removed", $"{STEP}Remove({_literal(path)})"));
+    }
+  }
+
+  private static void _declaration(Walk walk, IPropertySymbol property, string path, int depth, string? collection) {
+    var declaration = property.GetAttributes().FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, STORED_FORM));
+    if (declaration is null) {
+      return;
+    }
+    if (collection is not null) {
+      walk.Problem(INSIDE_COLLECTION, path, $"it is inside an element of the collection {collection}");
+    } else {
+      _declare(walk, property, path, declaration, topLevel: depth == 0);
+    }
+  }
+
+  // Into a complex property, or into a collection's complex element, where a declaration is reported, not generated.
+  private static void _descend(Walk walk, IPropertySymbol property, string path, int depth, string? collection) {
+    if (_elementOf(property.Type) is { } element) {
+      if (_isComplex(_unwrap(element))) {
+        _walk(walk, _unwrap(element), path + "[].", depth + 1, collection ?? path);
+      }
+    } else if (_isComplex(_unwrap(property.Type))) {
+      _walk(walk, _unwrap(property.Type), path + ".", depth + 1, collection);
+    }
   }
 
   private static void _declare(Walk walk, IPropertySymbol property, string path, AttributeData declaration, bool topLevel) {
@@ -272,26 +285,25 @@ public static class StoredFormDiscovery {
     if (value.Kind != TypedConstantKind.Primitive) {
       return null;
     }
-    switch (value.Value) {
-      case string or char when kind == Scalar.Text:
-        return _jsonString(Convert.ToString(value.Value, CultureInfo.InvariantCulture)!);
-      case bool flag when kind == Scalar.Bool:
-        return flag ? "true" : "false";
-      case string or char or bool:
-        return null;
-      default:
-        if (kind is not (Scalar.Number or Scalar.Enum)) {
-          return null;
-        }
-        var d = Convert.ToDouble(value.Value, CultureInfo.InvariantCulture);
-        var integral = kind == Scalar.Enum || number is not ("Decimal" or "Single" or "Double");
-        if (double.IsNaN(d) || double.IsInfinity(d) || (integral && Math.Abs(d % 1) > 0)) {
-          return null;
-        }
-        return value.Value is double or float
-          ? d.ToString("R", CultureInfo.InvariantCulture)
-          : Convert.ToString(value.Value, CultureInfo.InvariantCulture);
+    return value.Value switch {
+      string or char when kind == Scalar.Text => _jsonString(Convert.ToString(value.Value, CultureInfo.InvariantCulture)!),
+      bool flag when kind == Scalar.Bool => flag ? "true" : "false",
+      string or char or bool => null,
+      _ when kind is Scalar.Number or Scalar.Enum => _jsonNumber(value.Value, kind, number),
+      _ => null,
+    };
+  }
+
+  // A numeric default as JSON, or null when it is not finite or has a fraction the property's type cannot hold.
+  private static string? _jsonNumber(object? raw, Scalar kind, string? number) {
+    var d = Convert.ToDouble(raw, CultureInfo.InvariantCulture);
+    var integral = kind == Scalar.Enum || number is not ("Decimal" or "Single" or "Double");
+    if (double.IsNaN(d) || double.IsInfinity(d) || (integral && Math.Abs(d % 1) > 0)) {
+      return null;
     }
+    return raw is double or float
+      ? d.ToString("R", CultureInfo.InvariantCulture)
+      : Convert.ToString(raw, CultureInfo.InvariantCulture);
   }
 
   private static (Scalar Kind, string? Number) _classify(ITypeSymbol type) {
@@ -325,10 +337,10 @@ public static class StoredFormDiscovery {
     var members = PhysicalFieldScalar.EnumMembers(enumType) ?? "";
     string[] pairs = members.Length == 0
       ? []
-      : members.Split(';').Select(m => {
+      : [.. members.Split(';').Select(m => {
         var at = m.IndexOf('=');
-        return $"({_literal(m.Substring(0, at))}, {_literal(m.Substring(at + 1))})";
-      }).ToArray();
+        return $"({_literal(m[..at])}, {_literal(m[(at + 1)..])})";
+      })];
     return pairs.Length == 0
       ? "new (string Name, string Value)[] { }"
       : $"new (string Name, string Value)[] {{ {string.Join(", ", pairs)} }}";
@@ -353,7 +365,7 @@ public static class StoredFormDiscovery {
     }
     if (type is INamedTypeSymbol { IsGenericType: true } named && type.SpecialType != SpecialType.System_String
         && TypeNameUtilities.Display(named.ContainingNamespace).StartsWith("System.Collections", StringComparison.Ordinal)) {
-      return named.TypeArguments[named.TypeArguments.Length - 1];
+      return named.TypeArguments[^1];
     }
     return null;
   }

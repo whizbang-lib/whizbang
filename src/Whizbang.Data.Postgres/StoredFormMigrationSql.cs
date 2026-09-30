@@ -230,10 +230,11 @@ public static class StoredFormMigrationSql {
   }
 
   private static string _freeTag(string tag, string sql) {
-    while (sql.Contains($"${tag}$", StringComparison.Ordinal)) {
-      tag += "_x";
+    var free = new StringBuilder(tag);
+    while (sql.Contains($"${free}$", StringComparison.Ordinal)) {
+      free.Append("_x");
     }
-    return tag;
+    return free.ToString();
   }
 
   private static void _validate(string schema, string table, string name) {

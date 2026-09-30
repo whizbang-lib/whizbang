@@ -544,25 +544,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     if (e is MemberExpression { Member: PropertyInfo jprop, Expression: MemberExpression { Member.Name: var container, Expression: ParameterExpression jp } }
         && _qualifierFor(jp, ctx) is { } jq
         && _jsonbColumnFor(container) is { } col) {
-      // The jsonb KEY is the serialized name, which honors [JsonPropertyName] — e.g. PerspectiveScope.TenantId
-      // is [JsonPropertyName("t")], so it persists as scope->>'t', NOT scope->>'TenantId'. Emit the short key
-      // (matches EF's own translation for the native path). The PARAMETER name stays the property name.
-      var jsonKey = jprop.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? jprop.Name;
-      // An ordering comparison reads the key as a number, and it is that expression an index would have to carry.
-      var unqualified = numeric ? $"({col}->>'{jsonKey}')::numeric" : $"{col}->>'{jsonKey}'";
-      var columnSql = numeric ? $"({jq}{col}->>'{jsonKey}')::numeric" : $"{jq}{unqualified}";
-      // Attribute the path to its table (outer vs. EXISTS-inner) so the index lands on the right relation.
-      // Null table (Compile called without an outer table name) → skip: can't build the DDL, so no candidate.
-      string? table = null;
-      if (ReferenceEquals(jp, ctx.OuterParam)) {
-        table = ctx.OuterTableName;
-      } else if (ctx.InnerParam is not null && ReferenceEquals(jp, ctx.InnerParam)) {
-        table = ctx.InnerTableName;
-      }
-      if (table is not null) {
-        refs.Add(new ReferencedJsonPath(table, unqualified));
-      }
-      return new ResolvedColumn(columnSql, jprop.Name, ColumnKind.JsonText, MemberType: jprop.PropertyType);
+      return _jsonColumn(jprop, jp, jq, col, ctx, refs, numeric);
     }
 
     if (e is MemberExpression { Member: PropertyInfo { Name: "Id" }, Expression: ParameterExpression ip }
@@ -571,6 +553,32 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     }
 
     return null;
+  }
+
+  // A jsonb key of a row's Scope or Data, qualified for its context, recorded as an index candidate on its table.
+  private static ResolvedColumn _jsonColumn(
+      PropertyInfo jprop, ParameterExpression jp, string jq, string col, Ctx ctx, List<ReferencedJsonPath> refs, bool numeric) {
+    // The jsonb KEY is the serialized name, which honors [JsonPropertyName] — e.g. PerspectiveScope.TenantId
+    // is [JsonPropertyName("t")], so it persists as scope->>'t', NOT scope->>'TenantId'. Emit the short key
+    // (matches EF's own translation for the native path). The PARAMETER name stays the property name.
+    var jsonKey = jprop.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? jprop.Name;
+    // An ordering comparison reads the key as a number, and it is that expression an index would have to carry.
+    var unqualified = numeric ? $"({col}->>'{jsonKey}')::numeric" : $"{col}->>'{jsonKey}'";
+    var columnSql = numeric ? $"({jq}{col}->>'{jsonKey}')::numeric" : $"{jq}{unqualified}";
+    // Attribute the path to its table (outer vs. EXISTS-inner) so the index lands on the right relation.
+    // Null table (Compile called without an outer table name) → skip: can't build the DDL, so no candidate.
+    if (_tableOf(jp, ctx) is { } table) {
+      refs.Add(new ReferencedJsonPath(table, unqualified));
+    }
+    return new ResolvedColumn(columnSql, jprop.Name, ColumnKind.JsonText, MemberType: jprop.PropertyType);
+  }
+
+  // The table a row param reads, or null when its context has no table name.
+  private static string? _tableOf(ParameterExpression p, Ctx ctx) {
+    if (ReferenceEquals(p, ctx.OuterParam)) {
+      return ctx.OuterTableName;
+    }
+    return ctx.InnerParam is not null && ReferenceEquals(p, ctx.InnerParam) ? ctx.InnerTableName : null;
   }
 
   // The SQL qualifier ("" / "{outerTable}." / "{alias}.") for a row param, or null if it isn't a known one.

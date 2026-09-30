@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -73,13 +74,8 @@ public static partial class IndexStatistics {
     await using var command = new NpgsqlCommand(
       $"SELECT current_setting('{REWRITTEN_TABLES_SETTING}', true)", connection, transaction);
     var marked = await command.ExecuteScalarAsync(cancellationToken) as string;
-    var tables = new List<string>();
-    foreach (var table in (marked ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries)) {
-      if (!tables.Contains(table)) {
-        tables.Add(table);
-      }
-    }
-    return tables;
+    // Distinct keeps each table's first mark, so the order is the order the rewrites marked them in.
+    return [.. (marked ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal)];
   }
 
   /// <summary>
