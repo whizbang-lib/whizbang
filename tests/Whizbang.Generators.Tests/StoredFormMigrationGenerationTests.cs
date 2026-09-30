@@ -329,6 +329,7 @@ public class StoredFormMigrationGenerationTests {
   [Arguments("[StoredForm(DefaultWhenMissing = 1)] public Nested Bad { get; init; } = new();", "default")]
   [Arguments("[StoredForm(Previously = typeof(bool))] public int Bad { get; init; }", "Boolean")]
   [Arguments("[StoredForm(Previously = typeof(Nested))] public string Bad { get; init; } = \"\";", "Nested")]
+  [Arguments("[StoredForm(DefaultWhenMissing = 1)] public string Bad { get; init; } = \"\";", "default")]
   public async Task ADeclarationItCannotGenerate_IsWHIZ830_AndEmitsNothingAsync(string property, string mentioned) {
     var source = $$"""
       using System;
@@ -578,5 +579,77 @@ public class StoredFormMigrationGenerationTests {
     await Assert.That(code).DoesNotContain("StoredFormMigrationSql.Generated(");
     await Assert.That(code).Contains("return new global::Whizbang.Data.Postgres.StoredFormMigration[] {");
     await Assert.That(diagnostics.Where(d => d.Id is "WHIZ830" or "WHIZ831" or "WHIZ832")).IsEmpty();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task AConversionToANarrowOrUnsignedNumber_NamesThatWidthAsync() {
+    const string SOURCE = """
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record WEvent : IEvent;
+      public record WidthModel {
+        [StreamId] public Guid Id { get; init; }
+        [StoredForm(Previously = typeof(string))] public sbyte Tiny { get; init; }
+        [StoredForm(Previously = typeof(string))] public byte Octet { get; init; }
+        [StoredForm(Previously = typeof(string))] public short Small { get; init; }
+        [StoredForm(Previously = typeof(string))] public ushort Port { get; init; }
+        [StoredForm(Previously = typeof(string))] public uint Count { get; init; }
+      }
+      public class WidthPerspective : IPerspectiveFor<WidthModel, WEvent> {
+        public WidthModel Apply(WidthModel currentData, WEvent @event) => currentData;
+      }
+
+      [Whizbang.Data.EFCore.Custom.WhizbangDbContext]
+      public class TestDbContext : Microsoft.EntityFrameworkCore.DbContext {
+        public TestDbContext(Microsoft.EntityFrameworkCore.DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var (code, diagnostics) = await _runAsync(SOURCE);
+
+    await Assert.That(diagnostics.Where(d => d.Id is "WHIZ830" or "WHIZ831" or "WHIZ832")).IsEmpty();
+    await Assert.That(code).Contains($"{STEP}ToNumber(\"Tiny\", {NUMBER}SByte)");
+    await Assert.That(code).Contains($"{STEP}ToNumber(\"Octet\", {NUMBER}Byte)");
+    await Assert.That(code).Contains($"{STEP}ToNumber(\"Small\", {NUMBER}Int16)");
+    await Assert.That(code).Contains($"{STEP}ToNumber(\"Port\", {NUMBER}UInt16)");
+    await Assert.That(code).Contains($"{STEP}ToNumber(\"Count\", {NUMBER}UInt32)")
+      .Because("Each width bounds the conversion differently, so the step names the property's own width.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PreviouslyNull_DeclaresNoConversion_AndIsNotAnErrorAsync() {
+    const string SOURCE = """
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record NEvent : IEvent;
+      public record NullModel {
+        [StreamId] public Guid Id { get; init; }
+        [StoredForm(Previously = null)] public string Label { get; init; } = "";
+      }
+      public class NullPerspective : IPerspectiveFor<NullModel, NEvent> {
+        public NullModel Apply(NullModel currentData, NEvent @event) => currentData;
+      }
+
+      [Whizbang.Data.EFCore.Custom.WhizbangDbContext]
+      public class TestDbContext : Microsoft.EntityFrameworkCore.DbContext {
+        public TestDbContext(Microsoft.EntityFrameworkCore.DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var (code, diagnostics) = await _runAsync(SOURCE);
+
+    await Assert.That(diagnostics.Where(d => d.Id is "WHIZ830" or "WHIZ831" or "WHIZ832")).IsEmpty();
+    await Assert.That(code).DoesNotContain("StoredFormMigrationSql.Generated(")
+      .Because("An unset former type is no type change: there is nothing to convert.");
   }
 }
