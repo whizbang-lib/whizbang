@@ -5,8 +5,10 @@ using Whizbang.Core.Registry;
 namespace Whizbang.Sagas;
 
 /// <summary>
-/// Resolves the stream of the events the saga framework publishes itself: the watchdog tick, the
-/// abandon event and the continuation request, each stored on the stream of the saga it belongs to.
+/// Resolves the stream of every saga event: the watchdog tick, the abandon event and the continuation
+/// request the framework publishes itself, and every <see cref="ISagaStreamEvent"/>, which is every
+/// event a <c>[Saga]</c> declaration generates. Each is stored on the stream of the saga it belongs to,
+/// keyed by the saga id.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -19,8 +21,10 @@ namespace Whizbang.Sagas;
 /// <para>
 /// Registered with <see cref="StreamIdExtractorRegistry"/> when the assembly loads, beside the
 /// extractors generated for every other assembly, so a host needs no call to get it. It answers only
-/// for its three types and returns <see langword="null"/> for everything else, leaving consumer events
-/// to their own extractors.
+/// for saga events and returns <see langword="null"/> for everything else, leaving consumer events to
+/// their own extractors. The events a <c>[Saga]</c> declaration generates need it as much as the
+/// framework's own: they are emitted by another source generator, which a consumer's stream id
+/// generator cannot see, so before it they were each stored on a stream of their own message id.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
@@ -31,13 +35,21 @@ public sealed class SagaFrameworkEventStreamIds : IStreamIdExtractor {
 #pragma warning disable CA2255
   [ModuleInitializer]
 #pragma warning restore CA2255
-  internal static void Register() => StreamIdExtractorRegistry.Register(new SagaFrameworkEventStreamIds(), priority: 100);
+  internal static void Register() => StreamIdExtractorRegistry.Register(new SagaFrameworkEventStreamIds(), priority: PRIORITY);
+
+  /// <summary>
+  /// Ahead of the extractors generated for consumer assemblies (100): a <c>[Saga&lt;TBase&gt;]</c> event
+  /// base can carry a <c>[StreamId]</c> of its own, and a saga event belongs on its saga's stream
+  /// whatever its base says.
+  /// </summary>
+  internal const int PRIORITY = 50;
 
   /// <inheritdoc />
   public Guid? ExtractStreamId(object message, Type messageType) => message switch {
     SagaCompletionWatchdogTickEvent tick => tick.StreamId,
     SagaCompletionAbandonedEvent abandoned => abandoned.StreamId,
     SagaContinuationRequestedEvent continuation => continuation.StreamId,
+    ISagaStreamEvent sagaEvent => sagaEvent.SagaId,
     _ => null,
   };
 
@@ -52,6 +64,9 @@ public sealed class SagaFrameworkEventStreamIds : IStreamIdExtractor {
         return true;
       case SagaContinuationRequestedEvent continuation:
         continuation.StreamId = streamId;
+        return true;
+      case ISagaStreamEvent sagaEvent:
+        sagaEvent.SagaId = streamId;
         return true;
       default:
         return false;

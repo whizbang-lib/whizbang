@@ -76,8 +76,8 @@ public class SagaFrameworkEventStreamTests {
   }
 
   /// <summary>
-  /// The extractor answers for the three framework events and for nothing else, so it cannot claim
-  /// a consumer's event from the extractor generated for it.
+  /// The extractor answers for the three framework events and every saga stream event, and for nothing
+  /// else, so it cannot claim a consumer's own event from the extractor generated for it.
   /// </summary>
   [Test]
   public async Task Registry_ResolvesTheFrameworkEventsStream_AndLeavesOtherMessagesAloneAsync() {
@@ -90,7 +90,9 @@ public class SagaFrameworkEventStreamTests {
       .Because("the extractor is registered when the saga assembly loads, with no call from the host");
     await Assert.That(extractor.ExtractStreamId(abandoned, abandoned.GetType())).IsEqualTo(_sagaId);
     await Assert.That(extractor.ExtractStreamId(continuation, continuation.GetType())).IsEqualTo(_sagaId);
-    await Assert.That(extractor.ExtractStreamId(new ProbeSaga.InitiatedEvent(), typeof(ProbeSaga.InitiatedEvent))).IsNull();
+    await Assert.That(extractor.ExtractStreamId(new ProbeSaga.InitiatedEvent { SagaId = _sagaId }, typeof(ProbeSaga.InitiatedEvent))).IsEqualTo(_sagaId)
+      .Because("a generated saga event is a saga stream event, keyed by its saga id");
+    await Assert.That(extractor.ExtractStreamId(new NotASagaEvent(), typeof(NotASagaEvent))).IsNull();
   }
 
   /// <summary>
@@ -107,7 +109,10 @@ public class SagaFrameworkEventStreamTests {
     await Assert.That(extractor.SetStreamId(tick, _sagaId)).IsTrue();
     await Assert.That(extractor.SetStreamId(abandoned, _sagaId)).IsTrue();
     await Assert.That(extractor.SetStreamId(continuation, _sagaId)).IsTrue();
-    await Assert.That(extractor.SetStreamId(new ProbeSaga.InitiatedEvent(), _sagaId)).IsFalse();
+    var generated = new ProbeSaga.InitiatedEvent();
+    await Assert.That(extractor.SetStreamId(generated, _sagaId)).IsTrue();
+    await Assert.That(generated.SagaId).IsEqualTo(_sagaId);
+    await Assert.That(extractor.SetStreamId(new NotASagaEvent(), _sagaId)).IsFalse();
     await Assert.That(tick.StreamId).IsEqualTo(_sagaId);
     await Assert.That(abandoned.StreamId).IsEqualTo(_sagaId);
     await Assert.That(continuation.StreamId).IsEqualTo(_sagaId);
@@ -166,5 +171,10 @@ public class SagaFrameworkEventStreamTests {
   private sealed class MovableClock(DateTimeOffset start) : TimeProvider {
     public DateTimeOffset Now { get; set; } = start;
     public override DateTimeOffset GetUtcNow() => Now;
+  }
+
+  /// <summary>An event that belongs to no saga.</summary>
+  public sealed class NotASagaEvent : IEvent {
+    [StreamId] public Guid Id { get; set; }
   }
 }
