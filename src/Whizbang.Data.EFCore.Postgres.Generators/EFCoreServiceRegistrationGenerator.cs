@@ -516,6 +516,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: keys,
         PhysicalFields: physicalFields,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
+        PromotedIndexes: _promotedIndexes(modelType as INamedTypeSymbol),
         CompositeIndexes: _reachableComposites(modelType as INamedTypeSymbol),
         DocumentMatching: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol),
         CoalesceBody: _buildDataCoalesceStatements(modelType),
@@ -547,6 +548,16 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       MappedPathDiscovery.MustStoreOpaquely(modelType)
         ? []
         : JsonIndexDiscovery.From(modelType);
+
+  /// <summary>
+  /// The document indexes the promoted fields declare, or none when the model's document is stored
+  /// opaquely and so never had any.
+  /// </summary>
+  /// <remarks>See <see cref="JsonIndexDiscovery.PromotedFrom"/> and <see cref="_appendPromotedFieldIndexes"/>.</remarks>
+  private static ImmutableArray<JsonIndexInfo> _promotedIndexes(INamedTypeSymbol? modelType) =>
+      MappedPathDiscovery.MustStoreOpaquely(modelType)
+        ? []
+        : JsonIndexDiscovery.PromotedFrom(modelType);
 
   /// <summary>
   /// The composite and partial indexes the model declares, or none when its document is stored
@@ -609,6 +620,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: candidate.Keys,
         PhysicalFields: candidate.PhysicalFields,
         JsonIndexes: candidate.JsonIndexes,
+        PromotedIndexes: candidate.PromotedIndexes,
         CompositeIndexes: candidate.CompositeIndexes,
         DocumentMatching: candidate.DocumentMatching,
         CoalesceBody: candidate.CoalesceBody,
@@ -2896,7 +2908,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <para>
   /// Nothing here ever drops an index. An index an earlier release built that this one no longer
   /// declares stays until an operator removes it, since removing one a production query relies on
-  /// is worse than keeping one nobody reads.
+  /// is worse than keeping one nobody reads. The one exception is a promoted field's document index,
+  /// which no query can read once the field is redirected to its column and which is replaced by an
+  /// index of the same kind on the column; see <see cref="_appendPromotedFieldIndexes"/>.
   /// </para>
   /// </remarks>
   private static IEnumerable<string> _standardIndexStatements(
@@ -2953,7 +2967,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       PerspectiveModelInfo perspective,
       string quotedSchema) {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
-    _appendPhysicalSearchIndexes(sb, perspective, quotedSchema, shortName);
+    _appendPromotedFieldIndexes(sb, perspective, quotedSchema, shortName);
 
     foreach (var field in perspective.PhysicalFields) {
       if (!field.IsIndexed) {
@@ -2973,24 +2987,69 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// The trigram index over the fold of each promoted Search field's column, in one optional-extension
-  /// block so a server that refuses the trigram extension skips them with a warning rather than failing.
+  /// The indexes a promoted field's declarations call for beyond its plain btree: first the drop of each
+  /// document index the schema built for the field before it was promoted, then the column's trigram
+  /// indexes (search and substring) in one optional-extension block, then its case-folded btree.
   /// </summary>
-  /// <remarks>Over <c>wh_fold(column)</c>: exactly what the query side produces for a <c>Contains</c> on the
-  /// field once the promoted-field redirect has pointed it at the column.</remarks>
-  private static void _appendPhysicalSearchIndexes(
+  /// <remarks>
+  /// <para>
+  /// A promoted field's queries are redirected to its column, so an index over its extraction is never
+  /// read again while every write still maintains it (issue #1009). Each one is dropped by the name the
+  /// schema gave it, and only when its definition is over the document: an index under another name is an
+  /// operator's and stays, and a column index that took the same name is not over the document.
+  /// </para>
+  /// <para>
+  /// The drops come first because a column index can share a document index's name (field <c>Name</c>,
+  /// column <c>name</c>), and <c>IF NOT EXISTS</c> would otherwise find the old one and build nothing.
+  /// The column indexes come from the same declarations, so a database that promoted the field and one
+  /// created with it promoted end up with the same indexes.
+  /// </para>
+  /// <para>
+  /// The search index is over <c>wh_fold(column)</c>: exactly what the query side produces for a
+  /// <c>Contains</c> on the field once the redirect has pointed it at the column. A plain btree the field
+  /// asks for with <c>[Indexed]</c> is emitted with the other physical-field indexes, and is not repeated.
+  /// </para>
+  /// </remarks>
+  private static void _appendPromotedFieldIndexes(
       StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema, string shortName) {
-    var search = perspective.PhysicalFields.Where(f => f.IsSearch).ToList();
-    if (search.Count == 0) {
-      return;
+    var table = $"{quotedSchema}.{perspective.TableName}";
+    var trigram = new List<string>();
+    var plain = new List<string>();
+
+    foreach (var field in perspective.PhysicalFields.Where(f => f.IsSearch && !f.IsVector)) {
+      trigram.Add(JsonIndexSql.ColumnSearchStatement(field.ColumnName, table, shortName));
     }
-    sb.AppendLine(JsonIndexSql.OPTIONAL_EXTENSION_BEGIN + JsonIndexSql.TRIGRAM_EXTENSION);
-    sb.AppendLine($"CREATE EXTENSION IF NOT EXISTS {JsonIndexSql.TRIGRAM_EXTENSION};");
-    foreach (var field in search) {
-      sb.AppendLine($"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_{field.ColumnName}_fold_trgm")} ON {quotedSchema}.{perspective.TableName} "
-        + $"USING gin ({quotedSchema}.wh_fold({field.ColumnName}) gin_trgm_ops);");
+
+    if (!perspective.PromotedIndexes.IsDefaultOrEmpty) {
+      foreach (var index in perspective.PromotedIndexes) {
+        if (perspective.PhysicalFields.FirstOrDefault(f => !f.IsVector && f.PropertyName == index.PropertyName) is not { } field) {
+          continue;
+        }
+        foreach (var drop in JsonIndexSql.DropDocumentIndexStatements(index, table, shortName)) {
+          sb.AppendLine(drop);
+        }
+        foreach (var statement in JsonIndexSql.ColumnCreateStatements(index, field.ColumnName, table, shortName)) {
+          var target = statement.IndexOf("gin_trgm_ops", StringComparison.Ordinal) >= 0 ? trigram : plain;
+          // The plain btree of an [Indexed] field is emitted with the other physical-field indexes.
+          var isFieldBtree = field.IsIndexed && !index.CaseInsensitive && target == plain;
+          if (!isFieldBtree && !target.Contains(statement)) {
+            target.Add(statement);
+          }
+        }
+      }
     }
-    sb.AppendLine(JsonIndexSql.OPTIONAL_EXTENSION_END);
+
+    if (trigram.Count > 0) {
+      sb.AppendLine(JsonIndexSql.OPTIONAL_EXTENSION_BEGIN + JsonIndexSql.TRIGRAM_EXTENSION);
+      sb.AppendLine($"CREATE EXTENSION IF NOT EXISTS {JsonIndexSql.TRIGRAM_EXTENSION};");
+      foreach (var statement in trigram) {
+        sb.AppendLine(statement);
+      }
+      sb.AppendLine(JsonIndexSql.OPTIONAL_EXTENSION_END);
+    }
+    foreach (var statement in plain) {
+      sb.AppendLine(PerspectiveIndexSql.Ensure(statement, quotedSchema));
+    }
   }
 
   /// <summary>
@@ -3142,6 +3201,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
     var table = $"{quotedSchema}.{perspective.TableName}";
     foreach (var field in perspective.PhysicalFields) {
+      // Armed before the column is added, so only the pass that adds it arms it (#1009).
+      if (PhysicalColumnSql.Arm(table, field) is { } arm) {
+        sb.AppendLine(arm);
+      }
       sb.AppendLine(PhysicalColumnSql.AddColumn(table, field.ColumnName, _getPostgresColumnType(field)));
       if (PhysicalColumnSql.Backfill(table, field) is { } backfill) {
         sb.AppendLine(backfill);
@@ -3300,7 +3363,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static void _generatePerspectiveIndexSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
-    _appendPhysicalSearchIndexes(perspSql, perspective, quotedSchema, shortName);
+    _appendPromotedFieldIndexes(perspSql, perspective, quotedSchema, shortName);
 
     // See _standardIndexStatements for what each is for and why the document indexes are declared.
     // The same statements as the fallback script, so the per-perspective schema-hash entries match
@@ -3492,6 +3555,7 @@ internal sealed record DbContextInfo(
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective. Empty = default context only</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model (for DDL generation)</param>
 /// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
+/// <param name="PromotedIndexes">The document indexes each promoted field declares, which its column indexes answer and whose document versions are dropped</param>
 /// <param name="CompositeIndexes">Composite and partial indexes the model declares</param>
 /// <param name="DocumentMatching">Which document indexes the model's queries need, from [PerspectiveQueries]</param>
 /// <param name="CoalesceBody">Pre-rendered null-coalesce statements for the model's collection graph</param>
@@ -3508,6 +3572,7 @@ internal sealed record PerspectiveModelInfo(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<JsonIndexInfo> PromotedIndexes,
     ImmutableArray<CompositeIndexInfo> CompositeIndexes,
     DocumentMatching DocumentMatching,
     string CoalesceBody,
@@ -3528,6 +3593,7 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
+/// <param name="PromotedIndexes">The document indexes each promoted field declares, which its column indexes answer and whose document versions are dropped</param>
 /// <param name="CompositeIndexes">Composite and partial indexes the model declares</param>
 /// <param name="DocumentMatching">Which document indexes the model's queries need, from [PerspectiveQueries]</param>
 /// <param name="CoalesceBody">Pre-rendered null-coalesce statements for the model's collection graph
@@ -3545,6 +3611,7 @@ internal sealed record PerspectiveModelCandidate(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<JsonIndexInfo> PromotedIndexes,
     ImmutableArray<CompositeIndexInfo> CompositeIndexes,
     DocumentMatching DocumentMatching,
     string CoalesceBody,
