@@ -15,6 +15,10 @@ public static class SagaServiceCollectionExtensions {
   /// Registers Whizbang.Sagas runtime services. Call exactly once during
   /// container setup before any saga operation runs.
   /// </summary>
+  /// <remarks>
+  /// The dispatcher-backed <see cref="ISagaEventEmitter"/> is a default: an emitter the consumer
+  /// registered before this call is the one saga services get.
+  /// </remarks>
   /// <param name="services">The service collection.</param>
   /// <param name="configure">
   /// Optional configuration callback. The most common use is overriding
@@ -50,7 +54,8 @@ public static class SagaServiceCollectionExtensions {
 
     services.AddSingleton(opts);
     services.AddSingleton<SagaMetrics>(sp => new SagaMetrics(sp.GetRequiredService<WhizbangMetrics>()));
-    services.AddScoped<ISagaEventEmitter, DispatcherSagaEventEmitter>();
+    // The default: a consumer that registered its own emitter first keeps it.
+    services.TryAddScoped<ISagaEventEmitter, DispatcherSagaEventEmitter>();
 
     // Every saga started through BaseSagaService arms a completion watchdog tick. A saga declared
     // with [Saga] gets a generated receiver for it; a hand-written one relies on this router, which
