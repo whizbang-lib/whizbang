@@ -141,6 +141,14 @@ public class PhysicalPromotionIndexGenerationTests {
   }
 
   [Test]
+  public async Task WithoutADeclaration_NoIndexIsNamedDroppedOrCreatedAsync() {
+    await Assert.That(JsonIndexSql.IndexNames(null!, "item")).IsEmpty();
+    await Assert.That(JsonIndexSql.DropDocumentIndexStatements(null!, "\"s\".wh_per_item", "item")).IsEmpty();
+    await Assert.That(JsonIndexSql.ColumnCreateStatements(null!, "day", "\"s\".wh_per_item", "item")).IsEmpty()
+      .Because("a field with no index declaration has no document index to move and none to create on its column");
+  }
+
+  [Test]
   public async Task DropStatements_NameEachIndexOnceAsync() {
     var index = new JsonIndexInfo("Day", "Day", JsonIndexCast.Int8, Ordered: true, Substring: false,
       CaseInsensitive: false, Superseded: JsonIndexCast.Int4);

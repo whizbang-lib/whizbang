@@ -195,6 +195,26 @@ public class PhysicalColumnFillMaintenanceStepTests {
     await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills WHERE table_name = 'public.wh_per_gone'")).IsEqualTo("0");
   }
 
+  /// <summary>
+  /// A document value the column's type cannot take (a rank written as text) fails that column's batch only:
+  /// it is reported, the column stays armed for an operator, and the other columns are still filled.
+  /// </summary>
+  [Test]
+  public async Task AValueTheColumnCannotTake_FailsOnlyThatColumn_WhichStaysArmedAsync() {
+    await PhysicalFieldPromotionTests.ExecAsync(_connectionString, $"""
+      INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, sys_created_at, sys_updated_at, version)
+      VALUES (gen_random_uuid(), jsonb_build_object('Name', 'odd', 'Code', 'ODD', 'Rank', 'not-a-number'),
+              jsonb_build_object(), jsonb_build_object(), now(), now(), now(), now(), 1);
+      """);
+
+    var filled = await _fillAsync(PhysicalColumnFill.DEFAULT_BATCH_SIZE, 1, TimeSpan.Zero);
+
+    await Assert.That(filled).IsEqualTo(2).Because("the name and code columns are filled; the rank batch failed");
+    await Assert.That(await _scalarAsync($"SELECT count(*) FROM {TABLE} WHERE name = 'odd' AND code = 'ODD' AND rank IS NULL")).IsEqualTo("1");
+    await Assert.That(await _scalarAsync("SELECT string_agg(column_name, ',') FROM wh_physical_column_fills")).IsEqualTo("rank")
+      .Because("a failed column is not disarmed, so the failure keeps being reported until it is dealt with");
+  }
+
   /// <summary>The Postgres driver registers the step, so every host with the driver runs it.</summary>
   [Test]
   public async Task ThePostgresDriver_RegistersTheStepAsync() {
