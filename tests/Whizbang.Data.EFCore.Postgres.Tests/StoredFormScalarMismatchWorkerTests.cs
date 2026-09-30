@@ -24,6 +24,7 @@ using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Data.Postgres;
 using Whizbang.Testing.Options;
 using Whizbang.Testing.Workers;
 
@@ -58,7 +59,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Perspectives/StoredFormUnreadable.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCorePostgresPerspectiveStore.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/StoredFormMigrationSql.cs</code-under-test>
 /// <docs>operations/infrastructure/migrations</docs>
+/// <docs>fundamentals/perspectives/stored-form-migrations#recovery</docs>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
@@ -140,6 +143,66 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     await Assert.That(recoveredHealth.State).IsEqualTo(ComponentState.Operational)
       .Because("a stream that reads again is forgotten by the stored-forms health component");
     await Assert.That(pipeline.Logs.Snapshot().Count(l => l.EventId == 65 && l.StreamId == poisoned)).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// The motivating case of issue #986, end to end: <c>Status</c> was an <c>int</c> and is now a <c>string</c>, the
+  /// stored row still holds the number, the stream parks, and the stored-form migration the generator emits for
+  /// <c>[StoredForm(Previously = typeof(int))]</c> converts it through the real rewrite phase. The stream then
+  /// recovers on its next scheduled retry with no other step, and the migration is journaled.
+  /// </summary>
+  [Test]
+  [Timeout(180_000)]
+  public async Task NumberForAStringProperty_RecoversOnItsNextRetry_AfterTheStoredFormMigrationConvertsItAsync(
+      CancellationToken cancellationToken) {
+    await using var pipeline = _composePipeline(maxFailures: 10, claimBatchSize: 100, drainConsumers: 1);
+    await using var conn = await _openAsync(cancellationToken);
+    await pipeline.StartAsync(conn, cancellationToken);
+
+    var poisoned = (Guid)TrackedGuid.New();
+    var healthy = (Guid)TrackedGuid.New();
+    await pipeline.CommitAndWaitAppliedAsync(conn, [(poisoned, 10m), (healthy, 20m)], cancellationToken);
+
+    // The row as a release whose model had `public int Status` wrote it.
+    await _storeStatusAsync(conn, poisoned, "123", cancellationToken);
+    var failingEvent = await pipeline.CommitAsync(conn, [(poisoned, 11m)], cancellationToken);
+    var failingWork = await _workIdForEventAsync(conn, failingEvent[0], cancellationToken);
+    await pipeline.Failures.WaitAsync(items => items.Any(f => f.MessageId == failingWork), cancellationToken);
+    var parked = await _readWorkRowAsync(conn, failingWork, cancellationToken);
+    await Assert.That(parked.Failures).IsEqualTo(1).Because("the stream is parked on the unreadable document");
+    await Assert.That((await pipeline.Health.ReportAsync(cancellationToken)).State).IsEqualTo(ComponentState.Degraded);
+
+    // The stored-form migration, exactly as the generator emits it for the declaration, through the real phase.
+    var schema = (string)(await _scalarAsync(conn, "SELECT table_schema FROM information_schema.tables WHERE table_name = 'wh_per_order'", cancellationToken))!;
+    var healthyBefore = await _scalarAsync(conn, $"SELECT data::text FROM wh_per_order WHERE id = '{healthy}'", cancellationToken);
+    var migration = StoredFormMigrationSql.Generated(schema, "wh_per_order", "wh_per_order.Status:Int32->String", StoredFormStep.ToText("Status"));
+    await StoredFormMigrationSql.DeclareAsync(() => new NpgsqlConnection(ConnectionString), schema, [migration], cancellationToken);
+    var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
+      () => new NpgsqlConnection(ConnectionString), 986_986_986, StoredFormMigrationSql.ForPhase(schema, [migration]), 30,
+      cancellationToken: cancellationToken);
+    await Assert.That(ran).IsTrue();
+    await Assert.That(await _scalarAsync(conn, $"SELECT (data -> 'Status')::text FROM wh_per_order WHERE id = '{poisoned}'", cancellationToken))
+      .IsEqualTo("\"123\"").Because("the number the earlier release stored is now the string the model reads");
+    await Assert.That(await _scalarAsync(conn, $"SELECT data::text FROM wh_per_order WHERE id = '{healthy}'", cancellationToken))
+      .IsEqualTo(healthyBefore).Because("a row already in the new form is left alone");
+    var status = await StoredFormMigrationJournal.ReadAsync(conn, schema, [migration], cancellationToken);
+    await Assert.That(status.Single().State).IsEqualTo(StoredFormMigrationState.Applied);
+    await Assert.That(status.Single().RowsConverted).IsEqualTo(1L);
+    await Assert.That((await _readWorkRowAsync(conn, failingWork, cancellationToken)).Failures).IsEqualTo(1)
+      .Because("the migration changes the document, not the retry schedule");
+
+    // The retry falls due: the stream reads the converted document, applies the waiting event and recovers.
+    var recovered = pipeline.Applied.WaitAsync(items => items.Contains(poisoned), cancellationToken, fromNow: true);
+    var completed = pipeline.Completed.WaitAsync(items => items.Contains(failingWork), cancellationToken);
+    await _makeRetryDueAsync(conn, [failingWork], cancellationToken);
+    await recovered;
+    await completed;
+
+    await Assert.That(await _readAmountAsync(conn, poisoned, cancellationToken)).IsEqualTo(11m)
+      .Because("the event that could not be applied is applied once the document reads");
+    await Assert.That(await _pendingRowExistsAsync(conn, failingWork, cancellationToken)).IsFalse();
+    await Assert.That((await pipeline.Health.ReportAsync(cancellationToken)).State).IsEqualTo(ComponentState.Operational)
+      .Because("a stream that reads again is forgotten by the stored-forms health component");
   }
 
   [Test]
@@ -650,6 +713,13 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("value", jsonValue);
     cmd.Parameters.AddWithValue("id", streamId);
     await Assert.That(await cmd.ExecuteNonQueryAsync(ct)).IsEqualTo(1).Because("the applied row must exist to be changed");
+  }
+
+  private static async Task<object?> _scalarAsync(NpgsqlConnection conn, string sql, CancellationToken ct) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    var value = await cmd.ExecuteScalarAsync(ct);
+    return value is DBNull ? null : value;
   }
 
   private static async Task<Guid> _workIdForEventAsync(NpgsqlConnection conn, Guid eventId, CancellationToken ct) {

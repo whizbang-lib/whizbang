@@ -94,6 +94,32 @@ A date's index used to cast through `int4`; it now casts through `int8` like eve
 `CREATE INDEX IF NOT EXISTS` would keep the old index under the old name, `JsonIndexInfo.Superseded`
 renames it and drops the old one.
 
+## App-declared stored-form migrations (#986)
+
+An app whose model changed shape declares how its stored documents change: `[StoredForm(Previously,
+PreviousName, DefaultWhenMissing)]` on the property, `[StoredFormRemoved("Path")]` on the type, or an
+`IStoredFormMigration<TModel>` (raw SQL, stable `Name`). `StoredFormDiscovery` (Generators.Shared) walks
+the model (own, inherited and nested-object properties; a declaration inside a collection element is
+WHIZ832, an ungeneratable one WHIZ830, a custom migration that never runs WHIZ831) and the EF generator
+emits `GetStoredFormMigrations()` as calls to `StoredFormMigrationSql.Generated(..., StoredFormStep.X)` and
+`.Custom(...)`: the SQL lives in the runtime library, not in generated strings.
+
+- They run in `CanonicalTemporalRewritePhase` **before** the temporal rewrite (a renamed temporal key is
+  then converted in the same pass), one savepoint each, blocking with the shared SQLSTATE `WH980`.
+- Journal `wh_stored_form_migrations` (migration 176, bootstrap region). A generated migration settles on
+  the first pass that changes nothing (so a converting pass is followed by one more, catching rows an older
+  release wrote during a rollout); a custom one settles on its first run. Settled means one lookup, no scan.
+- `StoredFormMigrationSql.DeclareAsync` records every declaration as pending **outside** the phase
+  transaction. Inside it, the declaration's write would assign an xid and make the #949 fence wait on
+  every first start for nothing. A settling pass does write (its journal row), so the fence may wait once
+  there, like the temporal ledger's settle.
+- Physical fields: a type change retypes the column (`RetypeColumn`), a rename renames it; an enum target
+  is left to `EnumColumnRewriteSql`; a Split model has no document step.
+- Status: generated `GetStoredFormMigrationStatusAsync(dbContext)` and `whizbang stored-forms status`.
+
+Tests: `StoredFormMigrationTests`, `StoredFormMigrationSqlTests`, `StoredFormMigrationGenerationTests`,
+`StoredFormAttributeTests`, and the end-to-end recovery in `StoredFormScalarMismatchWorkerTests`.
+
 ## Objects a consumer owns over a temporal key
 
 Anything a consumer creates over a perspective document's temporal key reads the canonical number:

@@ -100,6 +100,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractMultiLensQueryInfo(ctx, ct)
     ).Where(static info => info is not null);
 
+    // Discover the app's custom stored-form migrations (IStoredFormMigration<TModel>)
+    var storedFormMigrations = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        transform: static (ctx, ct) => _extractStoredFormMigration(ctx, ct)
+    ).Where(static info => info is not null);
+
     // Combine perspectives with DbContext info and compilation
     var allData = perspectives.Collect()
         .Combine(dbContextClasses.Collect())
@@ -180,18 +186,20 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Generate DbContext schema extensions (EnsureWhizbangTablesCreatedAsync)
     context.RegisterSourceOutput(
-        allData,
+        allData.Combine(storedFormMigrations.Collect()),
         static (ctx, data) => {
-          var perspectives = data.Left.Left;
-          var dbContexts = data.Left.Right;
+          var perspectives = data.Left.Left.Left;
+          var dbContexts = data.Left.Left.Right;
 
           try {
             // Filter nulls to ensure type safety - OfType<> both filters and changes type to non-nullable
             var validPerspectives = perspectives.OfType<PerspectiveModelInfo>().ToImmutableArray();
             var validDbContexts = dbContexts.OfType<DbContextInfo>().ToImmutableArray();
-            var compilation = data.Right;
+            var compilation = data.Left.Right;
+            var customMigrations = data.Right.OfType<StoredFormMigrationClassInfo>().ToImmutableArray();
 
-            _generateSchemaExtensions(ctx, validPerspectives, validDbContexts, compilation);
+            _reportStoredFormDiagnostics(ctx, validPerspectives, customMigrations);
+            _generateSchemaExtensions(ctx, validPerspectives, validDbContexts, compilation, customMigrations);
           } catch (Exception ex) {
             var descriptor = new DiagnosticDescriptor(
                 id: "EFCORE995",
@@ -483,6 +491,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Extract physical fields from model type
     var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);
+    var (storedForms, storedFormProblems) = StoredFormDiscovery.From(modelType as INamedTypeSymbol);
 
     // Check for [WhizbangPerspective] attribute (optional)
     var perspectiveAttribute = symbol.GetAttributes()
@@ -509,7 +518,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
         CompositeIndexes: _reachableComposites(modelType as INamedTypeSymbol),
         DocumentMatching: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol),
-        CoalesceBody: _buildDataCoalesceStatements(modelType)
+        CoalesceBody: _buildDataCoalesceStatements(modelType),
+        StoredForms: storedForms,
+        StoredFormProblems: storedFormProblems
     );
   }
 
@@ -599,7 +610,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         JsonIndexes: candidate.JsonIndexes,
         CompositeIndexes: candidate.CompositeIndexes,
         DocumentMatching: candidate.DocumentMatching,
-        CoalesceBody: candidate.CoalesceBody
+        CoalesceBody: candidate.CoalesceBody,
+        StoredForms: candidate.StoredForms,
+        StoredFormProblems: candidate.StoredFormProblems
     );
   }
 
@@ -2287,7 +2300,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,
       ImmutableArray<DbContextInfo> dbContexts,
-      Compilation compilation) {
+      Compilation compilation,
+      ImmutableArray<StoredFormMigrationClassInfo> customMigrations) {
 
     if (dbContexts.IsEmpty) {
       return; // No DbContext found
@@ -2343,8 +2357,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // (the member names) to the number it now holds, applied by the stored-format rewrite phase.
       template = TemplateUtilities.ReplaceRegion(template, "PHYSICAL_COLUMN_REWRITES",
         _generatePhysicalColumnRewritesCode(matchingPerspectives, dbContext.Schema));
-      // No stored-form rewrite is generated. The template derives it at runtime from the model
+      // No canonical temporal rewrite is generated. The template derives it at runtime from the model
       // Entity Framework built and the serializer's metadata, the two things that read a document.
+      // The app's own stored-form migrations are generated: each is a declaration, not a discovery.
+      template = TemplateUtilities.ReplaceRegion(template, "STORED_FORM_MIGRATIONS",
+        _generateStoredFormMigrationsCode(matchingPerspectives, dbContext.Schema, customMigrations));
 
       // Replace MIGRATIONS region with embedded migration scripts
       template = TemplateUtilities.ReplaceRegion(
@@ -3105,6 +3122,104 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
 
   /// <summary>
+  /// The app's stored-form migrations for one DbContext, as <c>StoredFormMigration</c> entries: per table (in table
+  /// order) the generated ones in the order the model declares them to run, then the custom ones in class-name order.
+  /// A declaration on a physical field also retypes or renames the field's column, and on a Split model, which keeps
+  /// no copy of the field in the document, only the column.
+  /// </summary>
+  private static string _generateStoredFormMigrationsCode(
+      IReadOnlyList<PerspectiveModelInfo> perspectives, string schema, ImmutableArray<StoredFormMigrationClassInfo> customMigrations) {
+    const string STEP = "global::Whizbang.Data.Postgres.StoredFormStep.";
+    var sb = new StringBuilder();
+    foreach (var perspective in perspectives.GroupBy(p => p.TableName).Select(g => g.First()).OrderBy(p => p.TableName, StringComparer.Ordinal)) {
+      foreach (var form in perspective.StoredForms) {
+        var steps = new List<string>();
+        var field = form.ColumnProperty is null
+          ? null
+          : perspective.PhysicalFields.FirstOrDefault(f => !f.IsVector && f.PropertyName == form.ColumnProperty);
+        if (field?.IsSplit != true) {
+          steps.Add(form.DocumentStep);
+        }
+        if (field is not null && form.ColumnAction == StoredFormColumnAction.Retype) {
+          steps.Add($"{STEP}RetypeColumn(\"{field.ColumnName}\", \"{_getPostgresColumnType(field)}\", {form.ColumnNumber}, {form.ColumnEnumNames})");
+        } else if (field is not null && form.ColumnAction == StoredFormColumnAction.Rename && form.PreviousColumn != field.ColumnName) {
+          steps.Add($"{STEP}RenameColumn(\"{form.PreviousColumn}\", \"{field.ColumnName}\")");
+        }
+        sb.AppendLine($"      global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"{schema}\", \"{perspective.TableName}\", "
+          + $"\"{perspective.TableName}.{form.NameSuffix}\", {string.Join(", ", steps)}),");
+      }
+      foreach (var custom in customMigrations
+          .Where(m => m.Problem is null && m.ModelTypeName == perspective.ModelTypeName)
+          .OrderBy(m => m.ClassName, StringComparer.Ordinal)) {
+        sb.AppendLine($"      global::Whizbang.Data.Postgres.StoredFormMigrationSql.Custom(\"{schema}\", \"{perspective.TableName}\", new {custom.ClassName}()),");
+      }
+    }
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Finds a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>. An abstract class is a base for
+  /// migrations rather than one, and is passed over; a class the generated code cannot create carries the reason.
+  /// </summary>
+  private static StoredFormMigrationClassInfo? _extractStoredFormMigration(GeneratorSyntaxContext context, CancellationToken ct) {
+    var classDecl = (ClassDeclarationSyntax)context.Node;
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol
+        || symbol.IsAbstract
+        || symbol.AllInterfaces.FirstOrDefault(i =>
+             TypeNameUtilities.Display(i.OriginalDefinition) == "Whizbang.Core.Perspectives.IStoredFormMigration<TModel>") is not { } migration) {
+      return null;
+    }
+
+    string? problem = null;
+    if (symbol.IsGenericType) {
+      problem = "a generic class cannot be created by the generated code";
+    } else if (!symbol.InstanceConstructors.Any(c => c.Parameters.Length == 0 && c.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal)) {
+      problem = "it has no public or internal parameterless constructor";
+    } else {
+      for (var type = symbol; type is not null; type = type.ContainingType) {
+        if (type.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal)) {
+          problem = "it is not visible to the generated code (make it public or internal)";
+          break;
+        }
+      }
+    }
+
+    return new StoredFormMigrationClassInfo(
+        ClassName: TypeNameUtilities.FullyQualified(symbol),
+        DisplayName: TypeNameUtilities.Display(symbol),
+        ModelTypeName: TypeNameUtilities.FullyQualified(migration.TypeArguments[0]),
+        Problem: problem);
+  }
+
+  /// <summary>
+  /// Reports the stored-form declarations that are not generated (WHIZ830, WHIZ832), once each however many
+  /// contexts include the model, and the custom migrations that never run (WHIZ831).
+  /// </summary>
+  private static void _reportStoredFormDiagnostics(
+      SourceProductionContext context,
+      ImmutableArray<PerspectiveModelInfo> perspectives,
+      ImmutableArray<StoredFormMigrationClassInfo> customMigrations) {
+    var reported = new HashSet<StoredFormProblem>();
+    foreach (var problem in perspectives.SelectMany(p => p.StoredFormProblems)) {
+      if (reported.Add(problem)) {
+        var descriptor = problem.Id == StoredFormDiscovery.INSIDE_COLLECTION
+          ? DiagnosticDescriptors.StoredFormInsideCollection
+          : DiagnosticDescriptors.StoredFormCannotBeGenerated;
+        context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, problem.Subject, problem.Reason));
+      }
+    }
+
+    var models = new HashSet<string>(perspectives.Select(p => p.ModelTypeName), StringComparer.Ordinal);
+    foreach (var custom in customMigrations.Distinct()) {
+      var reason = custom.Problem
+        ?? (models.Contains(custom.ModelTypeName) ? null : $"{custom.ModelTypeName.Replace(PLACEHOLDER_GLOBAL, "")} is not the model of any perspective");
+      if (reason is not null) {
+        context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.StoredFormMigrationNeverRuns, Location.None, custom.DisplayName, reason));
+      }
+    }
+  }
+
+  /// <summary>
   /// The (name, SQL) entries of the generated physical-column rewrites: for each enumeration in a physical column
   /// (whose type the author did not declare), a call building the rewrite from the enum's members.
   /// </summary>
@@ -3351,6 +3466,8 @@ internal sealed record DbContextInfo(
 /// <param name="CompositeIndexes">Composite and partial indexes the model declares</param>
 /// <param name="DocumentMatching">Which document indexes the model's queries need, from [PerspectiveQueries]</param>
 /// <param name="CoalesceBody">Pre-rendered null-coalesce statements for the model's collection graph</param>
+/// <param name="StoredForms">The stored-form migrations the model declares, in the order they run</param>
+/// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3363,7 +3480,9 @@ internal sealed record PerspectiveModelInfo(
     ImmutableArray<JsonIndexInfo> JsonIndexes,
     ImmutableArray<CompositeIndexInfo> CompositeIndexes,
     DocumentMatching DocumentMatching,
-    string CoalesceBody);
+    string CoalesceBody,
+    ImmutableArray<StoredFormInfo> StoredForms,
+    ImmutableArray<StoredFormProblem> StoredFormProblems);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -3382,6 +3501,8 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="DocumentMatching">Which document indexes the model's queries need, from [PerspectiveQueries]</param>
 /// <param name="CoalesceBody">Pre-rendered null-coalesce statements for the model's collection graph
 /// (WORKAROUND(dotnet/efcore#38625)); empty when the model has no coalescible collections</param>
+/// <param name="StoredForms">The stored-form migrations the model declares, in the order they run</param>
+/// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
 internal sealed record PerspectiveModelCandidate(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3394,7 +3515,22 @@ internal sealed record PerspectiveModelCandidate(
     ImmutableArray<JsonIndexInfo> JsonIndexes,
     ImmutableArray<CompositeIndexInfo> CompositeIndexes,
     DocumentMatching DocumentMatching,
-    string CoalesceBody);
+    string CoalesceBody,
+    ImmutableArray<StoredFormInfo> StoredForms,
+    ImmutableArray<StoredFormProblem> StoredFormProblems);
+
+/// <summary>
+/// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.
+/// </summary>
+/// <param name="ClassName">The class, fully qualified with <c>global::</c>, for <c>new</c>.</param>
+/// <param name="DisplayName">The class as a diagnostic names it.</param>
+/// <param name="ModelTypeName">The model, fully qualified, matched against the perspectives' models.</param>
+/// <param name="Problem">Why it cannot be created, or <see langword="null"/> when it can.</param>
+internal sealed record StoredFormMigrationClassInfo(
+    string ClassName,
+    string DisplayName,
+    string ModelTypeName,
+    string? Problem);
 
 /// <summary>
 /// Information about a discovered multi-model ILensQuery constructor parameter.

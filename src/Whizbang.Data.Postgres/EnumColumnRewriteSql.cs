@@ -33,7 +33,8 @@ namespace Whizbang.Data.Postgres;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/EnumColumnRewriteTests.cs</tests>
 public static class EnumColumnRewriteSql {
   /// <summary>The SQLSTATE a rewrite raises when a value cannot be converted; the phase fails startup on it.</summary>
-  public const string BLOCKED_SQL_STATE = "WH980";
+  /// <remarks>The one value, shared with the stored-form migrations and the custom ones an app writes.</remarks>
+  public const string BLOCKED_SQL_STATE = Whizbang.Core.Perspectives.StoredFormMigrationTarget.BLOCKED_SQL_STATE;
 
   /// <summary>Builds the rewrite for one enum column.</summary>
   /// <param name="schema">The schema, unquoted.</param>
@@ -164,13 +165,15 @@ public static class EnumColumnRewriteSql {
 /// <summary>
 /// A stored-format rewrite found values it cannot convert. Thrown by <see cref="CanonicalTemporalRewritePhase"/>
 /// after it has committed every rewrite that could run, and not caught by the schema initializer, so startup stops
-/// with the table, the column and the offending values instead of running on a column it cannot read.
+/// with the table, the column or document path and the offending values instead of running on data it cannot read.
+/// Raised by an enum column conversion and by a stored-form migration (<see cref="StoredFormMigrationSql"/>).
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields#enum-text-columns</docs>
+/// <docs>fundamentals/perspectives/stored-form-migrations#blocking</docs>
 public sealed class StoredFormConversionBlockedException : Exception {
   /// <summary>Creates the exception from each blocked rewrite's message.</summary>
   public StoredFormConversionBlockedException(IReadOnlyList<string> failures)
-    : base("The stored-format rewrite could not convert every column, so startup is stopped. " + string.Join(" ", failures)) {
+    : base("The stored-format rewrite could not convert every stored value, so startup is stopped. " + string.Join(" ", failures)) {
     Failures = failures;
   }
 
@@ -185,7 +188,7 @@ public sealed class StoredFormConversionBlockedException : Exception {
   }
 
   /// <summary>Creates the exception with no detail.</summary>
-  public StoredFormConversionBlockedException() : this("The stored-format rewrite could not convert every column.") { }
+  public StoredFormConversionBlockedException() : this("The stored-format rewrite could not convert every stored value.") { }
 
   /// <summary>Each blocked rewrite's message.</summary>
   public IReadOnlyList<string> Failures { get; }
