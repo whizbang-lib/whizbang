@@ -10,7 +10,7 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
-/// The Dapper coordinator reads the applied-event ledger (migration 176, #959) the same way the EF Core
+/// The Dapper coordinator reads the applied-event ledger (migration 177, #959) the same way the EF Core
 /// one does: by event id, and by stream and local version.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.cs</code-under-test>

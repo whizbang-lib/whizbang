@@ -18,12 +18,12 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// The applied-event ledger (migration 176, #959) through the real inbound path: an event published by
+/// The applied-event ledger (migration 177, #959) through the real inbound path: an event published by
 /// another service is stored in this service's inbox, chained into the local event store and perspective
 /// work when its inbox row is claimed, and recorded as applied when the perspective's completion retires
 /// its work row. A wait in this service completes only then.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/176_PerspectiveAppliedLedger.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/177_PerspectiveAppliedLedger.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>fundamentals/perspectives/perspective-sync#applied-ledger</docs>
 [Category("Integration")]

@@ -1,4 +1,4 @@
--- Migration: 176_PerspectiveAppliedLedger.sql
+-- Migration: 177_PerspectiveAppliedLedger.sql
 -- Date: 2026-09-29
 -- Description: The applied-event ledger (#959): a durable record, shared by every instance, of which
 --              events each perspective has applied, so a service can wait until its read model has an
