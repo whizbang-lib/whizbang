@@ -478,6 +478,20 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveSinkQueueTests.cs:FetchCollectiveSinkQueueAsync_ReturnsTheQueueInCommitOrderAsync</tests>
+  public async Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueAsync(
+    Guid streamId,
+    CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    var rows = await connection.QueryAsync<PendingPerspectiveEventDto>(
+      "SELECT * FROM wh_collective_sink_queue(@p_stream_id)",
+      new { p_stream_id = streamId });
+
+    return [.. rows.Select(r => new CollectiveSinkQueueEntry(r.out_event_work_id, r.out_event_id, r.out_commit_sequence))];
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<StreamEventData>> FetchEventsByIdsAsync(
     IReadOnlyList<Guid> eventIds,
     CancellationToken cancellationToken = default) {

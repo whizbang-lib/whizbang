@@ -3277,19 +3277,32 @@ public partial class PerspectiveWorker(
       streamId, CollectiveRouting.SINK_PERSPECTIVE_NAME, cancellationToken).ConfigureAwait(false);
     var lastProcessedEventId = checkpoint?.LastEventId;
 
-    var events = await eventStore.GetEventsBetweenPolymorphicAsync(
-      streamId, lastProcessedEventId, Guid.Empty, typeProvider.GetEventTypes(), cancellationToken)
-      .ConfigureAwait(false);
-
-    var collectiveEnvelopes = events.Where(e => e.Payload is ICollectiveEvent).ToList();
+    // #963: the stream's queue, in commit order, when the engine provides one. Collectives sharing an ordering key
+    // share this stream, and the queue is what keeps them in line; without it the stream is read after its cursor.
+    var queue = await workCoordinator.FetchCollectiveSinkQueueAsync(streamId, cancellationToken).ConfigureAwait(false);
+    List<MessageEnvelope<IEvent>> collectiveEnvelopes;
+    Guid[] completedWorkIds = sinkWorkIds;
+    if (queue is not null) {
+      var batch = await _takeCollectiveQueueHeadAsync(
+        queue, sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
+      if (batch is null) {
+        return;
+      }
+      (collectiveEnvelopes, completedWorkIds) = batch.Value;
+    } else {
+      var events = await eventStore.GetEventsBetweenPolymorphicAsync(
+        streamId, lastProcessedEventId, Guid.Empty, typeProvider.GetEventTypes(), cancellationToken)
+        .ConfigureAwait(false);
+      collectiveEnvelopes = events.Where(e => e.Payload is ICollectiveEvent).ToList();
+    }
     if (collectiveEnvelopes.Count == 0) {
       // No collective event to dispatch, yet the sink rows were leased — the cursor already advanced
       // past them (a prior run applied the event and advanced the cursor without completing the row,
       // or a stale re-lease). Complete them anyway so claim_orphaned stops re-leasing them into a
       // no-op loop; leaving them keeps processed_at=NULL and re-spins the whole death-spiral.
       // Counted as skipped (#738): a rising count is that re-lease loop showing itself.
-      _compositeMetrics?.CollectivesSkipped.Add(sinkWorkIds.Length);
-      _completeCollectiveSinkWorkRows(sinkWorkIds);
+      _compositeMetrics?.CollectivesSkipped.Add(completedWorkIds.Length);
+      _completeCollectiveSinkWorkRows(completedWorkIds);
       return;
     }
     _compositeMetrics?.CollectivesReceived.Add(collectiveEnvelopes.Count);
@@ -3351,7 +3364,7 @@ public partial class PerspectiveWorker(
     // rows. Standard perspectives get the DELETE via _bufferCompletionsAndUpdateCache; the sink must do the
     // same here or claim_orphaned re-leases the row forever and re-dispatches the whole-cohort UPDATE — a
     // production death spiral (re-dispatch loop → ~95% table bloat → lock convoy).
-    _completeCollectiveSinkWorkRows(sinkWorkIds);
+    _completeCollectiveSinkWorkRows(completedWorkIds);
 
     // The apply is now durably complete. A collective event has no per-stream runner, so it never reaches
     // the normal PostAllPerspectives gate — but the apply finishing IS its "all perspectives complete"
@@ -3362,6 +3375,60 @@ public partial class PerspectiveWorker(
     // a failed apply returns above, so we never signal completion for an apply that did not happen.
     await _fireCollectivePostApplyLifecycleAsync(scope, streamId, collectiveEnvelopes, cancellationToken)
       .ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// The collectives this run applies from its stream's queue (#963), in queue order, and the work rows it completes
+  /// when they apply. The queue is the stream's unprocessed collectives in commit order; this run takes the leading
+  /// rows it holds and stops at the first it does not, because a collective ahead of it (leased elsewhere, or backing
+  /// off after a failure) has to apply first. Returns null when the head of the queue is not this run's, so nothing
+  /// applies and nothing is completed: the held rows are offered again once the one ahead has applied.
+  /// </summary>
+  /// <remarks>
+  /// A leased row the queue no longer holds was already applied and completed; it is completed again, with no apply,
+  /// so a stale lease cannot loop. A queued row whose event the store no longer returns is completed with the rest
+  /// rather than blocking the queue forever. The events are read by id, never after the cursor, so a collective
+  /// committed after one with a greater id is still applied, and in its place.
+  /// </remarks>
+  private async Task<(List<MessageEnvelope<IEvent>> Envelopes, Guid[] WorkIds)?> _takeCollectiveQueueHeadAsync(
+      IReadOnlyList<CollectiveSinkQueueEntry> queue, Guid[] sinkWorkIds, IWorkCoordinator workCoordinator,
+      IEventStore eventStore, IEventTypeProvider typeProvider, Guid streamId, CancellationToken cancellationToken) {
+    var held = new HashSet<Guid>(sinkWorkIds);
+    // A row this worker already applied is still in the queue until its completion flushes; it is behind us, not
+    // ahead, so it neither blocks the queue nor applies again.
+    var pending = queue.Where(e => !_processedEventCache.Contains(e.EventWorkId)).ToList();
+    var head = new List<CollectiveSinkQueueEntry>();
+    foreach (var entry in pending) {
+      if (!held.Contains(entry.EventWorkId)) {
+        break;
+      }
+      head.Add(entry);
+    }
+
+    var queued = new HashSet<Guid>(pending.Select(e => e.EventWorkId));
+    if (head.Count == 0 && sinkWorkIds.Any(queued.Contains)) {
+      LogCollectiveSinkWaitingItsTurn(_logger, streamId, pending[0].EventId);
+      return null;
+    }
+
+    // Rows this run holds that the queue does not were applied already; completing them is harmless and stops a loop.
+    var completed = head.Select(e => e.EventWorkId).Concat(sinkWorkIds.Where(id => !queued.Contains(id))).ToArray();
+    if (head.Count == 0) {
+      return ([], completed);
+    }
+
+    var raw = await workCoordinator.FetchEventsByIdsAsync([.. head.Select(e => e.EventId)], cancellationToken).ConfigureAwait(false);
+    var byId = new Dictionary<Guid, MessageEnvelope<IEvent>>();
+    foreach (var envelope in eventStore.DeserializeStreamEvents(raw, typeProvider.GetEventTypes()).Where(e => e.Payload is ICollectiveEvent)) {
+      byId.TryAdd(envelope.MessageId.Value, envelope);
+    }
+    var envelopes = new List<MessageEnvelope<IEvent>>(head.Count);
+    foreach (var entry in head) {
+      if (byId.TryGetValue(entry.EventId, out var envelope)) {
+        envelopes.Add(envelope);
+      }
+    }
+    return (envelopes, completed);
   }
 
   /// <summary>
@@ -4947,6 +5014,12 @@ public partial class PerspectiveWorker(
     Message = "Lifecycle reconciliation scan failed. Will retry on next startup."
   )]
   static partial void LogReconciliationFailed(ILogger logger, Exception exception);
+
+  [LoggerMessage(
+    EventId = 71,
+    Level = LogLevel.Debug,
+    Message = "Collective sink stream {StreamId} is waiting for collective {HeadEventId}, which is ahead of it in commit order and not held by this run")]
+  static partial void LogCollectiveSinkWaitingItsTurn(ILogger logger, Guid streamId, Guid headEventId);
 
   [LoggerMessage(
     EventId = 52,

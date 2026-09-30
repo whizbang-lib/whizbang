@@ -2215,6 +2215,25 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<StreamEventData>>([]);
 
   /// <summary>
+  /// The collective sink queue of one stream (#963): every unprocessed <c>__collective__</c> work row of
+  /// <paramref name="streamId"/>, in the order its collectives apply, which is the order the database committed them
+  /// (<c>commit_sequence</c> ascending, an unstamped row last, then <c>event_id</c>), the order a replay reads the
+  /// stream in. Collectives that share an ordering key share a stream, so this is the queue that keeps them in line.
+  /// </summary>
+  /// <param name="streamId">The sink stream.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// The queue, or null when the engine does not provide one; the sink then reads the stream after its cursor, the
+  /// behavior before the queue existed.
+  /// </returns>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_OrderedQueue_AppliesInCommitOrder_WhenIdsRunBackwardAsync</tests>
+  Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueAsync(
+    Guid streamId,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(null);
+
+  /// <summary>
   /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
   /// and stuck inbox messages. Called on startup and periodically by WorkCoordinatorPublisherWorker.
   /// </summary>
@@ -3476,6 +3495,16 @@ public record PerspectiveWork {
   /// </summary>
   public Dictionary<string, JsonElement>? Metadata { get; init; }
 }
+
+/// <summary>
+/// One unprocessed <c>__collective__</c> work row in a sink stream's queue, in the order the stream's collectives
+/// apply. See <see cref="IWorkCoordinator.FetchCollectiveSinkQueueAsync"/>.
+/// </summary>
+/// <param name="EventWorkId">The work row (<c>wh_perspective_events.event_work_id</c>).</param>
+/// <param name="EventId">The collective event the row applies.</param>
+/// <param name="CommitSequence">The event's <c>commit_sequence</c>; null until the commit-order stamper reaches it.</param>
+/// <docs>fundamentals/messaging/collective-events</docs>
+public sealed record CollectiveSinkQueueEntry(Guid EventWorkId, Guid EventId, long? CommitSequence);
 
 /// <summary>
 /// Represents a single event fetched for stream processing via get_stream_events.

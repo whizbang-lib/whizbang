@@ -43,8 +43,8 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// and this paragraph used to claim otherwise.
 /// </para>
 /// <para>
-/// Each collective event carries its own stream id and so becomes its own sink stream, and sink
-/// streams on different instances apply in parallel. The per-scope advisory lock serializes two
+/// Without an ordering key each collective event carries its own stream id and so becomes its own sink
+/// stream, and sink streams on different instances apply in parallel. The per-scope advisory lock serializes two
 /// applies to the same table and scope; it does not order them. Two collectives therefore apply in
 /// whatever order they finish, not in commit order.
 /// </para>
@@ -52,8 +52,9 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// That is invisible to a collective whose setters are idempotent or commutative, and wrong for one
 /// that expresses "latest wins" as a set-based flip -- <c>IsActive = (Id == e.Chosen)</c> across a
 /// family of rows, where an older collective landing after a newer one leaves the wrong row active.
-/// A consumer writing that shape needs ordering the framework does not yet provide; see #963, which
-/// proposes an opt-in ordering key routing collectives that share it through one ordered sink.
+/// A consumer writing that shape sets <see cref="Whizbang.Core.Messaging.ICollectiveEvent.OrderingKey"/>:
+/// collectives sharing a key in one scope share one sink stream, which the worker applies in commit order,
+/// and a replay folds them in the same order.
 /// </para>
 /// <para>
 /// AOT: matches Whizbang.Data.EFCore.Postgres's established pattern of
