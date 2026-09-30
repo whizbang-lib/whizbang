@@ -659,6 +659,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       }
     }
 
+    // The tables the pass created an index on are analyzed now that it has committed, so the planner
+    // has statistics for each new index's expression rather than a default that can make it ignore the
+    // index until autovacuum next analyzes the table (#1004). Outside the transaction and the lock, and
+    // never fatal: a table left unanalyzed is found by the maintenance step.
+    await _analyzeNewlyIndexedTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
+
     // Step 7: Run database maintenance (purge completed messages, etc.)
     // Runs outside the transaction and advisory lock because:
     // 1. VACUUM ANALYZE cannot run inside a transaction block
@@ -1914,6 +1920,37 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     } catch (Exception ex) {
       logger?.LogWarning(ex, "Failed to reconcile message type registry (function may not exist yet)");
       // Don't throw — reconciliation is informational, not critical for startup.
+    }
+  }
+
+  /// <summary>
+  /// Analyzes each table the schema pass queued as it created an index on it, once, then forgets it.
+  /// A start that created no index finds the queue empty and analyzes nothing.
+  /// </summary>
+  private static async Task _analyzeNewlyIndexedTablesAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+    try {
+      if (segmentConnectionFactory is not null) {
+        await using var connection = segmentConnectionFactory();
+        await connection.OpenAsync(cancellationToken);
+        await Whizbang.Data.Postgres.IndexStatistics.AnalyzeQueuedAsync(
+          connection, @"__QUOTED_SCHEMA__", logger, cancellationToken);
+        return;
+      }
+      await dbContext.Database.OpenConnectionAsync(cancellationToken);
+      try {
+        await Whizbang.Data.Postgres.IndexStatistics.AnalyzeQueuedAsync(
+          (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), @"__QUOTED_SCHEMA__", logger, cancellationToken);
+      } finally {
+        await dbContext.Database.CloseConnectionAsync();
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      logger?.LogWarning(ex,
+        "Could not analyze the tables the schema pass indexed for {Schema}; the index-statistics "
+        + "maintenance step analyzes them", "__SCHEMA__");
     }
   }
 

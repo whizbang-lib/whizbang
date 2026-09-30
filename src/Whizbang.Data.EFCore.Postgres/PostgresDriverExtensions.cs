@@ -137,6 +137,15 @@ public static class PostgresDriverExtensions {
             new EFCoreClaimedEmissionStore(
                 (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType)));
 
+        // TURNKEY: the maintenance step that analyzes perspective tables whose expression indexes have no
+        // statistics yet, so a selective predicate on a new index is not planned as a full scan (#1004).
+        // One per DbContext; the fleet runs each once per claim window.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new IndexStatisticsMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<IndexStatisticsMaintenanceStep>>(),
+                sp.GetService<TimeProvider>()));
+
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
         // has no effect — source-gen receptor discovery only sees the consumer's own syntax,

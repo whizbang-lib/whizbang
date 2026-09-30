@@ -107,6 +107,7 @@ public static class EnumColumnRewriteSql {
             RAISE EXCEPTION USING ERRCODE = '{BLOCKED_SQL_STATE}', MESSAGE = format(
               'Column %s of %s could not be converted to %s: %s', '{column}', '{schema}.{table}', '{columnType}', SQLERRM);
           END;
+          {IndexStatistics.MarkRewrittenSql($"'{schema}'", $"'{table}'")}
           RAISE NOTICE '%: column % converted from enumeration names to numbers', '{table}', '{column}';
         END IF;
       END $wh_enum$;
