@@ -177,12 +177,16 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       // unit). CreateExecutionStrategy() returns the configured strategy (a no-op non-retrying one when
       // retries are off, e.g. tests), so this is correct either way. PostgresDeadlockRetry stays the outer
       // backstop for 40P01/40001 when the configured strategy doesn't cover them.
-      var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
-        () => dbContext.Database.CreateExecutionStrategy().ExecuteAsync(
-          () => _executeOneBatchAsync(dbContext, selectSql, updateSql, setParameters, where, options, lockKey, storeColumns, lastCursor, cancellationToken)),
-        maxAttempts: 5,
-        logger: logger,
-        cancellationToken: cancellationToken).ConfigureAwait(false);
+      // A batch that does not get its lock inside the bounded wait waits again, renewing the lease through
+      // onBatchApplied first, so waiting behind another batch neither loses the work nor counts an attempt (#964).
+      var (count, maxId) = await CollectiveApplyContention.WaitingForTheLockAsync(
+        () => PostgresDeadlockRetry.ExecuteAsync(
+          () => dbContext.Database.CreateExecutionStrategy().ExecuteAsync(
+            () => _executeOneBatchAsync(dbContext, selectSql, updateSql, setParameters, where, options, lockKey, storeColumns, lastCursor, cancellationToken)),
+          maxAttempts: 5,
+          logger: logger,
+          cancellationToken: cancellationToken),
+        options, onBatchApplied, cancellationToken).ConfigureAwait(false);
       total += count;
       batches++;
       // Per-batch progress: lets the caller renew its work lease DURING a long apply — without

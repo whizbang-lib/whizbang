@@ -63,6 +63,31 @@ public sealed record CollectiveApplyOptions {
   /// </remarks>
   public int? LockWaitSeconds { get; init; } = 30;
 
+  /// <summary>
+  /// How many more times a batch waits for its apply lock after a wait of <see cref="LockWaitSeconds"/> ends
+  /// without it, renewing its work lease before each (#964). Zero gives up after the first wait.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A batch waiting behind another keeps its work: after each bounded wait it reports progress through the same
+  /// per-batch callback the worker renews the lease from, so the lease outlives the wait and the work is not leased
+  /// again underneath it, and the attempt count does not rise. With the default (five more waits of thirty
+  /// seconds) a batch waits up to three minutes, about what the unbounded wait used to allow before its statement
+  /// timeout, but holding its lease throughout. When every wait is used up the batch gives up with a
+  /// <see cref="CollectiveApplyLockBusyException"/> that reports the total wait, which the worker treats as busy,
+  /// not failed.
+  /// </para>
+  /// <para>
+  /// An advisory lock has no queue: PostgreSQL wakes its waiters in no guaranteed order, so a waiting batch has no
+  /// place in line to keep. Collectives that must apply in order carry an ordering key
+  /// (<c>ICollectiveEvent.OrderingKey</c>); those wait in their key's queue, which a busy lock does not reorder.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:LockHeldElsewhere_RenewsTheLeaseWhileItWaits_ThenAppliesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_WhileAnotherBatchHoldsTheLock_RenewsTheLeaseAndThenAppliesAsync</tests>
+  public int LockWaitRenewals { get; init; } = 5;
+
   /// <summary>The framework default policy.</summary>
   public static CollectiveApplyOptions Default { get; } = new();
 }

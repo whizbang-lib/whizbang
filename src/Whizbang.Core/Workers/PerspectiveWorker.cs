@@ -3324,6 +3324,13 @@ public partial class PerspectiveWorker(
           },
           cancellationToken: cancellationToken)
           .ConfigureAwait(false);
+      } catch (CollectiveApplyLockBusyException busy) when (!_options.CollectiveLockBusyCountsAsFailure) {
+        // Busy, not failed (#964): another batch holds the apply lock for the same table and scope, and this one
+        // waited out every renewal of its bounded wait. Nothing is wrong with the event, so no failure is reported
+        // (the failure count drives dead-lettering) and nothing is completed: the rows stay and the collective is
+        // applied later. The ones applied before it in this run are re-applied then, in the same order.
+        LogCollectiveApplyLockBusy(_logger, streamId, envelope.MessageId.Value, busy.Table, busy.WaitedSeconds);
+        return;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         // A failing collective apply must NOT crash the host. Without this guard the exception propagates out
         // of the perspective batch, re-throws at the cursor catch, and trips BackgroundServiceExceptionBehavior
@@ -5016,6 +5023,12 @@ public partial class PerspectiveWorker(
   static partial void LogReconciliationFailed(ILogger logger, Exception exception);
 
   [LoggerMessage(
+    EventId = 72,
+    Level = LogLevel.Information,
+    Message = "Collective {EventId} on sink stream {StreamId} did not get its apply lock for {Table} after waiting {WaitedSeconds}s; it stays queued and is not counted as a failure")]
+  static partial void LogCollectiveApplyLockBusy(ILogger logger, Guid streamId, Guid eventId, string table, int waitedSeconds);
+
+  [LoggerMessage(
     EventId = 71,
     Level = LogLevel.Debug,
     Message = "Collective sink stream {StreamId} is waiting for collective {HeadEventId}, which is ahead of it in commit order and not held by this run")]
@@ -5148,6 +5161,22 @@ public class PerspectiveWorkerOptions {
   /// </para>
   /// </remarks>
   public int? MaxPerspectiveEventAttempts { get; set; } = 10;
+
+  /// <summary>
+  /// Whether a collective that did not get its apply lock counts as a failed apply (#964). Default <c>false</c>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A <see cref="Whizbang.Core.Perspectives.CollectiveApplyLockBusyException"/> means another batch holds the lock
+  /// for the same table and scope and this one waited out every bounded wait, renewing its lease through each. By
+  /// default that is busy, not failed: no failure is reported, so the count that drives dead-lettering does not move,
+  /// and the collective's rows stay to be applied later. Set <c>true</c> to restore the accounting from before, where
+  /// a busy lock was reported like any failed apply.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_BusyApplyLock_IsNotReportedAsAFailure_AndKeepsItsRowAsync</tests>
+  public bool CollectiveLockBusyCountsAsFailure { get; set; }
 
   /// <summary>
   /// Lease duration in seconds.

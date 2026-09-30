@@ -34,7 +34,10 @@ public interface ICollectiveDispatcher {
   /// <param name="onBatchApplied">Optional per-batch progress callback, invoked by the driver after
   /// each batched UPDATE commits. The worker that owns the leased work item uses it to renew the
   /// lease DURING a long multi-batch apply — without it, an apply spanning many batches outlives
-  /// its lease and the work is redelivered (idempotently, but wastefully). Null = no reporting.</param>
+  /// its lease and the work is redelivered (idempotently, but wastefully). It is also invoked after each bounded
+  /// wait for the apply lock that ends without it, before the batch waits again
+  /// (<see cref="CollectiveApplyOptions.LockWaitRenewals"/>), so the lease is renewed while the batch waits too.
+  /// Null = no reporting.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   Task<CollectiveDispatchResult> DispatchAsync(
     ICollectiveEvent evt,

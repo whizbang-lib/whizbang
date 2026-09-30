@@ -978,6 +978,72 @@ public class PerspectiveWorkerCollectiveSinkTests {
     await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(behind.WorkId);
   }
 
+  // ── Busy apply lock (#964): not a failure ──────────────────────────────────────────────────
+
+  /// <summary>
+  /// A collective that did not get its apply lock has not failed: another batch holds the lock for the same table and
+  /// scope. It is not reported as a failure, so the failure count that drives dead-lettering does not move, and its row
+  /// is not completed, so it is applied later in the same place.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_BusyApplyLock_IsNotReportedAsAFailure_AndKeepsItsRowAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var sinkWork = _sinkWork(streamId);
+    var dispatcher = new BusyLockDispatcher();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [sinkWork],
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") })] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
+      dispatcher: dispatcher);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* teardown */ }
+
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse();
+    await Assert.That(coordinator.ReportedFailures.Count).IsEqualTo(0)
+      .Because("A busy lock is not a failed apply; reporting it would count toward dead-lettering a good event.");
+    await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(sinkWork.WorkId)
+      .Because("Nothing applied, so the row stays and the collective applies later, in its place.");
+  }
+
+  /// <summary>The reversible default: an option restores the accounting from before, a busy lock as a failure.</summary>
+  [Test]
+  public async Task CollectiveSink_BusyApplyLock_CountsAsAFailure_WhenConfiguredToAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var dispatcher = new BusyLockDispatcher();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [_sinkWork(streamId)],
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") })] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
+      dispatcher: dispatcher,
+      lockBusyCountsAsFailure: true);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(coordinator.ReportedFailures.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PerspectiveWorkerOptions_BusyApplyLock_IsNotAFailureByDefaultAsync() {
+    await Assert.That(new PerspectiveWorkerOptions().CollectiveLockBusyCountsAsFailure).IsFalse();
+  }
+
   private static PerspectiveWork _sinkWork(Guid streamId) => new() {
     WorkId = Guid.CreateVersion7(),
     StreamId = streamId,
@@ -1012,7 +1078,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
       int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null,
       IReceptorInvoker? receptorInvoker = null, ILeaseRenewalChannel? leaseRenewalChannel = null,
       LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null,
-      CompositeMetrics? compositeMetrics = null) {
+      CompositeMetrics? compositeMetrics = null, bool lockBusyCountsAsFailure = false) {
     var instanceProvider = new InstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -1040,7 +1106,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
-        MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
+        MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts,
+        CollectiveLockBusyCountsAsFailure = lockBusyCountsAsFailure,
       }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
@@ -1223,6 +1290,17 @@ public class PerspectiveWorkerCollectiveSinkTests {
         }
       }
       return Task.FromResult(ids.Count);
+    }
+  }
+
+  private sealed class BusyLockDispatcher : ICollectiveDispatcher {
+    private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task FirstDispatch => _first.Task;
+
+    public Task<CollectiveDispatchResult> DispatchAsync(
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) {
+      _first.TrySetResult();
+      throw new CollectiveApplyLockBusyException("wh_per_probe", 30);
     }
   }
 

@@ -64,4 +64,10 @@ public class CollectiveApplyLockBusyExceptionTests {
     await Assert.That(wrapped.WaitedSeconds).IsEqualTo(0)
       .Because("no wait was reported, and 0 reads as that rather than as a wait that elapsed");
   }
+
+  [Test]
+  public async Task CollectiveApplyOptions_WaitsAgainAfterABusyLock_FiveTimesByDefaultAsync() {
+    await Assert.That(CollectiveApplyOptions.Default.LockWaitRenewals).IsEqualTo(5)
+      .Because("a batch behind another keeps its lease and waits up to three minutes at the default thirty-second wait");
+  }
 }
