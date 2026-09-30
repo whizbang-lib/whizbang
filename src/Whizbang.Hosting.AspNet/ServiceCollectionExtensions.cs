@@ -1,7 +1,9 @@
 using System.Linq;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Health;
 
 namespace Whizbang.Hosting.AspNet;
@@ -31,6 +33,45 @@ public static class ServiceCollectionExtensions {
   /// <tests>tests/Whizbang.Hosting.AspNet.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbangAspNet_RegistersStartupFilterAsync</tests>
   /// <tests>tests/Whizbang.Hosting.AspNet.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbangAspNet_CalledMultipleTimes_RegistersOnceAsync</tests>
   public static IServiceCollection AddWhizbangAspNet(this IServiceCollection services) {
+    // The hosting options bind from configuration, so a deployment can change them without a code
+    // change. Each binding is written out against its concrete type rather than through a generic
+    // helper: the binder source generator only intercepts ConfigurationBinder.Bind when it can see
+    // the type at the call site, and a type parameter sends it to the reflection path, which is an
+    // AOT break (IL3050). Registered before the filters below, which resolve through IOptions<T>.
+    services.AddOptions<WhizbangAvailabilityOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<WhizbangAvailabilityOptions>>(sp => {
+      var configuration = sp.GetService<IConfiguration>();
+      return new ConfigureOptions<WhizbangAvailabilityOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          ConfigurationBinder.Bind(configuration.GetSection("Whizbang:AspNet:Availability"), options);
+#pragma warning restore IL2026
+        }
+      });
+    }));
+    services.AddOptions<WhizbangCorrelationOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<WhizbangCorrelationOptions>>(sp => {
+      var configuration = sp.GetService<IConfiguration>();
+      return new ConfigureOptions<WhizbangCorrelationOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          ConfigurationBinder.Bind(configuration.GetSection("Whizbang:AspNet:Correlation"), options);
+#pragma warning restore IL2026
+        }
+      });
+    }));
+    services.AddOptions<WhizbangSecurityHeadersOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<WhizbangSecurityHeadersOptions>>(sp => {
+      var configuration = sp.GetService<IConfiguration>();
+      return new ConfigureOptions<WhizbangSecurityHeadersOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          ConfigurationBinder.Bind(configuration.GetSection("Whizbang:AspNet:SecurityHeaders"), options);
+#pragma warning restore IL2026
+        }
+      });
+    }));
+
     services.TryAddEnumerable(
       ServiceDescriptor.Singleton<IStartupFilter, WhizbangFlushStartupFilter>());
     // Turnkey: capture an inbound correlation id (default X-Correlation-ID) at the start of the pipeline so
@@ -46,8 +87,8 @@ public static class ServiceCollectionExtensions {
       ServiceDescriptor.Singleton<IStartupFilter, WhizbangSecurityHeadersStartupFilter>());
 
     // Turnkey: auto-inject the schema-availability gate (serve reads / 503 writes during a startup
-    // migration, pass-through once ready). Configure the mode or disable via WhizbangAvailabilityOptions.
-    services.AddOptions<WhizbangAvailabilityOptions>();
+    // migration, pass-through once ready). Configure the mode or disable via WhizbangAvailabilityOptions,
+    // or from Whizbang:AspNet:Availability.
     services.TryAddEnumerable(
       ServiceDescriptor.Singleton<IStartupFilter, WhizbangAvailabilityStartupFilter>());
     // Surfaces that must not share a failure domain with what they report on (the startup status
