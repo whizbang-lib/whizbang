@@ -31,6 +31,13 @@ public class ClaimedEmissionStoreDefaultsTests {
     await Assert.That(await store.ReleaseAsync("k", CancellationToken.None)).IsFalse();
   }
 
+  [Test]
+  public async Task Prune_Default_PrunesNothingAsync() {
+    IClaimedEmissionStore store = new ClaimOnlyStore();
+
+    await Assert.That(await store.PruneAsync("saga-completed:", DateTimeOffset.UtcNow, CancellationToken.None)).IsEqualTo(0);
+  }
+
   private sealed class ClaimOnlyStore : IClaimedEmissionStore {
     public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken)
       => Task.FromResult(true);

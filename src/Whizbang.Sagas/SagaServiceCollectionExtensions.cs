@@ -69,6 +69,9 @@ public static class SagaServiceCollectionExtensions {
     // A lost tick ends a saga's watchdog chain for good. The maintenance cycle re-arms sagas whose
     // chain has ended; TryAddEnumerable so calling this twice does not sweep twice.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<Whizbang.Core.Workers.IMaintenanceStep, StrandedSagaSweepStep>());
+    // The claims a saga spends as it runs are pruned once past their retention; the abandonment
+    // claim, a record, is kept.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<Whizbang.Core.Workers.IMaintenanceStep, SagaClaimPruneStep>());
 
     return services;
   }

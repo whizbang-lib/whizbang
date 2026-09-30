@@ -111,6 +111,21 @@ public sealed class EFCoreClaimedEmissionStore(DbContext dbContext) : IClaimedEm
     return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) > 0;
   }
 
+  /// <inheritdoc />
+  /// <remarks>
+  /// <c>starts_with</c> rather than <c>LIKE</c>, so a <c>_</c> or <c>%</c> in the prefix is literal and
+  /// cannot stretch the delete over another owner's keys.
+  /// </remarks>
+  public async Task<int> PruneAsync(string keyPrefix, DateTimeOffset claimedBefore, CancellationToken cancellationToken) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(keyPrefix);
+
+    await using var cmd = await _commandAsync(cancellationToken).ConfigureAwait(false);
+    cmd.CommandText = $"DELETE FROM {_table()} WHERE starts_with(claim_key, @prefix) AND claimed_at < @before";
+    cmd.Parameters.AddWithValue("prefix", keyPrefix);
+    cmd.Parameters.AddWithValue("before", claimedBefore);
+    return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
   /// <summary>A command on the ambient context's connection, opened if it is not yet.</summary>
   private async Task<NpgsqlCommand> _commandAsync(CancellationToken cancellationToken) {
     var conn = (NpgsqlConnection)_dbContext.Database.GetDbConnection();

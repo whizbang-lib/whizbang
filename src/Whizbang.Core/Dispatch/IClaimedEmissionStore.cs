@@ -98,4 +98,23 @@ public interface IClaimedEmissionStore {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:Release_HeldKey_CanBeClaimedAgain_AndAFreeKeyReportsNothingReleasedAsync</tests>
   Task<bool> ReleaseAsync(string claimKey, CancellationToken cancellationToken)
     => Task.FromResult(false);
+
+  /// <summary>
+  /// Deletes every claim whose key starts with <paramref name="keyPrefix"/> and that was taken before
+  /// <paramref name="claimedBefore"/>.
+  /// </summary>
+  /// <remarks>
+  /// For the owner of a key convention, which alone knows when its claims are spent: the saga
+  /// framework prunes its sweep, completion and continuation claims this way, and keeps its
+  /// abandonment claims. The prefix is matched literally. The default prunes nothing.
+  /// </remarks>
+  /// <param name="keyPrefix">The literal key prefix; must not be blank.</param>
+  /// <param name="claimedBefore">Only claims taken before this are deleted.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>How many claims were deleted.</returns>
+  /// <docs>fundamentals/dispatcher/publish-once</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/ClaimedEmissionStoreDefaultsTests.cs:Prune_Default_PrunesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:Prune_RemovesOnlyThePrefixesClaimsTakenBeforeTheCutoffAsync</tests>
+  Task<int> PruneAsync(string keyPrefix, DateTimeOffset claimedBefore, CancellationToken cancellationToken)
+    => Task.FromResult(0);
 }

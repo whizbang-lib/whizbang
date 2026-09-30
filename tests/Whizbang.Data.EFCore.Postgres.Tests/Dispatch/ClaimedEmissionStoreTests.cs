@@ -327,6 +327,35 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
     await Assert.That(released).IsTrue();
   }
 
+  /// <summary>
+  /// Pruning removes exactly the claims under the prefix taken before the cutoff: not a newer one, and
+  /// not one under another prefix, however old.
+  /// </summary>
+  [Test]
+  public async Task Prune_RemovesOnlyThePrefixesClaimsTakenBeforeTheCutoffAsync() {
+    await using var ctx = CreateDbContext();
+    var store = new EFCoreClaimedEmissionStore(ctx);
+    var run = Guid.NewGuid().ToString("N");
+    var prefix = $"prune_test-{run}:";
+    var old = $"{prefix}old";
+    var recent = $"{prefix}recent";
+    var otherPrefix = $"other-{run}:old";
+    var likeWildcard = $"pruneXtest-{run}:old";
+    foreach (var key in new[] { old, recent, otherPrefix, likeWildcard }) {
+      await store.TryClaimAsync(key, TrackedGuid.New(), CancellationToken.None);
+    }
+    foreach (var key in new[] { old, otherPrefix, likeWildcard }) {
+      await _executeAsync(ctx, "UPDATE wh_unique_emission_claims SET claimed_at = NOW() - INTERVAL '30 days' WHERE claim_key = @key", key);
+    }
+
+    var pruned = await store.PruneAsync(prefix, DateTimeOffset.UtcNow.AddDays(-7), CancellationToken.None);
+
+    await Assert.That(pruned).IsEqualTo(1);
+    var left = await store.FindClaimedAsync([old, recent, otherPrefix, likeWildcard], CancellationToken.None);
+    await Assert.That(left!).IsEquivalentTo([recent, otherPrefix, likeWildcard])
+      .Because("the prefix is matched literally: another prefix, or one a LIKE wildcard would stretch to, is not the caller's to prune");
+  }
+
   // ── Helpers ──────────────────────────────────────────────────────────
 
   private static async Task _executeAsync(DbContext ctx, string sql, string? key) {
