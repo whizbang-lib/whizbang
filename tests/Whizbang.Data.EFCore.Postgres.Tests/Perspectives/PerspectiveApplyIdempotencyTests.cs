@@ -97,7 +97,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     });
 
     await using var storeContext = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "wh_per_action_test");
     var runner = await CreateRunnerAsync(eventStore, perspectiveStore);
 
     var result = await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
@@ -106,7 +106,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     await Assert.That(result.LastEventId).IsEqualTo(createdId.Value);
 
     await using var verifyContext = CreateDbContext();
-    var verifyStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(verifyContext, "action_test");
+    var verifyStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(verifyContext, "wh_per_action_test");
     var metadata = await verifyStore.GetMetadataByStreamIdAsync(streamId);
 
     await Assert.That(metadata).IsNotNull();
@@ -130,7 +130,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     });
 
     await using (var ctx1 = CreateDbContext()) {
-      var ps1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx1, "action_test");
+      var ps1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx1, "wh_per_action_test");
       var runner1 = await CreateRunnerAsync(eventStore, ps1);
       var first = await runner1.RunAsync(streamId, "action_test", null, CancellationToken.None);
       await Assert.That(first.EventsProcessed).IsEqualTo(1);
@@ -151,7 +151,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     // claim_orphaned_perspective_events re-claims the same events and we get invoked
     // with lastProcessedEventId stale (or null on a fresh stream).
     await using (var ctx2 = CreateDbContext()) {
-      var ps2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "action_test");
+      var ps2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "wh_per_action_test");
       var runner2 = await CreateRunnerAsync(eventStore, ps2);
       var second = await runner2.RunAsync(streamId, "action_test", null, CancellationToken.None);
 
@@ -191,7 +191,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     });
 
     await using (var ctx1 = CreateDbContext()) {
-      var ps1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx1, "action_test");
+      var ps1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx1, "wh_per_action_test");
       var runner1 = await CreateRunnerAsync(eventStore, ps1);
       var first = await runner1.RunAsync(streamId, "action_test", null, CancellationToken.None);
       await Assert.That(first.EventsProcessed).IsEqualTo(1);
@@ -205,7 +205,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
 
     // Re-run with cursor=null — claims both old + new event. Only the new one should apply.
     await using (var ctx2 = CreateDbContext()) {
-      var ps2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "action_test");
+      var ps2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "wh_per_action_test");
       var runner2 = await CreateRunnerAsync(eventStore, ps2);
       var second = await runner2.RunAsync(streamId, "action_test", null, CancellationToken.None);
       await Assert.That(second.EventsProcessed).IsEqualTo(1);
@@ -240,7 +240,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     });
 
     await using var storeContext = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "wh_per_action_test");
     var runner = await CreateRunnerAsync(eventStore, perspectiveStore);
 
     var result = await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
@@ -277,7 +277,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     stampingMap[createdId.Value] = expectedCommitSequence;
 
     await using var storeContext = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "wh_per_action_test");
     var runner = await CreateRunnerAsync(stampingStore, perspectiveStore);
 
     var result = await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
@@ -285,7 +285,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     await Assert.That(result.EventsProcessed).IsEqualTo(1);
 
     await using var verifyContext = CreateDbContext();
-    var verifyStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(verifyContext, "action_test");
+    var verifyStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(verifyContext, "wh_per_action_test");
     var metadata = await verifyStore.GetMetadataByStreamIdAsync(streamId);
 
     await Assert.That(metadata).IsNotNull();
@@ -338,7 +338,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var unstampedStore = innerStore;  // no wrapper — InMemoryEventStore.GetCommitSequenceAsync returns null
 
     await using (var ctx = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "action_test");
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test");
       var runner = await CreateRunnerAsync(unstampedStore, ps);
       var firstResult = await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
       await Assert.That(firstResult.EventsProcessed).IsEqualTo(1);
@@ -346,7 +346,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
 
     // Confirm metadata.CommitSequence is null (the prerequisite for the bug).
     await using (var verifyMd = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(verifyMd, "action_test");
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(verifyMd, "wh_per_action_test");
       var meta = await ps.GetMetadataByStreamIdAsync(streamId);
       await Assert.That(meta!.CommitSequence).IsNull()
         .Because("setup precondition: the stamper-lag race makes persisted CommitSequence null");
@@ -362,7 +362,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     };
 
     await using (var ctx2 = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "action_test");
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "wh_per_action_test");
       var runner = await CreateRunnerAsync(unstampedStore, ps);
 
       var lateEnvelopePoly = new MessageEnvelope<IEvent> {
@@ -430,7 +430,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var stampingStore = new CommitSequenceStampingEventStore(innerStore, stamping);
 
     await using (var ctx = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "action_test");
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test");
       var runner = await CreateRunnerAsync(stampingStore, ps);
       var firstResult = await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
       await Assert.That(firstResult.EventsProcessed).IsEqualTo(1);
@@ -449,7 +449,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     // NOTE: deliberately NOT stamping lateId in the map — envelope.LocalCommitSequence will be null.
 
     await using (var ctx2 = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "action_test");
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "wh_per_action_test");
       var runner = await CreateRunnerAsync(stampingStore, ps);
 
       var lateEnvelopePoly = new MessageEnvelope<IEvent> {
@@ -506,7 +506,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var stampingStore = new CommitSequenceStampingEventStore(innerStore, stamping);
 
     await using (var ctx = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "action_test");
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test");
       var runner = await CreateRunnerAsync(stampingStore, ps);
       var firstResult = await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
       await Assert.That(firstResult.EventsProcessed).IsEqualTo(1);
@@ -514,7 +514,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
 
     // Confirm floor: metadata advanced to EventId=large, CommitSequence=234000.
     await using (var verify1 = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(verify1, "action_test");
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(verify1, "wh_per_action_test");
       var meta = await ps.GetMetadataByStreamIdAsync(streamId);
       await Assert.That(meta!.EventId).IsEqualTo(firstId.Value.ToString("D"));
       await Assert.That(meta.CommitSequence).IsEqualTo(234000L);
@@ -533,7 +533,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     stamping[lateId.Value] = 234500L;
 
     await using (var ctx2 = CreateDbContext()) {
-      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "action_test");
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "wh_per_action_test");
       var runner = await CreateRunnerAsync(stampingStore, ps);
       // Use RunWithEventsAsync — the worker's drain-mode path. The drainer pre-fetches
       // events (worker already saw them in the DB) and hands them straight to the runner,
@@ -571,7 +571,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   [Test]
   public async Task GetMetadataByStreamIdAsync_WhenRowDoesNotExist_ReturnsNullAsync() {
     await using var storeContext = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "wh_per_action_test");
 
     var metadata = await perspectiveStore.GetMetadataByStreamIdAsync(Guid.NewGuid());
 
@@ -599,7 +599,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       innerStore, new Dictionary<Guid, long?> { [checkpointId.Value] = expectedCommitSequence });
 
     await using var storeCtx = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeCtx, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeCtx, "wh_per_action_test");
 
     // Pre-seed the row so BootstrapSnapshotAsync finds something to snapshot.
     await perspectiveStore.UpsertAsync(streamId, new ActionTestModel { Id = streamId, Name = "x", Value = 1 });

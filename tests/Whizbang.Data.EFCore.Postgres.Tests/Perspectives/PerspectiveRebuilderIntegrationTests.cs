@@ -135,12 +135,12 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     services.AddScoped<IPerspectiveStore<RebuildBalanceModel>>(sp =>
         new EFCorePostgresPerspectiveStore<RebuildBalanceModel>(
             sp.GetRequiredService<WorkCoordinationDbContext>(),
-            "rebuild_balance"));
+            "wh_per_rebuild_balance"));
 
     services.AddScoped<IPerspectiveStore<RebuildInventoryModel>>(sp =>
         new EFCorePostgresPerspectiveStore<RebuildInventoryModel>(
             sp.GetRequiredService<WorkCoordinationDbContext>(),
-            "rebuild_inventory"));
+            "wh_per_rebuild_inventory"));
 
     // Register the perspectives and their source-generated runners. Use reflection to locate
     // the generated runner types so this file compiles even when the generator hasn't produced
@@ -201,11 +201,11 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     services.AddScoped<IPerspectiveStore<RebuildBalanceModel>>(sp =>
         new EFCorePostgresPerspectiveStore<RebuildBalanceModel>(
             sp.GetRequiredService<WorkCoordinationDbContext>(),
-            "rebuild_balance"));
+            "wh_per_rebuild_balance"));
     services.AddScoped<IPerspectiveStore<RebuildInventoryModel>>(sp =>
         new EFCorePostgresPerspectiveStore<RebuildInventoryModel>(
             sp.GetRequiredService<WorkCoordinationDbContext>(),
-            "rebuild_inventory"));
+            "wh_per_rebuild_inventory"));
 
     services.AddScoped<RebuildBalancePerspective>();
     services.AddScoped<RebuildInventoryPerspective>();

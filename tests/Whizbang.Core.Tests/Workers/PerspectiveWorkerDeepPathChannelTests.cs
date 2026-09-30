@@ -292,6 +292,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     // Assert — sync surfaces were signaled
     await Assert.That(syncSignaler.SignalCount).IsGreaterThanOrEqualTo(1);
     await Assert.That(syncTracker.MarkedEventIds).Contains(eventId);
+    await Assert.That(syncTracker.AppliedEvents).Contains((eventId, perspectiveName))
+      .Because("a committed apply marks the event applied for an applied-event waiter (#959)");
     await Assert.That(syncTracker.StreamSweeps).Contains((perspectiveName, streamId));
 
     // Assert — fallback PostLifecycle fired inline + detached stages
@@ -473,6 +475,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       // Assert — the sync tracker was told the failed event is done for this perspective
       await Assert.That(syncTracker.MarkedEventIds).Contains(eventId)
         .Because("Failed events must still release perspective-sync waiters");
+      await Assert.That(syncTracker.AppliedEvents).IsEmpty()
+        .Because("a failed apply must never read as applied (#959)");
       await Assert.That(coordinator.Failures.Count).IsGreaterThanOrEqualTo(1);
       coordinator.Failures.TryPeek(out var failure);
       await Assert.That(failure?.PerspectiveName).IsEqualTo(perspectiveName);
@@ -1483,6 +1487,14 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
 
   private sealed class RecordingSyncEventTracker : ISyncEventTracker {
     public ConcurrentQueue<Guid> MarkedEventIds { get; } = new();
+    public ConcurrentQueue<(Guid EventId, string PerspectiveName)> AppliedEvents { get; } = new();
+
+    public void MarkApplied(IEnumerable<Guid> eventIds, string perspectiveName) {
+      foreach (var id in eventIds) {
+        AppliedEvents.Enqueue((id, perspectiveName));
+      }
+    }
+
     public ConcurrentQueue<(string PerspectiveName, Guid StreamId)> StreamSweeps { get; } = new();
 
     public void TrackEvent(Type eventType, Guid eventId, Guid streamId, string perspectiveName) { }

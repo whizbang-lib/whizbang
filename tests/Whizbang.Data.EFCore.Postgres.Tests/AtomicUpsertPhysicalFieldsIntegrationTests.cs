@@ -79,16 +79,10 @@ public class AtomicUpsertPhysicalFieldsIntegrationTests : IAsyncDisposable {
     await using var ctx = _createDbContext();
     await ctx.Database.EnsureCreatedAsync();
 
-    // Wire Path 1 manually for the test scope.
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>
-      Generated.PerspectivePersistenceJsonContext.CreateOptions(
-        Generated.MessageJsonContext.Default,
-        global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
   }
 
   [After(Test)]
   public async Task TeardownAsync() {
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = null;
     if (!string.IsNullOrEmpty(_testDatabaseName)) {
       await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
       await admin.OpenAsync();

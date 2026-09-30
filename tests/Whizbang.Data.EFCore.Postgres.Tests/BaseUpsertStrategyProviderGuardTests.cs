@@ -1,49 +1,62 @@
 using System.Text.Json;
-using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Lenses;
 using Whizbang.Data.EFCore.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Regression lock for the order-dependent flake where MultiPerspectiveUpsertSymmetryTests
-/// failed in CI but passed locally: the static `PathOnePersistenceOptionsProvider` was set
-/// by a generated ModuleInitializer (Release-only generator output), then atomic UPSERT
-/// triggered against InMemoryDatabase fixtures and failed on JsonTypeInfo missing for
-/// nested test models. Now the atomic path additionally checks `Database.ProviderName`
-/// and bails out for non-Npgsql providers.
+/// A provider other than Npgsql is a case that still legitimately falls back: the atomic statement is
+/// raw PostgreSQL, so the PostgreSQL strategy on any other provider must write through Entity Framework.
 /// </summary>
-// Mutates the process-wide BaseUpsertStrategy.PathOnePersistenceOptionsProvider — serialize against the
-// other persistence tests so it can't flip the provider mid-seed (the cross-test static race).
-[NotInParallel("EFCorePostgresTests")]
+/// <remarks>
+/// The atomic path is available with no startup hook (#967), and the model here is one the persistence union
+/// resolves, so nothing but this guard keeps the atomic path away from an in-memory fixture. Had the guard gone, the atomic path would ask the in-memory context for its
+/// database connection, which a non-relational provider refuses, and the write would throw instead of landing.
+/// </remarks>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/BaseUpsertStrategy.cs</code-under-test>
 [Category("Shard1")]
 public class BaseUpsertStrategyProviderGuardTests {
 
-  private sealed class ProbeDbContext(DbContextOptions<ProbeDbContext> options) : DbContext(options) { }
+  private sealed class ProbeDbContext(DbContextOptions<ProbeDbContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      base.OnModelCreating(modelBuilder);
+      modelBuilder.Entity<PerspectiveRow<UpsertCoverageWidgetModel>>(entity => {
+        entity.ToTable("wh_per_guard_model");
+        entity.HasKey(e => e.Id);
+        entity.Property<DateTime?>("sys_created_at");
+        entity.Property<DateTime?>("sys_updated_at");
+        entity.OwnsOne(e => e.Data, d => d.WithOwner());
+        entity.OwnsOne(e => e.Metadata, m => m.WithOwner());
+        entity.Property(e => e.Scope)
+          .HasConversion(
+            v => JsonSerializer.Serialize(v, JsonSerializerOptions.Default),
+            v => JsonSerializer.Deserialize<PerspectiveScope>(v, JsonSerializerOptions.Default)!);
+      });
+    }
+  }
 
   [Test]
-  public async Task InMemoryProvider_DoesNotTriggerAtomicUpsertPathAsync() {
-    // Set a non-null provider so the only reason to bail must be the Npgsql guard.
-    var prev = BaseUpsertStrategy.PathOnePersistenceOptionsProvider;
-    try {
-      BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () => new JsonSerializerOptions {
-        TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
-      };
+  public async Task Upsert_OnANonNpgsqlProvider_FallsBackToTheEntityFrameworkPathAndPersistsAsync() {
+    var options = new DbContextOptionsBuilder<ProbeDbContext>()
+      .UseInMemoryDatabase($"probe-{Guid.CreateVersion7()}")
+      .Options;
+    await using var context = new ProbeDbContext(options);
+    var id = Guid.CreateVersion7();
 
-      var options = new DbContextOptionsBuilder<ProbeDbContext>()
-        .UseInMemoryDatabase($"probe-{Guid.NewGuid()}")
-        .Options;
-      await using var ctx = new ProbeDbContext(options);
+    await new PostgresUpsertStrategy().UpsertPerspectiveRowAsync(
+      context,
+      "wh_per_guard_model",
+      id,
+      new UpsertCoverageWidgetModel { Id = id, Name = "InMemory" },
+      new PerspectiveMetadata { EventType = "Guarded", EventId = Guid.CreateVersion7().ToString(), Timestamp = DateTime.UtcNow },
+      new PerspectiveScope());
 
-      // ProviderName for the in-memory provider does not contain "Npgsql".
-      var providerName = ctx.Database.ProviderName;
-      await Assert.That(providerName).IsNotNull();
-      await Assert.That(providerName!.Contains("Npgsql", StringComparison.Ordinal)).IsFalse();
-    } finally {
-      BaseUpsertStrategy.PathOnePersistenceOptionsProvider = prev;
-    }
+    var row = await context.Set<PerspectiveRow<UpsertCoverageWidgetModel>>().AsNoTracking().SingleAsync(r => r.Id == id);
+    await Assert.That(row.Data.Name).IsEqualTo("InMemory")
+      .Because("on a provider other than Npgsql the atomic statement declines and Entity Framework writes the row");
   }
 }

@@ -7,6 +7,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
@@ -376,6 +377,52 @@ public class PerspectiveWorkerCollectiveSinkTests {
       .Because("A successful sink dispatch must delete its own __collective__ work row by event_work_id, " +
         "so claim_orphaned can't re-lease it into the re-dispatch loop that caused the production bloat.");
   }
+
+  /// <summary>
+  /// #959: a collective apply is awaitable. Once the sink's apply commits, the event is marked applied under
+  /// the sink's name, which settles a wait for that event on any perspective.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_SuccessfulDispatch_MarksTheEventAppliedForAnyPerspective_Async() {
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new RecordingDispatcher();
+    var tracker = new SyncEventTracker();
+    var awaiter = new PerspectiveSyncAwaiter(
+      new FakeCoordinator([]),
+      new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled }),
+      NullLogger<PerspectiveSyncAwaiter>.Instance,
+      tracker,
+      new ScopedEventTracker(),
+      new AsyncLocalLifecycleContextAccessor());
+    // The wait starts before the apply: the event was never tracked in this process.
+    var waiting = awaiter.WaitForAppliedAsync(typeof(CollectiveTargetPerspective), eventId, TimeSpan.FromSeconds(30));
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [_sinkWork(streamId)],
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
+      dispatcher: dispatcher,
+      syncEventTracker: tracker);
+    await Assert.That(waiting.IsCompleted).IsFalse();
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    var result = await waiting.WaitAsync(TimeSpan.FromSeconds(30));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
+      .Because("the wait completed on the sink's committed apply, not before it");
+  }
+
+  /// <summary>A perspective whose model a collective event targets; only its name matters here.</summary>
+  private sealed class CollectiveTargetPerspective;
 
   /// <summary>
   /// Same regression as <see cref="CollectiveSink_SuccessfulDispatch_CompletesSinkWorkRowByEventWorkId_Async"/>,
@@ -1078,7 +1125,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
       int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null,
       IReceptorInvoker? receptorInvoker = null, ILeaseRenewalChannel? leaseRenewalChannel = null,
       LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null,
-      CompositeMetrics? compositeMetrics = null, bool lockBusyCountsAsFailure = false) {
+      CompositeMetrics? compositeMetrics = null, bool lockBusyCountsAsFailure = false,
+      ISyncEventTracker? syncEventTracker = null) {
     var instanceProvider = new InstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -1114,7 +1162,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
       completionStrategy: strategy,
       eventTypeProvider: registry,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
-      syncEventTracker: new SyncEventTracker(),
+      syncEventTracker: syncEventTracker ?? new SyncEventTracker(),
       logger: NullLogger<PerspectiveWorker>.Instance,
       snapshotStore: NullPerspectiveSnapshotStore.Instance,
       streamLocker: NullPerspectiveStreamLocker.Instance,

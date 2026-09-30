@@ -85,7 +85,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "wh_per_action_test");
     var runner = await CreateRunnerAsync(eventStore, perspectiveStore);
 
     // Act
@@ -118,7 +118,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "wh_per_action_test");
     var runner = await CreateRunnerAsync(eventStore, perspectiveStore);
 
     // Act
@@ -151,7 +151,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "wh_per_action_test");
     var runner = await CreateRunnerAsync(eventStore, perspectiveStore);
 
     // Act
@@ -182,7 +182,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "wh_per_action_test");
     var runner = await CreateRunnerAsync(eventStore, perspectiveStore);
 
     // Act
@@ -215,7 +215,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "wh_per_action_test");
     var runner = await CreateRunnerAsync(eventStore, perspectiveStore);
 
     // Act
@@ -243,7 +243,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext1 = CreateDbContext();
-    var perspectiveStore1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext1, "action_test");
+    var perspectiveStore1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext1, "wh_per_action_test");
     var runner1 = await CreateRunnerAsync(eventStore, perspectiveStore1);
 
     var result1 = await runner1.RunAsync(streamId, "action_test", null, CancellationToken.None);
@@ -261,7 +261,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext2 = CreateDbContext();
-    var perspectiveStore2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext2, "action_test");
+    var perspectiveStore2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext2, "wh_per_action_test");
     var runner2 = await CreateRunnerAsync(eventStore, perspectiveStore2);
 
     await runner2.RunAsync(streamId, "action_test", result1.LastEventId, CancellationToken.None);
@@ -294,7 +294,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext1 = CreateDbContext();
-    var perspectiveStore1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext1, "action_test");
+    var perspectiveStore1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext1, "wh_per_action_test");
     var runner1 = await CreateRunnerAsync(eventStore, perspectiveStore1);
     var result1 = await runner1.RunAsync(streamId, "action_test", null, CancellationToken.None);
 
@@ -320,7 +320,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext2 = CreateDbContext();
-    var perspectiveStore2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext2, "action_test");
+    var perspectiveStore2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext2, "wh_per_action_test");
     var runner2 = await CreateRunnerAsync(eventStore, perspectiveStore2);
 
     // Act: Process the batch — should purge the row despite events after the purge
@@ -349,7 +349,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "wh_per_action_test");
     var runner = await CreateRunnerAsync(eventStore, perspectiveStore);
 
     // Act
@@ -384,7 +384,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext = CreateDbContext();
-    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "wh_per_action_test");
     var runner = await CreateRunnerAsync(eventStore, perspectiveStore);
 
     // Act
@@ -416,7 +416,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext1 = CreateDbContext();
-    var perspectiveStore1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext1, "action_test");
+    var perspectiveStore1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext1, "wh_per_action_test");
     var runner1 = await CreateRunnerAsync(eventStore, perspectiveStore1);
     var result1 = await runner1.RunAsync(streamId, "action_test", null, CancellationToken.None);
 
@@ -426,7 +426,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext2 = CreateDbContext();
-    var perspectiveStore2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext2, "action_test");
+    var perspectiveStore2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext2, "wh_per_action_test");
     var runner2 = await CreateRunnerAsync(eventStore, perspectiveStore2);
 
     // Act
@@ -460,7 +460,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext1 = CreateDbContext();
-    var perspectiveStore1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext1, "action_test");
+    var perspectiveStore1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext1, "wh_per_action_test");
     var runner1 = await CreateRunnerAsync(eventStore, perspectiveStore1);
     var result1 = await runner1.RunAsync(streamId, "action_test", null, CancellationToken.None);
 
@@ -475,7 +475,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     });
 
     await using var storeContext2 = CreateDbContext();
-    var perspectiveStore2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext2, "action_test");
+    var perspectiveStore2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext2, "wh_per_action_test");
     var runner2 = await CreateRunnerAsync(eventStore, perspectiveStore2);
 
     // Act
