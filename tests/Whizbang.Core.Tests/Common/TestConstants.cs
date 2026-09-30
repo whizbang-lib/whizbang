@@ -91,7 +91,11 @@ public static class TestConstants {
   /// <para>- 1 receptor from DispatcherSecurityBuilderPublishOnceTests.cs
   ///     (SecuredOnceEventReceptor — observes the security context a publish-once runs under)</para>
   ///
-  /// <para>Total: 124 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>- 1 receptor from Dispatcher/DispatcherLocalDispatchRecordTests.cs
+  ///     (LocalDispatchRecordProbeReceptor — a default-stage receptor whose local firing the stored
+  ///     envelope must record)</para>
+  ///
+  /// <para>Total: 125 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 124;
+  public const int EXPECTED_RECEPTOR_COUNT = 125;
 }
