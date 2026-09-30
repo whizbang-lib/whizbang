@@ -159,4 +159,49 @@ internal static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "The generated index name exceeds the database provider's maximum identifier length. PostgreSQL allows 63 bytes. Index names follow the pattern 'ix_{table}_{column}'. Consider shortening the table or column name."
   );
+
+  /// <summary>
+  /// WHIZ830: Error - A stored-form declaration the generator cannot turn into SQL.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/stored-form-migrations#diagnostics</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StoredFormMigrationGenerationTests.cs:ADeclarationItCannotGenerate_IsWHIZ830_AndEmitsNothingAsync</tests>
+  public static readonly DiagnosticDescriptor StoredFormCannotBeGenerated = new(
+      id: "WHIZ830",
+      title: "Stored-form migration cannot be generated",
+      messageFormat: "The stored-form declaration on {0} cannot be generated: {1}. Write an IStoredFormMigration for it.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A [StoredForm] or [StoredFormRemoved] declaration has no generated conversion. Nothing is emitted for it, so stored documents would stay in the old form; a custom IStoredFormMigration covers any change."
+  );
+
+  /// <summary>
+  /// WHIZ831: Warning - A custom stored-form migration that never runs.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/stored-form-migrations#diagnostics</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StoredFormMigrationGenerationTests.cs:ADeclarationInsideACollectionElement_IsWHIZ832_AndAnOrphanMigrationWHIZ831Async</tests>
+  public static readonly DiagnosticDescriptor StoredFormMigrationNeverRuns = new(
+      id: "WHIZ831",
+      title: "Stored-form migration never runs",
+      messageFormat: "{0} is a stored-form migration that never runs: {1}",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "An IStoredFormMigration<TModel> runs against the table of the perspective whose model is TModel, and is created with its parameterless constructor. Without either it is never run."
+  );
+
+  /// <summary>
+  /// WHIZ832: Warning - A stored-form declaration inside an element of a collection.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/stored-form-migrations#diagnostics</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StoredFormMigrationGenerationTests.cs:ADeclarationInsideACollectionElement_IsWHIZ832_AndAnOrphanMigrationWHIZ831Async</tests>
+  public static readonly DiagnosticDescriptor StoredFormInsideCollection = new(
+      id: "WHIZ832",
+      title: "Stored-form declaration inside a collection element",
+      messageFormat: "The stored-form declaration on {0} is not generated: {1}. Write an IStoredFormMigration for it.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A declaration on a property of a collection's element type has no single document path a generated statement could convert."
+  );
 }

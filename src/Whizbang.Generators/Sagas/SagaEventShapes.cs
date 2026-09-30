@@ -82,6 +82,7 @@ internal static class SagaEventShapes {
     new("InitiatedEvent", "Whizbang.Sagas.ISagaInitiatedEvent", [
       _sagaName(),
       _entityId(),
+      _sagaId(),
       new("ItemIdentifiers", STRING_LIST, IsValueType: false),
       _totalItems(),
       new("HookNames", NULLABLE_STRING_LIST, IsValueType: false),
@@ -90,6 +91,7 @@ internal static class SagaEventShapes {
     new("ItemsDispatchedEvent", "Whizbang.Sagas.ISagaItemsDispatchedEvent", [
       _sagaName(),
       _entityId(),
+      _sagaId(),
       _totalItems(),
       new("SuccessfullyDispatched", INT, IsValueType: true),
       new("FailedToDispatch", INT, IsValueType: true),
@@ -124,6 +126,7 @@ internal static class SagaEventShapes {
     new("CompletedEvent", "Whizbang.Sagas.ISagaCompletedEvent", [
       _sagaName(),
       _entityId(),
+      _sagaId(),
       new("FinalStatus", SAGA_STATUS, IsValueType: true),
       new("CompletedByItemIdentifier", NULLABLE_STRING, IsValueType: false),
       new("CompletedItems", INT, IsValueType: true),
@@ -134,6 +137,7 @@ internal static class SagaEventShapes {
     new("ResetEvent", "Whizbang.Sagas.ISagaResetEvent", [
       _sagaName(),
       _entityId(),
+      _sagaId(),
       _itemIdentifier(),
       new("PreviousStatus", SAGA_ITEM_STATE, IsValueType: true),
     ], IsHookEvent: false),
@@ -141,6 +145,7 @@ internal static class SagaEventShapes {
     new("HookStartedEvent", "Whizbang.Sagas.ISagaHookStartedEvent", [
       _sagaName(),
       _entityId(),
+      _sagaId(),
       _hookName(),
       _displayName(),
     ], IsHookEvent: true),
@@ -148,6 +153,7 @@ internal static class SagaEventShapes {
     new("HookCompletedEvent", "Whizbang.Sagas.ISagaHookCompletedEvent", [
       _sagaName(),
       _entityId(),
+      _sagaId(),
       _hookName(),
       _displayName(),
       new("Status", SAGA_ITEM_STATE, IsValueType: true),

@@ -193,13 +193,19 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           }
         }
 
-        // The temporal rewrites derived from the model, then the generated physical-column rewrites (an enum
-        // column an earlier release stored as text is converted to the number it now holds).
-        var rewrites = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Concat(
+        // The app's stored-form migrations first, so a value a rename moves is converted to the canonical temporal
+        // form in the same pass; then the temporal rewrites derived from the model; then the generated
+        // physical-column rewrites (an enum column an earlier release stored as text is converted to the number it
+        // now holds).
+        var storedFormMigrations = GetStoredFormMigrations();
+        await global::Whizbang.Data.Postgres.StoredFormMigrationSql.DeclareAsync(
+          rewriteConnectionFactory, "__SCHEMA__", storedFormMigrations, cancellationToken);
+        var rewrites = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(
+          global::Whizbang.Data.Postgres.StoredFormMigrationSql.ForPhase("__SCHEMA__", storedFormMigrations),
           Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(
             dbContext.Model,
             Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options,
-            "__SCHEMA__"),
+            "__SCHEMA__")),
           GetPhysicalColumnRewrites()));
         await Whizbang.Data.Postgres.CanonicalTemporalRewritePhase.ApplyAsync(
           rewriteConnectionFactory, lockId, rewrites, SCHEMA_COMMAND_TIMEOUT_SECONDS, logger,
@@ -658,6 +664,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         }
       }
     }
+
+    // The tables the pass created an index on are analyzed now that it has committed, so the planner
+    // has statistics for each new index's expression rather than a default that can make it ignore the
+    // index until autovacuum next analyzes the table (#1004). Outside the transaction and the lock, and
+    // never fatal: a table left unanalyzed is found by the maintenance step.
+    await _analyzeNewlyIndexedTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
 
     // Step 7: Run database maintenance (purge completed messages, etc.)
     // Runs outside the transaction and advisory lock because:
@@ -1166,6 +1178,39 @@ END $$;
       // Physical-column rewrites will be embedded here by the source generator
       #endregion
     };
+  }
+
+  /// <summary>
+  /// The app's stored-form migrations, applied by the stored-format rewrite phase before the temporal rewrites: one
+  /// per [StoredForm] or [StoredFormRemoved] declaration, generated, then each IStoredFormMigration, per table. Each is
+  /// journaled in wh_stored_form_migrations and skipped once settled.
+  /// </summary>
+  internal static global::Whizbang.Data.Postgres.StoredFormMigration[] GetStoredFormMigrations() {
+    return new global::Whizbang.Data.Postgres.StoredFormMigration[] {
+      #region STORED_FORM_MIGRATIONS
+      // Stored-form migrations will be embedded here by the source generator
+      #endregion
+    };
+  }
+
+  /// <summary>
+  /// Every stored-form migration this build declares for __DBCONTEXT_CLASS__, merged with the journal: Pending,
+  /// Applied or Settled, with its row count and times, followed by any journal rows this build no longer declares.
+  /// </summary>
+  /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/perspectives/stored-form-migrations#status</docs>
+  public static async Task<System.Collections.Generic.IReadOnlyList<global::Whizbang.Data.Postgres.StoredFormMigrationStatus>> GetStoredFormMigrationStatusAsync(
+      this __DBCONTEXT_FQN__ dbContext,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(dbContext);
+    await dbContext.Database.OpenConnectionAsync(cancellationToken);
+    try {
+      return await global::Whizbang.Data.Postgres.StoredFormMigrationJournal.ReadAsync(
+        (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), "__SCHEMA__", GetStoredFormMigrations(), cancellationToken);
+    } finally {
+      await dbContext.Database.CloseConnectionAsync();
+    }
   }
 
   /// <summary>
@@ -1914,6 +1959,37 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     } catch (Exception ex) {
       logger?.LogWarning(ex, "Failed to reconcile message type registry (function may not exist yet)");
       // Don't throw — reconciliation is informational, not critical for startup.
+    }
+  }
+
+  /// <summary>
+  /// Analyzes each table the schema pass queued as it created an index on it, once, then forgets it.
+  /// A start that created no index finds the queue empty and analyzes nothing.
+  /// </summary>
+  private static async Task _analyzeNewlyIndexedTablesAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+    try {
+      if (segmentConnectionFactory is not null) {
+        await using var connection = segmentConnectionFactory();
+        await connection.OpenAsync(cancellationToken);
+        await Whizbang.Data.Postgres.IndexStatistics.AnalyzeQueuedAsync(
+          connection, @"__QUOTED_SCHEMA__", logger, cancellationToken);
+        return;
+      }
+      await dbContext.Database.OpenConnectionAsync(cancellationToken);
+      try {
+        await Whizbang.Data.Postgres.IndexStatistics.AnalyzeQueuedAsync(
+          (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), @"__QUOTED_SCHEMA__", logger, cancellationToken);
+      } finally {
+        await dbContext.Database.CloseConnectionAsync();
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      logger?.LogWarning(ex,
+        "Could not analyze the tables the schema pass indexed for {Schema}; the index-statistics "
+        + "maintenance step analyzes them", "__SCHEMA__");
     }
   }
 

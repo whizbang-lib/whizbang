@@ -171,4 +171,32 @@ public interface ISyncEventTracker {
   /// happy path.
   /// </remarks>
   void MarkPerspectiveStreamProcessed(string perspectiveName, Guid streamId);
+
+  /// <summary>
+  /// Records that <paramref name="perspectiveName"/> committed its apply of each event, and wakes every
+  /// <see cref="WhenAppliedAsync"/> waiter for them. Called by the perspective worker on a successful apply
+  /// only, never on a failure, so unlike <see cref="MarkProcessedByPerspective"/> it means the read model has
+  /// the event. The collective sink marks under its own name.
+  /// </summary>
+  /// <param name="eventIds">The applied events.</param>
+  /// <param name="perspectiveName">The perspective, or the collective sink's name, that applied them.</param>
+  /// <remarks>The default does nothing: a tracker with no applied signal leaves the answer to the ledger.</remarks>
+  /// <docs>fundamentals/perspectives/perspective-sync#cross-service-wake</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerAppliedTests.cs</tests>
+  void MarkApplied(IEnumerable<Guid> eventIds, string perspectiveName) { }
+
+  /// <summary>
+  /// Completes when <paramref name="perspectiveName"/> is marked as having applied <paramref name="eventId"/>
+  /// in this process (<see cref="MarkApplied"/>), whether or not the event was ever tracked here. Completes at
+  /// once for an event marked recently.
+  /// </summary>
+  /// <param name="eventId">The event.</param>
+  /// <param name="perspectiveName">The perspective, or the collective sink's name.</param>
+  /// <param name="cancellationToken">Cancels the wait, and unregisters it.</param>
+  /// <returns>A task that completes when the apply is marked, or is canceled with the token.</returns>
+  /// <remarks>The default never completes on its own: it waits for the token.</remarks>
+  /// <docs>fundamentals/perspectives/perspective-sync#cross-service-wake</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerAppliedTests.cs</tests>
+  Task WhenAppliedAsync(Guid eventId, string perspectiveName, CancellationToken cancellationToken) =>
+    Task.Delay(Timeout.Infinite, cancellationToken);
 }

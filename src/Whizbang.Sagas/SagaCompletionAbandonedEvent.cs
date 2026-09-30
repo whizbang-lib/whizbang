@@ -1,3 +1,5 @@
+using Whizbang.Core;
+
 namespace Whizbang.Sagas;
 
 /// <summary>
@@ -30,6 +32,11 @@ public class SagaCompletionAbandonedEvent : SagaEventBase, ISagaCompletionAbando
   public Guid EntityId { get; set; }
 
   /// <summary>Stream id this abandon event is bound to (the saga's stream).</summary>
+  /// <remarks>
+  /// The event is stored on this stream, so a perspective can apply it to the saga's own row; see
+  /// <see cref="SagaFrameworkEventStreamIds"/>.
+  /// </remarks>
+  [StreamId]
   public Guid StreamId { get; set; }
 
   /// <summary>

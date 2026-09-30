@@ -43,8 +43,8 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// and this paragraph used to claim otherwise.
 /// </para>
 /// <para>
-/// Each collective event carries its own stream id and so becomes its own sink stream, and sink
-/// streams on different instances apply in parallel. The per-scope advisory lock serializes two
+/// Without an ordering key each collective event carries its own stream id and so becomes its own sink
+/// stream, and sink streams on different instances apply in parallel. The per-scope advisory lock serializes two
 /// applies to the same table and scope; it does not order them. Two collectives therefore apply in
 /// whatever order they finish, not in commit order.
 /// </para>
@@ -52,8 +52,9 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// That is invisible to a collective whose setters are idempotent or commutative, and wrong for one
 /// that expresses "latest wins" as a set-based flip -- <c>IsActive = (Id == e.Chosen)</c> across a
 /// family of rows, where an older collective landing after a newer one leaves the wrong row active.
-/// A consumer writing that shape needs ordering the framework does not yet provide; see #963, which
-/// proposes an opt-in ordering key routing collectives that share it through one ordered sink.
+/// A consumer writing that shape sets <see cref="Whizbang.Core.Messaging.ICollectiveEvent.OrderingKey"/>:
+/// collectives sharing a key in one scope share one sink stream, which the worker applies in commit order,
+/// and a replay folds them in the same order.
 /// </para>
 /// <para>
 /// AOT: matches Whizbang.Data.EFCore.Postgres's established pattern of
@@ -176,12 +177,16 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       // unit). CreateExecutionStrategy() returns the configured strategy (a no-op non-retrying one when
       // retries are off, e.g. tests), so this is correct either way. PostgresDeadlockRetry stays the outer
       // backstop for 40P01/40001 when the configured strategy doesn't cover them.
-      var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
-        () => dbContext.Database.CreateExecutionStrategy().ExecuteAsync(
-          () => _executeOneBatchAsync(dbContext, selectSql, updateSql, setParameters, where, options, lockKey, storeColumns, lastCursor, cancellationToken)),
-        maxAttempts: 5,
-        logger: logger,
-        cancellationToken: cancellationToken).ConfigureAwait(false);
+      // A batch that does not get its lock inside the bounded wait waits again, renewing the lease through
+      // onBatchApplied first, so waiting behind another batch neither loses the work nor counts an attempt (#964).
+      var (count, maxId) = await CollectiveApplyContention.WaitingForTheLockAsync(
+        () => PostgresDeadlockRetry.ExecuteAsync(
+          () => dbContext.Database.CreateExecutionStrategy().ExecuteAsync(
+            () => _executeOneBatchAsync(dbContext, selectSql, updateSql, setParameters, where, options, lockKey, storeColumns, lastCursor, cancellationToken)),
+          maxAttempts: 5,
+          logger: logger,
+          cancellationToken: cancellationToken),
+        options, onBatchApplied, cancellationToken).ConfigureAwait(false);
       total += count;
       batches++;
       // Per-batch progress: lets the caller renew its work lease DURING a long apply — without

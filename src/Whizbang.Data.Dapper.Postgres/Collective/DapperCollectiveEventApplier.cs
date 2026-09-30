@@ -147,12 +147,16 @@ public static class DapperCollectiveEventApplier<TModel> where TModel : class {
       // Each batch is one short transaction. Transient concurrency errors (40P01 / 40001) are retried in-line
       // with jittered backoff so contention clears here, not at the __collective__ sink's attempt counter. Each
       // attempt opens a fresh connection (a rolled-back transaction leaves its connection unusable).
-      var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
-        () => _executeOneBatchAsync(connectionFactory, selectSql, updateSql, setClause.Parameters,
-          whereClause.Parameters, effectiveOptions, lockKey, storeColumns, cursor, cancellationToken),
-        maxAttempts: 5,
-        logger: logger,
-        cancellationToken: cancellationToken).ConfigureAwait(false);
+      // A batch that does not get its lock inside the bounded wait waits again, renewing the lease through
+      // onBatchApplied first (#964) — see EFCoreCollectiveAdapter's twin note.
+      var (count, maxId) = await CollectiveApplyContention.WaitingForTheLockAsync(
+        () => PostgresDeadlockRetry.ExecuteAsync(
+          () => _executeOneBatchAsync(connectionFactory, selectSql, updateSql, setClause.Parameters,
+            whereClause.Parameters, effectiveOptions, lockKey, storeColumns, cursor, cancellationToken),
+          maxAttempts: 5,
+          logger: logger,
+          cancellationToken: cancellationToken),
+        effectiveOptions, onBatchApplied, cancellationToken).ConfigureAwait(false);
       total += count;
       // Per-batch progress: the lease-renewal seam — see EFCoreCollectiveAdapter's twin note.
       if (onBatchApplied is not null) {

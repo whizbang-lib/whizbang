@@ -131,6 +131,14 @@ public partial class DeadLetterRecoveryWorker(
 
   /// <summary>Number of scan cycles since process start.</summary>
   public long TotalScans => Interlocked.Read(ref _totalScans);
+
+  /// <summary>
+  /// Raised after each scan has finished with every row it fetched, whether it completed or failed and was logged; not
+  /// raised when shutdown cancels a scan. Synchronous, on the worker's loop. A deterministic signal for a caller (or a
+  /// test) that needs to know a sweep's dispositions are done, where the fetch alone says only that one began.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/recovery</docs>
+  public event Action? OnScanCompleted;
   /// <summary>Cumulative count of DLQ rows successfully recovered.</summary>
   public long TotalRecovered => Interlocked.Read(ref _totalRecovered);
   /// <summary>Cumulative count of rows policy-exhausted to HoldForReview.</summary>
@@ -229,6 +237,7 @@ public partial class DeadLetterRecoveryWorker(
       } catch (Exception ex) {
         LogError(_logger, ex);
       }
+      OnScanCompleted?.Invoke();
 
       // Slice 7c — race the polling interval against the NOTIFY-driven wake. When the
       // listener fires, the next scan runs within ms; otherwise the ScanIntervalMinutes

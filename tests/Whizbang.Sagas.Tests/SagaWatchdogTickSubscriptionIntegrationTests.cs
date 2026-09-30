@@ -209,6 +209,7 @@ public class SagaWatchdogTickSubscriptionIntegrationTests {
           services.AddSingleton<ISagaEventEmitter, NoOpEmitter>();
           services.AddGeneratorTestDefaultSaga();
           services.AddGeneratorTestCustomBaseSaga();
+          services.AddGeneratorTestChainedSaga();
           global::Whizbang.Sagas.Tests.Generated.DispatcherRegistrations.AddReceptors(services);
           global::Whizbang.Sagas.Tests.Generated.DispatcherRegistrations.AddWhizbangReceptorRegistry(services);
           services.AddSingleton(ledger);

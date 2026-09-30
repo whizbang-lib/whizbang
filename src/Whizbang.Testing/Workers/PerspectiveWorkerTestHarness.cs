@@ -62,9 +62,40 @@ public sealed class CapturingPerspectiveCompletionChannel : IPerspectiveCompleti
   /// <summary>Completes when the first cursor advancement is enqueued.</summary>
   public Task FirstCursor => _firstCursor.Task;
 
+  private readonly Lock _waitLock = new();
+  private readonly List<(HashSet<Guid> Remaining, TaskCompletionSource Done)> _idWaits = [];
+
+  /// <summary>
+  /// Completes once every one of <paramref name="eventWorkIds"/> has been enqueued for deletion, in any order and
+  /// whether before or after this call: a deterministic signal for a test that asserts several specific rows were
+  /// completed, where <see cref="FirstEventWorkId"/> would release on the first of them.
+  /// </summary>
+  public Task EventWorkIdsCaptured(params Guid[] eventWorkIds) {
+    ArgumentNullException.ThrowIfNull(eventWorkIds);
+    lock (_waitLock) {
+      var remaining = new HashSet<Guid>(eventWorkIds);
+      remaining.ExceptWith(EventWorkIds);
+      if (remaining.Count == 0) {
+        return Task.CompletedTask;
+      }
+      var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      _idWaits.Add((remaining, done));
+      return done.Task;
+    }
+  }
+
   /// <inheritdoc />
   public ValueTask EnqueueEventWorkIdAsync(Guid eventWorkId, CancellationToken cancellationToken = default) {
-    EventWorkIds.Enqueue(eventWorkId);
+    lock (_waitLock) {
+      EventWorkIds.Enqueue(eventWorkId);
+      for (var i = _idWaits.Count - 1; i >= 0; i--) {
+        var (remaining, done) = _idWaits[i];
+        if (remaining.Remove(eventWorkId) && remaining.Count == 0) {
+          _idWaits.RemoveAt(i);
+          done.TrySetResult();
+        }
+      }
+    }
     _firstEventWorkId.TrySetResult();
     return ValueTask.CompletedTask;
   }

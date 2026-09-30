@@ -108,4 +108,51 @@ public interface IPerspectiveSyncAwaiter : IAwaiterIdentity {
       TimeSpan timeout,
       Guid? eventIdToAwait = null,
       CancellationToken ct = default);
+
+  /// <summary>
+  /// Waits until a local perspective has applied an event, whoever published it: an event emitted here, one
+  /// that arrived over the transport from another service, or a collective event the collective sink applied.
+  /// </summary>
+  /// <remarks>
+  /// Answered from the applied-event ledger, which every instance shares, and woken early by an apply committed
+  /// in this process. An event that has not reached this service yet is waited for, not reported as synced.
+  /// </remarks>
+  /// <param name="perspectiveType">The perspective whose read model must have the event.</param>
+  /// <param name="eventId">The event's id (the envelope's message id, the same in every service).</param>
+  /// <param name="timeout">The longest to wait.</param>
+  /// <param name="ct">Cancels the wait; a canceled wait throws rather than reporting a timeout.</param>
+  /// <returns>
+  /// <see cref="SyncOutcome.Synced"/> once applied, <see cref="SyncOutcome.NoPendingEvents"/> when the
+  /// perspective has nothing to apply for the event, or <see cref="SyncOutcome.TimedOut"/>.
+  /// </returns>
+  /// <docs>fundamentals/perspectives/perspective-sync#cross-service</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterAppliedTests.cs</tests>
+  Task<SyncResult> WaitForAppliedAsync(
+      Type perspectiveType,
+      Guid eventId,
+      TimeSpan timeout,
+      CancellationToken ct = default) =>
+    throw new NotSupportedException($"{GetType().Name} does not implement WaitForAppliedAsync.");
+
+  /// <summary>
+  /// Waits until a local perspective has applied the event at a position in a stream, whoever published it.
+  /// </summary>
+  /// <param name="perspectiveType">The perspective whose read model must have the event.</param>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="streamPosition">
+  /// The event's position in THIS service's copy of the stream: the per-stream version the local event store
+  /// assigned (1 for the first event). A service that received the stream numbers it itself.
+  /// </param>
+  /// <param name="timeout">The longest to wait.</param>
+  /// <param name="ct">Cancels the wait; a canceled wait throws rather than reporting a timeout.</param>
+  /// <returns>As <see cref="WaitForAppliedAsync(Type, Guid, TimeSpan, CancellationToken)"/>.</returns>
+  /// <docs>fundamentals/perspectives/perspective-sync#cross-service</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterAppliedTests.cs</tests>
+  Task<SyncResult> WaitForAppliedAsync(
+      Type perspectiveType,
+      Guid streamId,
+      int streamPosition,
+      TimeSpan timeout,
+      CancellationToken ct = default) =>
+    throw new NotSupportedException($"{GetType().Name} does not implement WaitForAppliedAsync.");
 }

@@ -7,6 +7,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
@@ -378,6 +379,52 @@ public class PerspectiveWorkerCollectiveSinkTests {
   }
 
   /// <summary>
+  /// #959: a collective apply is awaitable. Once the sink's apply commits, the event is marked applied under
+  /// the sink's name, which settles a wait for that event on any perspective.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_SuccessfulDispatch_MarksTheEventAppliedForAnyPerspective_Async() {
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new RecordingDispatcher();
+    var tracker = new SyncEventTracker();
+    var awaiter = new PerspectiveSyncAwaiter(
+      new FakeCoordinator([]),
+      new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled }),
+      NullLogger<PerspectiveSyncAwaiter>.Instance,
+      tracker,
+      new ScopedEventTracker(),
+      new AsyncLocalLifecycleContextAccessor());
+    // The wait starts before the apply: the event was never tracked in this process.
+    var waiting = awaiter.WaitForAppliedAsync(typeof(CollectiveTargetPerspective), eventId, TimeSpan.FromSeconds(30));
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [_sinkWork(streamId)],
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
+      dispatcher: dispatcher,
+      syncEventTracker: tracker);
+    await Assert.That(waiting.IsCompleted).IsFalse();
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    var result = await waiting.WaitAsync(TimeSpan.FromSeconds(30));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
+      .Because("the wait completed on the sink's committed apply, not before it");
+  }
+
+  /// <summary>A perspective whose model a collective event targets; only its name matters here.</summary>
+  private sealed class CollectiveTargetPerspective;
+
+  /// <summary>
   /// Same regression as <see cref="CollectiveSink_SuccessfulDispatch_CompletesSinkWorkRowByEventWorkId_Async"/>,
   /// but via the production DRAIN route (a collective event claimed as a stream, not injected as channel work).
   /// The drain twin of the sink guard must resolve the sink row's <c>event_work_id</c> from the drain batch's
@@ -743,6 +790,427 @@ public class PerspectiveWorkerCollectiveSinkTests {
     await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.applied")).IsEqualTo(0);
   }
 
+  // ── Ordered sink (#963): the stream's collective queue, in commit order ─────────────────────
+
+  /// <summary>
+  /// Two collectives sharing an ordering key share one sink stream. The later-committed one was minted first, so its
+  /// id is the smaller: applied in id order (as the sink once read its stream) the earlier commit lands last and wins.
+  /// The queue is in commit order, and the sink applies it in that order, so the later commit's result stands.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_OrderedQueue_AppliesInCommitOrder_WhenIdsRunBackwardAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var laterCommitEarlierId = Guid.Parse("00000000-0000-7000-8000-000000000001");
+    var earlierCommitLaterId = Guid.Parse("00000000-0000-7000-8000-000000000002");
+    var first = _sinkWork(streamId);
+    var second = _sinkWork(streamId);
+    var earlier = new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "a" };
+    var later = new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "b" };
+    var dispatcher = new FlipDispatcher(expected: 2);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [first, second],
+      eventStore: new EventStore {
+        Deserialized = [_envelope(laterCommitEarlierId, later), _envelope(earlierCommitLaterId, earlier)],
+      },
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher);
+    coordinator.SinkQueue = [
+      new CollectiveSinkQueueEntry(first.WorkId, earlierCommitLaterId, CommitSequence: 10),
+      new CollectiveSinkQueueEntry(second.WorkId, laterCommitEarlierId, CommitSequence: 11),
+    ];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.AllDispatched.WaitAsync(TimeSpan.FromSeconds(10));
+    await harness.CompletionCapture.EventWorkIdsCaptured(first.WorkId, second.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(dispatcher.Applied).IsEquivalentTo(["a", "b"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("The sink applies its stream's collectives in commit order, not id order.");
+    await Assert.That(dispatcher.State).IsEqualTo("b")
+      .Because("Two collectives sharing a key end at the later commit's result.");
+    await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(first.WorkId);
+    await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(second.WorkId);
+    await Assert.That(coordinator.EventsFetchedById).IsEquivalentTo([earlierCommitLaterId, laterCommitEarlierId])
+      .Because("The sink loads exactly the queued events, whatever the cursor says, so none behind it is skipped.");
+  }
+
+  /// <summary>
+  /// A collective this worker applied stays in the queue until its completion flushes. The next collective on the
+  /// stream, claimed in a later batch before that flush, must not wait behind it: it is behind us, not ahead.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_OrderedQueue_AnAppliedRowAwaitingItsFlush_DoesNotBlockTheNextAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var first = _sinkWork(streamId);
+    var second = _sinkWork(streamId);
+    var firstId = Guid.CreateVersion7();
+    var secondId = Guid.CreateVersion7();
+    var dispatcher = new FlipDispatcher(expected: 2);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [first],
+      eventStore: new EventStore {
+        Deserialized = [
+          _envelope(firstId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "a" }),
+          _envelope(secondId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "b" }),
+        ],
+      },
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher);
+    // The queue still holds the first row after it applied, as the database does until the completion flushes.
+    coordinator.SinkQueue = [
+      new CollectiveSinkQueueEntry(first.WorkId, firstId, CommitSequence: 1),
+      new CollectiveSinkQueueEntry(second.WorkId, secondId, CommitSequence: 2),
+    ];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstApplied.WaitAsync(TimeSpan.FromSeconds(10));
+    coordinator.OfferWork([second]);
+    await dispatcher.AllDispatched.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(dispatcher.Applied).IsEquivalentTo(["a", "b"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("Each applies once and in order; the first is not applied again and does not hold up the second.");
+  }
+
+  /// <summary>
+  /// A collective ahead in the queue that this run does not hold (leased elsewhere, or waiting out a retry) blocks
+  /// every collective behind it: applying the later one first is exactly the reordering the key exists to prevent.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_OrderedQueue_WaitsBehindACollectiveItDoesNotHoldAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var held = _sinkWork(streamId);
+    var ahead = Guid.CreateVersion7();
+    var dispatcher = new FlipDispatcher(expected: 1);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [held],
+      eventStore: new EventStore(),
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher);
+    coordinator.SinkQueue = [
+      new CollectiveSinkQueueEntry(ahead, Guid.CreateVersion7(), CommitSequence: 10),
+      new CollectiveSinkQueueEntry(held.WorkId, Guid.CreateVersion7(), CommitSequence: 11),
+    ];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await coordinator.SinkQueueRead.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(dispatcher.Applied.Count).IsEqualTo(0)
+      .Because("The held collective is behind one this run does not hold, so it must wait for it.");
+    await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(held.WorkId)
+      .Because("A collective that did not apply keeps its row, so it is offered again once the one ahead has applied.");
+    await Assert.That(coordinator.ReportedFailures.Count).IsEqualTo(0)
+      .Because("Waiting its turn is not a failure.");
+  }
+
+  /// <summary>
+  /// Two collectives sharing a key, claimed together, can reach the sink in two runs; the stream's gate serializes them
+  /// but does not order them. When the later one's run gets the gate first it has to wait, and it must then apply right
+  /// behind the head in the head's run, not sit until its lease expires and it is offered again. Here the later row is
+  /// offered alone first and the head only after the later row's run has read the queue, which is the losing order.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_OrderedQueue_ALaterRowWhoseRunWentFirst_AppliesBehindTheHeadAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var first = _sinkWork(streamId);
+    var second = _sinkWork(streamId);
+    var firstId = Guid.CreateVersion7();
+    var secondId = Guid.CreateVersion7();
+    var dispatcher = new FlipDispatcher(expected: 2);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [second],
+      eventStore: new EventStore {
+        Deserialized = [
+          _envelope(firstId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "a" }),
+          _envelope(secondId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "b" }),
+        ],
+      },
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher);
+    coordinator.SinkQueue = [
+      new CollectiveSinkQueueEntry(first.WorkId, firstId, CommitSequence: 1),
+      new CollectiveSinkQueueEntry(second.WorkId, secondId, CommitSequence: 2),
+    ];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    // The later row's run reads the queue inside the stream's gate, so the head's run cannot start before it ends.
+    await coordinator.SinkQueueRead.WaitAsync(TimeSpan.FromSeconds(10));
+    coordinator.OfferWork([first]);
+    await harness.CompletionCapture.EventWorkIdsCaptured(first.WorkId, second.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(dispatcher.Applied).IsEquivalentTo(["a", "b"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("The head's run takes over the row that waited for it and applies both, in commit order.");
+    await Assert.That(coordinator.ReportedFailures.Count).IsEqualTo(0);
+    await Assert.That(worker.HeldBackSinkStreamCount).IsEqualTo(0)
+      .Because("Nothing is left waiting once both have applied.");
+  }
+
+  /// <summary>
+  /// A row held back is taken over only while its lease is still this pod's. Past that it may have been claimed
+  /// elsewhere, so the next run leaves it to be offered again, and it is forgotten; a stream whose held-back rows have
+  /// all expired is dropped when another stream holds a row back, so the map holds only streams waiting right now.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_OrderedQueue_AHeldBackRowPastItsLease_IsNotTakenOver_AndIsForgottenAsync() {
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+    var pastTheLease = TimeSpan.FromSeconds(new LeaseRenewalWorkerOptions().LeaseSeconds + 1);
+    var one = TrackedGuid.New().Value;
+    var two = TrackedGuid.New().Value;
+    var oneHead = _sinkWork(one);
+    var oneHeld = _sinkWork(one);
+    var twoHead = _sinkWork(two);
+    var twoAhead = _sinkWork(two);
+    var twoHeld = _sinkWork(two);
+    var ids = Enumerable.Range(0, 6).Select(_ => Guid.CreateVersion7()).ToArray();
+    var dispatcher = new FlipDispatcher(expected: 3);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [oneHeld],
+      eventStore: new EventStore {
+        Deserialized = [.. ids.Select((id, i) => _envelope(id, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = $"e{i}" }))],
+      },
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher,
+      timeProvider: clock);
+    // Each stream: a head this pod holds, a collective held elsewhere, then one this pod holds behind it.
+    coordinator.SinkQueues[one] = [
+      new CollectiveSinkQueueEntry(oneHead.WorkId, ids[0], CommitSequence: 1),
+      new CollectiveSinkQueueEntry(Guid.CreateVersion7(), ids[1], CommitSequence: 2),
+      new CollectiveSinkQueueEntry(oneHeld.WorkId, ids[2], CommitSequence: 3),
+    ];
+    coordinator.SinkQueues[two] = [
+      new CollectiveSinkQueueEntry(twoHead.WorkId, ids[3], CommitSequence: 1),
+      new CollectiveSinkQueueEntry(twoAhead.WorkId, ids[4], CommitSequence: 2),
+      new CollectiveSinkQueueEntry(twoHeld.WorkId, ids[5], CommitSequence: 3),
+    ];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    // Each held row is offered alone and waits; its head follows once that run has read the queue, inside the
+    // stream's gate. The head's completion is enqueued after its run has settled what stays held back.
+    await coordinator.SinkQueueReads(1).WaitAsync(TimeSpan.FromSeconds(10));
+    coordinator.OfferWork([oneHead]);
+    await harness.CompletionCapture.EventWorkIdsCaptured(oneHead.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(worker.HeldBackSinkStreamCount).IsEqualTo(1);
+
+    clock.Advance(pastTheLease);
+    coordinator.OfferWork([twoHeld]);
+    await coordinator.SinkQueueReads(3).WaitAsync(TimeSpan.FromSeconds(10));
+    coordinator.OfferWork([twoHead]);
+    await harness.CompletionCapture.EventWorkIdsCaptured(twoHead.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(worker.HeldBackSinkStreamCount).IsEqualTo(1)
+      .Because("The first stream's row is past its lease, so holding the second stream's row back drops it.");
+
+    clock.Advance(pastTheLease);
+    coordinator.OfferWork([twoAhead]);
+    await harness.CompletionCapture.EventWorkIdsCaptured(twoAhead.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(dispatcher.Applied).IsEquivalentTo(["e0", "e3", "e4"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("A held-back row past its lease may be another instance's now, so it is not applied here.");
+    await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(twoHeld.WorkId);
+    await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(oneHeld.WorkId);
+    await Assert.That(worker.HeldBackSinkStreamCount).IsEqualTo(0)
+      .Because("The expired row is forgotten, and with it the stream.");
+  }
+
+  /// <summary>A leased row the queue no longer holds was already applied; it is completed without a dispatch.</summary>
+  [Test]
+  public async Task CollectiveSink_OrderedQueue_WithoutTheLeasedRows_CompletesThemWithoutDispatchAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var stale = _sinkWork(streamId);
+    var dispatcher = new FlipDispatcher(expected: 1);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [stale],
+      eventStore: new EventStore(),
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher);
+    coordinator.SinkQueue = [];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(dispatcher.Applied.Count).IsEqualTo(0);
+    await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(stale.WorkId);
+  }
+
+  /// <summary>
+  /// A queued collective whose event the store no longer returns (a reaped body) is completed with the rest rather
+  /// than blocking the queue forever.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_OrderedQueue_ARowWithoutItsEvent_IsCompletedWithTheRestAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var gone = _sinkWork(streamId);
+    var present = _sinkWork(streamId);
+    var presentId = Guid.CreateVersion7();
+    var dispatcher = new FlipDispatcher(expected: 1);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [gone, present],
+      eventStore: new EventStore {
+        Deserialized = [_envelope(presentId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "p" })],
+      },
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher);
+    coordinator.SinkQueue = [
+      new CollectiveSinkQueueEntry(gone.WorkId, Guid.CreateVersion7(), CommitSequence: 1),
+      new CollectiveSinkQueueEntry(present.WorkId, presentId, CommitSequence: 2),
+    ];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.AllDispatched.WaitAsync(TimeSpan.FromSeconds(10));
+    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(dispatcher.Applied).IsEquivalentTo(["p"]);
+    await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(gone.WorkId);
+    await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(present.WorkId);
+  }
+
+  /// <summary>
+  /// A failed collective stops the queue where it failed: nothing behind it applies ahead of it, and nothing is
+  /// completed, so the failure is retried in its place.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_OrderedQueue_AFailureStopsTheQueueInPlaceAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var failing = _sinkWork(streamId);
+    var behind = _sinkWork(streamId);
+    var failingId = Guid.CreateVersion7();
+    var behindId = Guid.CreateVersion7();
+    var dispatcher = new FlipDispatcher(expected: 1) { FailOn = "x" };
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [failing, behind],
+      eventStore: new EventStore {
+        Deserialized = [
+          _envelope(failingId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "x" }),
+          _envelope(behindId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "y" }),
+        ],
+      },
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher);
+    coordinator.SinkQueue = [
+      new CollectiveSinkQueueEntry(failing.WorkId, failingId, CommitSequence: 1),
+      new CollectiveSinkQueueEntry(behind.WorkId, behindId, CommitSequence: 2),
+    ];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(dispatcher.Applied.Count).IsEqualTo(0)
+      .Because("The collective behind a failed one must not apply ahead of it.");
+    await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(failing.WorkId);
+    await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(behind.WorkId);
+  }
+
+  // ── Busy apply lock (#964): not a failure ──────────────────────────────────────────────────
+
+  /// <summary>
+  /// A collective that did not get its apply lock has not failed: another batch holds the lock for the same table and
+  /// scope. It is not reported as a failure, so the failure count that drives dead-lettering does not move, and its row
+  /// is not completed, so it is applied later in the same place.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_BusyApplyLock_IsNotReportedAsAFailure_AndKeepsItsRowAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var sinkWork = _sinkWork(streamId);
+    var dispatcher = new BusyLockDispatcher();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [sinkWork],
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") })] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
+      dispatcher: dispatcher);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* teardown */ }
+
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse();
+    await Assert.That(coordinator.ReportedFailures.Count).IsEqualTo(0)
+      .Because("A busy lock is not a failed apply; reporting it would count toward dead-lettering a good event.");
+    await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(sinkWork.WorkId)
+      .Because("Nothing applied, so the row stays and the collective applies later, in its place.");
+  }
+
+  /// <summary>The reversible default: an option restores the accounting from before, a busy lock as a failure.</summary>
+  [Test]
+  public async Task CollectiveSink_BusyApplyLock_CountsAsAFailure_WhenConfiguredToAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var dispatcher = new BusyLockDispatcher();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [_sinkWork(streamId)],
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") })] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
+      dispatcher: dispatcher,
+      lockBusyCountsAsFailure: true);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(coordinator.ReportedFailures.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PerspectiveWorkerOptions_BusyApplyLock_IsNotAFailureByDefaultAsync() {
+    await Assert.That(new PerspectiveWorkerOptions().CollectiveLockBusyCountsAsFailure).IsFalse();
+  }
+
   private static PerspectiveWork _sinkWork(Guid streamId) => new() {
     WorkId = Guid.CreateVersion7(),
     StreamId = streamId,
@@ -777,7 +1245,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
       int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null,
       IReceptorInvoker? receptorInvoker = null, ILeaseRenewalChannel? leaseRenewalChannel = null,
       LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null,
-      CompositeMetrics? compositeMetrics = null) {
+      CompositeMetrics? compositeMetrics = null, bool lockBusyCountsAsFailure = false,
+      ISyncEventTracker? syncEventTracker = null, TimeProvider? timeProvider = null) {
     var instanceProvider = new InstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -805,14 +1274,15 @@ public class PerspectiveWorkerCollectiveSinkTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
-        MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
+        MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts,
+        CollectiveLockBusyCountsAsFailure = lockBusyCountsAsFailure,
       }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: registry,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
-      syncEventTracker: new SyncEventTracker(),
+      syncEventTracker: syncEventTracker ?? new SyncEventTracker(),
       logger: NullLogger<PerspectiveWorker>.Instance,
       snapshotStore: NullPerspectiveSnapshotStore.Instance,
       streamLocker: NullPerspectiveStreamLocker.Instance,
@@ -835,6 +1305,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
       })).Value),
+      timeProvider: timeProvider,
       leaseRegistry: leaseRegistry,
       compositeMetrics: compositeMetrics);
     return (worker, harness, coordinator);
@@ -842,6 +1313,42 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
   private sealed record TestCollectiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
+  }
+
+  private sealed record FlipCollectiveEvent : ICollectiveEvent {
+    public required CollectiveScope Scope { get; init; }
+    public string Chosen { get; init; } = "";
+  }
+
+  /// <summary>
+  /// Applies a flip: the state becomes the event's choice, so the final state is whichever collective applied last.
+  /// Throws for the choice named by <see cref="FailOn"/>.
+  /// </summary>
+  private sealed class FlipDispatcher(int expected) : ICollectiveDispatcher {
+    private readonly TaskCompletionSource _all = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _firstApplied = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public List<string> Applied { get; } = [];
+    public Task FirstApplied => _firstApplied.Task;
+    public string? State { get; private set; }
+    public string? FailOn { get; init; }
+    public Task AllDispatched => _all.Task;
+
+    public Task<CollectiveDispatchResult> DispatchAsync(
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) {
+      var chosen = ((FlipCollectiveEvent)evt).Chosen;
+      if (chosen == FailOn) {
+        throw new InvalidOperationException("simulated collective apply failure");
+      }
+      lock (Applied) {
+        Applied.Add(chosen);
+        State = chosen;
+        _firstApplied.TrySetResult();
+        if (Applied.Count >= expected) {
+          _all.TrySetResult();
+        }
+      }
+      return Task.FromResult(new CollectiveDispatchResult(1, 1));
+    }
   }
 
   private sealed class RecordingDispatcher : ICollectiveDispatcher {
@@ -955,6 +1462,17 @@ public class PerspectiveWorkerCollectiveSinkTests {
     }
   }
 
+  private sealed class BusyLockDispatcher : ICollectiveDispatcher {
+    private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task FirstDispatch => _first.Task;
+
+    public Task<CollectiveDispatchResult> DispatchAsync(
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) {
+      _first.TrySetResult();
+      throw new CollectiveApplyLockBusyException("wh_per_probe", 30);
+    }
+  }
+
   private sealed class ThrowingDispatcher : ICollectiveDispatcher {
     private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _calls;
@@ -1057,6 +1575,9 @@ public class PerspectiveWorkerCollectiveSinkTests {
     }
     public Task WaitForCyclesAsync(int minCycles, TimeSpan timeout) =>
       _waiters.GetOrAdd(minCycles, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task.WaitAsync(timeout);
+    private List<PerspectiveWork>? _laterWork;
+    /// <summary>Offers <paramref name="later"/> on the next claim cycle.</summary>
+    public void OfferWork(List<PerspectiveWork> later) => Interlocked.Exchange(ref _laterWork, later);
     private int _extraDrainOffers;
     /// <summary>Re-offers the drain stream ids on the next claim cycle — models the production
     /// drain refetch re-serving a stream whose completion flush hasn't landed yet.</summary>
@@ -1064,10 +1585,43 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public new Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var c = Interlocked.Increment(ref _cycle);
       foreach (var kv in _waiters) { if (c >= kv.Key) { kv.Value.TrySetResult(); } }
-      var pw = c == 1 ? new List<PerspectiveWork>(work) : [];
+      var later = Interlocked.Exchange(ref _laterWork, null);
+      List<PerspectiveWork> pw = c == 1 ? [.. work] : later ?? [];
       var reoffer = Interlocked.Exchange(ref _extraDrainOffers, 0) > 0;
       var sids = c == 1 || reoffer ? new List<Guid>(DrainStreamIds) : [];
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = pw, PerspectiveStreamIds = sids });
+    }
+    /// <summary>The stream's collective queue, or null for an engine without one (the legacy after-cursor read).</summary>
+    public List<CollectiveSinkQueueEntry>? SinkQueue { get; set; }
+    private readonly TaskCompletionSource _sinkQueueRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    /// <summary>Completes once the sink has read its queue.</summary>
+    public Task SinkQueueRead => _sinkQueueRead.Task;
+    public List<Guid> EventsFetchedById { get; } = [];
+    /// <summary>Per-stream queues, for a test with more than one sink stream; a stream not here reads <see cref="SinkQueue"/>.</summary>
+    public Dictionary<Guid, List<CollectiveSinkQueueEntry>> SinkQueues { get; } = [];
+    private int _sinkQueueReads;
+    private readonly ConcurrentDictionary<int, TaskCompletionSource> _sinkQueueReadWaiters = new();
+    /// <summary>Completes once the sink has read a queue <paramref name="count"/> times, counting reads before this call.</summary>
+    public Task SinkQueueReads(int count) {
+      var waiter = _sinkQueueReadWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      if (Volatile.Read(ref _sinkQueueReads) >= count) {
+        waiter.TrySetResult();
+      }
+      return waiter.Task;
+    }
+    Task<IReadOnlyList<CollectiveSinkQueueEntry>?> IWorkCoordinator.FetchCollectiveSinkQueueAsync(Guid streamId, CancellationToken cancellationToken) {
+      var reads = Interlocked.Increment(ref _sinkQueueReads);
+      foreach (var (count, waiter) in _sinkQueueReadWaiters) {
+        if (reads >= count) {
+          waiter.TrySetResult();
+        }
+      }
+      _sinkQueueRead.TrySetResult();
+      return Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(SinkQueues.TryGetValue(streamId, out var own) ? own : SinkQueue);
+    }
+    Task<IReadOnlyList<StreamEventData>> IWorkCoordinator.FetchEventsByIdsAsync(IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken) {
+      lock (EventsFetchedById) { EventsFetchedById.AddRange(eventIds); }
+      return Task.FromResult<IReadOnlyList<StreamEventData>>([.. eventIds.Select(id => _raw(Guid.Empty, id))]);
     }
     // Explicit interface implementation so the worker's interface call routes here, overriding the
     // IWorkCoordinator default (which returns empty and would short-circuit the drain fetch).

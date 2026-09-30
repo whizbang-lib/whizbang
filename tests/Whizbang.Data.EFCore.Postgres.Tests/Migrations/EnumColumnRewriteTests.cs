@@ -51,8 +51,25 @@ public class EnumColumnRewriteTests : IAsyncDisposable {
     ("enum-column:wh_per_ticket.stage",
       EnumColumnRewriteSql.Build("public", "wh_per_ticket", "stage", "Stage", "INTEGER", _stage));
 
-  private Task<bool> _applyAsync() =>
-    CanonicalTemporalRewritePhase.ApplyAsync(() => new NpgsqlConnection(_connectionString), LOCK_ID, [_rewrite()], TIMEOUT_SECONDS);
+  private Task<bool> _applyAsync(Microsoft.Extensions.Logging.ILogger? logger = null) =>
+    CanonicalTemporalRewritePhase.ApplyAsync(() => new NpgsqlConnection(_connectionString), LOCK_ID, [_rewrite()], TIMEOUT_SECONDS, logger);
+
+  /// <summary>
+  /// Issue #1004: converting a column rewrites its table, whose statistics then describe the column as
+  /// it was, so the table is analyzed; a column already converted is not touched and not analyzed.
+  /// </summary>
+  [Test]
+  public async Task AConvertedColumn_HasItsTableAnalyzed_AndAnAlreadyConvertedOneIsNotAsync() {
+    var first = new SignalingListLogger();
+    await _applyAsync(first);
+
+    await Assert.That(first.Entries.Count(e => e.Message.StartsWith("Analyzed ", StringComparison.Ordinal) && e.Message.Contains("wh_per_ticket", StringComparison.Ordinal)))
+      .IsEqualTo(1);
+
+    var second = new SignalingListLogger();
+    await _applyAsync(second);
+    await Assert.That(second.Entries.Where(e => e.Message.StartsWith("Analyzed ", StringComparison.Ordinal))).IsEmpty();
+  }
 
   [Test]
   public async Task ATextColumnOfNames_IsConvertedToNumbers_KeepingEveryRowAsync() {
@@ -82,7 +99,7 @@ public class EnumColumnRewriteTests : IAsyncDisposable {
   public async Task AValueThatIsNeitherANameNorANumber_StopsStartup_NamingTheColumnAsync() {
     await _executeAsync("INSERT INTO wh_per_ticket VALUES (7, 'Archived', 'g'), (8, 'draft', 'h')");
 
-    var failure = await Assert.That(_applyAsync).Throws<StoredFormConversionBlockedException>();
+    var failure = await Assert.That(() => _applyAsync()).Throws<StoredFormConversionBlockedException>();
 
     await Assert.That(failure!.Message).Contains("wh_per_ticket");
     await Assert.That(failure.Message).Contains("stage");

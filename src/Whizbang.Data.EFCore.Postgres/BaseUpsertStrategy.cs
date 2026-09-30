@@ -41,40 +41,27 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     PerspectiveRowVersion ExpectedVersion) where TModel : class;
 
   /// <summary>
-  /// Optional Path 1 atomic-upsert hook. When set, <see cref="_upsertCoreAsync"/> attempts
-  /// an atomic <c>INSERT … ON CONFLICT (id) DO UPDATE</c> using the provided
-  /// <see cref="JsonSerializerOptions"/> to serialize <c>Data</c>, <c>Metadata</c>, and
-  /// <c>Scope</c> as JSONB. When null (or when a row carries physical-field values), the
-  /// strategy falls back to the legacy SELECT-then-INSERT/UPDATE retry path.
+  /// Whether this strategy writes a row with the Path 1 atomic <c>INSERT … ON CONFLICT (id) DO UPDATE</c>
+  /// where that statement applies. True for every strategy the framework ships.
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Consumers register a provider via their DI module — typically pointing to a
-  /// generated <c>PerspectivePersistenceJsonContext.CreateOptions(...)</c> call that
-  /// chains the consumer's <c>MessageJsonContext.Default</c> and
-  /// <c>InfrastructureJsonContext.Default</c>. The chain MUST place a context that
-  /// returns object-mode <see cref="System.Text.Json.Serialization.Metadata.JsonTypeInfo"/>
-  /// for <c>[WhizbangId]</c> structs first, so EF Core 10's nested-object byte format
-  /// is matched (otherwise reads through EF will throw <code>InvalidOperationException:
-  /// Invalid token type</code>).
+  /// The atomic statement serializes <c>Data</c>, <c>Metadata</c> and <c>Scope</c> itself, since raw SQL
+  /// cannot use Entity Framework's value converters. It takes its options from the serialization
+  /// registry's persistence profile (<see cref="Perspectives.PerspectiveDocumentSerialization.Options"/>),
+  /// which every assembly's generated contexts join from their own module initializers, so no startup
+  /// hook has to run for the path to be available. It still declines, and the Entity Framework path
+  /// writes the row, for a provider other than Npgsql, a table or column name that is not a plain
+  /// identifier, a type the persistence union cannot resolve, or a value Npgsql cannot bind.
   /// </para>
   /// <para>
-  /// Setting this hook is process-wide and shared by every <see cref="BaseUpsertStrategy"/>
-  /// instance. The atomic path eliminates the 23505 dup-key storm slice 19's retry loop
-  /// currently catches at <c>[ERR]</c> log severity.
+  /// This is an instance property rather than process-wide state, so choosing the Entity Framework path
+  /// for one strategy (a test that needs that path, for instance) cannot change which path any other
+  /// strategy takes.
   /// </para>
   /// </remarks>
-  public static Func<JsonSerializerOptions>? PathOnePersistenceOptionsProvider { get; set; }
-
-  /// <summary>
-  /// Persistence serialization options: the one set every perspective document is written and read
-  /// with, from <see cref="Perspectives.PerspectiveDocumentSerialization"/>, with any user-supplied
-  /// options from <see cref="PathOnePersistenceOptionsProvider"/> folded in as a fallback resolver.
-  /// Reused until the registry changes, so late assembly registrations are reflected without
-  /// rebuilding the serializer's metadata cache on every upsert.
-  /// </summary>
-  private static JsonSerializerOptions _resolvePersistenceOptions(Func<JsonSerializerOptions>? userProvider) =>
-    Perspectives.PerspectiveDocumentSerialization.Resolve(userProvider);
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyWritePathTests.cs</tests>
+  protected virtual bool UsesAtomicUpsert => true;
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowAsync<TModel>(
@@ -232,13 +219,13 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var expiryAnchor = applyAnchor;
     DateTimeOffset? expiresAt = ttlSeconds >= 0 ? expiryAnchor.AddSeconds(ttlSeconds) : null;
 
-    // Path 1 atomic upsert. When configured (see PathOnePersistenceOptionsProvider) and
-    // applicable (no physical fields, table name supplied), this single round-trip replaces
+    // Path 1 atomic upsert. When this strategy uses it (see UsesAtomicUpsert) and it applies
+    // (Npgsql, plain identifiers, a resolvable model), this single round-trip replaces
     // the SELECT-then-INSERT/UPDATE pattern and structurally eliminates the 23505 dup-key
     // race that slice 19's retry loop was built to recover from. Returns false to signal
-    // the caller should fall back to the retry loop (config off, physical fields present,
+    // the caller should fall back to the retry loop (another provider, an unresolvable type,
     // or any other unsupported case).
-    if (await _tryAtomicUpsertAsync(context, args, hookPlan, expiresAt, expiryAnchor.UtcDateTime, cancellationToken)) {
+    if (UsesAtomicUpsert && await _tryAtomicUpsertAsync(context, args, hookPlan, expiresAt, expiryAnchor.UtcDateTime, cancellationToken)) {
       return;
     }
 
@@ -275,9 +262,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// not applicable so the caller can fall back to the legacy retry loop.
   /// </summary>
   /// <remarks>
-  /// Fall-back conditions: <see cref="PathOnePersistenceOptionsProvider"/> is null,
-  /// physical-field values are present (those require shadow-property hydration through
-  /// EF's interceptor pipeline), or the caller didn't supply a non-empty table name.
+  /// Fall-back conditions: the caller didn't supply a non-empty table name, the provider is not
+  /// Npgsql, a table or physical-field name is not a plain identifier, the persistence union
+  /// cannot resolve the model, or Npgsql cannot bind a value.
   /// </remarks>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Single atomic UPSERT contains all the JSONB serialization + physical-field interpolation + retry-or-fallback control flow on purpose; splitting would force passing 6+ pieces of state across helpers and obscure the SQL composition.")]
   private static async Task<bool> _tryAtomicUpsertAsync<TModel>(
@@ -288,10 +275,6 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       DateTime businessTime,
       CancellationToken cancellationToken)
       where TModel : class {
-    var optionsProvider = PathOnePersistenceOptionsProvider;
-    if (optionsProvider is null) {
-      return false;
-    }
     if (string.IsNullOrEmpty(args.TableName)) {
       return false;
     }
@@ -299,10 +282,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // The atomic upsert path runs raw Postgres-specific SQL via Npgsql commands —
     // it cannot execute against any other EF Core provider (InMemoryDatabase, Sqlite
     // test doubles, etc.). Bail out so the SELECT-then-UPDATE fallback path takes over
-    // for those providers. Without this guard the path triggers whenever the
-    // ModuleInitializer-set static PathOnePersistenceOptionsProvider is non-null,
-    // making cross-test state leak into non-Postgres unit tests (Postgres-specific
-    // perspective store wired against InMemoryDb fixtures fails on the JSONB raw SQL).
+    // for those providers (a Postgres-specific perspective store wired against an
+    // InMemoryDb fixture would otherwise fail on the JSONB raw SQL).
     if (!_isNpgsqlProvider(context)) {
       return false;
     }
@@ -322,9 +303,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       return false;
     }
 
-    var options = _resolvePersistenceOptions(optionsProvider);
+    var options = Perspectives.PerspectiveDocumentSerialization.Options;
 
-    // Graceful fallback: the atomic path is an optimization. If the persistence union (+ user options)
+    // Graceful fallback: the atomic path is an optimization. If the persistence union
     // can't resolve a type — e.g. an ad-hoc model not registered in any source-gen context — defer to the
     // legacy SELECT-then-INSERT path (which serializes through the DbContext's own, reflection-capable,
     // Npgsql JSON options) instead of throwing. We probe via the resolver, whose GetTypeInfo returns null

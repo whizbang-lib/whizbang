@@ -250,9 +250,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([entry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.HoldCalls).Contains(entry.DeadLetterId)
       .Because("without a Pass verdict the exhaustion hold is the correct quarantine");
@@ -271,9 +271,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([entry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.HoldCalls).Contains(entry.DeadLetterId);
     await Assert.That(svc.PassedFingerprintQueries).IsEmpty()
@@ -298,9 +298,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([entry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.DiscardCalls.Select(d => d.Id)).Contains(entry.DeadLetterId)
       .Because("the subsystem is off: the message has no meaning, and settling it is the "
@@ -325,9 +325,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([entry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.HoldCalls).Contains(entry.DeadLetterId)
       .Because("an ENABLED subsystem's poison row is real evidence for an operator");
@@ -409,6 +409,13 @@ public class DeadLetterRecoveryWorkerTests {
       _entered.TrySetResult();
       await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
     }
+  }
+
+  /// <summary>Completes when the worker's first scan has finished with its rows; subscribe before starting it.</summary>
+  private static Task _firstScanCompleted(DeadLetterRecoveryWorker worker) {
+    var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnScanCompleted += () => done.TrySetResult();
+    return done.Task;
   }
 
   private static (DeadLetterRecoveryWorker Worker, FakeRecoveryService Svc) _newWorker(
@@ -711,10 +718,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([entry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    // Give the scan body a moment to dispatch the policy decision
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.RecoverCalls).Contains(entry.DeadLetterId)
       .Because("a fresh Throttled row should hit the recover path");
@@ -733,9 +739,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([entry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.HoldCalls).Contains(entry.DeadLetterId)
       .Because("ValidationError policy is HoldForReview with MaxRecoveryAttempts=0 → terminal Holding");
@@ -755,9 +761,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([entry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.PermanentlyFailedCalls).Contains(entry.DeadLetterId);
     await Assert.That(svc.HoldCalls).IsEmpty();
@@ -775,9 +781,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([entry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.ScheduleCalls).Count().IsEqualTo(1)
       .Because("a recovery exception should result in next-attempt scheduling with policy cooldown");
@@ -816,13 +822,13 @@ public class DeadLetterRecoveryWorkerTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(500);  // would be enough to fire scans if it were enabled
+    // Stop first: once the body has returned, nothing it could have done is still to come.
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(svc.ResetForGenerationCalls).IsEmpty();
     await Assert.That(worker.TotalScans).IsEqualTo(0);
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
   }
 
   [Test]
@@ -833,9 +839,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([entry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.RecoverCalls).IsEmpty()
       .Because("HoldForReview rows must never enter the recovery loop even if fetch returns them");
@@ -935,9 +941,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([entry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     // The throw was swallowed — no hold recorded, no recover attempted, worker still alive.
     await Assert.That(svc.HoldCalls).IsEmpty()
@@ -961,9 +967,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([entry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Both the recover and the schedule threw — neither was recorded, worker survived.
     await Assert.That(svc.RecoverCalls).IsEmpty();
@@ -1184,8 +1190,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([_entry()]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await Task.Delay(250);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.RecoverCalls).IsEmpty()
       .Because("a busy service must not have dead letters re-driven into its queues");
@@ -1416,9 +1423,9 @@ public class DeadLetterRecoveryWorkerTests {
 
     var before = DateTimeOffset.UtcNow;
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.ScheduleCalls).Count().IsEqualTo(1)
       .Because("a recovery exception must still schedule a next attempt, even under a zero-cooldown policy");
@@ -1549,9 +1556,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([recoverableEntry]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.DiscardCalls).IsEmpty()
       .Because("MarkDiscardedAsync threw, so the row was not actually settled this cycle");
@@ -1581,9 +1588,9 @@ public class DeadLetterRecoveryWorkerTests {
     svc.FetchBatches.Enqueue([raced, other]);
 
     using var cts = new CancellationTokenSource();
+    var scanned = _firstScanCompleted(worker);
     await worker.StartAsync(cts.Token);
-    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Task.Delay(100);
+    await scanned.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(svc.RecoverCalls).IsEquivalentTo([raced.DeadLetterId, other.DeadLetterId])
       .Because("losing the race is a normal outcome — recovery is still attempted for every due "

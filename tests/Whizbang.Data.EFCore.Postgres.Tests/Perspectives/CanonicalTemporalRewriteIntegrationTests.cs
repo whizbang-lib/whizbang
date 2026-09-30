@@ -223,6 +223,28 @@ public class CanonicalTemporalRewriteIntegrationTests : IAsyncDisposable {
       .Because("a settled table is skipped without a scan; the reader accepts the rendering and counts it");
   }
 
+  /// <summary>
+  /// Issue #1004: a table a pass converts is analyzed afterwards, because the mass update leaves its
+  /// statistics describing the rows as they were; a table the pass changes nothing in is not.
+  /// </summary>
+  [Test]
+  public async Task AConvertedTableIsAnalyzed_AndAnUnchangedOneIsNotAsync() {
+    await _seedAsync("wh_per_mapped", Guid.CreateVersion7(), """{"OccurredAt":"2026-03-04T05:06:07Z"}""", "{}");
+    var first = new ListLogger();
+
+    await _runAsync(logger: first);
+
+    await Assert.That(first.Entries.Count(e => e.Message.StartsWith("Analyzed ", StringComparison.Ordinal))).IsEqualTo(1);
+    await Assert.That(first.Entries.Any(e => e.Message.StartsWith("Analyzed ", StringComparison.Ordinal) && e.Message.Contains("wh_per_mapped", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the converted table is analyzed, and the opaque table, which held nothing to convert, is not");
+
+    var second = new ListLogger();
+    await _runAsync(logger: second);
+    await Assert.That(second.Entries.Where(e => e.Message.StartsWith("Analyzed ", StringComparison.Ordinal))).IsEmpty()
+      .Because("a pass that converts nothing changes no statistics");
+  }
+
   /// <summary>A table that does not exist yet is skipped, and nothing is recorded for it.</summary>
   [Test]
   public async Task AMissingTableIsSkippedAsync() {

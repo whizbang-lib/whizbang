@@ -3272,7 +3272,8 @@ public abstract partial class Dispatcher(
       // flows (a detached-stage or worker emit). Without this, PublishAsync passed sourceEnvelope=null and the
       // child fabricated a fresh correlation + null scope across the boundary.
       var establishingEnvelope = _captureAmbientSourceEnvelope();
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope);
+      // The local path runs below, so the stored envelope records it (see _recordLocalDispatchAsync).
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, recordLocalDispatch: true);
 
       try {
         await publisher(eventData);
@@ -3368,7 +3369,6 @@ public abstract partial class Dispatcher(
       // Capture the establishing context synchronously (see the other overload) so a detached/worker emit's
       // child inherits identity+scope from the hop rather than fabricating a fresh root across the boundary.
       var establishingEnvelope = _captureAmbientSourceEnvelope();
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, options: options);
 
       // ScheduledFor must gate the in-process local-receptor invocation the same way it gates
       // the outbox-pickup query. Without this branch the local receptor fires inline despite the
@@ -3377,6 +3377,7 @@ public abstract partial class Dispatcher(
       // milliseconds because the local watchdog-tick receptor re-armed synchronously each re-publish.
       // Past or null ScheduledFor preserves the historical immediate-dispatch semantics.
       var deferLocal = options.ScheduledFor is DateTimeOffset scheduledAt && scheduledAt > DateTimeOffset.UtcNow;
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, options: options, recordLocalDispatch: !deferLocal);
       if (!deferLocal) {
         var publisher = GetReceptorPublisher(eventData, eventType);
         try {
@@ -3668,7 +3669,11 @@ public abstract partial class Dispatcher(
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
   /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
-  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false, DispatchOptions? options = null) {
+  /// <param name="recordLocalDispatch">
+  /// True when the caller's local path runs this event's default-stage receptors itself, so the stored
+  /// envelope records that for the receptor dedup store.
+  /// </param>
+  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false, DispatchOptions? options = null, bool recordLocalDispatch = false) {
     // The caller's schedule, declared priority and payload limit, when it dispatched with options.
     var scheduledFor = options?.ScheduledFor;
     var priority = options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED;
@@ -3737,6 +3742,9 @@ public abstract partial class Dispatcher(
       var envelope = _createOutboxEnvelopeWithHop(eventData, eventType, messageId, sourceEnvelope, destination);
       _stampExplicitPriority(envelope, priority);   // an explicit number on the options is the caller's declaration
       envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
+      if (recordLocalDispatch) {
+        await _recordLocalDispatchAsync(envelope, eventType, scope.ServiceProvider).ConfigureAwait(false);
+      }
 
       // Serialize, queue, and flush
       await _serializeQueueAndFlushAsync(envelope, eventData!, eventType, destination, messageId, strategy, scheduledFor);
@@ -3747,6 +3755,47 @@ public abstract partial class Dispatcher(
       } else {
         scope.Dispose();
       }
+    }
+  }
+
+  /// <summary>
+  /// Records, on the envelope about to be stored, that the publish's local path runs this event's
+  /// default-stage receptors, so the receptor dedup store sees that firing at every later stage.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The dedup store keeps "a receptor that fired for a message does not fire again for it" by reading
+  /// the records an envelope carries. The local path invokes its receptors directly rather than through
+  /// the receptor invoker, so it wrote none, and a later stage reaching the same receptor for the same
+  /// message fired it again wherever no same-service rule applied: a saga watchdog tick published
+  /// without a schedule was handled by the publishing host and again by another host of the same saga.
+  /// </para>
+  /// <para>
+  /// Written before the envelope is serialized, because the outbox write runs beside the local path,
+  /// not after it. The receptors recorded are those at the local default stage, which are the ones the
+  /// local path runs. With tracking off, or no dedup store, nothing is recorded, as the invoker records
+  /// nothing then either.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/receptors/exactly-once-firing</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalDispatchRecordTests.cs</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaWatchdogTickDeliveryCountTests.cs:ImmediateTick_ReceivedByAnotherHostOfTheSameSaga_IsNotHandledAgainAsync</tests>
+  private async ValueTask _recordLocalDispatchAsync(IMessageEnvelope envelope, Type eventType, IServiceProvider scopedProvider) {
+    if (_receptorRegistry is null
+        || _whizbangOptions.Guardrails.ReceptorInvocationTracking == ReceptorInvocationTracking.Off
+        || scopedProvider.GetService<IReceptorDedupStore>() is not { } dedupStore) {
+      return;
+    }
+
+    var now = DateTimeOffset.UtcNow;
+    foreach (var receptor in _receptorRegistry.GetReceptorsFor(eventType, LifecycleStage.LocalImmediateDetached)) {
+      await dedupStore.RecordInvocationAsync(envelope, new ReceptorInvocationRecord {
+        ReceptorId = receptor.ReceptorId,
+        Stage = LifecycleStage.LocalImmediateInline,
+        CompletedAt = now,
+        Duration = TimeSpan.Zero,
+        ServiceName = _instanceProvider.ServiceName,
+      }, CancellationToken.None).ConfigureAwait(false);
     }
   }
 

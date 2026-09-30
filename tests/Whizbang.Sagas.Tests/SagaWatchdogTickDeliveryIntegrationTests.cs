@@ -46,6 +46,7 @@ public class SagaWatchdogTickDeliveryIntegrationTests {
     // [Saga]-declared sagas, each with its own generated tick receiver.
     services.AddGeneratorTestDefaultSaga();
     services.AddGeneratorTestCustomBaseSaga();
+    services.AddGeneratorTestChainedSaga();
     global::Whizbang.Sagas.Tests.Generated.DispatcherRegistrations.AddReceptors(services);
     global::Whizbang.Sagas.Tests.Generated.DispatcherRegistrations.AddWhizbangReceptorRegistry(services);
     services.AddWhizbangSagas();

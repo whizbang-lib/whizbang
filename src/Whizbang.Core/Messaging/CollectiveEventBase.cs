@@ -18,9 +18,10 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Each collective event is its own single-event stream.</strong> The base carries a
-/// <c>[StreamId] [GenerateStreamId]</c> <see cref="StreamId"/> that the dispatcher mints at publish — the
-/// producer never sets it. That stream is what the <c>__collective__</c> sink work row is keyed to, and
+/// <strong>Each collective event is its own single-event stream</strong>, unless it carries an
+/// <see cref="OrderingKey"/>, in which case it shares its key's stream with every collective carrying the same key in
+/// the same scope. The base carries a <c>[StreamId] [GenerateStreamId]</c> <see cref="StreamId"/> that the dispatcher
+/// mints at publish — the producer never sets it. That stream is what the <c>__collective__</c> sink work row is keyed to, and
 /// what the perspective worker leases to dispatch the event through <c>ICollectiveDispatcher</c> exactly
 /// once. (Scope-level determinism means the event carries no enumerated stream set — only its scope.)
 /// </para>
@@ -34,8 +35,10 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveScopeBaseRoutingTests.cs:CollectiveEventBase_IsAnEvent_CarriesGeneratedStreamAndScopeAsync</tests>
 public abstract record CollectiveEventBase : ICollectiveEvent {
   /// <summary>
-  /// The collective event's own stream id, auto-generated at dispatch (each collective event is its own
-  /// single-event stream). Do not set this — the framework mints it.
+  /// The collective event's stream id. Without an <see cref="OrderingKey"/> it is auto-generated at dispatch (each
+  /// collective event is its own single-event stream). With one it is the key's stream,
+  /// <see cref="CollectiveOrdering.StreamIdFor"/> over the scope and the key, and a value written to it is ignored.
+  /// Do not set this — the framework mints or derives it.
   /// </summary>
   /// <remarks>
   /// Mutable (<c>set</c>, not <c>init</c>) on purpose: <c>[GenerateStreamId]</c> mints the id at dispatch
@@ -46,11 +49,24 @@ public abstract record CollectiveEventBase : ICollectiveEvent {
   /// </remarks>
   [StreamId]
   [GenerateStreamId]
-  public Guid StreamId { get; set; }
+  public Guid StreamId {
+    get => string.IsNullOrWhiteSpace(OrderingKey) ? _streamId : CollectiveOrdering.StreamIdFor(Scope, OrderingKey);
+    set => _streamId = value;
+  }
+
+  private Guid _streamId;
 
   /// <summary>
   /// The cohort descriptor — the sole source of the SQL UPDATE's <c>WHERE</c> predicate. Set it on the
   /// derived event via the object initializer.
   /// </summary>
   public required CollectiveScope Scope { get; init; }
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// Setting it moves the event onto its key's stream: <see cref="StreamId"/> then reads the derived id whatever the
+  /// dispatcher mints, so every collective sharing the key, of any type, lands on one stream.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveOrderingKeyTests.cs:WithAnOrderingKey_TheStreamIsDerivedFromTheScopeAndTheKeyAsync</tests>
+  public string? OrderingKey { get; init; }
 }

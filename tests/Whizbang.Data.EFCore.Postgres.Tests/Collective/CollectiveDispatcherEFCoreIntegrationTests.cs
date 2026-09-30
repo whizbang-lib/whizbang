@@ -1324,7 +1324,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     var started = Stopwatch.StartNew();
     var busy = await Assert.That(async () =>
-        await _buildSetTagDispatcher(new CollectiveApplyOptions { LockWaitSeconds = 2 }).DispatchAsync(
+        await _buildSetTagDispatcher(new CollectiveApplyOptions { LockWaitSeconds = 2, LockWaitRenewals = 0 }).DispatchAsync(
           evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lockbusy"), Tag = "after" },
           collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: cancellationToken))
       .Throws<CollectiveApplyLockBusyException>()
@@ -1338,6 +1338,77 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("the wait is bounded now; unbounded it sat for the whole statement timeout");
     await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("before")
       .Because("a batch that never got the lock applied nothing");
+  }
+
+  /// <summary>
+  /// A batch waiting for its apply lock keeps its work lease (#964): each bounded wait that ends without the lock
+  /// reports progress through the same callback the worker renews the lease from, and the batch waits again.
+  /// </summary>
+  [Test]
+  public async Task DispatchAsync_WhileAnotherBatchHoldsTheLock_RenewsTheLeaseAndThenAppliesAsync(
+      CancellationToken cancellationToken) {
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-lockwait", tag: "before");
+    var lockKey = CollectiveApplyLockKey.Compute(
+      "wh_per_collective_cells", new TenantCollectiveScope("t-lockwait").ScopeIdentity);
+    await using var holder = new NpgsqlConnection(_connectionString);
+    await holder.OpenAsync(cancellationToken);
+    var holdTx = await holder.BeginTransactionAsync(cancellationToken);
+    await using (var hold = holder.CreateCommand()) {
+      hold.Transaction = holdTx;
+      hold.CommandText = "SELECT pg_advisory_xact_lock(@k)";
+      hold.Parameters.AddWithValue("k", lockKey);
+      await hold.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var reports = 0;
+    await _buildSetTagDispatcher(new CollectiveApplyOptions { LockWaitSeconds = 1, LockWaitRenewals = 3 }).DispatchAsync(
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lockwait"), Tag = "after" },
+      collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!,
+      onBatchApplied: async ct => {
+        // The first report is the renewal after the first wait: release the lock there, deterministically.
+        if (Interlocked.Increment(ref reports) == 1) {
+          await holdTx.CommitAsync(ct);
+        }
+      },
+      cancellationToken: cancellationToken);
+    await holdTx.DisposeAsync();
+
+    await Assert.That(reports).IsEqualTo(2)
+      .Because("one report renewed the lease during the wait, and one reported the batch that then applied");
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after");
+  }
+
+  /// <summary>A batch whose lock stays held through every renewal gives up as busy, having waited every slice.</summary>
+  [Test]
+  public async Task DispatchAsync_WhenTheLockStaysHeldThroughEveryRenewal_GivesUpAsBusyAsync(
+      CancellationToken cancellationToken) {
+    var id = Guid.NewGuid();
+    await _seedCellsAsync(id, tenantId: "t-lockheld", tag: "before");
+    var lockKey = CollectiveApplyLockKey.Compute(
+      "wh_per_collective_cells", new TenantCollectiveScope("t-lockheld").ScopeIdentity);
+    await using var holder = new NpgsqlConnection(_connectionString);
+    await holder.OpenAsync(cancellationToken);
+    await using var holdTx = await holder.BeginTransactionAsync(cancellationToken);
+    await using (var hold = holder.CreateCommand()) {
+      hold.Transaction = holdTx;
+      hold.CommandText = "SELECT pg_advisory_xact_lock(@k)";
+      hold.Parameters.AddWithValue("k", lockKey);
+      await hold.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var reports = 0;
+    var busy = await Assert.That(async () =>
+        await _buildSetTagDispatcher(new CollectiveApplyOptions { LockWaitSeconds = 1, LockWaitRenewals = 2 }).DispatchAsync(
+          evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lockheld"), Tag = "after" },
+          collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!,
+          onBatchApplied: _ => { Interlocked.Increment(ref reports); return ValueTask.CompletedTask; },
+          cancellationToken: cancellationToken))
+      .Throws<CollectiveApplyLockBusyException>();
+
+    await Assert.That(reports).IsEqualTo(2).Because("the lease was renewed after each wait but the last");
+    await Assert.That(busy!.WaitedSeconds).IsEqualTo(3);
+    await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("before");
   }
 
   /// <summary>With no wait configured the apply waits as it always did, and narrows nothing.</summary>

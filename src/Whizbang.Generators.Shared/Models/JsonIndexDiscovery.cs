@@ -179,7 +179,31 @@ public static class JsonIndexDiscovery {
   /// reporting each skip would be noise.
   /// </para>
   /// </remarks>
-  public static ImmutableArray<JsonIndexInfo> From(INamedTypeSymbol? model) {
+  public static ImmutableArray<JsonIndexInfo> From(INamedTypeSymbol? model) => _collect(model, promoted: false);
+
+  /// <summary>
+  /// The document indexes each field promoted to a physical column would carry if it were still in the
+  /// document: what an earlier release built for it before it was promoted, and the kinds its column
+  /// indexes have to be.
+  /// </summary>
+  /// <param name="model">The perspective's model type.</param>
+  /// <returns>One entry per promoted field and comparison form that declares an index.</returns>
+  /// <remarks>
+  /// <para>
+  /// Promoting a field redirects its queries to the column, so an index over its extraction is never read
+  /// again. The schema drops the ones it built, by the names it gave them, and builds an index of the same
+  /// kind over the column (issue #1009). The same declarations answer both, so a database that promoted
+  /// the field and one created with the field already promoted end up with the same indexes.
+  /// </para>
+  /// <para>
+  /// A vector is not in this list: it was never a document field with a declared index.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/physical-fields#promoting-an-existing-field</docs>
+  public static ImmutableArray<JsonIndexInfo> PromotedFrom(INamedTypeSymbol? model) => _collect(model, promoted: true);
+
+  /// <summary>The declared indexes of the document fields, or of the promoted ones.</summary>
+  private static ImmutableArray<JsonIndexInfo> _collect(INamedTypeSymbol? model, bool promoted) {
     if (model is null) {
       return [];
     }
@@ -193,9 +217,9 @@ public static class JsonIndexDiscovery {
     foreach (var property in model.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic)) {
       var attributes = property.GetAttributes();
 
-      // Promoted fields carry their own column and their own index.
-      if (attributes.Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, PHYSICAL_FIELD)
-                              || TypeNameUtilities.IsNamed(a.AttributeClass, VECTOR_FIELD))) {
+      // Promoted fields carry their own column and their own index, so each list takes one side.
+      if (attributes.Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, VECTOR_FIELD))
+          || attributes.Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, PHYSICAL_FIELD)) != promoted) {
         continue;
       }
 

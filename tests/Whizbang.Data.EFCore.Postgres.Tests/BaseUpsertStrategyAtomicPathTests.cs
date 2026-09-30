@@ -9,15 +9,13 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
-using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Verifies <see cref="BaseUpsertStrategy"/> actually takes the Path 1 atomic-upsert
-/// branch when <see cref="BaseUpsertStrategy.PathOnePersistenceOptionsProvider"/> is set,
-/// falls back to the legacy SELECT-then-INSERT/UPDATE retry path otherwise.
+/// Verifies <see cref="BaseUpsertStrategy"/> takes the Path 1 atomic-upsert branch by default on
+/// Npgsql, and the legacy SELECT-then-INSERT/UPDATE retry path when a strategy opts out of it.
 /// </summary>
 /// <remarks>
 /// The atomic path is "invisible" from EF's perspective — both branches end with a row in
@@ -27,28 +25,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// race is structurally impossible: ON CONFLICT (id) DO UPDATE collapses both attempts
 /// into a single round-trip — the second arrival becomes an UPDATE in the same statement.
 /// </remarks>
-// Serializes with every other test that reads or writes the process-wide
-// BaseUpsertStrategy.PathOnePersistenceOptionsProvider static. Without this, a mutator here could flip the
-// provider mid-seed of a parallel persistence test (e.g. ComplexTypeJsonMappingTests), engaging the atomic
-// path for a model it can't cleanly bind — the cross-test static race behind the PostgreSQL-integration flake.
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
-  [After(Test)]
-  public Task ClearPathOneProviderAsync() {
-    // Reset the process-wide hook so this test doesn't leak into other suites.
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = null;
-    return Task.CompletedTask;
-  }
-
   [Test]
-  public async Task Upsert_WithPathOneOptionsProvider_PersistsRowViaAtomicSqlAsync() {
-    // Arrange — register Path 1 globally; from here on, atomic UPSERT is the active branch.
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>
-      PerspectivePersistenceJsonContext.CreateOptions(
-        MessageJsonContext.Default,
-        global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
-
+  public async Task Upsert_OnNpgsql_PersistsRowViaAtomicSqlAsync() {
+    // Arrange — nothing to register: the atomic path resolves its options from the registry.
     await using var context = CreateDbContext();
     var strategy = new PostgresUpsertStrategy();
     var testId = Guid.CreateVersion7();
@@ -64,7 +46,7 @@ public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
     };
     var scope = new PerspectiveScope();
 
-    // Act — first upsert through the public surface; with the provider set, this goes
+    // Act — first upsert through the public surface; on Npgsql this goes
     // through _tryAtomicUpsertAsync, NOT the SELECT-then-INSERT retry path.
     await strategy.UpsertPerspectiveRowAsync(context, "wh_per_order", testId, order, metadata, scope);
 
@@ -85,11 +67,6 @@ public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
   public async Task SequentialUpserts_WithPathOneActive_DoNotIncrementDupKeyRetryCounterAsync() {
     // Arrange — capture the slice-19 retry counter baseline.
     var baselineRetries = BaseUpsertStrategy.DuplicateKeyRetriesRecovered;
-
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>
-      PerspectivePersistenceJsonContext.CreateOptions(
-        MessageJsonContext.Default,
-        global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
 
     var testId = Guid.CreateVersion7();
     var metadata = new PerspectiveMetadata {
@@ -126,12 +103,10 @@ public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task Upsert_WithoutPathOneOptionsProvider_FallsBackToRetryPathAsync() {
-    // Arrange — explicitly leave the provider null. Existing strategy must continue to work.
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = null;
-
+  public async Task Upsert_WithAStrategyThatOptsOutOfPathOne_FallsBackToRetryPathAsync() {
+    // Arrange — a strategy that chooses the Entity Framework path on its own instance.
     await using var context = CreateDbContext();
-    var strategy = new PostgresUpsertStrategy();
+    var strategy = new EntityFrameworkPathUpsertStrategy();
     var testId = Guid.CreateVersion7();
     var order = new Order {
       OrderId = new TestOrderId(testId),
@@ -145,7 +120,7 @@ public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
     };
     var scope = new PerspectiveScope();
 
-    // Act — without provider, this MUST take the legacy path. No exception, row lands as v=1.
+    // Act — opted out, this MUST take the legacy path. No exception, row lands as v=1.
     await strategy.UpsertPerspectiveRowAsync(context, "wh_per_order", testId, order, metadata, scope);
 
     // Assert — same external behavior as before slice 22b.3 shipped.
@@ -182,12 +157,6 @@ public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
     Timestamp = DateTime.UtcNow,
   };
 
-  private static void _enablePathOne() =>
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>
-      PerspectivePersistenceJsonContext.CreateOptions(
-        MessageJsonContext.Default,
-        global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
-
   [Test]
   [Arguments("wh_per_order; DROP TABLE wh_per_order")]
   [Arguments("wh-per-order")]
@@ -195,7 +164,6 @@ public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
   [Arguments("wh_per_order\"")]
   public async Task Upsert_WithAnInvalidTableName_DeclinesTheAtomicPathAndLeavesTheTableIntactAsync(
       string tableName) {
-    _enablePathOne();
     await using var context = CreateDbContext();
     var strategy = new PostgresUpsertStrategy();
     var id = Guid.CreateVersion7();
@@ -217,7 +185,6 @@ public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
   public async Task Upsert_WithAnOverlongTableName_DeclinesTheAtomicPathAsync() {
     // Postgres truncates identifiers at 63 bytes, so a longer name would silently target a
     // different table than the caller named — the guard rejects rather than let that happen.
-    _enablePathOne();
     await using var context = CreateDbContext();
     var strategy = new PostgresUpsertStrategy();
     var id = Guid.CreateVersion7();

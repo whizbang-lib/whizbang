@@ -264,22 +264,29 @@ public class PerspectiveWorkerCoverageTests {
 
   [Test]
   public async Task Worker_NoWork_IncreasesConsecutiveEmptyPollsAsync() {
-    // Arrange - No work returned
-    var (worker, coordinator, _, harness) = _createWorker();
+    // Arrange - one item, then nothing. The idle event fires only once the empty-poll count reaches the threshold,
+    // and only on a transition from active, so the item is what makes it a signal; no wall-clock wait stands in for
+    // "several empty polls" (under load a fixed sleep saw none).
+    var idleFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var (worker, coordinator, _, harness) = _createWorker(idleThresholdPolls: 2);
+    worker.OnWorkProcessingIdle += () => idleFired.TrySetResult();
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork { StreamId = Guid.NewGuid(), PerspectiveName = "TestPerspective", PartitionNumber = 1 }
+    ];
 
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await Task.Delay(1000); // Let several empty polls complete (generous for CI contention)
+    await idleFired.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await cts.CancelAsync();
 
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
-    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThan(0)
-      .Because("Empty polls should increment the counter");
+    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(2)
+      .Because("Empty polls increment the counter, up to the threshold that made the worker idle, and nothing reset it");
   }
 
   #endregion

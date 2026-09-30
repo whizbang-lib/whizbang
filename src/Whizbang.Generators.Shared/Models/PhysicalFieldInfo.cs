@@ -40,6 +40,13 @@ namespace Whizbang.Generators.Shared.Models;
 /// For an enumeration marked <c>[Flags]</c>, true: its stored names may be combined (<c>"A, B"</c>), and the rewrite
 /// converts a combination to the bitwise OR of the members' values.
 /// </param>
+/// <param name="IsInitOnly">
+/// True when the property's setter is <c>init</c>: code generated to copy a column into a model that already
+/// exists sets it through a <c>with</c> expression on a record, and cannot set it on a class (issue #982).
+/// </param>
+/// <param name="IsReadOnly">
+/// True when the property has no setter at all (a computed value), so there is nothing to copy a column into.
+/// </param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Models/PhysicalFieldInfoTests.cs</tests>
 public sealed record PhysicalFieldInfo(
@@ -59,7 +66,9 @@ public sealed record PhysicalFieldInfo(
     bool IsSearch = false,
     string? EnumScalarType = null,
     string? EnumMembers = null,
-    bool EnumIsFlags = false
+    bool EnumIsFlags = false,
+    bool IsInitOnly = false,
+    bool IsReadOnly = false
 );
 
 /// <summary>

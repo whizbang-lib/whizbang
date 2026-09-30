@@ -197,23 +197,6 @@ public static class ServiceRegistrationCallbacks {
   public static Action<IServiceCollection>? RawReceptors { get; set; }
 
   /// <summary>
-  /// Callback for wiring the Path 1 atomic-upsert options provider on
-  /// <c>BaseUpsertStrategy.PathOnePersistenceOptionsProvider</c>. Set by the
-  /// PerspectivePersistenceJsonContextGenerator's module initializer in the consumer
-  /// assembly. Fires inside <see cref="InvokeAll"/> so that ordering is deterministic
-  /// regardless of cross-assembly module-load order.
-  /// </summary>
-  /// <remarks>
-  /// When fired, the callback sets <c>BaseUpsertStrategy.PathOnePersistenceOptionsProvider</c>
-  /// to a delegate returning <code>PerspectivePersistenceJsonContext.CreateOptions(
-  /// MessageJsonContext.Default, InfrastructureJsonContext.Default)</code>. After this point,
-  /// every <c>UpsertPerspectiveRowAsync</c> call routes through the atomic
-  /// <c>INSERT…ON CONFLICT DO UPDATE</c> path instead of the slice-19 retry loop —
-  /// structurally eliminating the 23505 dup-key storm.
-  /// </remarks>
-  public static Action<IServiceCollection>? PerspectivePersistenceOptions { get; set; }
-
-  /// <summary>
   /// Callback that folds the ASP.NET hosting integration (<c>AddWhizbangAspNet()</c>) into
   /// <see cref="ServiceCollectionExtensions.AddWhizbang"/>. Set by the Whizbang.Hosting.AspNet
   /// assembly's <c>[ModuleInitializer]</c>, so it is present only when that assembly is loaded — i.e.
@@ -242,11 +225,6 @@ public static class ServiceRegistrationCallbacks {
         services.TryAddSingleton<IEphemeralModeResolver, EphemeralModeResolver>();
         services.TryAddSingleton<IEventMarkerResolver, EventMarkerResolver>();
       }
-      // Path 1 atomic-upsert wiring fires last — it depends on JsonSerializerContext
-      // statics that are populated by their own [ModuleInitializer] runs on consumer
-      // assembly load, and on BaseUpsertStrategy's static hook which is process-wide.
-      // It doesn't add services, so the IServiceCollection argument is unused.
-      PerspectivePersistenceOptions?.Invoke(services);
     }
   }
 
@@ -261,7 +239,6 @@ public static class ServiceRegistrationCallbacks {
       Dispatcher = null;
       PinnedIdRegistry = null;
       MessageTypeCatalog = null;
-      PerspectivePersistenceOptions = null;
       HostingIntegration = null;
     }
   }

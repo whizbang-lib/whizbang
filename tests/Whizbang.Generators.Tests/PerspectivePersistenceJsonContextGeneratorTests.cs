@@ -6,9 +6,8 @@ namespace Whizbang.Generators.Tests;
 /// <summary>
 /// Tests for <see cref="PerspectivePersistenceJsonContextGenerator"/>.
 /// Verifies discovery of [WhizbangId] structs, the emitted object-mode
-/// PerspectivePersistenceJsonContext resolver, and the ModuleInitializer callback
-/// initializer that auto-wires the Path 1 atomic-upsert options provider when
-/// perspectives are present in the consuming assembly.
+/// PerspectivePersistenceJsonContext resolver, and the ModuleInitializer that joins it to
+/// the registry's persistence profile when perspectives are present in the consuming assembly.
 /// </summary>
 /// <tests>src/Whizbang.Data.EFCore.Postgres.Generators/PerspectivePersistenceJsonContextGenerator.cs</tests>
 [Category("SourceGenerators")]
@@ -282,9 +281,9 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
   }
 
   /// <summary>
-  /// Test that a class-based perspective triggers emission of the ModuleInitializer
-  /// callback initializer that registers with JsonContextRegistry and wires the
-  /// Path 1 atomic-upsert options provider through ServiceRegistrationCallbacks.
+  /// Test that a class-based perspective triggers emission of the
+  /// module initializer that registers with JsonContextRegistry under the persistence profile,
+  /// and sets nothing else.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -305,11 +304,11 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
     await Assert.That(callback).Contains("priority: 1000,");
     await Assert.That(callback).Contains("profile: global::Whizbang.Core.Serialization.SerializationProfile.Persistence);");
 
-    // Wires the static hook via ServiceRegistrationCallbacks (order owned by InvokeAll)
-    await Assert.That(callback).Contains("ServiceRegistrationCallbacks.PerspectivePersistenceOptions = _ =>");
-    await Assert.That(callback).Contains("BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>");
-    await Assert.That(callback).Contains("MessageJsonContext.Default,");
-    await Assert.That(callback).Contains("global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);");
+    // The registry is the atomic upsert's only source of options: no mutable process-wide slot
+    // is set, and no callback is left for AddWhizbang to fire.
+    await Assert.That(callback).DoesNotContain("PathOnePersistenceOptionsProvider")
+      .Because("the atomic upsert resolves its options from the registry's persistence profile (#967)");
+    await Assert.That(callback).DoesNotContain("ServiceRegistrationCallbacks");
   }
 
   /// <summary>

@@ -98,9 +98,9 @@ public sealed class SagaOptions {
   /// The sweep's claim records that a tick was published, not that it was handled. Without a re-arm
   /// interval a stranded saga, which by definition does not change, kept one claim forever, and a
   /// single lost tick was its last. A saga with a tick still waiting in an outbox or inbox is never
-  /// re-armed, whatever the interval. A saga that the tick abandons and that has nothing to resolve
-  /// stays incomplete, so it is re-armed and abandoned again once per interval; exclude abandoned
-  /// sagas in <c>LoadIncompleteSagasAsync</c> to stop that. Defaults to one hour; must be positive.
+  /// re-armed, whatever the interval, and neither is an abandoned one: the tick that abandons a saga
+  /// claims its abandonment, and the sweep leaves a saga holding that claim alone. Defaults to one
+  /// hour; must be positive.
   /// </remarks>
   /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
   /// <docs>fundamentals/sagas/completion-orchestration#stranded-sagas</docs>
@@ -118,4 +118,29 @@ public sealed class SagaOptions {
 
   /// <summary>The clock the stranded-saga sweep reads; replaced only by tests.</summary>
   internal TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
+  private TimeSpan _claimRetention = TimeSpan.FromDays(7);
+
+  /// <summary>
+  /// How long a saga's spent claims are kept before the maintenance cycle prunes them.
+  /// </summary>
+  /// <remarks>
+  /// Pruned: the stranded-saga sweep's claims, dead once their interval has passed, and the completion
+  /// and continuation claims, which exist only once the saga has completed. Kept: the abandonment
+  /// claim, the record that stops the sweep re-arming an abandoned saga, which goes only when an
+  /// operator re-drives it. Past the window a completion claim no longer dedups a very late second
+  /// completion attempt; the saga projection's completion flag still ends the watchdog's. Defaults to
+  /// seven days; must be positive.
+  /// </remarks>
+  /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
+  /// <docs>fundamentals/sagas/completion-orchestration#claim-retention</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/SagaClaimPruneStepTests.cs:Run_UsesTheConfiguredRetentionAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/SagaClaimPruneStepTests.cs:Options_ClaimRetention_MustBePositiveAsync</tests>
+  public TimeSpan ClaimRetention {
+    get => _claimRetention;
+    set {
+      ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, TimeSpan.Zero);
+      _claimRetention = value;
+    }
+  }
 }
