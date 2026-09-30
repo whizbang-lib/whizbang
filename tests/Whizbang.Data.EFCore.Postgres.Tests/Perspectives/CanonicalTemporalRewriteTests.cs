@@ -223,6 +223,9 @@ public class CanonicalTemporalRewriteTests {
     await Assert.That(sql).Contains(
       "RAISE NOTICE USING MESSAGE = format('%s: converted, %s row update(s)', 'wh_per_thing', v_touched);")
       .Because("the count is the evidence an operator reads; one update per row and path");
+    await Assert.That(sql).Contains(
+      "  IF v_touched > 0 THEN\n    PERFORM set_config('whizbang.rewritten_tables', ")
+      .Because("a table the statement changed is marked, so the phase analyzes it after the commit (#1004)");
     await Assert.That(sql.IndexOf("row update(s)", StringComparison.Ordinal))
       .IsGreaterThan(sql.IndexOf("ON CONFLICT (table_name) DO UPDATE", StringComparison.Ordinal))
       .Because("the count is reported once the ledger row that records it is written");

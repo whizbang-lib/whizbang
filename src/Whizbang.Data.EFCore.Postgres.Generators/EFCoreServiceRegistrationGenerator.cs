@@ -520,7 +520,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         DocumentMatching: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol),
         CoalesceBody: _buildDataCoalesceStatements(modelType),
         StoredForms: storedForms,
-        StoredFormProblems: storedFormProblems
+        StoredFormProblems: storedFormProblems,
+        IsModelRecord: modelType.IsRecord
     );
   }
 
@@ -612,7 +613,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         DocumentMatching: candidate.DocumentMatching,
         CoalesceBody: candidate.CoalesceBody,
         StoredForms: candidate.StoredForms,
-        StoredFormProblems: candidate.StoredFormProblems
+        StoredFormProblems: candidate.StoredFormProblems,
+        IsModelRecord: candidate.IsModelRecord
     );
   }
 
@@ -940,7 +942,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         IsSearch: isSearch,
         EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
         EnumMembers: PhysicalFieldScalar.EnumMembers(property.Type),
-        EnumIsFlags: PhysicalFieldScalar.IsFlagsEnum(property.Type)
+        EnumIsFlags: PhysicalFieldScalar.IsFlagsEnum(property.Type),
+        IsInitOnly: property.SetMethod?.IsInitOnly == true,
+        IsReadOnly: property.SetMethod is null
     );
   }
 
@@ -1001,7 +1005,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         VectorDimensions: dimensions,
         VectorDistanceMetric: distanceMetric,
         VectorIndexType: indexType,
-        VectorIndexLists: indexLists
+        VectorIndexLists: indexLists,
+        IsInitOnly: property.SetMethod?.IsInitOnly == true,
+        IsReadOnly: property.SetMethod is null
     );
   }
 
@@ -1049,11 +1055,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates multi-model ILensQuery transient registrations for a DbContext.
   /// Generates PhysicalFieldHydratorRegistry.Register call for a model with physical fields.
   /// The hydrator reads shadow property values via MaterializationInterceptionData.GetPropertyValue
   /// and copies them into the Data model (AOT-safe, no reflection).
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PhysicalFieldHydratorInitOnlyTests.cs:Record_MaterializationHydrator_CopiesTheColumnsWithAWithExpressionAsync</tests>
   private static void _generatePhysicalFieldHydratorRegistration(
       StringBuilder sb,
       PerspectiveModelInfo model) {
@@ -1062,33 +1068,18 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.PhysicalFieldHydratorRegistry.Register<{model.ModelTypeName}>((materializationData, entity) => {{");
     sb.AppendLine($"          var row = (global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>)entity;");
     sb.AppendLine("          if (row.Data is null) return; // ComplexProperty().ToJson() materializes Data after InitializedInstance");
-
-    foreach (var field in model.PhysicalFields) {
-      if (field.IsVector) {
-        // Vector fields: GetPropertyValue returns Pgvector.Vector, convert to float[]
-        sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<global::Pgvector.Vector?>(\"{field.ColumnName}\");");
-        sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
-        sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
-        sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
-      } else {
-        // Non-vector fields: direct type cast
-        var clrType = field.TypeName;
-        var isNullable = clrType.EndsWith("?", StringComparison.Ordinal);
-        if (isNullable) {
-          sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
-          sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
-          sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
-          sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
-        } else {
-          sb.AppendLine($"          row.Data.{field.PropertyName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
-        }
-      }
-    }
-
+    _appendColumnCopy(sb, model, static field => field.IsVector
+        ? $"materializationData.GetPropertyValue<global::Pgvector.Vector?>(\"{field.ColumnName}\")"
+        : $"materializationData.GetPropertyValue<{field.TypeName}>(\"{field.ColumnName}\")");
     sb.AppendLine(CLOSE_BRACE_INDENT_8);
     sb.AppendLine();
   }
 
+  /// <summary>
+  /// Generates the SplitModeChangeTrackerHydrator.Register call for a model with physical fields: the
+  /// hydrator copies each shadow property's current value into the Data model, then detaches the row.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PhysicalFieldHydratorInitOnlyTests.cs:Record_ChangeTrackerHydrator_CopiesTheColumnsWithAWithExpressionAsync</tests>
   private static void _generateChangeTrackerHydratorRegistration(
       StringBuilder sb,
       PerspectiveModelInfo model) {
@@ -1098,32 +1089,70 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.SplitModeChangeTrackerHydrator.Register(typeof({rowType}), entry => {{");
     sb.AppendLine($"          var row = ({rowType})entry.Entity;");
     sb.AppendLine("          if (row.Data is null) { return; }");
-
-    foreach (var field in model.PhysicalFields) {
+    _appendColumnCopy(sb, model, static field => {
       if (field.IsVector) {
-        // Vector: read as Pgvector.Vector?, convert to float[]
-        sb.AppendLine($"          var _{field.ColumnName} = (global::Pgvector.Vector?)entry.Property(\"{field.ColumnName}\").CurrentValue;");
-        sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
-        sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
-        sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
-      } else {
-        var clrType = field.TypeName;
-        var isNullable = clrType.EndsWith("?", StringComparison.Ordinal);
-        if (isNullable) {
-          sb.AppendLine($"          var _{field.ColumnName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue;");
-          sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
-          sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
-          sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
-        } else {
-          sb.AppendLine($"          row.Data.{field.PropertyName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue!;");
-        }
+        return $"(global::Pgvector.Vector?)entry.Property(\"{field.ColumnName}\").CurrentValue";
       }
-    }
-
+      // A value that cannot be null is unwrapped; a nullable one keeps its null for the copy to test.
+      var suppress = _isNullableTypeName(field.TypeName) ? "" : "!";
+      return $"({field.TypeName})entry.Property(\"{field.ColumnName}\").CurrentValue{suppress}";
+    });
     sb.AppendLine("          entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;");
     sb.AppendLine(CLOSE_BRACE_INDENT_8);
     sb.AppendLine();
   }
+
+  /// <summary>
+  /// Emits the body both hydrators share: one local per promoted column, read with
+  /// <paramref name="read"/>, then the copy of those locals into <c>row.Data</c>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A record is copied with one <c>with</c> expression, which sets an <c>init</c>-only property as well as a
+  /// settable one; assigning an <c>init</c>-only property is CS8852, which is how a record model documented
+  /// with <c>init</c> properties failed to compile in every storage mode (issue #982). A class is assigned in
+  /// place, and a property it cannot assign once the instance exists (<c>init</c>-only) is left as the
+  /// document has it: a Split class model cannot declare one, because the runner strips it in place before the
+  /// write, so only a mode whose document also holds the value reaches here. A property with no setter is
+  /// computed rather than stored, and is never copied into.
+  /// </para>
+  /// <para>
+  /// A null vector column, and a null column of a nullable type, keep the value the document holds.
+  /// </para>
+  /// </remarks>
+  private static void _appendColumnCopy(
+      StringBuilder sb,
+      PerspectiveModelInfo model,
+      Func<PhysicalFieldInfo, string> read) {
+    var copied = model.PhysicalFields
+        .Where(f => !f.IsReadOnly && (model.IsModelRecord || !f.IsInitOnly))
+        .ToList();
+
+    foreach (var field in copied) {
+      sb.AppendLine($"          var _{field.ColumnName} = {read(field)};");
+    }
+
+    if (model.IsModelRecord) {
+      var members = string.Join(", ", copied.Select(f => $"{f.PropertyName} = {_copiedValue(f)}"));
+      sb.AppendLine($"          row.Data = row.Data with {{ {members} }};");
+      return;
+    }
+
+    foreach (var field in copied) {
+      sb.AppendLine($"          row.Data.{field.PropertyName} = {_copiedValue(field)};");
+    }
+  }
+
+  /// <summary>The value a hydrator copies into one property from the local holding its column.</summary>
+  private static string _copiedValue(PhysicalFieldInfo field) {
+    var local = $"_{field.ColumnName}";
+    if (field.IsVector) {
+      return $"{local} is not null ? {local}.ToArray() : row.Data.{field.PropertyName}";
+    }
+    return _isNullableTypeName(field.TypeName) ? $"{local} ?? row.Data.{field.PropertyName}" : local;
+  }
+
+  private static bool _isNullableTypeName(string typeName) => typeName.EndsWith("?", StringComparison.Ordinal);
 
   /// <summary>
   /// Generates multi-model ILensQuery registrations for perspective lens queries.
@@ -3468,6 +3497,7 @@ internal sealed record DbContextInfo(
 /// <param name="CoalesceBody">Pre-rendered null-coalesce statements for the model's collection graph</param>
 /// <param name="StoredForms">The stored-form migrations the model declares, in the order they run</param>
 /// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
+/// <param name="IsModelRecord">True when the model is a record, which the hydrators copy with a <c>with</c> expression</param>
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3482,7 +3512,8 @@ internal sealed record PerspectiveModelInfo(
     DocumentMatching DocumentMatching,
     string CoalesceBody,
     ImmutableArray<StoredFormInfo> StoredForms,
-    ImmutableArray<StoredFormProblem> StoredFormProblems);
+    ImmutableArray<StoredFormProblem> StoredFormProblems,
+    bool IsModelRecord);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -3503,6 +3534,7 @@ internal sealed record PerspectiveModelInfo(
 /// (WORKAROUND(dotnet/efcore#38625)); empty when the model has no coalescible collections</param>
 /// <param name="StoredForms">The stored-form migrations the model declares, in the order they run</param>
 /// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
+/// <param name="IsModelRecord">True when the model is a record, which the hydrators copy with a <c>with</c> expression</param>
 internal sealed record PerspectiveModelCandidate(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3517,7 +3549,8 @@ internal sealed record PerspectiveModelCandidate(
     DocumentMatching DocumentMatching,
     string CoalesceBody,
     ImmutableArray<StoredFormInfo> StoredForms,
-    ImmutableArray<StoredFormProblem> StoredFormProblems);
+    ImmutableArray<StoredFormProblem> StoredFormProblems,
+    bool IsModelRecord);
 
 /// <summary>
 /// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.

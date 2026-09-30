@@ -470,4 +470,58 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
       _connect, LOCK_ID, _rewrites("x"), TIMEOUT_SECONDS, timeProvider: null!))
       .Throws<ArgumentNullException>();
   }
+
+  /// <summary>
+  /// A table of 5,000 documents with an index over an extraction, never analyzed, and a statement that
+  /// rewrites every row of it and marks the table as rewritten.
+  /// </summary>
+  private async Task<(string Name, string Sql)> _rewrittenTableAsync(string table, bool failAfterMarking = false) {
+    await _executeAsync($"""
+      CREATE TABLE {table} (id int PRIMARY KEY, data jsonb NOT NULL) WITH (autovacuum_enabled = false);
+      INSERT INTO {table} SELECT g, jsonb_build_object('At', '2026-01-0' || (g % 9 + 1)) FROM generate_series(1, 5000) AS g;
+      CREATE INDEX {table}_at ON {table} ((data ->> 'At'));
+      """);
+    var fail = failAfterMarking ? "RAISE EXCEPTION 'rewrite failed after marking';" : "";
+    return (table, $"""
+      DO $rw$ BEGIN
+        UPDATE {table} SET data = jsonb_build_object('At', (data ->> 'At') || 'T00:00:00Z');
+        {IndexStatistics.MarkRewrittenSql("'public'", $"'{table}'")}
+        {IndexStatistics.MarkRewrittenSql("'public'", $"'{table}'")}
+        {fail}
+      END $rw$;
+      """);
+  }
+
+  private async Task<long> _indexStatisticsAsync(string index) =>
+    long.Parse(await _scalarAsync(
+      $"SELECT count(*) FROM pg_stats WHERE schemaname = 'public' AND tablename = '{index}'"), CultureInfo.InvariantCulture);
+
+  /// <summary>
+  /// Issue #1004: a mass update skews a table's statistics, so the phase analyzes each table a rewrite
+  /// changed, once, after it commits.
+  /// </summary>
+  [Test]
+  public async Task ARewrittenTableIsAnalyzedAsync() {
+    var log = new SignalingListLogger();
+    var rewrite = await _rewrittenTableAsync("wh_per_rewritten");
+
+    await CanonicalTemporalRewritePhase.ApplyAsync(_connect, LOCK_ID, [rewrite], TIMEOUT_SECONDS, log);
+
+    await Assert.That(await _indexStatisticsAsync("wh_per_rewritten_at")).IsGreaterThan(0)
+      .Because("analyzing the rewritten table gathers statistics for its index's expression too");
+    await Assert.That(log.Entries.Count(e => e.Message.StartsWith("Analyzed ", StringComparison.Ordinal))).IsEqualTo(1)
+      .Because("a table marked twice is analyzed once");
+  }
+
+  /// <summary>A rewrite rolled back to its savepoint changed nothing, so its table is not analyzed.</summary>
+  [Test]
+  public async Task ARolledBackRewriteIsNotAnalyzedAsync() {
+    var log = new SignalingListLogger();
+    var rewrite = await _rewrittenTableAsync("wh_per_rolled_back", failAfterMarking: true);
+
+    await CanonicalTemporalRewritePhase.ApplyAsync(_connect, LOCK_ID, [rewrite], TIMEOUT_SECONDS, log);
+
+    await Assert.That(await _indexStatisticsAsync("wh_per_rolled_back_at")).IsEqualTo(0);
+    await Assert.That(log.Entries.Where(e => e.Message.StartsWith("Analyzed ", StringComparison.Ordinal))).IsEmpty();
+  }
 }

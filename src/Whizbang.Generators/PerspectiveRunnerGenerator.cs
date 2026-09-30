@@ -539,6 +539,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // back into the model the next event is applied to. The copy is generated here, where the fields are known.
     result = TemplateUtilities.ReplaceRegion(result, "SPLIT_PHYSICAL_FIELD_REGISTRATION",
         _buildSplitPhysicalFieldRegistration(perspective, modelTypeName));
+    // Issue #983: a model the write strips in place has to be snapshotted before the write.
+    result = TemplateUtilities.ReplaceRegion(result, "SNAPSHOT_BEFORE_WRITE",
+        _buildSnapshotBeforeWrite(perspective, modelTypeName));
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
@@ -692,6 +695,29 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         $"      global::Whizbang.Core.Perspectives.SplitPhysicalFieldRegistry.Register(new global::Whizbang.Core.Perspectives.SplitPhysicalFieldMap<{modelTypeName}>(\n" +
         $"          new[] {{ {columns} }},\n" +
         $"          {hydrate}));";
+  }
+
+  /// <summary>
+  /// Emits <c>SnapshotBeforeWrite</c>, which the runner calls just before each write that a snapshot follows.
+  /// </summary>
+  /// <remarks>
+  /// The write of a Split model strips its promoted fields so the document never holds them. A record is
+  /// stripped as a copy, but a class is stripped in place (it has no <c>with</c>), so the instance the runner
+  /// snapshots after the write has lost them, and a rewind that starts from that snapshot writes their
+  /// defaults over the columns (issue #983). For that model this serializes the snapshot before the write,
+  /// when snapshots are on; for every other model it returns null and the snapshot is taken after the write
+  /// as before.
+  /// </remarks>
+  private static string _buildSnapshotBeforeWrite(PerspectiveInfo perspective, string modelTypeName) {
+    var strippedInPlace = perspective.StorageMode == 2
+        && perspective.PhysicalFields is { Length: > 0 }
+        && !perspective.IsModelRecord;
+    return strippedInPlace
+        ? "// The write strips this model's promoted fields in place, so its snapshot is taken first (issue #983).\n" +
+          $"private JsonDocument? SnapshotBeforeWrite({modelTypeName} model) =>\n" +
+          "    _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true ? ToSnapshotJson(model) : null;"
+        : "// The write does not strip this model in place, so its snapshot is taken after the write.\n" +
+          $"private static JsonDocument? SnapshotBeforeWrite({modelTypeName} model) => null;";
   }
 
   /// <summary>The expression that reads one promoted column as its property's type.</summary>
