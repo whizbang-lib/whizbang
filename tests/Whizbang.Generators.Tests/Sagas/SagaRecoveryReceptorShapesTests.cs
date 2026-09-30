@@ -48,12 +48,16 @@ public class SagaRecoveryReceptorShapesTests {
         .IsEqualTo("Whizbang.Sagas.SagaCompletionWatchdogTickEvent");
   }
 
+  /// <summary>
+  /// The tick handler is received at the pre-inbox stage, which runs for every inbox row whichever
+  /// service published it; the post-inbox default skipped every tick the saga's own service published.
+  /// </summary>
   [Test]
-  public async Task WatchdogTickHandler_TakesTheDefaultLifecycleStageAsync() {
+  public async Task WatchdogTickHandler_IsReceivedAtThePreInboxStageAsync() {
     var shape = SagaRecoveryReceptorShapes.All
         .Single(s => s.ClassName == "SagaCompletionWatchdogTickHandler");
 
-    await Assert.That(shape.LifecycleStage).IsNull();
+    await Assert.That(shape.LifecycleStage).IsEqualTo("global::Whizbang.Core.Messaging.LifecycleStage.PreInboxInline");
   }
 
   [Test]

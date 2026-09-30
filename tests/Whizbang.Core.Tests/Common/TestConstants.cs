@@ -95,7 +95,11 @@ public static class TestConstants {
   ///     (EmitKeyedFlipReceptor — returns a collective with an ordering key, so its cascade is tracked on the
   ///     key's stream)</para>
   ///
-  /// <para>Total: 125 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>- 1 receptor from Dispatcher/DispatcherLocalDispatchRecordTests.cs
+  ///     (LocalDispatchRecordProbeReceptor — a default-stage receptor whose local firing the stored
+  ///     envelope must record)</para>
+  ///
+  /// <para>Total: 126 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 125;
+  public const int EXPECTED_RECEPTOR_COUNT = 126;
 }

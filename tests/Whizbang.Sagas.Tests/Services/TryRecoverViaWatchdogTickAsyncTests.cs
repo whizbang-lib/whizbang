@@ -203,6 +203,45 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       .Because("abandon carries the rescheduleCount of the LAST tick that observed the stall for operator forensics.");
   }
 
+  /// <summary>
+  /// The abandonment is published under the saga's abandonment claim, which is what the stranded-saga
+  /// sweep reads to leave the saga alone afterward.
+  /// </summary>
+  [Test]
+  public async Task MaxConsecutiveStalls_AbandonsUnderTheSagasAbandonmentClaimAsync() {
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(new SagaItemAggregate(Total: 10, Completed: 7, Failed: 0, InProgress: 3), items: []),
+      terminalReader: new FakeTerminalReader(),
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 10 });
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(7, 0), CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Abandoned);
+    await Assert.That(emitter.ClaimKeys).Contains($"saga-abandoned:{SAGA_NAME}:{_sagaId}")
+      .Because("the claim is the record of the abandonment every consumer has, whether or not its perspective applies the event");
+    await Assert.That(emitter.Published.OfType<SagaCompletionAbandonedEvent>().Count()).IsEqualTo(1);
+  }
+
+  /// <summary>A saga already abandoned is not announced as abandoned a second time.</summary>
+  /// <remarks>
+  /// A second tick can still reach the stall limit, from a chain started before the abandonment. The
+  /// claim is already held, so it publishes nothing, and the outcome still says what the saga is.
+  /// </remarks>
+  [Test]
+  public async Task MaxConsecutiveStalls_AbandonmentAlreadyClaimed_PublishesNoSecondAbandonEventAsync() {
+    var emitter = new RecordingEmitter { WinClaims = false };
+    var svc = new TestSagaService(emitter,
+      new FakeItemRepository(new SagaItemAggregate(Total: 10, Completed: 7, Failed: 0, InProgress: 3), items: []),
+      new FakeTerminalReader(),
+      new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 10 });
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(7, 0), CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Abandoned);
+    await Assert.That(emitter.Published).IsEmpty()
+      .Because("the saga was abandoned once; announcing it again tells an operator nothing new");
+  }
+
   [Test]
   public async Task ProgressAfterStalls_ResetsStallCounterAsync() {
     // ConsecutiveStallCount = 2 from prior ticks, BUT progress was just made.
@@ -717,6 +756,174 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       .Because("an item never dispatched is as stranded as one whose worker died");
   }
 
+  // ── Items that never got a row: the fan-out stopped before starting them ──
+
+  private static List<SagaItemModel> _rows(int completed, int failed, int offset = 0) => [
+    .. Enumerable.Range(offset, completed).Select(i => _item($"i{i:D3}", SagaItemState.Completed)),
+    .. Enumerable.Range(offset + completed, failed).Select(i => _item($"i{i:D3}", SagaItemState.Failed)),
+  ];
+
+  /// <summary>
+  /// A saga whose fan-out stopped partway completes, with the items that never started counted as
+  /// failed, instead of being abandoned with every finished item discarded.
+  /// </summary>
+  /// <remarks>
+  /// The worker died after starting 337 of 350 items. The reconciler counts terminal rows against the
+  /// saga's total and can never reach it, and stranded-item resolution only looks at rows that exist,
+  /// so it resolved nothing and the saga was abandoned. With every recorded row terminal at the stall
+  /// limit, nothing else can move: the 13 items with no row were never going to start.
+  /// </remarks>
+  [Test]
+  public async Task MaxConsecutiveStalls_ItemsWithNoRow_AreFailedAndTheSagaCompletesAsync() {
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(new SagaItemAggregate(Total: 337, Completed: 336, Failed: 1, InProgress: 0), _rows(336, 1)),
+      terminalReader: new FakeTerminalReader(),
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 350 });
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(336, 1), CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Recovered);
+    await Assert.That(emitter.Published.OfType<SagaCompletionAbandonedEvent>()).IsEmpty()
+      .Because("abandoning would discard the 336 items that finished over 13 that were never started");
+    var completed = emitter.Published.OfType<TestCompletedEvent>().Single();
+    await Assert.That(completed.FinalStatus).IsEqualTo(SagaStatus.CompletedWithFailures);
+    await Assert.That(completed.CompletedItems).IsEqualTo(336);
+    await Assert.That(completed.FailedItems).IsEqualTo(14)
+      .Because("the one item that failed and the 13 that never started are all items that did not complete");
+    await Assert.That(completed.TotalItems).IsEqualTo(350);
+    await Assert.That(emitter.Published.OfType<SagaCompletionWatchdogTickEvent>()).IsEmpty();
+  }
+
+  /// <summary>
+  /// A service that can say which items the saga was started with has each one that never got a row
+  /// failed by name, as a stranded item is, so the failure shows against the item itself.
+  /// </summary>
+  /// <remarks>
+  /// Preferred over counting the missing items as failed: each gets a failed event and an item row, so
+  /// an operator can see which items did not run. A missing item the store already records as
+  /// terminal is left alone, and one the service re-dispatches stays in progress.
+  /// </remarks>
+  [Test]
+  public async Task MaxConsecutiveStalls_ExpectedItemsKnown_FailsEachItemThatNeverGotARowAsync() {
+    var expected = Enumerable.Range(0, 350).Select(i => $"i{i:D3}").ToList();
+    var emitter = new RecordingEmitter();
+    var redriven = new List<string>();
+    var svc = new TestSagaService(
+      emitter,
+      new FakeItemRepository(new SagaItemAggregate(Total: 337, Completed: 336, Failed: 1, InProgress: 0), _rows(336, 1)),
+      new KeyedTerminalReader(new Dictionary<Guid, SagaItemTerminalOutcome> {
+        [SagaItemStreams.Of(_sagaId, "i337")] = SagaItemTerminalOutcome.Completed,
+      }),
+      new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 350 }) {
+      ExpectedItems = [.. expected, "i349"],
+      Redrive = item => {
+        redriven.Add(item.ItemIdentifier);
+        return item.ItemIdentifier == "i338";
+      },
+    };
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(336, 1), CancellationToken.None);
+
+    var failed = emitter.Published.OfType<TestItemFailedEvent>().ToList();
+    await Assert.That(failed.Select(f => f.ItemIdentifier)).IsEquivalentTo(expected.Skip(339))
+      .Because("i337 is already terminal in the store and i338 was re-dispatched; the other eleven never started");
+    await Assert.That(failed.All(f => f.ErrorMessage.Contains("never started", StringComparison.Ordinal))).IsTrue()
+      .Because("the reason has to say the item was never started, not that its worker was lost");
+    await Assert.That(redriven).IsEquivalentTo(expected.Skip(338))
+      .Because("an item with no row is offered for re-dispatch like a stranded one, and a duplicate expected id is offered once");
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.ReArmed)
+      .Because("the failures need time to land before the saga is judged again");
+    await Assert.That(emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Single().ConsecutiveStallCount).IsEqualTo(0);
+    await Assert.That(emitter.Published.OfType<SagaCompletionAbandonedEvent>()).IsEmpty();
+  }
+
+  /// <summary>
+  /// A row the store already records as finished counts as it finished when the missing items are
+  /// counted as failed: its projection row is merely behind.
+  /// </summary>
+  [Test]
+  public async Task MaxConsecutiveStalls_ItemsWithNoRowAndARowBehindTheStore_CountsWhatTheStoreRecordsAsync() {
+    var rows = new List<SagaItemModel>(_rows(2, 0)) { _item("done-in-store", SagaItemState.Running), _item("failed-in-store", SagaItemState.Running) };
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(new SagaItemAggregate(Total: 4, Completed: 2, Failed: 0, InProgress: 2), rows),
+      terminalReader: new KeyedTerminalReader(new Dictionary<Guid, SagaItemTerminalOutcome> {
+        [SagaItemStreams.Of(_sagaId, "done-in-store")] = SagaItemTerminalOutcome.Completed,
+        [SagaItemStreams.Of(_sagaId, "failed-in-store")] = SagaItemTerminalOutcome.Failed,
+      }),
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 6 });
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(2, 0), CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Recovered);
+    var completed = emitter.Published.OfType<TestCompletedEvent>().Single();
+    await Assert.That(completed.CompletedItems).IsEqualTo(3);
+    await Assert.That(completed.FailedItems).IsEqualTo(3);
+  }
+
+  /// <summary>Without a terminal reader the recorded rows alone are counted.</summary>
+  [Test]
+  public async Task MaxConsecutiveStalls_ItemsWithNoRowAndNoTerminalReader_CompletesFromTheRowsAsync() {
+    var emitter = new RecordingEmitter();
+    var svc = new TestSagaService(emitter,
+      new FakeItemRepository(new SagaItemAggregate(Total: 3, Completed: 2, Failed: 1, InProgress: 0), _rows(2, 1)),
+      terminalReader: null!,
+      new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 5 });
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(2, 1), CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Recovered);
+    await Assert.That(emitter.Published.OfType<TestCompletedEvent>().Single().FailedItems).IsEqualTo(3);
+  }
+
+  /// <summary>
+  /// A saga that recorded no item row at all is abandoned, not completed: with nothing recorded there
+  /// is no evidence to complete it on, unless the service can say which items it expected.
+  /// </summary>
+  [Test]
+  public async Task MaxConsecutiveStalls_NoItemRowAtAll_IsAbandonedUnlessTheExpectedItemsAreKnownAsync() {
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(new SagaItemAggregate(Total: 0, Completed: 0, Failed: 0, InProgress: 0), items: []),
+      terminalReader: new FakeTerminalReader(),
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 2 });
+    var knowing = new TestSagaService(new RecordingEmitter(),
+      new FakeItemRepository(new SagaItemAggregate(Total: 0, Completed: 0, Failed: 0, InProgress: 0), items: []),
+      new FakeTerminalReader(),
+      new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 2 }) {
+      ExpectedItems = ["a", "b"],
+    };
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(0, 0), CancellationToken.None);
+    var knowingOutcome = await knowing.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(0, 0), CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Abandoned);
+    await Assert.That(emitter.Published.OfType<TestCompletedEvent>()).IsEmpty();
+    await Assert.That(knowingOutcome).IsEqualTo(WatchdogTickOutcome.ReArmed)
+      .Because("with the expected items known, each is failed by name and the saga completes once the failures land");
+  }
+
+  /// <summary>
+  /// Counting the missing items as failed needs the saga's total, so a saga whose total cannot be read
+  /// is abandoned as before.
+  /// </summary>
+  /// <param name="noLoader">The service has no projection loader, rather than a saga with no known total.</param>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task MaxConsecutiveStalls_ItemsWithNoRowButNoKnownTotal_IsAbandonedAsync(bool noLoader) {
+    var emitter = new RecordingEmitter();
+    var svc = new TestSagaService(emitter,
+      new FakeItemRepository(new SagaItemAggregate(Total: 2, Completed: 2, Failed: 0, InProgress: 0), _rows(2, 0)),
+      new FakeTerminalReader(),
+      new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 0 }) {
+      NoProjectionLoader = noLoader,
+    };
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(2, 0), CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Abandoned);
+    await Assert.That(emitter.Published.OfType<TestCompletedEvent>()).IsEmpty();
+  }
+
   // ── Builder + test doubles ─────────────────────────────────────────────
 
   private static (TestSagaService, RecordingEmitter) _buildService(
@@ -769,9 +976,14 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       LastScheduledFor = scheduledFor;
       return Task.CompletedTask;
     }
+    public List<string> ClaimKeys { get; } = [];
+    public bool WinClaims { get; init; } = true;
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken) where TEvent : IEvent {
-      Published.Add(eventData);
-      return Task.FromResult(true);
+      ClaimKeys.Add(claimKey);
+      if (WinClaims) {
+        Published.Add(eventData);
+      }
+      return Task.FromResult(WinClaims);
     }
   }
 
@@ -861,11 +1073,20 @@ public class TryRecoverViaWatchdogTickAsyncTests {
     /// <summary>When set, stands in for a service that can re-dispatch a stranded item's work.</summary>
     public Func<SagaItemModel, bool>? Redrive { get; init; }
 
+    /// <summary>When set, stands in for a service that knows every item the saga was started with.</summary>
+    public IReadOnlyList<string>? ExpectedItems { get; init; }
+
+    /// <summary>When set, reads the projection through the framework default, as a service with no loader does.</summary>
+    public bool NoProjectionLoader { get; init; }
+
+    protected override Task<IReadOnlyList<string>?> LoadExpectedItemIdentifiersAsync(SagaContext ctx, CancellationToken cancellationToken)
+      => ExpectedItems is null ? base.LoadExpectedItemIdentifiersAsync(ctx, cancellationToken) : Task.FromResult<IReadOnlyList<string>?>(ExpectedItems);
+
     protected override Task<bool> TryRedriveStrandedItemAsync(SagaContext ctx, SagaItemModel item, CancellationToken cancellationToken)
       => Redrive is null ? base.TryRedriveStrandedItemAsync(ctx, item, cancellationToken) : Task.FromResult(Redrive(item));
 
     protected override Task<BaseSagaModel?> LoadProjectionAsync(Guid sagaId, CancellationToken cancellationToken)
-      => Task.FromResult(_projection);
+      => NoProjectionLoader ? base.LoadProjectionAsync(sagaId, cancellationToken) : Task.FromResult(_projection);
 
     protected override TestInitiatedEvent BuildInitiatedEvent(SagaContext ctx, IReadOnlyList<string> itemIdentifiers, IReadOnlyList<string>? hookNames, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, ItemIdentifiers = itemIdentifiers, TotalItems = itemIdentifiers.Count, HookNames = hookNames };

@@ -244,7 +244,132 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
       .Because("Default TTL is 30 minutes = 1800 seconds. Changing this is a deliberate decision tied to the prune sweep; if the prune cadence ever shortens to where 30 min is too long, this test must change together with it.");
   }
 
+  // ── Reading claims back and releasing them ───────────────────────────
+
+  /// <summary>
+  /// Which of the asked keys are held: the ones claimed and not released, however long ago, because a
+  /// held key is what a claim attempt conflicts on.
+  /// </summary>
+  [Test]
+  public async Task FindClaimed_ReturnsExactlyTheHeldKeysAsync() {
+    await using var ctx = CreateDbContext();
+    var store = new EFCoreClaimedEmissionStore(ctx);
+    var held = $"test:{Guid.NewGuid():N}:held";
+    var expired = $"test:{Guid.NewGuid():N}:expired";
+    var free = $"test:{Guid.NewGuid():N}:free";
+    var notAsked = $"test:{Guid.NewGuid():N}:not-asked";
+    await store.TryClaimAsync(held, TrackedGuid.New(), CancellationToken.None);
+    await store.TryClaimAsync(expired, TrackedGuid.New(), CancellationToken.None);
+    await store.TryClaimAsync(notAsked, TrackedGuid.New(), CancellationToken.None);
+    await _executeAsync(ctx, "UPDATE wh_unique_emission_claims SET expires_at = NOW() - INTERVAL '1 day' WHERE claim_key = @key", expired);
+
+    var found = await store.FindClaimedAsync([held, expired, free], CancellationToken.None);
+
+    await Assert.That(found).IsNotNull();
+    await Assert.That(found!).IsEquivalentTo([held, expired])
+      .Because("a key is held while its row exists: a claim attempt on an expired row still conflicts, so it still reads as claimed");
+  }
+
+  [Test]
+  public async Task FindClaimed_NoKeys_ReturnsAnEmptySetWithoutAQueryAsync() {
+    await using var ctx = CreateDbContext();
+    var store = new EFCoreClaimedEmissionStore(ctx);
+
+    var found = await store.FindClaimedAsync([], CancellationToken.None);
+
+    await Assert.That(found).IsNotNull();
+    await Assert.That(found!).IsEmpty();
+  }
+
+  /// <summary>A released key can be claimed again, and releasing one nobody holds reports so.</summary>
+  [Test]
+  public async Task Release_HeldKey_CanBeClaimedAgain_AndAFreeKeyReportsNothingReleasedAsync() {
+    await using var ctx = CreateDbContext();
+    var store = new EFCoreClaimedEmissionStore(ctx);
+    var key = $"test:{Guid.NewGuid():N}";
+    await store.TryClaimAsync(key, TrackedGuid.New(), CancellationToken.None);
+
+    var released = await store.ReleaseAsync(key, CancellationToken.None);
+    var releasedAgain = await store.ReleaseAsync(key, CancellationToken.None);
+    var reclaimed = await store.TryClaimAsync(key, TrackedGuid.New(), CancellationToken.None);
+
+    await Assert.That(released).IsTrue();
+    await Assert.That(releasedAgain).IsFalse()
+      .Because("nothing held the key the second time");
+    await Assert.That(reclaimed).IsTrue()
+      .Because("releasing a claim is what lets the gated side effect happen again");
+  }
+
+  /// <summary>Reads and releases qualify the table from the model, as claims do.</summary>
+  [Test]
+  public async Task FindClaimedAndRelease_SchemaScopedDbContext_UseTheModelSchemaAsync() {
+    await using (var setup = CreateDbContext()) {
+      await _executeAsync(setup, $"""
+        CREATE SCHEMA IF NOT EXISTS {ServiceSchema};
+        CREATE TABLE IF NOT EXISTS {ServiceSchema}.wh_unique_emission_claims (
+          claim_key TEXT PRIMARY KEY,
+          claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          claimed_by_event_id UUID NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 minutes')
+        );
+        """, key: null);
+    }
+    var options = new DbContextOptionsBuilder<SchemaScopedDbContext>().UseNpgsql(ConnectionString).Options;
+    await using var schemaScoped = new SchemaScopedDbContext(options);
+    var store = new EFCoreClaimedEmissionStore(schemaScoped);
+    var key = $"schema-scoped:{Guid.NewGuid():N}";
+    await store.TryClaimAsync(key, TrackedGuid.New(), CancellationToken.None);
+
+    var found = await store.FindClaimedAsync([key], CancellationToken.None);
+    var released = await store.ReleaseAsync(key, CancellationToken.None);
+
+    await Assert.That(found!).IsEquivalentTo([key]);
+    await Assert.That(released).IsTrue();
+  }
+
+  /// <summary>
+  /// Pruning removes exactly the claims under the prefix taken before the cutoff: not a newer one, and
+  /// not one under another prefix, however old.
+  /// </summary>
+  [Test]
+  public async Task Prune_RemovesOnlyThePrefixesClaimsTakenBeforeTheCutoffAsync() {
+    await using var ctx = CreateDbContext();
+    var store = new EFCoreClaimedEmissionStore(ctx);
+    var run = Guid.NewGuid().ToString("N");
+    var prefix = $"prune_test-{run}:";
+    var old = $"{prefix}old";
+    var recent = $"{prefix}recent";
+    var otherPrefix = $"other-{run}:old";
+    var likeWildcard = $"pruneXtest-{run}:old";
+    foreach (var key in new[] { old, recent, otherPrefix, likeWildcard }) {
+      await store.TryClaimAsync(key, TrackedGuid.New(), CancellationToken.None);
+    }
+    foreach (var key in new[] { old, otherPrefix, likeWildcard }) {
+      await _executeAsync(ctx, "UPDATE wh_unique_emission_claims SET claimed_at = NOW() - INTERVAL '30 days' WHERE claim_key = @key", key);
+    }
+
+    var pruned = await store.PruneAsync(prefix, DateTimeOffset.UtcNow.AddDays(-7), CancellationToken.None);
+
+    await Assert.That(pruned).IsEqualTo(1);
+    var left = await store.FindClaimedAsync([old, recent, otherPrefix, likeWildcard], CancellationToken.None);
+    await Assert.That(left!).IsEquivalentTo([recent, otherPrefix, likeWildcard])
+      .Because("the prefix is matched literally: another prefix, or one a LIKE wildcard would stretch to, is not the caller's to prune");
+  }
+
   // ── Helpers ──────────────────────────────────────────────────────────
+
+  private static async Task _executeAsync(DbContext ctx, string sql, string? key) {
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    if (key is not null) {
+      cmd.Parameters.AddWithValue(nameof(key), key);
+    }
+    await cmd.ExecuteNonQueryAsync();
+  }
 
   private static async Task<int> _countClaimRowsAsync(DbContext ctx, string key) {
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();

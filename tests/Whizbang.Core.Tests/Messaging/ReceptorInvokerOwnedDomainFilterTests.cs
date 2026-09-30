@@ -156,10 +156,18 @@ public class ReceptorInvokerOwnedDomainFilterTests {
   /// <para>
   /// What suppresses the echo for a host that configures no owned domain is
   /// <see cref="IReceptorDedupStore"/>, which is per-receptor rather than per-stage: a receptor that
-  /// fired for a message does not fire again for it unless it declares itself idempotent. So a
-  /// duplicate delivery here is a question about that store, or about the receptor's own
-  /// idempotence declaration -- not about the stage contract, and not something to fix by changing
-  /// it. Thirty-one of this repository's tests say so.
+  /// fired for a message does not fire again for it unless it declares itself idempotent. Here both
+  /// stages are driven through the invoker with no dedup store registered, so both fire.
+  /// </para>
+  /// <para>
+  /// This test does not describe the saga watchdog tick, though it was written for #943 and read as
+  /// if it did. A generated receptor with no <c>[FireAt]</c> is routed at the local and post-inbox
+  /// stages, never at the outbox one, and the publish's local path runs it without the invoker. Measured
+  /// end to end (<c>SagaWatchdogTickDeliveryCountTests</c>), an unscheduled tick was handled twice across
+  /// two hosts of one saga, because the local path wrote no invocation record (fixed in #943), and a
+  /// scheduled tick was handled zero times by its own service, because the post-inbox stage skips a
+  /// message this same service published (#942). The generated tick receiver now declares the pre-inbox
+  /// stage, as the framework's router does.
   /// </para>
   /// </remarks>
   /// <param name="withOwnedDomain">Whether the host configures an owned domain.</param>

@@ -450,11 +450,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     // recovery can't drive a duplicate auto-complete attempt. PublishOnceAsync's claim key
     // already dedups at the dispatcher layer; this just avoids the wasted PublishOnceAsync
     // round-trip and keeps the in-memory view consistent with the projection.
-    lock (_completionLock) {
-      if (_completionTrackers.TryGetValue(ctx.SagaId, out var tracker)) {
-        tracker.DispatchedCompletion = true;
-      }
-    }
+    _markCompletionDispatched(ctx.SagaId);
     return WatchdogRecoveryResult.Recovered;
   }
 
@@ -465,8 +461,8 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// saga is still in progress, computes an adaptive next-tick delay from the
   /// observed completion rate (see <c>_computeAdaptiveNextDelay</c>) — or, when
   /// <see cref="SagaOptions.MaxConsecutiveStalls"/> is reached, publishes
-  /// <see cref="SagaCompletionAbandonedEvent"/> so operators can triage the
-  /// stuck saga.
+  /// <see cref="SagaCompletionAbandonedEvent"/> once, under the saga's
+  /// <see cref="SagaAbandonGuard"/> claim, so operators can triage the stuck saga.
   /// </summary>
   /// <remarks>
   /// <para>
@@ -507,12 +503,17 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:ProgressBetweenTicks_NextDelayIsEtaBasedAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:NoProgressBetweenTicks_StallCounterIncrementsAndBacksOffAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_AbandonsAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_AbandonsUnderTheSagasAbandonmentClaimAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_AbandonmentAlreadyClaimed_PublishesNoSecondAbandonEventAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:ProgressAfterStalls_ResetsStallCounterAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:NextDelay_ClampedAtMaxAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:CompletedSaga_TickWithProgress_EndsTheChainAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:CompletedSaga_TickAtTheStallLimit_NeitherResolvesItemsNorAbandonsAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MissingSaga_TickEndsTheChainAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/BaseSagaServiceCoverageTests.cs:TryRecoverViaWatchdogTickAsync_WithNoProjectionLoaderWired_StillReArmsAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_ItemsWithNoRow_AreFailedAndTheSagaCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_NoItemRowAtAll_IsAbandonedUnlessTheExpectedItemsAreKnownAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_ItemsWithNoRowButNoKnownTotal_IsAbandonedAsync</tests>
   public virtual async Task<WatchdogTickOutcome> TryRecoverViaWatchdogTickAsync(
       SagaCompletionWatchdogTickEvent tick,
       CancellationToken cancellationToken) {
@@ -533,7 +534,76 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     var now = DateTimeOffset.UtcNow;
 
     var (nextDelay, nextStallCount, shouldAbandon) = _computeAdaptiveNextDelay(tick, currentAgg, now);
-    if (shouldAbandon && await _resolveStrandedItemsAsync(ctx, cancellationToken).ConfigureAwait(false) > 0) {
+    if (shouldAbandon) {
+      return await _atTheStallLimitAsync(tick, ctx, currentAgg, now, cancellationToken).ConfigureAwait(false);
+    }
+
+    var next = new SagaCompletionWatchdogTickEvent {
+      StreamId = tick.StreamId,
+      SagaName = tick.SagaName,
+      EntityId = tick.EntityId,
+      RescheduleCount = tick.RescheduleCount + 1,
+      LastObservedAt = now,
+      LastObservedCompleted = currentAgg?.Completed ?? 0,
+      LastObservedFailed = currentAgg?.Failed ?? 0,
+      ConsecutiveStallCount = nextStallCount,
+    };
+    await _emitter.PublishAsync(next, now + nextDelay).ConfigureAwait(false);
+    return WatchdogTickOutcome.ReArmed;
+  }
+
+  /// <summary>
+  /// Re-drives a saga the completion watchdog abandoned: releases its abandonment claim and arms a
+  /// fresh watchdog tick, with the whole stall budget, at once.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An operator's act. Abandoning a saga decided it was not coming back on its own, and the
+  /// stranded-saga sweep leaves it alone from then on. Once the cause is dealt with (a worker
+  /// restored, an item re-dispatched), this puts the saga back under the watchdog: the tick checks
+  /// completion straight away, and a saga still not moving is abandoned again only after
+  /// <see cref="SagaOptions.MaxConsecutiveStalls"/> more stalls.
+  /// </para>
+  /// <para>
+  /// A saga whose perspective recorded <see cref="SagaStatus.Abandoned"/> is also skipped by the sweep
+  /// on that status, and cannot record a completion from it; move it back to running through the reset
+  /// path as well. A saga holding no abandonment claim is left as it is and nothing is armed, so calling
+  /// this for a saga that still has its chain cannot start a second one beside it.
+  /// </para>
+  /// </remarks>
+  /// <param name="ctx">The abandoned saga.</param>
+  /// <param name="cancellationToken">Cancels the re-drive.</param>
+  /// <returns><see langword="true"/> when the saga held an abandonment claim and was re-driven.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#abandoned-sagas</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:ReDrive_AbandonedSaga_ReleasesTheClaimAndArmsAFreshTickAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:ReDrive_SagaNotAbandoned_ArmsNothingAsync</tests>
+  public async Task<bool> ReDriveAbandonedSagaAsync(SagaContext ctx, CancellationToken cancellationToken) {
+    cancellationToken.ThrowIfCancellationRequested();
+    if (!await _emitter.ReleaseClaimAsync(SagaAbandonGuard.ClaimKey(_sagaName, ctx.SagaId), cancellationToken).ConfigureAwait(false)) {
+      return false;
+    }
+    await _emitter.PublishAsync(new SagaCompletionWatchdogTickEvent {
+      StreamId = ctx.SagaId,
+      SagaName = _sagaName,
+      EntityId = ctx.EntityId,
+      RescheduleCount = 0,
+    }).ConfigureAwait(false);
+    return true;
+  }
+
+  /// <summary>
+  /// What a tick does once the saga has made no progress across the whole stall limit: resolve what
+  /// it can, complete the saga if nothing is left that could still move, and abandon it only when
+  /// neither is possible.
+  /// </summary>
+  private async Task<WatchdogTickOutcome> _atTheStallLimitAsync(
+      SagaCompletionWatchdogTickEvent tick, SagaContext ctx, SagaItemAggregate? currentAgg, DateTimeOffset now,
+      CancellationToken cancellationToken) {
+    var items = _itemRepository is null
+      ? null
+      : await _itemRepository.GetItemsAsync(ctx.SagaId, cancellationToken).ConfigureAwait(false);
+
+    if (await _resolveStrandedItemsAsync(ctx, items, cancellationToken).ConfigureAwait(false) > 0) {
       // Stranded items were failed or re-dispatched. Complete now if that finished the saga, and
       // otherwise wake again with the stall count reset, so the new terminal events have time to
       // reach the projection before the saga is judged stuck a second time.
@@ -552,29 +622,89 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       }, now + _options.MinWatchdogDelay).ConfigureAwait(false);
       return WatchdogTickOutcome.ReArmed;
     }
-    if (shouldAbandon) {
-      var abandoned = new SagaCompletionAbandonedEvent {
-        StreamId = tick.StreamId,
-        SagaName = tick.SagaName,
-        EntityId = tick.EntityId,
-        RescheduleCount = tick.RescheduleCount,
-      };
-      await _emitter.PublishAsync(abandoned).ConfigureAwait(false);
-      return WatchdogTickOutcome.Abandoned;
+
+    if (await _tryCompleteWithUnstartedItemsAsync(ctx, items, cancellationToken).ConfigureAwait(false)) {
+      return WatchdogTickOutcome.Recovered;
     }
 
-    var next = new SagaCompletionWatchdogTickEvent {
+    // Claimed, so the abandonment is recorded for every consumer, not only one whose perspective
+    // applies the event: the sweep leaves a saga holding this claim alone, and a tick from an older
+    // chain that reaches the stall limit again publishes nothing.
+    var abandoned = new SagaCompletionAbandonedEvent {
       StreamId = tick.StreamId,
       SagaName = tick.SagaName,
       EntityId = tick.EntityId,
-      RescheduleCount = tick.RescheduleCount + 1,
-      LastObservedAt = now,
-      LastObservedCompleted = currentAgg?.Completed ?? 0,
-      LastObservedFailed = currentAgg?.Failed ?? 0,
-      ConsecutiveStallCount = nextStallCount,
+      RescheduleCount = tick.RescheduleCount,
     };
-    await _emitter.PublishAsync(next, now + nextDelay).ConfigureAwait(false);
-    return WatchdogTickOutcome.ReArmed;
+    await _emitter.PublishOnceAsync(SagaAbandonGuard.ClaimKey(_sagaName, ctx.SagaId), abandoned, cancellationToken)
+      .ConfigureAwait(false);
+    return WatchdogTickOutcome.Abandoned;
+  }
+
+  /// <summary>
+  /// Completes a saga whose recorded items are all terminal but fewer than its total, counting the
+  /// items that never got a row as failed.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A fan-out that stopped partway (its worker died after starting 337 of 350 items) leaves fewer item
+  /// rows than the saga's total. The reconciler counts terminal rows against the total and can never
+  /// reach it, and stranded-item resolution only reaches rows that exist, so the saga used to be
+  /// abandoned with every finished item discarded. At the stall limit, with every recorded row
+  /// terminal, nothing else can move: the items with no row were never going to start. The saga
+  /// completes as <see cref="SagaStatus.CompletedWithFailures"/>, with failed = total − completed.
+  /// </para>
+  /// <para>
+  /// This is the fallback. A service that overrides <see cref="LoadExpectedItemIdentifiersAsync"/> has
+  /// each missing item failed by name first, which records which items did not run; this then applies
+  /// only to what that could not name. A saga with no item row at all is not completed on this
+  /// evidence and is abandoned, and neither is one whose total cannot be read.
+  /// </para>
+  /// <para>
+  /// A row still Pending or Running here is one the store already records as terminal (any other would
+  /// have been resolved first), so it counts as the store records it.
+  /// </para>
+  /// </remarks>
+  private async Task<bool> _tryCompleteWithUnstartedItemsAsync(
+      SagaContext ctx, IReadOnlyList<SagaItemModel>? items, CancellationToken cancellationToken) {
+    if (items is not { Count: > 0 }) {
+      return false;
+    }
+    var saga = await LoadProjectionAsync(ctx.SagaId, cancellationToken).ConfigureAwait(false);
+    if (saga is not { TotalItems: > 0 }) {
+      return false;
+    }
+
+    var completed = items.Count(i => i.State == SagaItemState.Completed);
+    if (_terminalReader is not null) {
+      foreach (var item in items.Where(i => !i.IsTerminal)) {
+        var stored = await _terminalReader.CheckAsync(SagaItemStreams.Of(ctx.SagaId, item.ItemIdentifier), cancellationToken)
+          .ConfigureAwait(false);
+        if (stored == SagaItemTerminalOutcome.Completed) {
+          completed++;
+        }
+      }
+    }
+
+    // The recovery this tick ran first declined, so fewer than TotalItems items completed and the
+    // difference is at least one.
+    await CompleteSagaAsync(
+      ctx, SagaStatus.CompletedWithFailures, completedByItemIdentifier: "watchdog",
+      completed, saga.TotalItems - completed, saga.TotalItems, cancellationToken).ConfigureAwait(false);
+    _markCompletionDispatched(ctx.SagaId);
+    return true;
+  }
+
+  /// <summary>
+  /// Marks the in-memory tracker once a recovery path has claimed the completion, so a late per-item
+  /// terminal on this instance does not drive a second attempt.
+  /// </summary>
+  private void _markCompletionDispatched(Guid sagaId) {
+    lock (_completionLock) {
+      if (_completionTrackers.TryGetValue(sagaId, out var tracker)) {
+        tracker.DispatchedCompletion = true;
+      }
+    }
   }
 
   /// <summary>
@@ -630,17 +760,27 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_TickLostAndSagaStillStranded_IsReArmedAfterTheInterval_NotBeforeAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_SeveralInstancesInOneInterval_ArmOneTickAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_TickStillComing_IsNotReArmedHoweverManyIntervalsHavePassedAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_AbandonedSaga_IsNotReArmedInLaterIntervalsAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_ArmsARunningSaga_BesideOneHoldingItsAbandonmentClaimAsync</tests>
   public virtual async Task<int> ArmStrandedSagasAsync(ISagaWakeLookup wakes, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(wakes);
 
     // An abandoned saga is not coming back on its own, which is what abandoning it decided. Re-arming
     // it once per interval published its abandonment again each time and told an operator nothing new.
-    // Re-driving it is an explicit act, through the reset path.
+    // The status covers a saga whose perspective records it; the abandonment claim covers every saga,
+    // including one whose perspective does not. Re-driving it is an explicit act:
+    // ReDriveAbandonedSagaAsync.
     var candidates = (await LoadIncompleteSagasAsync(cancellationToken).ConfigureAwait(false))
       .Where(c => !c.Saga.CompletionEventDispatched
                && c.Saga.TotalItems > 0
                && c.Saga.Status != SagaStatus.Abandoned)
       .ToList();
+    if (candidates.Count > 0) {
+      var abandoned = await _emitter.FindClaimedAsync(
+          [.. candidates.Select(c => SagaAbandonGuard.ClaimKey(_sagaName, c.Saga.Id))], cancellationToken)
+        .ConfigureAwait(false);
+      candidates.RemoveAll(c => abandoned.Contains(SagaAbandonGuard.ClaimKey(_sagaName, c.Saga.Id)));
+    }
     if (candidates.Count == 0) {
       return 0;
     }
@@ -729,13 +869,18 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     "No terminal event was recorded for this item across every watchdog check before the stall limit; " +
     "the worker processing it was most likely lost.";
 
+  /// <summary>Why an expected item that never got a row is failed; carried on the item's failed event.</summary>
+  private const string UNSTARTED_ITEM_MESSAGE =
+    "The item never started: no item row or terminal event was recorded for it before the stall limit, " +
+    "so the fan-out that would have started it was most likely lost.";
+
   /// <summary>
   /// Resolves items left non-terminal once the saga has made no progress across the stall limit.
   /// </summary>
   /// <remarks>
   /// <para>
-  /// At the stall limit no item has moved across every watchdog check. An item still non-terminal
-  /// then, with no terminal event in its per-item stream either, was being processed by a worker
+  /// At the stall limit no item has moved across every watchdog check. An item still
+  /// non-terminal then, with no terminal event in its per-item stream either, was being processed by a worker
   /// that no longer exists: the message that would finish it went with the worker, so nothing will
   /// retry it and nothing will dead-letter it. Left alone, the saga could only be abandoned —
   /// discarding every item that did finish.
@@ -747,37 +892,89 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// is merely behind, which the reconciler resolves. Without an item repository nothing can be
   /// enumerated, and the saga is abandoned exactly as before.
   /// </para>
+  /// <para>
+  /// When the service can say which items the saga was started with
+  /// (<see cref="LoadExpectedItemIdentifiersAsync"/>), each one with no row at all is resolved the same
+  /// way, as an item that never started.
+  /// </para>
   /// </remarks>
   /// <returns>How many items were failed or re-dispatched.</returns>
-  private async Task<int> _resolveStrandedItemsAsync(SagaContext ctx, CancellationToken cancellationToken) {
-    if (_itemRepository is null) {
+  private async Task<int> _resolveStrandedItemsAsync(
+      SagaContext ctx, IReadOnlyList<SagaItemModel>? items, CancellationToken cancellationToken) {
+    if (items is null) {
       return 0;
     }
 
-    var items = await _itemRepository.GetItemsAsync(ctx.SagaId, cancellationToken).ConfigureAwait(false);
     var resolved = 0;
     foreach (var item in items.Where(i => i.State is SagaItemState.Pending or SagaItemState.Running)) {
-      if (_terminalReader is not null) {
-        var stored = await _terminalReader.CheckAsync(SagaItemStreams.Of(ctx.SagaId, item.ItemIdentifier), cancellationToken)
-          .ConfigureAwait(false);
-        if (stored != SagaItemTerminalOutcome.NotTerminal) {
-          continue;
-        }
-      }
+      var details = $"Started {item.StartedAt:O}; attempts {item.AttemptCount}; state {item.State}.";
+      resolved += await _resolveItemAsync(ctx, item, STRANDED_ITEM_MESSAGE, details, cancellationToken).ConfigureAwait(false);
+    }
 
-      if (!await TryRedriveStrandedItemAsync(ctx, item, cancellationToken).ConfigureAwait(false)) {
-        await FailItemAsync(
-          ctx,
-          item.ItemIdentifier,
-          STRANDED_ITEM_MESSAGE,
-          $"Started {item.StartedAt:O}; attempts {item.AttemptCount}; state {item.State}.",
-          item.DisplayName,
-          cancellationToken).ConfigureAwait(false);
+    var expected = await LoadExpectedItemIdentifiersAsync(ctx, cancellationToken).ConfigureAwait(false);
+    if (expected is not null) {
+      var recorded = items.Select(i => i.ItemIdentifier).ToHashSet(StringComparer.Ordinal);
+      foreach (var identifier in expected.Where(id => !recorded.Contains(id)).Distinct(StringComparer.Ordinal)) {
+        var unstarted = new SagaItemModel {
+          SagaId = ctx.SagaId,
+          SagaName = _sagaName,
+          ItemIdentifier = identifier,
+          State = SagaItemState.Pending,
+        };
+        resolved += await _resolveItemAsync(ctx, unstarted, UNSTARTED_ITEM_MESSAGE, "No item row was recorded for it.", cancellationToken)
+          .ConfigureAwait(false);
       }
-      resolved++;
     }
     return resolved;
   }
+
+  /// <summary>
+  /// Re-drives or fails one item that nothing will finish, unless the store already records it as
+  /// terminal.
+  /// </summary>
+  /// <returns>1 when the item was re-dispatched or failed, 0 when the store already had it.</returns>
+  private async Task<int> _resolveItemAsync(
+      SagaContext ctx, SagaItemModel item, string message, string details, CancellationToken cancellationToken) {
+    if (_terminalReader is not null) {
+      var stored = await _terminalReader.CheckAsync(SagaItemStreams.Of(ctx.SagaId, item.ItemIdentifier), cancellationToken)
+        .ConfigureAwait(false);
+      if (stored != SagaItemTerminalOutcome.NotTerminal) {
+        return 0;
+      }
+    }
+
+    if (!await TryRedriveStrandedItemAsync(ctx, item, cancellationToken).ConfigureAwait(false)) {
+      await FailItemAsync(ctx, item.ItemIdentifier, message, details, item.DisplayName, cancellationToken).ConfigureAwait(false);
+    }
+    return 1;
+  }
+
+  /// <summary>
+  /// The identifiers of every item the saga was started with, or <see langword="null"/> when this
+  /// service cannot say.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Consulted only at the watchdog's stall limit. An item listed here with no item row at all was
+  /// never started: the fan-out that would have started it stopped partway, typically because its
+  /// worker died. Each such item is offered to <see cref="TryRedriveStrandedItemAsync"/> and, if not
+  /// re-dispatched, failed with a reason, exactly as an item whose worker was lost is, so the saga can
+  /// complete with every failure visible against the item that failed.
+  /// </para>
+  /// <para>
+  /// Override when the identifiers can be read back, for example from the saga's initiation event or
+  /// the command that started it. The default returns <see langword="null"/>; the watchdog then
+  /// counts the items with no row as failed, without naming them, once every recorded row is terminal.
+  /// </para>
+  /// </remarks>
+  /// <param name="ctx">The saga.</param>
+  /// <param name="cancellationToken">Cancels the read.</param>
+  /// <returns>The expected item identifiers, or <see langword="null"/>.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#items-that-never-started</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_ExpectedItemsKnown_FailsEachItemThatNeverGotARowAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_ItemsWithNoRow_AreFailedAndTheSagaCompletesAsync</tests>
+  protected virtual Task<IReadOnlyList<string>?> LoadExpectedItemIdentifiersAsync(SagaContext ctx, CancellationToken cancellationToken)
+    => Task.FromResult<IReadOnlyList<string>?>(null);
 
   /// <summary>
   /// Offers a stranded item back to the saga service before it is failed.
