@@ -465,8 +465,8 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// saga is still in progress, computes an adaptive next-tick delay from the
   /// observed completion rate (see <c>_computeAdaptiveNextDelay</c>) — or, when
   /// <see cref="SagaOptions.MaxConsecutiveStalls"/> is reached, publishes
-  /// <see cref="SagaCompletionAbandonedEvent"/> so operators can triage the
-  /// stuck saga.
+  /// <see cref="SagaCompletionAbandonedEvent"/> once, under the saga's
+  /// <see cref="SagaAbandonGuard"/> claim, so operators can triage the stuck saga.
   /// </summary>
   /// <remarks>
   /// <para>
@@ -507,6 +507,8 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:ProgressBetweenTicks_NextDelayIsEtaBasedAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:NoProgressBetweenTicks_StallCounterIncrementsAndBacksOffAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_AbandonsAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_AbandonsUnderTheSagasAbandonmentClaimAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:MaxConsecutiveStalls_AbandonmentAlreadyClaimed_PublishesNoSecondAbandonEventAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:ProgressAfterStalls_ResetsStallCounterAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:NextDelay_ClampedAtMaxAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs:CompletedSaga_TickWithProgress_EndsTheChainAsync</tests>
@@ -553,13 +555,17 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       return WatchdogTickOutcome.ReArmed;
     }
     if (shouldAbandon) {
+      // Claimed, so the abandonment is recorded for every consumer, not only one whose perspective
+      // applies the event: the sweep leaves a saga holding this claim alone, and a tick from an older
+      // chain that reaches the stall limit again publishes nothing.
       var abandoned = new SagaCompletionAbandonedEvent {
         StreamId = tick.StreamId,
         SagaName = tick.SagaName,
         EntityId = tick.EntityId,
         RescheduleCount = tick.RescheduleCount,
       };
-      await _emitter.PublishAsync(abandoned).ConfigureAwait(false);
+      await _emitter.PublishOnceAsync(SagaAbandonGuard.ClaimKey(_sagaName, ctx.SagaId), abandoned, cancellationToken)
+        .ConfigureAwait(false);
       return WatchdogTickOutcome.Abandoned;
     }
 
@@ -575,6 +581,45 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     };
     await _emitter.PublishAsync(next, now + nextDelay).ConfigureAwait(false);
     return WatchdogTickOutcome.ReArmed;
+  }
+
+  /// <summary>
+  /// Re-drives a saga the completion watchdog abandoned: releases its abandonment claim and arms a
+  /// fresh watchdog tick, with the whole stall budget, at once.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An operator's act. Abandoning a saga decided it was not coming back on its own, and the
+  /// stranded-saga sweep leaves it alone from then on. Once the cause is dealt with (a worker
+  /// restored, an item re-dispatched), this puts the saga back under the watchdog: the tick checks
+  /// completion straight away, and a saga still not moving is abandoned again only after
+  /// <see cref="SagaOptions.MaxConsecutiveStalls"/> more stalls.
+  /// </para>
+  /// <para>
+  /// A saga whose perspective recorded <see cref="SagaStatus.Abandoned"/> is also skipped by the sweep
+  /// on that status, and cannot record a completion from it; move it back to running through the reset
+  /// path as well. A saga holding no abandonment claim is left as it is and nothing is armed, so calling
+  /// this for a saga that still has its chain cannot start a second one beside it.
+  /// </para>
+  /// </remarks>
+  /// <param name="ctx">The abandoned saga.</param>
+  /// <param name="cancellationToken">Cancels the re-drive.</param>
+  /// <returns><see langword="true"/> when the saga held an abandonment claim and was re-driven.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#abandoned-sagas</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:ReDrive_AbandonedSaga_ReleasesTheClaimAndArmsAFreshTickAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:ReDrive_SagaNotAbandoned_ArmsNothingAsync</tests>
+  public async Task<bool> ReDriveAbandonedSagaAsync(SagaContext ctx, CancellationToken cancellationToken) {
+    cancellationToken.ThrowIfCancellationRequested();
+    if (!await _emitter.ReleaseClaimAsync(SagaAbandonGuard.ClaimKey(_sagaName, ctx.SagaId), cancellationToken).ConfigureAwait(false)) {
+      return false;
+    }
+    await _emitter.PublishAsync(new SagaCompletionWatchdogTickEvent {
+      StreamId = ctx.SagaId,
+      SagaName = _sagaName,
+      EntityId = ctx.EntityId,
+      RescheduleCount = 0,
+    }).ConfigureAwait(false);
+    return true;
   }
 
   /// <summary>
@@ -630,17 +675,27 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_TickLostAndSagaStillStranded_IsReArmedAfterTheInterval_NotBeforeAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_SeveralInstancesInOneInterval_ArmOneTickAsync</tests>
   /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_TickStillComing_IsNotReArmedHoweverManyIntervalsHavePassedAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_AbandonedSaga_IsNotReArmedInLaterIntervalsAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_ArmsARunningSaga_BesideOneHoldingItsAbandonmentClaimAsync</tests>
   public virtual async Task<int> ArmStrandedSagasAsync(ISagaWakeLookup wakes, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(wakes);
 
     // An abandoned saga is not coming back on its own, which is what abandoning it decided. Re-arming
     // it once per interval published its abandonment again each time and told an operator nothing new.
-    // Re-driving it is an explicit act, through the reset path.
+    // The status covers a saga whose perspective records it; the abandonment claim covers every saga,
+    // including one whose perspective does not. Re-driving it is an explicit act:
+    // ReDriveAbandonedSagaAsync.
     var candidates = (await LoadIncompleteSagasAsync(cancellationToken).ConfigureAwait(false))
       .Where(c => !c.Saga.CompletionEventDispatched
                && c.Saga.TotalItems > 0
                && c.Saga.Status != SagaStatus.Abandoned)
       .ToList();
+    if (candidates.Count > 0) {
+      var abandoned = await _emitter.FindClaimedAsync(
+          [.. candidates.Select(c => SagaAbandonGuard.ClaimKey(_sagaName, c.Saga.Id))], cancellationToken)
+        .ConfigureAwait(false);
+      candidates.RemoveAll(c => abandoned.Contains(SagaAbandonGuard.ClaimKey(_sagaName, c.Saga.Id)));
+    }
     if (candidates.Count == 0) {
       return 0;
     }

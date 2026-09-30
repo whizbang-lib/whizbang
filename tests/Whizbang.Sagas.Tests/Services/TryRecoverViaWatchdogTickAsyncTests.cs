@@ -203,6 +203,45 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       .Because("abandon carries the rescheduleCount of the LAST tick that observed the stall for operator forensics.");
   }
 
+  /// <summary>
+  /// The abandonment is published under the saga's abandonment claim, which is what the stranded-saga
+  /// sweep reads to leave the saga alone afterward.
+  /// </summary>
+  [Test]
+  public async Task MaxConsecutiveStalls_AbandonsUnderTheSagasAbandonmentClaimAsync() {
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(new SagaItemAggregate(Total: 10, Completed: 7, Failed: 0, InProgress: 3), items: []),
+      terminalReader: new FakeTerminalReader(),
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 10 });
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(7, 0), CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Abandoned);
+    await Assert.That(emitter.ClaimKeys).Contains($"saga-abandoned:{SAGA_NAME}:{_sagaId}")
+      .Because("the claim is the record of the abandonment every consumer has, whether or not its perspective applies the event");
+    await Assert.That(emitter.Published.OfType<SagaCompletionAbandonedEvent>().Count()).IsEqualTo(1);
+  }
+
+  /// <summary>A saga already abandoned is not announced as abandoned a second time.</summary>
+  /// <remarks>
+  /// A second tick can still reach the stall limit, from a chain started before the abandonment. The
+  /// claim is already held, so it publishes nothing, and the outcome still says what the saga is.
+  /// </remarks>
+  [Test]
+  public async Task MaxConsecutiveStalls_AbandonmentAlreadyClaimed_PublishesNoSecondAbandonEventAsync() {
+    var emitter = new RecordingEmitter { WinClaims = false };
+    var svc = new TestSagaService(emitter,
+      new FakeItemRepository(new SagaItemAggregate(Total: 10, Completed: 7, Failed: 0, InProgress: 3), items: []),
+      new FakeTerminalReader(),
+      new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 10 });
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(_tickAtTheStallLimit(7, 0), CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Abandoned);
+    await Assert.That(emitter.Published).IsEmpty()
+      .Because("the saga was abandoned once; announcing it again tells an operator nothing new");
+  }
+
   [Test]
   public async Task ProgressAfterStalls_ResetsStallCounterAsync() {
     // ConsecutiveStallCount = 2 from prior ticks, BUT progress was just made.
@@ -769,9 +808,14 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       LastScheduledFor = scheduledFor;
       return Task.CompletedTask;
     }
+    public List<string> ClaimKeys { get; } = [];
+    public bool WinClaims { get; init; } = true;
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken) where TEvent : IEvent {
-      Published.Add(eventData);
-      return Task.FromResult(true);
+      ClaimKeys.Add(claimKey);
+      if (WinClaims) {
+        Published.Add(eventData);
+      }
+      return Task.FromResult(WinClaims);
     }
   }
 
