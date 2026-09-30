@@ -42,13 +42,15 @@ public class SagaWatchdogTickDeliveryIntegrationTests {
   private static ServiceProvider _host(RecordingParticipant handWritten) {
     var services = new ServiceCollection();
     services.AddLogging();
-    services.AddSingleton<ISagaEventEmitter, NoOpEmitter>();
     // [Saga]-declared sagas, each with its own generated tick receiver.
     services.AddGeneratorTestDefaultSaga();
     services.AddGeneratorTestCustomBaseSaga();
+    services.AddGeneratorTestChainedSaga();
     global::Whizbang.Sagas.Tests.Generated.DispatcherRegistrations.AddReceptors(services);
     global::Whizbang.Sagas.Tests.Generated.DispatcherRegistrations.AddWhizbangReceptorRegistry(services);
     services.AddWhizbangSagas();
+    // After AddWhizbangSagas, which registers the dispatcher-backed emitter this host has no dispatcher for.
+    services.AddSingleton<ISagaEventEmitter, NoOpEmitter>();
     // The hand-written saga, as AddSagaService exposes one to the router.
     services.AddScoped<ISagaWatchdogParticipant>(_ => handWritten);
     return services.BuildServiceProvider();

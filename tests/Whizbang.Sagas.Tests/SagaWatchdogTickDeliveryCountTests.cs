@@ -65,81 +65,105 @@ public class SagaWatchdogTickDeliveryCountTests {
   private static CapturedOutboxHost.StoredRow _row(CapturedOutboxHost host, SagaCompletionWatchdogTickEvent tick) =>
     host.Outbox.Rows.Single(r => ReferenceEquals(r.Payload, tick));
 
-  /// <summary>The tick published and received by the saga's own service is handled once.</summary>
+  private static Task _publishScheduledAsync(CapturedOutboxHost host, SagaCompletionWatchdogTickEvent tick)
+    => new Whizbang.Sagas.Services.DispatcherSagaEventEmitter(host.Dispatcher).PublishAsync(tick, DateTimeOffset.UtcNow.AddMinutes(5));
+
+  private static CapturedOutboxHost _otherHost() => CapturedOutboxHost.Create(services =>
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(Guid.CreateVersion7(), "other-host", "host-b", 2)));
+
+  /// <summary>
+  /// A scheduled tick published and received by the saga's own service is handled once, when its time
+  /// comes.
+  /// </summary>
+  /// <remarks>
+  /// The normal case: a saga arms its first tick for later when it starts, and every re-arm is
+  /// scheduled. The receiver used to sit at the post-inbox stage, which the invoker skips for a message
+  /// whose last hop is this same service, because such a message already ran its receptors when it was
+  /// published. A scheduled tick ran none, so every one was stored, committed and handed to nobody; only
+  /// the stranded-saga sweep's unscheduled ticks were ever handled.
+  /// </remarks>
+  [Test]
+  public async Task ScheduledTick_ReceivedByItsOwnService_IsHandledOnceAsync() {
+    await using var host = CapturedOutboxHost.Create();
+    var tick = _tick();
+
+    await _publishScheduledAsync(host, tick);
+    var envelope = _row(host, tick).Rehydrate<SagaCompletionWatchdogTickEvent>();
+    await _runStagesAsync(host, envelope, _stagesAfterTheOutbox);
+    var handledBeforeTheInbox = _handlings(host, tick);
+    await _runStagesAsync(host, envelope, _stagesOfTheInbox);
+
+    await Assert.That(handledBeforeTheInbox).IsEqualTo(0)
+      .Because("a scheduled tick waits for its time; handling it at publish would re-arm at once and cascade");
+    await Assert.That(_handlings(host, tick)).IsEqualTo(1)
+      .Because("a tick its own service armed has to reach the saga, or the watchdog chain ends at its first link");
+  }
+
+  /// <summary>
+  /// An unscheduled tick, as the stranded-saga sweep publishes one, is handled once too: on the
+  /// receiving side, like every other tick, and not also at publish.
+  /// </summary>
   [Test]
   public async Task ImmediateTick_ReceivedByItsOwnService_IsHandledOnceAsync() {
     await using var host = CapturedOutboxHost.Create();
     var tick = _tick();
 
     await host.Dispatcher.PublishAsync(tick);
+    var handledAtPublish = _handlings(host, tick);
     var envelope = _row(host, tick).Rehydrate<SagaCompletionWatchdogTickEvent>();
     await _runStagesAsync(host, envelope, [.. _stagesAfterTheOutbox, .. _stagesOfTheInbox]);
 
+    await Assert.That(handledAtPublish).IsEqualTo(0);
     await Assert.That(_handlings(host, tick)).IsEqualTo(1)
       .Because("a tick handled twice counts two stalls for one check");
   }
 
   /// <summary>
-  /// The tick received by another host of the same saga is not handled a second time there: it was
-  /// handled when it was published.
+  /// The publish writes no invocation record for the receiver, because the receiver no longer runs
+  /// there, so the record cannot stop it at the inbox.
   /// </summary>
   /// <remarks>
-  /// Watchdog ticks share one topic, so every host that declares a saga of the same name receives
-  /// every tick for it. The receiving host is a different service, so the rule that skips the inbox
-  /// stages for a message from this same service does not apply. What stops the second handling is the
-  /// receptor invocation record the publishing host's local path wrote on the envelope before the
-  /// envelope was stored.
+  /// The dispatcher records the receptors its local path runs on the envelope it stores. A record for
+  /// this receiver would skip it at the inbox stage, the one place it now runs.
   /// </remarks>
   [Test]
-  public async Task ImmediateTick_ReceivedByAnotherHostOfTheSameSaga_IsNotHandledAgainAsync() {
-    await using var publisher = CapturedOutboxHost.Create();
-    await using var otherHost = CapturedOutboxHost.Create(services =>
-      services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(Guid.CreateVersion7(), "other-host", "host-b", 2)));
-    var tick = _tick();
-
-    await publisher.Dispatcher.PublishAsync(tick);
-    var envelope = _row(publisher, tick).Rehydrate<SagaCompletionWatchdogTickEvent>();
-    await _runStagesAsync(publisher, envelope, _stagesAfterTheOutbox);
-    await _runStagesAsync(otherHost, envelope, _stagesOfTheInbox);
-
-    await Assert.That(_handlings(publisher, tick) + _handlings(otherHost, tick)).IsEqualTo(1)
-      .Because("one tick is one check of the saga, wherever it is delivered");
-  }
-
-  /// <summary>
-  /// The record written for the local path names the receiver and the stage it ran at, so an operator
-  /// reading the stored envelope sees where the tick was handled.
-  /// </summary>
-  [Test]
-  public async Task ImmediateTick_StoredEnvelope_RecordsTheLocalHandlingAsync() {
+  public async Task ImmediateTick_StoredEnvelope_RecordsNoLocalHandlingOfTheReceiverAsync() {
     await using var host = CapturedOutboxHost.Create();
     var tick = _tick();
 
     await host.Dispatcher.PublishAsync(tick);
 
-    var record = _row(host, tick).ReceptorInvocations
-      .Single(r => r.ReceptorId.EndsWith("GeneratorTestDefaultSaga.SagaCompletionWatchdogTickHandler", StringComparison.Ordinal));
-    await Assert.That(record.Stage).IsEqualTo(LifecycleStage.LocalImmediateInline);
+    await Assert.That(_row(host, tick).ReceptorInvocations
+        .Any(r => r.ReceptorId.EndsWith("SagaCompletionWatchdogTickHandler", StringComparison.Ordinal)))
+      .IsFalse();
   }
 
-  /// <summary>
-  /// A scheduled tick is not handled when it is published, so nothing is recorded for it and the
-  /// receiving host handles it once.
-  /// </summary>
+  /// <summary>Each host that receives a tick handles it once, whether it was published there or not.</summary>
+  /// <remarks>
+  /// Ticks share one topic, so a second service that declares a saga of the same name receives every
+  /// tick for it and handles it once, as the hand-written router does. Running one saga in two
+  /// differently named services is not a supported topology for the watchdog: each would check it.
+  /// </remarks>
+  /// <param name="scheduled">Whether the tick is scheduled or published for now.</param>
   [Test]
-  public async Task ScheduledTick_ReceivedByAnotherHostOfTheSameSaga_IsHandledOnceThereAsync() {
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task Tick_EachReceivingHost_HandlesItOnceAsync(bool scheduled) {
     await using var publisher = CapturedOutboxHost.Create();
-    await using var otherHost = CapturedOutboxHost.Create(services =>
-      services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(Guid.CreateVersion7(), "other-host", "host-b", 2)));
+    await using var otherHost = _otherHost();
     var tick = _tick();
 
-    await new Whizbang.Sagas.Services.DispatcherSagaEventEmitter(publisher.Dispatcher).PublishAsync(tick, DateTimeOffset.UtcNow.AddMinutes(5));
-    var envelope = _row(publisher, tick).Rehydrate<SagaCompletionWatchdogTickEvent>();
-    await _runStagesAsync(publisher, envelope, _stagesAfterTheOutbox);
-    await _runStagesAsync(otherHost, envelope, _stagesOfTheInbox);
+    if (scheduled) {
+      await _publishScheduledAsync(publisher, tick);
+    } else {
+      await publisher.Dispatcher.PublishAsync(tick);
+    }
+    // Each host receives its own copy of the stored row off the transport.
+    var row = _row(publisher, tick);
+    await _runStagesAsync(publisher, row.Rehydrate<SagaCompletionWatchdogTickEvent>(), [.. _stagesAfterTheOutbox, .. _stagesOfTheInbox]);
+    await _runStagesAsync(otherHost, row.Rehydrate<SagaCompletionWatchdogTickEvent>(), _stagesOfTheInbox);
 
-    await Assert.That(_handlings(publisher, tick)).IsEqualTo(0)
-      .Because("a scheduled tick waits for its time; handling it at publish would re-arm at once and cascade");
+    await Assert.That(_handlings(publisher, tick)).IsEqualTo(1);
     await Assert.That(_handlings(otherHost, tick)).IsEqualTo(1);
   }
 }

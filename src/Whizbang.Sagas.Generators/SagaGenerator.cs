@@ -355,6 +355,11 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
     sb.AppendLine();
     sb.AppendLine("  /// <summary>Drives the auto-armed watchdog tick through its re-arm / abandon lifecycle via <see cref=\"global::Whizbang.Sagas.Services.BaseSagaService{TInit,TItemsDispatched,TItemStarted,TItemCompleted,TItemFailed,TCompleted,TReset,THookStarted,THookCompleted}.TryRecoverViaWatchdogTickAsync\"/>.</summary>");
+    // Received at the pre-inbox stage, as the framework's router is: it runs once for every inbox row
+    // whichever service published it, where the post-inbox default skips a tick this same service
+    // published, which is nearly every tick a saga has. It also keeps the receiver off the publish path,
+    // so an unscheduled tick is handled on the receiving side like any other.
+    sb.AppendLine("  [global::Whizbang.Core.Messaging.FireAt(global::Whizbang.Core.Messaging.LifecycleStage.PreInboxInline)]");
     sb.AppendLine("  public sealed class SagaCompletionWatchdogTickHandler(Service _svc) : global::Whizbang.Core.IReceptor<global::Whizbang.Sagas.SagaCompletionWatchdogTickEvent> {");
     sb.AppendLine("    public async global::System.Threading.Tasks.ValueTask HandleAsync(global::Whizbang.Sagas.SagaCompletionWatchdogTickEvent @event, global::System.Threading.CancellationToken ct) {");
     sb.AppendLine("      if (@event.SagaName != SagaName) return;");

@@ -78,13 +78,13 @@ public class SagaRecoveryReceptorDiscoveryTests {
     await using var provider = _buildProvider();
     var registry = provider.GetRequiredService<IReceptorRegistry>();
 
-    // The watchdog handler carries no [FireAt], so it lands on the default stage.
-    var stages = Enum.GetValues<LifecycleStage>();
-    var routedAtAnyStage = stages.Any(stage =>
-      registry.GetReceptorsFor(typeof(SagaCompletionWatchdogTickEvent), stage).Count > 0);
+    // The watchdog handler is received at the pre-inbox stage, and only there (#942).
+    var routedStages = Enum.GetValues<LifecycleStage>()
+      .Where(stage => registry.GetReceptorsFor(typeof(SagaCompletionWatchdogTickEvent), stage).Count > 0)
+      .ToList();
 
-    await Assert.That(routedAtAnyStage).IsTrue()
-      .Because("The watchdog tick is the safety net that re-arms with backoff and eventually abandons; unrouted, a stranded saga is never reconciled at all.");
+    await Assert.That(routedStages).IsEquivalentTo([LifecycleStage.PreInboxInline])
+      .Because("The watchdog tick is the safety net that re-arms with backoff and eventually abandons. At the post-inbox default it skipped every tick its own service published, which is nearly all of them; at a publishing stage it would run at arming time.");
   }
 
   [Test]
