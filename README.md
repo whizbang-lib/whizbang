@@ -22,6 +22,7 @@
   <a href="https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml"><img src="https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml/badge.svg" alt="Secret Scanning"></a>
   <a href="https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml"><img src="https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml/badge.svg" alt="Supply Chain"></a>
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/whizbang-lib/whizbang"><img src="https://api.securityscorecards.dev/projects/github.com/whizbang-lib/whizbang/badge" alt="OSSF Scorecard"></a>
+  <a href="https://www.bestpractices.dev/projects/15090"><img src="https://www.bestpractices.dev/projects/15090/badge" alt="OpenSSF Best Practices"></a>
 </p>
 
 <p align="center">
