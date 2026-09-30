@@ -49,7 +49,7 @@ public class SplitHydratorHookedWriteTests : EFCoreTestBase {
     await connection.OpenAsync();
     await using var command = new NpgsqlCommand(
         $"SELECT status, priority, data ->> 'Note' FROM {TABLE_NAME} WHERE id = @id", connection);
-    command.Parameters.AddWithValue("id", id);
+    command.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await command.ExecuteReaderAsync();
     if (!await reader.ReadAsync()) {
       return null;

@@ -266,7 +266,7 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
     var found = await store.FindClaimedAsync([held, expired, free], CancellationToken.None);
 
     await Assert.That(found).IsNotNull();
-    await Assert.That(found!).IsEquivalentTo([held, expired])
+    await Assert.That(found).IsEquivalentTo([held, expired])
       .Because("a key is held while its row exists: a claim attempt on an expired row still conflicts, so it still reads as claimed");
   }
 
@@ -278,7 +278,7 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
     var found = await store.FindClaimedAsync([], CancellationToken.None);
 
     await Assert.That(found).IsNotNull();
-    await Assert.That(found!).IsEmpty();
+    await Assert.That(found).IsEmpty();
   }
 
   /// <summary>A released key can be claimed again, and releasing one nobody holds reports so.</summary>
@@ -323,7 +323,7 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
     var found = await store.FindClaimedAsync([key], CancellationToken.None);
     var released = await store.ReleaseAsync(key, CancellationToken.None);
 
-    await Assert.That(found!).IsEquivalentTo([key]);
+    await Assert.That(found).IsEquivalentTo([key]);
     await Assert.That(released).IsTrue();
   }
 
@@ -352,7 +352,7 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
 
     await Assert.That(pruned).IsEqualTo(1);
     var left = await store.FindClaimedAsync([old, recent, otherPrefix, likeWildcard], CancellationToken.None);
-    await Assert.That(left!).IsEquivalentTo([recent, otherPrefix, likeWildcard])
+    await Assert.That(left).IsEquivalentTo([recent, otherPrefix, likeWildcard])
       .Because("the prefix is matched literally: another prefix, or one a LIKE wildcard would stretch to, is not the caller's to prune");
   }
 

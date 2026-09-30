@@ -136,8 +136,8 @@ public class PhysicalFieldPromotionTests {
     await Assert.That(indexes["idx_promoted_item_code_ci_trgm"]).Contains("lower(code) gin_trgm_ops")
       .Because("a case-folded substring index over the document becomes one over the column");
     var overTheDocument = indexes
-      .Where(i => i.Key != OPERATOR_INDEX)
-      .Where(i => _promotedKeys.Any(key => i.Value.Contains($"(data ->> '{key}'::text)", StringComparison.Ordinal)))
+      .Where(i => i.Key != OPERATOR_INDEX
+        && _promotedKeys.Any(key => i.Value.Contains($"(data ->> '{key}'::text)", StringComparison.Ordinal)))
       .Select(i => i.Key)
       .ToList();
     await Assert.That(overTheDocument).IsEmpty()

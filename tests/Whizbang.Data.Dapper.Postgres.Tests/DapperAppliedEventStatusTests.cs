@@ -18,7 +18,7 @@ public class DapperAppliedEventStatusTests : PostgresTestBase {
   private const string PERSPECTIVE = "Ledger.Tests.OrderViewPerspective";
 
   private DapperWorkCoordinator _build() =>
-    new DapperWorkCoordinator(
+    new(
       ConnectionString,
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       NullLogger<DapperWorkCoordinator>.Instance);

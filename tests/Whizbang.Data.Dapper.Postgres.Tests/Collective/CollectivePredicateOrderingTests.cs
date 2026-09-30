@@ -354,7 +354,7 @@ public class CollectivePredicateOrderingTests {
     // A long and a DateTimeOffset cannot be compared in C#; a converted operand could reach the compiler only
     // through a hand-built tree, which is exactly what this builds.
     var row = Expression.Parameter(typeof(PerspectiveRow<OrderedModel>), "r");
-    var data = Expression.Property(row, nameof(PerspectiveRow<OrderedModel>.Data));
+    var data = Expression.Property(row, nameof(PerspectiveRow<>.Data));
     var body = Expression.LessThan(
       Expression.Convert(Expression.Property(data, nameof(OrderedModel.ActivatedAt)), typeof(object)),
       Expression.Convert(Expression.Property(data, nameof(OrderedModel.Ordinal)), typeof(object)),

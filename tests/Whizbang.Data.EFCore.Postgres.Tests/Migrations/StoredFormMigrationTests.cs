@@ -60,7 +60,7 @@ public class StoredFormMigrationTests : IAsyncDisposable {
 
   [Test]
   public async Task NumberToString_ConvertsNumbersAndBooleans_LeavesStringsNullsAndMissingAsync() {
-    await _seedAsync("""{"Status": 123}""", """{"Status": "Open"}""", """{"Status": null}""", """{}""", """{"Status": 1.50}""", """{"Status": true}""");
+    await _seedAsync("""{"Status": 123}""", """{"Status": "Open"}""", """{"Status": null}""", "{}", """{"Status": 1.50}""", """{"Status": true}""");
 
     var log = await _applyAsync(_generated("wh_per_thing.Status:Int32->String", StoredFormStep.ToText("Status")));
 
@@ -223,7 +223,7 @@ public class StoredFormMigrationTests : IAsyncDisposable {
 
   [Test]
   public async Task DefaultWhenMissing_FillsOnlyAMissingKey_UnderAnExistingParentAsync() {
-    await _seedAsync("""{}""", """{"Tier": 5}""", """{"Tier": null}""", """{"Shipping": {}}""", """{"Shipping": null}""");
+    await _seedAsync("{}", """{"Tier": 5}""", """{"Tier": null}""", """{"Shipping": {}}""", """{"Shipping": null}""");
 
     await _applyAsync(
       _generated("wh_per_thing.Tier:default", StoredFormStep.DefaultWhenMissing("Tier", "1")),
@@ -395,11 +395,12 @@ public class StoredFormMigrationTests : IAsyncDisposable {
 
     var status = await _statusAsync([converted, settled, custom]);
 
-    await Assert.That(status.Select(s => (s.Name, s.State)).ToList()).IsEquivalentTo(new[] {
+    (string, StoredFormMigrationState)[] expected = [
       ("wh_per_thing.Status:Int32->String", StoredFormMigrationState.Applied),
       ("wh_per_thing.Legacy:removed", StoredFormMigrationState.Settled),
       ("2026-10-increment-count", StoredFormMigrationState.Pending),
-    });
+    ];
+    await Assert.That(status.Select(s => (s.Name, s.State)).ToList()).IsEquivalentTo(expected);
     var applied = status.Single(s => s.State == StoredFormMigrationState.Applied);
     await Assert.That(applied.RowsConverted).IsEqualTo(1L);
     await Assert.That(applied.Table).IsEqualTo(TABLE);
@@ -512,7 +513,7 @@ public class StoredFormMigrationTests : IAsyncDisposable {
     await connection.OpenAsync();
     await using var command = new NpgsqlCommand(
       "SELECT rows_converted, settled_at IS NOT NULL, kind FROM wh_stored_form_migrations WHERE name = @name AND first_applied_at IS NOT NULL", connection);
-    command.Parameters.AddWithValue("name", name);
+    command.Parameters.AddWithValue(nameof(name), name);
     await using var reader = await command.ExecuteReaderAsync();
     return await reader.ReadAsync() ? (reader.GetInt64(0), reader.GetBoolean(1), reader.GetString(2)) : null;
   }

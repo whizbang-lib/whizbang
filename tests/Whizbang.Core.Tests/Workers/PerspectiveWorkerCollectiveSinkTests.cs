@@ -1305,9 +1305,9 @@ public class PerspectiveWorkerCollectiveSinkTests {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
       })).Value),
+      timeProvider: timeProvider,
       leaseRegistry: leaseRegistry,
-      compositeMetrics: compositeMetrics,
-      timeProvider: timeProvider);
+      compositeMetrics: compositeMetrics);
     return (worker, harness, coordinator);
   }
 
@@ -1586,7 +1586,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
       var c = Interlocked.Increment(ref _cycle);
       foreach (var kv in _waiters) { if (c >= kv.Key) { kv.Value.TrySetResult(); } }
       var later = Interlocked.Exchange(ref _laterWork, null);
-      var pw = c == 1 ? new List<PerspectiveWork>(work) : later ?? [];
+      List<PerspectiveWork> pw = c == 1 ? [.. work] : later ?? [];
       var reoffer = Interlocked.Exchange(ref _extraDrainOffers, 0) > 0;
       var sids = c == 1 || reoffer ? new List<Guid>(DrainStreamIds) : [];
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = pw, PerspectiveStreamIds = sids });

@@ -50,7 +50,7 @@ public class DapperCollectiveSinkQueueTests : PostgresTestBase {
       """;
     cmd.Parameters.AddWithValue("eid", eventId);
     cmd.Parameters.AddWithValue("sid", stream);
-    cmd.Parameters.AddWithValue("seq", commitSequence.HasValue ? commitSequence.Value : DBNull.Value);
+    cmd.Parameters.AddWithValue("seq", (object?)commitSequence ?? DBNull.Value);
     await cmd.ExecuteNonQueryAsync();
   }
 }

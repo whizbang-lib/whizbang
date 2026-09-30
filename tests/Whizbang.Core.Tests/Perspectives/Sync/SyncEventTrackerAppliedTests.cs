@@ -75,6 +75,8 @@ public class SyncEventTrackerAppliedTests {
     using var cts = new CancellationTokenSource();
 
     var waiting = tracker.WhenAppliedAsync(eventId, PERSPECTIVE, cts.Token);
+    await Assert.That(tracker.AppliedWaiterCount).IsEqualTo(1)
+      .Because("the wait is registered until it is served or gives up");
     await cts.CancelAsync();
 
     await Assert.That(async () => await waiting).Throws<OperationCanceledException>();
