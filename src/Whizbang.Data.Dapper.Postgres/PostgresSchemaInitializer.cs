@@ -36,6 +36,17 @@ public sealed class PostgresSchemaInitializer {
   private readonly string _connectionString;
   private readonly string? _perspectiveSchemaSql;
   private readonly KeyValuePair<string, string>[]? _perspectiveEntries;
+  /// <summary>
+  /// How many times one batched region may be sent before it is treated as not converging.
+  /// </summary>
+  /// <remarks>
+  /// At any sensible batch size this is far past a real backfill, so reaching it means the region's
+  /// statement is not excluding what it already handled rather than that the table is large. Settable
+  /// so a test can prove the guard fires without sending ten thousand statements; nothing outside a
+  /// test changes it.
+  /// </remarks>
+  internal static int MaxBatchPasses { get; set; } = 10_000;
+
   private readonly IMigrationProvider _migrationProvider;
   private readonly string? _applicationVersion;
   private readonly IApplicationSchemaObjects? _applicationObjects;
@@ -512,7 +523,7 @@ public sealed class PostgresSchemaInitializer {
               break;
             }
 
-            if (++passes > 10_000) {
+            if (++passes > MaxBatchPasses) {
               throw new InvalidOperationException(
                 $"Migration {migration.Name} ran {passes} batches without finishing. A batched "
                 + "region has to exclude the rows it already handled, or it reports the same rows "
