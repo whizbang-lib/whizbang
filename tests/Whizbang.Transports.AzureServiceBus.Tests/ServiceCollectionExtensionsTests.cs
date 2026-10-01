@@ -576,6 +576,22 @@ public class ServiceCollectionExtensionsTests {
   }
 
   [Test]
+  public async Task AddAzureServiceBusTransport_PublishStrategy_ReadsTheBoundThrottleRetryOptionsAsync() {
+    // #1014: Whizbang:ThrottleRetry binds into IOptions<ThrottleRetryOptions>; the strategy used to be
+    // handed null, so neither configuration nor services.Configure ever reached it.
+    var services = new ServiceCollection();
+    services.AddSingleton(new ServiceBusClient(EMULATOR_CONNECTION_STRING));
+    services.AddLogging();
+    services.Configure<ThrottleRetryOptions>(o => o.MaxAttempts = 9);
+    services.AddAzureServiceBusTransport(EMULATOR_CONNECTION_STRING);
+    var provider = services.BuildServiceProvider();
+
+    var strategy = provider.GetRequiredService<IMessagePublishStrategy>();
+
+    await Assert.That(((TransportPublishStrategy)strategy).ThrottleRetry.MaxAttempts).IsEqualTo(9);
+  }
+
+  [Test]
   public async Task AddAzureServiceBusTransport_WithNamespaceOutboxStrategy_WiresPublishTimeFlipSeamAsync() {
     // Phase 6: the DI factory must recognize NamespaceOutboxStrategy, propagate its shared
     // inbox topic, AND hand the strategy itself to TransportPublishStrategy so the

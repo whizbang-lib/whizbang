@@ -67,7 +67,7 @@ public class WhizbangSecurityHeadersMiddleware {
   private void _applyHeaders(HttpContext context) {
     var headers = context.Response.Headers;
 
-    if (_options.StrictTransportSecurity is not null && _isTlsRequest(context.Request)) {
+    if (!string.IsNullOrEmpty(_options.StrictTransportSecurity) && _isTlsRequest(context.Request)) {
       _setIfAbsent(headers, "Strict-Transport-Security", _options.StrictTransportSecurity);
     }
     _setIfAbsent(headers, "X-Content-Type-Options", _options.XContentTypeOptions);
@@ -77,8 +77,10 @@ public class WhizbangSecurityHeadersMiddleware {
     _setIfAbsent(headers, "Permissions-Policy", _options.PermissionsPolicy);
   }
 
+  // Null or empty both mean "do not send": configuration cannot express null, so an empty value is how
+  // Whizbang:AspNet:SecurityHeaders turns a header off.
   private static void _setIfAbsent(IHeaderDictionary headers, string name, string? value) {
-    if (value is not null && !headers.ContainsKey(name)) {
+    if (!string.IsNullOrEmpty(value) && !headers.ContainsKey(name)) {
       headers[name] = value;
     }
   }

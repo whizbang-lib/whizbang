@@ -9,10 +9,12 @@ using TUnit.Core;
 namespace Whizbang.Hosting.AspNet.Tests;
 
 /// <summary>
-/// The ASP.NET hosting options bind from configuration, so an operator can change them at deploy
-/// time without a code change. Before this, every one of them needed
+/// #1014: the ASP.NET hosting options bind from <c>Whizbang:AspNet:*</c>, so an operator can change
+/// them at deploy time without a code change. Before this, every one of them needed
 /// <c>services.Configure&lt;T&gt;(…)</c> and a redeploy.
 /// </summary>
+/// <code-under-test>src/Whizbang.Hosting.AspNet/ServiceCollectionExtensions.cs</code-under-test>
+/// <docs>operations/configuration/configuration-reference</docs>
 public class AspNetOptionsConfigurationBindingTests {
 
   private static ServiceProvider _build(Dictionary<string, string?> values) {
@@ -24,54 +26,57 @@ public class AspNetOptionsConfigurationBindingTests {
   }
 
   [Test]
-  public async Task AvailabilityGate_BindsFromConfigurationAsync() {
+  public async Task AvailabilityGate_EveryKeyBindsAsync() {
     using var provider = _build(new() {
       ["Whizbang:AspNet:Availability:Enabled"] = "false",
       ["Whizbang:AspNet:Availability:Mode"] = "AllNonExempt",
-    });
-
-    var options = provider.GetRequiredService<IOptions<WhizbangAvailabilityOptions>>().Value;
-
-    await Assert.That(options.Enabled).IsFalse();
-    await Assert.That(options.Mode).IsEqualTo(AvailabilityGateMode.AllNonExempt);
-  }
-
-  [Test]
-  public async Task AvailabilityGate_ExemptPaths_BindAsAListAsync() {
-    using var provider = _build(new() {
       ["Whizbang:AspNet:Availability:ExemptPaths:0"] = "/healthz",
       ["Whizbang:AspNet:Availability:ExemptPaths:1"] = "/status",
     });
 
     var options = provider.GetRequiredService<IOptions<WhizbangAvailabilityOptions>>().Value;
 
+    await Assert.That(options.Enabled).IsFalse();
+    await Assert.That(options.Mode).IsEqualTo(AvailabilityGateMode.AllNonExempt);
     await Assert.That(options.ExemptPaths).IsNotNull();
-    await Assert.That(options.ExemptPaths!).Contains("/healthz");
-    await Assert.That(options.ExemptPaths!).Contains("/status");
+    await Assert.That(options.ExemptPaths!).IsEquivalentTo(["/healthz", "/status"]);
   }
 
   [Test]
-  public async Task SecurityHeaders_BindFromConfigurationAsync() {
-    using var provider = _build(new() {
-      ["Whizbang:AspNet:SecurityHeaders:XFrameOptions"] = "SAMEORIGIN",
-      ["Whizbang:AspNet:SecurityHeaders:ReferrerPolicy"] = "no-referrer",
-    });
-
-    var options = provider.GetRequiredService<IOptions<WhizbangSecurityHeadersOptions>>().Value;
-
-    await Assert.That(options.XFrameOptions).IsEqualTo("SAMEORIGIN");
-    await Assert.That(options.ReferrerPolicy).IsEqualTo("no-referrer");
-  }
-
-  [Test]
-  public async Task SecurityHeaders_CanBeDisabledFromConfigurationAsync() {
+  public async Task SecurityHeaders_EveryKeyBindsAsync() {
     using var provider = _build(new() {
       ["Whizbang:AspNet:SecurityHeaders:Enabled"] = "false",
+      ["Whizbang:AspNet:SecurityHeaders:StrictTransportSecurity"] = "max-age=60",
+      ["Whizbang:AspNet:SecurityHeaders:XContentTypeOptions"] = "nosniff-custom",
+      ["Whizbang:AspNet:SecurityHeaders:XFrameOptions"] = "SAMEORIGIN",
+      ["Whizbang:AspNet:SecurityHeaders:ContentSecurityPolicy"] = "default-src 'self'",
+      ["Whizbang:AspNet:SecurityHeaders:ReferrerPolicy"] = "no-referrer",
+      ["Whizbang:AspNet:SecurityHeaders:PermissionsPolicy"] = "camera=()",
+      ["Whizbang:AspNet:SecurityHeaders:AllowedMethods:0"] = "GET",
+      ["Whizbang:AspNet:SecurityHeaders:AllowedMethods:1"] = "POST",
     });
 
     var options = provider.GetRequiredService<IOptions<WhizbangSecurityHeadersOptions>>().Value;
 
     await Assert.That(options.Enabled).IsFalse();
+    await Assert.That(options.StrictTransportSecurity).IsEqualTo("max-age=60");
+    await Assert.That(options.XContentTypeOptions).IsEqualTo("nosniff-custom");
+    await Assert.That(options.XFrameOptions).IsEqualTo("SAMEORIGIN");
+    await Assert.That(options.ContentSecurityPolicy).IsEqualTo("default-src 'self'");
+    await Assert.That(options.ReferrerPolicy).IsEqualTo("no-referrer");
+    await Assert.That(options.PermissionsPolicy).IsEqualTo("camera=()");
+    await Assert.That(options.AllowedMethods).IsEquivalentTo(["GET", "POST"]);
+  }
+
+  [Test]
+  public async Task SecurityHeaders_AnEmptyValueBindsAsEmpty_WhichSuppressesTheHeaderAsync() {
+    using var provider = _build(new() {
+      ["Whizbang:AspNet:SecurityHeaders:PermissionsPolicy"] = "",
+    });
+
+    var options = provider.GetRequiredService<IOptions<WhizbangSecurityHeadersOptions>>().Value;
+
+    await Assert.That(options.PermissionsPolicy).IsEqualTo(string.Empty);
   }
 
   [Test]
@@ -85,8 +90,23 @@ public class AspNetOptionsConfigurationBindingTests {
 
     var options = provider.GetRequiredService<IOptions<WhizbangCorrelationOptions>>().Value;
 
-    await Assert.That(options.HeaderNames).Contains("X-Request-Id");
-    await Assert.That(options.HeaderNames).Contains("X-Correlation-ID");
+    await Assert.That(options.HeaderNames).IsEquivalentTo(["X-Correlation-ID", "X-Request-Id"]);
+  }
+
+  [Test]
+  public async Task CalledTwice_BindsOnce_SoListsDoNotDoubleAsync() {
+    var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:AspNet:Correlation:HeaderNames:0"] = "X-Request-Id",
+    }).Build();
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(configuration);
+    services.AddWhizbangAspNet();
+    services.AddWhizbangAspNet();
+    using var provider = services.BuildServiceProvider();
+
+    var options = provider.GetRequiredService<IOptions<WhizbangCorrelationOptions>>().Value;
+
+    await Assert.That(options.HeaderNames).IsEquivalentTo(["X-Correlation-ID", "X-Request-Id"]);
   }
 
   [Test]
@@ -100,7 +120,7 @@ public class AspNetOptionsConfigurationBindingTests {
     await Assert.That(availability.Enabled).IsTrue();
     await Assert.That(availability.Mode).IsEqualTo(AvailabilityGateMode.MutationsOnly);
     await Assert.That(headers.XFrameOptions).IsEqualTo("DENY");
-    await Assert.That(correlation.HeaderNames).Contains("X-Correlation-ID");
+    await Assert.That(correlation.HeaderNames).IsEquivalentTo(["X-Correlation-ID"]);
   }
 
   [Test]
@@ -111,27 +131,52 @@ public class AspNetOptionsConfigurationBindingTests {
     services.AddWhizbangAspNet();
     using var provider = services.BuildServiceProvider();
 
-    var options = provider.GetRequiredService<IOptions<WhizbangSecurityHeadersOptions>>().Value;
+    var headers = provider.GetRequiredService<IOptions<WhizbangSecurityHeadersOptions>>().Value;
+    var availability = provider.GetRequiredService<IOptions<WhizbangAvailabilityOptions>>().Value;
+    var correlation = provider.GetRequiredService<IOptions<WhizbangCorrelationOptions>>().Value;
 
-    await Assert.That(options.Enabled).IsTrue();
-    await Assert.That(options.XContentTypeOptions).IsEqualTo("nosniff");
+    await Assert.That(headers.Enabled).IsTrue();
+    await Assert.That(headers.XContentTypeOptions).IsEqualTo("nosniff");
+    await Assert.That(availability.Enabled).IsTrue();
+    await Assert.That(correlation.HeaderNames).IsEquivalentTo(["X-Correlation-ID"]);
   }
 
   [Test]
-  public async Task CodeConfigurationRunsFirst_SoAConfigurationKeyWinsAsync() {
-    // services.Configure<T> runs before the configuration binder, which keeps the documented
-    // precedence: a key in appsettings or the environment overrides what the host set in code.
+  public async Task CodeConfiguredBeforeRegistration_AConfigurationKeyOverridesItAsync() {
+    // Registration order decides, as for every other bound section: a services.Configure<T> made
+    // before AddWhizbangAspNet runs first, so a key in appsettings or the environment overrides it.
     var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
       ["Whizbang:AspNet:SecurityHeaders:XFrameOptions"] = "SAMEORIGIN",
     }).Build();
     var services = new ServiceCollection();
     services.AddSingleton<IConfiguration>(configuration);
-    services.Configure<WhizbangSecurityHeadersOptions>(o => o.XFrameOptions = "DENY");
+    services.Configure<WhizbangSecurityHeadersOptions>(o => {
+      o.XFrameOptions = "DENY";
+      o.ReferrerPolicy = "same-origin";
+    });
     services.AddWhizbangAspNet();
     using var provider = services.BuildServiceProvider();
 
     var options = provider.GetRequiredService<IOptions<WhizbangSecurityHeadersOptions>>().Value;
 
     await Assert.That(options.XFrameOptions).IsEqualTo("SAMEORIGIN");
+    await Assert.That(options.ReferrerPolicy).IsEqualTo("same-origin")
+      .Because("a key that is absent leaves the code value alone");
+  }
+
+  [Test]
+  public async Task CodeConfiguredAfterRegistration_WinsOverConfigurationAsync() {
+    var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:AspNet:Availability:Mode"] = "AllNonExempt",
+    }).Build();
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(configuration);
+    services.AddWhizbangAspNet();
+    services.Configure<WhizbangAvailabilityOptions>(o => o.Mode = AvailabilityGateMode.MutationsOnly);
+    using var provider = services.BuildServiceProvider();
+
+    var options = provider.GetRequiredService<IOptions<WhizbangAvailabilityOptions>>().Value;
+
+    await Assert.That(options.Mode).IsEqualTo(AvailabilityGateMode.MutationsOnly);
   }
 }

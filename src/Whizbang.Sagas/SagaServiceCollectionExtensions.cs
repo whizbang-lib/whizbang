@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -52,7 +53,10 @@ public static class SagaServiceCollectionExtensions {
     // derivation in this process uses the configured value.
     SagaItemStreams.AppDefaultNamespace = opts.PerItemStreamNamespace;
 
-    services.AddSingleton(opts);
+    // Whizbang:Sagas binds over the code values when the options first resolve, so the watchdog and
+    // the stranded-saga sweep can be tuned at deploy time (#1014). A key that is absent leaves the
+    // code value alone.
+    services.AddSingleton(sp => _bindFromConfiguration(sp.GetService<IConfiguration>(), opts));
     services.AddSingleton<SagaMetrics>(sp => new SagaMetrics(sp.GetRequiredService<WhizbangMetrics>()));
     // The default: a consumer that registered its own emitter first keeps it.
     services.TryAddScoped<ISagaEventEmitter, DispatcherSagaEventEmitter>();
@@ -114,5 +118,47 @@ public static class SagaServiceCollectionExtensions {
     services.AddScoped<TService>();
     services.AddScoped<ISagaWatchdogParticipant>(sp => sp.GetRequiredService<TService>());
     return services;
+  }
+
+  /// <summary>
+  /// Applies <c>Whizbang:Sagas</c> to <paramref name="options"/>. The keys bind into a section of their
+  /// own and are copied across only when present, so an absent key leaves the code value alone. The
+  /// per-item stream namespace has no key: it is stream identity, applied process-wide at registration,
+  /// and a key that changed it here would disagree with every stream derived before.
+  /// </summary>
+  private static SagaOptions _bindFromConfiguration(IConfiguration? configuration, SagaOptions options) {
+    if (configuration is not null) {
+      var section = new SagaConfigurationSection();
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+      ConfigurationBinder.Bind(configuration.GetSection("Whizbang:Sagas"), section);
+#pragma warning restore IL2026
+      section.ApplyTo(options);
+    }
+    return options;
+  }
+}
+
+/// <summary>
+/// The keys of <c>Whizbang:Sagas</c>. Each is nullable so an absent key leaves the value code set alone.
+/// </summary>
+internal sealed class SagaConfigurationSection {
+  public TimeSpan? MinWatchdogDelay { get; set; }
+  public TimeSpan? MaxWatchdogDelay { get; set; }
+  public TimeSpan? WatchdogSafetyMargin { get; set; }
+  public int? MaxConsecutiveStalls { get; set; }
+  public double? StallBackoffMultiplier { get; set; }
+  public TimeSpan? StrandedSagaIdleGuard { get; set; }
+  public TimeSpan? StrandedSagaRearmInterval { get; set; }
+  public TimeSpan? ClaimRetention { get; set; }
+
+  public void ApplyTo(SagaOptions options) {
+    options.MinWatchdogDelay = MinWatchdogDelay ?? options.MinWatchdogDelay;
+    options.MaxWatchdogDelay = MaxWatchdogDelay ?? options.MaxWatchdogDelay;
+    options.WatchdogSafetyMargin = WatchdogSafetyMargin ?? options.WatchdogSafetyMargin;
+    options.MaxConsecutiveStalls = MaxConsecutiveStalls ?? options.MaxConsecutiveStalls;
+    options.StallBackoffMultiplier = StallBackoffMultiplier ?? options.StallBackoffMultiplier;
+    options.StrandedSagaIdleGuard = StrandedSagaIdleGuard ?? options.StrandedSagaIdleGuard;
+    options.StrandedSagaRearmInterval = StrandedSagaRearmInterval ?? options.StrandedSagaRearmInterval;
+    options.ClaimRetention = ClaimRetention ?? options.ClaimRetention;
   }
 }

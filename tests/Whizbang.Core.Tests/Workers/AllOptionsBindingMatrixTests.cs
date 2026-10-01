@@ -331,10 +331,10 @@ public sealed class AllOptionsBindingMatrixTests {
   [Test]
   public async Task WhizbangOptions_BindsTurnkeyAsync() {
     await using var provider = _hostWith(new Dictionary<string, string?> {
-      ["Whizbang:ShowBanner"] = "false",
+      ["Whizbang:DisableGuidTracking"] = "true",
     });
     var options = provider.GetRequiredService<IOptions<Whizbang.Core.Configuration.WhizbangOptions>>().Value;
-    await Assert.That(options.ShowBanner).IsFalse()
+    await Assert.That(options.DisableGuidTracking).IsTrue()
       .Because("#646: an options class the turnkey pipeline registers but never binds is a "
              + "silent lie — the documented section must reach the running instance");
   }

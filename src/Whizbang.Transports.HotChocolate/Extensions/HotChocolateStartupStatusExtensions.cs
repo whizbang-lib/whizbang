@@ -2,6 +2,7 @@ using HotChocolate;
 using HotChocolate.Execution.Configuration;
 using HotChocolate.Resolvers;
 using HotChocolate.Types;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Startup;
@@ -61,7 +62,12 @@ public static class HotChocolateStartupStatusExtensions {
       this IRequestExecutorBuilder builder,
       bool includeReasons = false) {
     ArgumentNullException.ThrowIfNull(builder);
-    builder.Services.AddSingleton(new WhizbangStartupStatusGraphOptions(includeReasons));
+    // Whizbang:StartupStatusGraph:IncludeReasons, when present and readable, overrides the code value,
+    // so an operator can open the reasons up while diagnosing a deployment and close them again.
+    builder.Services.AddSingleton(sp => new WhizbangStartupStatusGraphOptions(
+      bool.TryParse(sp.GetService<IConfiguration>()?["Whizbang:StartupStatusGraph:IncludeReasons"], out var configured)
+        ? configured
+        : includeReasons));
     return builder.AddTypeExtension<WhizbangStartupQueries>();
   }
 }
