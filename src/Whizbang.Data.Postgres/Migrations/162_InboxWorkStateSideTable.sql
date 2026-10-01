@@ -234,6 +234,8 @@ END $$;
 -- conflicting insert reports zero rows, so a slice of rows already seeded would read as "nothing
 -- left to do" and stop with the rest of the table unseeded. Excluding them instead means each call
 -- moves forward.
+-- <docs>operations/infrastructure/migrations#batched-regions</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheGuardedBackfillsReportZeroRatherThanFailingAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_seed_inbox_state_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE

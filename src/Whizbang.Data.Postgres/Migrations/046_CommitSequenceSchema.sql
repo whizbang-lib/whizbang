@@ -132,6 +132,8 @@ END $$;
 
 -- Both fills exclude the rows they have already written, which is what makes the reported count
 -- fall to zero instead of repeating the same slice forever.
+-- <docs>operations/infrastructure/migrations#batched-regions</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheGuardedBackfillsReportZeroRatherThanFailingAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_backfill_inbox_source_columns_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE

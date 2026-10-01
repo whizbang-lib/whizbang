@@ -163,6 +163,9 @@ GRANT EXECUTE ON FUNCTION register_message_associations(JSONB, VARCHAR) TO PUBLI
 -- in a consumer with many message types. The whole migration is one command with one timeout, so an
 -- unbounded rewrite cannot finish once the table is large enough. ctid bounds the slice without
 -- needing a declared key, since this table is created from code rather than here.
+-- <docs>operations/infrastructure/migrations#batched-regions</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheBackfillMovesOneBoundedSliceAtATimeAndThenStopsAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheBackfillReportsNothingWhenThereIsNothingToDoAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_backfill_normalized_message_type_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE

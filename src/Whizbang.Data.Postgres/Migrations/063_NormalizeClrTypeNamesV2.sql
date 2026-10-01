@@ -40,6 +40,8 @@
 -- The same version guard the block uses lives inside here, so a store already at v3 reports zero on
 -- the first call and the runner stops. The predicate excludes rows that already hold the derived
 -- value, which is what makes the count fall to zero rather than repeating forever.
+-- <docs>operations/infrastructure/migrations#batched-regions</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheGuardedBackfillsReportZeroRatherThanFailingAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_normalize_aggregate_type_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE

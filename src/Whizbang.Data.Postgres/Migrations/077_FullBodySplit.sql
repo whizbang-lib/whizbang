@@ -544,6 +544,8 @@ COMMENT ON FUNCTION __SCHEMA__.wh_backfill_event_bodies IS
 -- the inline columns) the body would fail at execution with 42703 — there is nothing left to
 -- backfill, so the guard returns zero and the runner stops after one call. PL/pgSQL plans a
 -- statement when it first runs it, so the guarded statements are never planned on that path.
+-- <docs>operations/infrastructure/migrations#batched-regions</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheGuardedBackfillsReportZeroRatherThanFailingAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_backfill_event_bodies_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE
