@@ -80,4 +80,36 @@ public interface ISagaEventEmitter {
     ArgumentNullException.ThrowIfNull(work);
     return work(cancellationToken);
   }
+
+  /// <summary>
+  /// Which of <paramref name="claimKeys"/> are held in the claim store <see cref="PublishOnceAsync{TEvent}"/>
+  /// claims in.
+  /// </summary>
+  /// <remarks>
+  /// The stranded-saga sweep reads the abandonment claims of its candidates through this, and leaves a
+  /// saga holding one alone. The default, for an emitter with no claim store to read, answers that none
+  /// is held, and the sweep then arms as it did before the claim existed: a saga it cannot see as
+  /// abandoned is treated as stranded, which costs a repeated abandonment rather than a saga left
+  /// stranded for good.
+  /// </remarks>
+  /// <param name="claimKeys">The keys to check.</param>
+  /// <param name="cancellationToken">Cancels the read.</param>
+  /// <returns>The held subset of <paramref name="claimKeys"/>.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#abandoned-sagas</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_EmitterThatCannotReadClaims_ArmsAsBeforeAsync</tests>
+  Task<IReadOnlySet<string>> FindClaimedAsync(IReadOnlyCollection<string> claimKeys, CancellationToken cancellationToken)
+    => Task.FromResult<IReadOnlySet<string>>(new HashSet<string>(StringComparer.Ordinal));
+
+  /// <summary>Releases a held claim, so what it gated can happen once more.</summary>
+  /// <remarks>
+  /// Used to re-drive an abandoned saga. The default, for an emitter with no claim store, releases
+  /// nothing and returns <see langword="false"/>.
+  /// </remarks>
+  /// <param name="claimKey">The key to release.</param>
+  /// <param name="cancellationToken">Cancels the release.</param>
+  /// <returns><see langword="true"/> when a held claim was released.</returns>
+  /// <docs>fundamentals/sagas/completion-orchestration#abandoned-sagas</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/StrandedSagaSweepTests.cs:Sweep_EmitterThatCannotReadClaims_ArmsAsBeforeAsync</tests>
+  Task<bool> ReleaseClaimAsync(string claimKey, CancellationToken cancellationToken)
+    => Task.FromResult(false);
 }

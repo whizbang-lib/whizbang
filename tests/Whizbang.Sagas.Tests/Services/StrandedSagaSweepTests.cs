@@ -194,6 +194,122 @@ public class StrandedSagaSweepTests {
       .Because("only the running one is a candidate");
   }
 
+  /// <summary>
+  /// A saga the watchdog abandoned stays abandoned, whether or not its perspective records it.
+  /// </summary>
+  /// <remarks>
+  /// The saga here stays Running because its perspective does not apply the abandon event, which is
+  /// the case the Abandoned status cannot reach. The abandonment claim can: the tick claims it when it
+  /// abandons, and the sweep leaves a claimed saga alone however many intervals pass. Before, every
+  /// interval brought a new sweep claim key, a new tick and a new abandon event.
+  /// </remarks>
+  [Test]
+  public async Task Sweep_AbandonedSaga_IsNotReArmedInLaterIntervalsAsync() {
+    var sagaId = _id(50);
+    var clock = new MovableClock(DateTimeOffset.UtcNow);
+    var options = new SagaOptions { TimeProvider = clock };
+    var emitter = new ClaimingEmitter();
+    var svc = new SweptSagaService(emitter, itemRepository: null,
+      [new IncompleteSaga(_saga(sagaId, clock.Now - TimeSpan.FromHours(2)), TENANT)], options: options);
+    var noTickComing = new FixedWakes(new HashSet<Guid>());
+
+    await svc.ArmStrandedSagasAsync(noTickComing, CancellationToken.None);
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(
+      emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Single(), CancellationToken.None);
+    var armedLater = 0;
+    for (var interval = 1; interval <= 5; interval++) {
+      clock.Now += options.StrandedSagaRearmInterval;
+      armedLater += await svc.ArmStrandedSagasAsync(noTickComing, CancellationToken.None);
+    }
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.Abandoned)
+      .Because("the precondition: the sweep's tick arrives at the stall limit with nothing to resolve");
+    await Assert.That(armedLater).IsEqualTo(0)
+      .Because("an abandoned saga is not coming back on its own; re-arming it only publishes its abandonment again");
+    await Assert.That(emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Count()).IsEqualTo(1);
+    await Assert.That(emitter.Published.OfType<SagaCompletionAbandonedEvent>().Count()).IsEqualTo(1);
+  }
+
+  /// <summary>The claim holds one saga back, not the sagas swept beside it.</summary>
+  [Test]
+  public async Task Sweep_ArmsARunningSaga_BesideOneHoldingItsAbandonmentClaimAsync() {
+    var old = _ago(TimeSpan.FromHours(2));
+    var emitter = new ClaimingEmitter();
+    emitter.Claim(SagaAbandonGuard.ClaimKey(SAGA_NAME, _id(52)));
+    var wakes = new FixedWakes(new HashSet<Guid>());
+    var svc = new SweptSagaService(emitter, _repoIdleSince(_id(51), old), [
+      new IncompleteSaga(_saga(_id(51), old), TENANT),
+      new IncompleteSaga(_saga(_id(52), old), TENANT)]);
+
+    var armed = await svc.ArmStrandedSagasAsync(wakes, CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(1);
+    await Assert.That(wakes.Asked.Single()).IsEquivalentTo([_id(51)])
+      .Because("the claimed saga is out of the candidate set before any wake is looked up");
+  }
+
+  /// <summary>An emitter that cannot read claims leaves the sweep as it was.</summary>
+  /// <remarks>
+  /// The emitter's default answers that no key is claimed. The sweep then arms as it did before the
+  /// claim existed: a saga it cannot see as abandoned is treated as stranded, which costs a repeated
+  /// abandonment rather than a stranded saga left for good.
+  /// </remarks>
+  [Test]
+  public async Task Sweep_EmitterThatCannotReadClaims_ArmsAsBeforeAsync() {
+    var old = _ago(TimeSpan.FromHours(2));
+    var emitter = new ScopelessEmitter();
+    var svc = new SweptSagaService(emitter, _repoIdleSince(_id(53), old), [new IncompleteSaga(_saga(_id(53), old), TENANT)]);
+
+    var armed = await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
+
+    await Assert.That(armed).IsEqualTo(1);
+    await Assert.That(await ((ISagaEventEmitter)emitter).ReleaseClaimAsync("any", CancellationToken.None)).IsFalse()
+      .Because("an emitter with no claim store has nothing to release");
+  }
+
+  /// <summary>
+  /// An operator re-drives an abandoned saga: its claim is released and it gets a fresh watchdog chain
+  /// with its whole stall budget.
+  /// </summary>
+  [Test]
+  public async Task ReDrive_AbandonedSaga_ReleasesTheClaimAndArmsAFreshTickAsync() {
+    var sagaId = _id(54);
+    var clock = new MovableClock(DateTimeOffset.UtcNow);
+    var options = new SagaOptions { TimeProvider = clock };
+    var emitter = new ClaimingEmitter();
+    emitter.Claim(SagaAbandonGuard.ClaimKey(SAGA_NAME, sagaId));
+    var svc = new SweptSagaService(emitter, itemRepository: null,
+      [new IncompleteSaga(_saga(sagaId, clock.Now - TimeSpan.FromHours(2)), TENANT)], options: options);
+
+    var redriven = await svc.ReDriveAbandonedSagaAsync(new SagaContext(sagaId, _entityId), CancellationToken.None);
+    clock.Now += options.StrandedSagaRearmInterval;
+    var armedAfter = await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
+
+    await Assert.That(redriven).IsTrue();
+    var tick = emitter.Plain.OfType<SagaCompletionWatchdogTickEvent>().Single();
+    await Assert.That(tick.StreamId).IsEqualTo(sagaId);
+    await Assert.That(tick.SagaName).IsEqualTo(SAGA_NAME);
+    await Assert.That(tick.EntityId).IsEqualTo(_entityId);
+    await Assert.That(tick.ConsecutiveStallCount).IsEqualTo(0)
+      .Because("a re-driven saga starts a whole stall budget over, not one stall from abandoning again");
+    await Assert.That(tick.LastObservedAt).IsNull();
+    await Assert.That(armedAfter).IsEqualTo(1)
+      .Because("with the claim released the sweep treats the saga as any other again");
+  }
+
+  /// <summary>Re-driving a saga that is not abandoned does nothing, so it cannot start a second chain.</summary>
+  [Test]
+  public async Task ReDrive_SagaNotAbandoned_ArmsNothingAsync() {
+    var emitter = new ClaimingEmitter();
+    var svc = new SweptSagaService(emitter, itemRepository: null, []);
+
+    var redriven = await svc.ReDriveAbandonedSagaAsync(new SagaContext(_id(55), _entityId), CancellationToken.None);
+
+    await Assert.That(redriven).IsFalse();
+    await Assert.That(emitter.Plain).IsEmpty()
+      .Because("a saga with no abandonment claim still has its chain; a second tick would re-arm beside it");
+  }
+
   [Test]
   public async Task Sweep_AsksAboutEveryCandidateInOneLookupAsync() {
     var old = _ago(TimeSpan.FromHours(2));
@@ -694,7 +810,17 @@ public class StrandedSagaSweepTests {
   private sealed class ClaimingEmitter : ISagaEventEmitter {
     private readonly HashSet<string> _claimed = [];
     public List<IEvent> Published { get; } = [];
-    public Task PublishAsync<TEvent>(TEvent eventData) where TEvent : IEvent => Task.CompletedTask;
+    /// <summary>What was published without a claim.</summary>
+    public List<IEvent> Plain { get; } = [];
+    public void Claim(string claimKey) => _claimed.Add(claimKey);
+    public Task PublishAsync<TEvent>(TEvent eventData) where TEvent : IEvent {
+      Plain.Add(eventData);
+      return Task.CompletedTask;
+    }
+    public Task<IReadOnlySet<string>> FindClaimedAsync(IReadOnlyCollection<string> claimKeys, CancellationToken cancellationToken)
+      => Task.FromResult<IReadOnlySet<string>>(claimKeys.Where(_claimed.Contains).ToHashSet());
+    public Task<bool> ReleaseClaimAsync(string claimKey, CancellationToken cancellationToken)
+      => Task.FromResult(_claimed.Remove(claimKey));
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken) where TEvent : IEvent
       => PublishOnceInTenantAsync(null, claimKey, eventData, cancellationToken);
     public Task<bool> PublishOnceInTenantAsync<TEvent>(string? tenantId, string claimKey, TEvent eventData, CancellationToken cancellationToken) where TEvent : IEvent {

@@ -238,8 +238,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
 
     context.AddSource("PerspectivePersistenceJsonContext.g.cs", sb.ToString());
 
-    // Auto-wire the Path 1 atomic-upsert provider when the consumer has at least one
-    // perspective. We detect this syntactically — checking for IPerspectiveFor /
+    // Join the persistence profile's union when the consumer has at least one
+    // perspective; the atomic upsert resolves its options from that union. We detect this syntactically — checking for IPerspectiveFor /
     // IPerspectiveWithActionsFor / IPerspectiveBase implementations in user source —
     // because we can't see MessageJsonContextGenerator's output (source generators
     // run in parallel against user source only). The signals are equivalent:
@@ -255,19 +255,14 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
 
   /// <summary>
   /// Emits a sibling <c>PerspectivePersistenceCallbackInitializer.g.cs</c> whose
-  /// <c>[ModuleInitializer]</c> registers a callback with
-  /// <c>ServiceRegistrationCallbacks.PerspectivePersistenceOptions</c>. The callback,
-  /// when fired from <c>AddWhizbang() → InvokeAll()</c>, points
-  /// <c>BaseUpsertStrategy.PathOnePersistenceOptionsProvider</c> at the per-assembly
-  /// resolver chain (this generator's <c>PerspectivePersistenceJsonContext</c> +
-  /// the consumer's <c>MessageJsonContext</c> + Core's <c>InfrastructureJsonContext</c>).
+  /// <c>[ModuleInitializer]</c> registers this assembly's <c>PerspectivePersistenceJsonContext</c>
+  /// with <c>JsonContextRegistry</c> under the persistence profile.
   /// </summary>
   /// <remarks>
-  /// Routing through <c>ServiceRegistrationCallbacks</c> rather than setting the static
-  /// hook directly from a <c>[ModuleInitializer]</c> ensures order is governed by
-  /// <c>InvokeAll</c>, not by non-deterministic cross-assembly module-load order. Tests
-  /// that don't call <c>AddWhizbang</c> see the static hook stay <c>null</c> by default,
-  /// preserving the slice-19 retry path for unit-test scenarios.
+  /// The atomic upsert resolves its options from that profile's union, so this registration is
+  /// the whole of its wiring. The registry is append-only with a generation counter: an assembly
+  /// that loads late is picked up on the next write, and nothing can clear what was registered,
+  /// so which write path runs never depends on what ran before.
   /// </remarks>
   private static void _emitCallbackInitializer(
       SourceProductionContext context,
@@ -278,19 +273,13 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("// DO NOT EDIT — Changes will be overwritten on next build.");
     sb.AppendLine("#nullable enable");
     sb.AppendLine();
-    sb.AppendLine("using System;");
     sb.AppendLine("using System.Runtime.CompilerServices;");
-    sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
-    sb.AppendLine("using Whizbang.Core;");
-    sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
     sb.AppendLine();
     sb.AppendLine($"namespace {assemblyName}.Generated;");
     sb.AppendLine();
     sb.AppendLine("/// <summary>");
-    sb.AppendLine("/// Auto-wires the Path 1 atomic-upsert options provider on AddWhizbang().");
-    sb.AppendLine("/// Module initializer registers a callback with ServiceRegistrationCallbacks");
-    sb.AppendLine("/// rather than setting the static hook directly — that way cross-assembly");
-    sb.AppendLine("/// ordering is owned by InvokeAll, not by module-load timing.");
+    sb.AppendLine("/// Joins this assembly's perspective persistence context to the serialization registry's");
+    sb.AppendLine("/// persistence profile, which the atomic upsert resolves its options from.");
     sb.AppendLine("/// </summary>");
     sb.AppendLine("internal static class PerspectivePersistenceCallbackInitializer {");
     sb.AppendLine("#pragma warning disable CA2255  // Intentional ModuleInitializer for AOT-safe auto-registration.");
@@ -307,14 +296,11 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("      profile: global::Whizbang.Core.Serialization.SerializationProfile.Persistence);");
     sb.AppendLine();
 
-    // Nothing is registered for the canonical temporal form here. The converters are on the
-    // persistence profile's options, registered by the framework's own initializer, and the
-    // serializer applies them wherever a temporal occurs in any document.
-    sb.AppendLine("    ServiceRegistrationCallbacks.PerspectivePersistenceOptions = _ =>");
-    sb.AppendLine("      BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>");
-    sb.AppendLine("        PerspectivePersistenceJsonContext.CreateOptions(");
-    sb.AppendLine("          MessageJsonContext.Default,");
-    sb.AppendLine("          global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);");
+    // This registration is all the atomic upsert needs: it resolves its options from the registry's
+    // persistence profile, so no startup hook sets anything for it. Nothing is registered for the
+    // canonical temporal form here either. The converters are on the persistence profile's options,
+    // registered by the framework's own initializer, and the serializer applies them wherever a
+    // temporal occurs in any document.
     sb.AppendLine("  }");
     sb.AppendLine("}");
 

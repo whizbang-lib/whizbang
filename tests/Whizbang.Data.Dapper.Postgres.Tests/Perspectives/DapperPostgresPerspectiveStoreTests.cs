@@ -231,6 +231,34 @@ public class DapperPostgresPerspectiveStoreTests : PostgresTestBase {
     await Assert.That(result).IsNull();
   }
 
+  /// <summary>
+  /// A stored number where the model has a string fails the read with a refusal the perspective worker
+  /// classifies as a stored document no reader takes, naming the path (issue #985).
+  /// </summary>
+  /// <remarks>
+  /// This store reads the whole document with the serializer, whose refusal is a
+  /// <see cref="JsonException"/> carrying the path, so the classification holds here as it stands.
+  /// </remarks>
+  [Test]
+  public async Task GetByStreamId_NumberWhereTheModelHasAString_IsClassifiedAsUnreadableWithThePathAsync() {
+    var store = new DapperPostgresPerspectiveStore<TestModel>(ConnectionString, TABLE_NAME, _jsonOptions);
+    var id = Guid.CreateVersion7();
+    await store.UpsertAsync(id, new TestModel { Name = "written" });
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync();
+      await using var cmd = new NpgsqlCommand(
+          $"UPDATE {TABLE_NAME} SET data = jsonb_set(data, '{{Name}}', '123'::jsonb) WHERE id = @id", conn);
+      cmd.Parameters.AddWithValue("id", id);
+      await Assert.That(await cmd.ExecuteNonQueryAsync()).IsEqualTo(1);
+    }
+
+    var raised = await Assert.That(async () => await store.GetByStreamIdAsync(id)).Throws<Exception>();
+
+    await Assert.That(Whizbang.Core.Perspectives.StoredFormUnreadable.TryClassify(raised!, out var failure)).IsTrue()
+      .Because("the worker parks only a failure it classifies");
+    await Assert.That(failure!.Path).IsEqualTo("$.Name");
+  }
+
   internal sealed class TestModel {
     public string Name { get; set; } = "";
   }

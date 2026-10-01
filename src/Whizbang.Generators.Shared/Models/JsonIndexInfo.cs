@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Shared.Models;
 
@@ -196,25 +197,28 @@ public static class JsonIndexSql {
     // CREATE INDEX IF NOT EXISTS quietly do nothing.
     var fold = index.CaseInsensitive ? "_ci" : string.Empty;
 
+    // Every name is kept within PostgreSQL's identifier limit. Truncated, the exact and the folded
+    // names of a long property became one identifier and the second index was never created.
     if (index.Ordered) {
       var name = $"idx_{indexPrefix}_{suffix}{fold}_json";
 
       if (index.Superseded != JsonIndexCast.None) {
         // An index whose expression changed under the same name is never rebuilt: IF NOT EXISTS
         // matches by name alone. So the index over the old cast is dropped by its old name, cheaply
-        // once it is gone, and the new one carries its store type in its name.
+        // once it is gone, and the new one carries its store type in its name. The old name is
+        // dropped as it was written: PostgreSQL truncates it the same way it did when creating it.
         yield return $"DROP INDEX IF EXISTS {_schemaOf(qualifiedTable)}{name};";
         name = $"idx_{indexPrefix}_{suffix}{fold}_{StoreType(index.Cast)}_json";
       }
 
-      yield return $"CREATE INDEX IF NOT EXISTS {name} ON {qualifiedTable} ({element});";
+      yield return $"CREATE INDEX IF NOT EXISTS {PostgresIdentifiers.WithinLimit(name)} ON {qualifiedTable} ({element});";
     }
 
     if (index.Search) {
       // Over the framework's fold of the raw value, which is exactly what the query side produces for a
       // Contains on this field: wh_fold(value) LIKE wh_fold_pattern(term). Named apart from the plain
       // trigram index because it is a different expression, and a field may carry both.
-      yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}_fold_trgm "
+      yield return $"CREATE INDEX IF NOT EXISTS {PostgresIdentifiers.WithinLimit($"idx_{indexPrefix}_{suffix}_fold_trgm")} "
           + $"ON {qualifiedTable} USING gin ({_schemaOf(qualifiedTable)}wh_fold(data ->> '{index.JsonKey}') gin_trgm_ops);";
     }
 
@@ -222,10 +226,122 @@ public static class JsonIndexSql {
       // Needs the trigram extension. The extension statement is not emitted here, per index, but
       // once per script by AppendScript, inside a block the schema pass can skip as a whole when
       // the server refuses the extension.
-      yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}{fold}_trgm "
+      yield return $"CREATE INDEX IF NOT EXISTS {PostgresIdentifiers.WithinLimit($"idx_{indexPrefix}_{suffix}{fold}_trgm")} "
           + $"ON {qualifiedTable} USING gin ({element} gin_trgm_ops);";
     }
   }
+
+  /// <summary>The function that drops a promoted field's document index, defined by migration 179.</summary>
+  public const string DROP_DOCUMENT_INDEX_FUNCTION = "wh_drop_document_index";
+
+  /// <summary>
+  /// Every name <see cref="CreateStatements"/> has given a declaration's indexes, including the name an
+  /// index over a superseded cast was built under.
+  /// </summary>
+  /// <param name="index">The field's declaration.</param>
+  /// <param name="indexPrefix">The prefix index names carry.</param>
+  /// <returns>Each name once, as it was written in the statement that created it.</returns>
+  /// <remarks>
+  /// This is how the schema recognizes an index it built: by the name it derives for it, which nobody
+  /// else derives. A promoted field's document indexes are dropped by these names and no others (issue
+  /// #1009).
+  /// </remarks>
+  public static IEnumerable<string> IndexNames(JsonIndexInfo index, string indexPrefix) {
+    if (index is null) {
+      yield break;
+    }
+
+    var suffix = index.JsonKey.ToLowerInvariant();
+    var fold = index.CaseInsensitive ? "_ci" : string.Empty;
+    if (index.Ordered) {
+      var name = $"idx_{indexPrefix}_{suffix}{fold}_json";
+      yield return PostgresIdentifiers.WithinLimit(name);
+      if (index.Superseded != JsonIndexCast.None) {
+        // The old name as it was written, which PostgreSQL truncated if it was long; the drop compares
+        // the truncated form.
+        yield return name;
+        yield return PostgresIdentifiers.WithinLimit($"idx_{indexPrefix}_{suffix}{fold}_{StoreType(index.Cast)}_json");
+      }
+    }
+    if (index.Search) {
+      yield return PostgresIdentifiers.WithinLimit($"idx_{indexPrefix}_{suffix}_fold_trgm");
+    }
+    if (index.Substring) {
+      yield return PostgresIdentifiers.WithinLimit($"idx_{indexPrefix}_{suffix}{fold}_trgm");
+    }
+  }
+
+  /// <summary>
+  /// The statements that drop the indexes the schema built over a promoted field's extraction.
+  /// </summary>
+  /// <param name="index">The declaration the field carried, or carries, as a document field.</param>
+  /// <param name="qualifiedTable">The table, schema-qualified.</param>
+  /// <param name="indexPrefix">The prefix index names carry.</param>
+  /// <returns>One call per name, each dropping that index only when it is over the document.</returns>
+  /// <remarks>
+  /// A column index can take the same name as a document index (a field <c>Name</c> in column
+  /// <c>name</c>), so a name alone is not enough: the function drops only an index whose definition
+  /// extracts the field from the document. These run before the column's indexes are created, so a
+  /// shared name is free by then.
+  /// </remarks>
+  public static IEnumerable<string> DropDocumentIndexStatements(
+      JsonIndexInfo index, string qualifiedTable, string indexPrefix) {
+    if (index is null) {
+      yield break;
+    }
+
+    var names = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var name in IndexNames(index, indexPrefix)) {
+      if (names.Add(name)) {
+        yield return $"SELECT {_schemaOf(qualifiedTable)}{DROP_DOCUMENT_INDEX_FUNCTION}("
+          + $"'{qualifiedTable}', '{name}', '{index.JsonKey}');";
+      }
+    }
+  }
+
+  /// <summary>
+  /// The column indexes that answer what a promoted field's document indexes answered: one of the same
+  /// kind for each, over the column rather than the extraction.
+  /// </summary>
+  /// <param name="index">The field's declaration.</param>
+  /// <param name="column">The field's column.</param>
+  /// <param name="qualifiedTable">The table, schema-qualified.</param>
+  /// <param name="indexPrefix">The prefix index names carry.</param>
+  /// <returns>One statement per declared kind, the trigram ones naming <c>gin_trgm_ops</c>.</returns>
+  /// <remarks>
+  /// The expression mirrors what a query on the field becomes once the redirect has pointed it at the
+  /// column: the column itself, its <c>lower</c> for a comparison that folds case, and its
+  /// <c>wh_fold</c> for a search.
+  /// </remarks>
+  public static IEnumerable<string> ColumnCreateStatements(
+      JsonIndexInfo index, string column, string qualifiedTable, string indexPrefix) {
+    if (index is null) {
+      yield break;
+    }
+
+    var fold = index.CaseInsensitive ? "_ci" : string.Empty;
+    var element = index.CaseInsensitive ? $"(lower({column}))" : column;
+    if (index.Ordered) {
+      yield return $"CREATE INDEX IF NOT EXISTS {PostgresIdentifiers.WithinLimit($"idx_{indexPrefix}_{column}{fold}")} "
+        + $"ON {qualifiedTable} ({element});";
+    }
+    if (index.Search) {
+      yield return ColumnSearchStatement(column, qualifiedTable, indexPrefix);
+    }
+    if (index.Substring) {
+      yield return $"CREATE INDEX IF NOT EXISTS {PostgresIdentifiers.WithinLimit($"idx_{indexPrefix}_{column}{fold}_trgm")} "
+        + $"ON {qualifiedTable} USING gin ({element} gin_trgm_ops);";
+    }
+  }
+
+  /// <summary>The trigram index over the fold of a promoted Search field's column.</summary>
+  /// <param name="column">The field's column.</param>
+  /// <param name="qualifiedTable">The table, schema-qualified.</param>
+  /// <param name="indexPrefix">The prefix index names carry.</param>
+  /// <returns>One statement.</returns>
+  public static string ColumnSearchStatement(string column, string qualifiedTable, string indexPrefix) =>
+    $"CREATE INDEX IF NOT EXISTS {PostgresIdentifiers.WithinLimit($"idx_{indexPrefix}_{column}_fold_trgm")} "
+      + $"ON {qualifiedTable} USING gin ({_schemaOf(qualifiedTable)}wh_fold({column}) gin_trgm_ops);";
 
   /// <summary>The extension a trigram index needs.</summary>
   public const string TRIGRAM_EXTENSION = "pg_trgm";
@@ -248,6 +364,12 @@ public static class JsonIndexSql {
   /// <param name="indexes">The table's declared indexes.</param>
   /// <param name="qualifiedTable">The table, schema-qualified.</param>
   /// <param name="indexPrefix">The prefix index names carry.</param>
+  /// <param name="plain">
+  /// How each statement outside the block is written, or null to write it as it is. The schema
+  /// generator passes <see cref="PerspectiveIndexSql.Ensure"/>, so a declared index is compared with
+  /// the table's existing ones before it is created. The trigram statements are never passed through
+  /// it: the block's reader names the indexes it skips by reading their create statements.
+  /// </param>
   /// <remarks>
   /// One <c>CREATE EXTENSION</c> per script rather than one per index, because the schema pass
   /// treats a refused extension as "this index family is unavailable": it skips the whole block
@@ -257,7 +379,8 @@ public static class JsonIndexSql {
   /// what it does wherever the index is absent.
   /// </remarks>
   public static void AppendScript(
-      StringBuilder script, IEnumerable<JsonIndexInfo> indexes, string qualifiedTable, string indexPrefix) {
+      StringBuilder script, IEnumerable<JsonIndexInfo> indexes, string qualifiedTable, string indexPrefix,
+      Func<string, string>? plain = null) {
     if (script is null) {
       throw new ArgumentNullException(nameof(script));
     }
@@ -271,7 +394,7 @@ public static class JsonIndexSql {
         if (statement.IndexOf("gin_trgm_ops", StringComparison.Ordinal) >= 0) {
           trigram.Add(statement);
         } else {
-          script.AppendLine(statement);
+          script.AppendLine(plain is null ? statement : plain(statement));
         }
       }
     }

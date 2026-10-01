@@ -24,24 +24,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 [Category("Integration")]
 [Category("Storage")]
-// Mutates the process-wide BaseUpsertStrategy.PathOnePersistenceOptionsProvider — serialize against the
-// other persistence tests so it can't flip the provider mid-seed (the cross-test static race).
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class VersionedApplyTargetTests : EFCoreTestBase {
-  [After(Test)]
-  public Task ClearPathOneProviderAsync() {
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = null;
-    return Task.CompletedTask;
-  }
-
-  private static void EnableAtomicPath() {
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>
-      PerspectivePersistenceJsonContext.CreateOptions(
-        MessageJsonContext.Default,
-        global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
-  }
-
   // Test model lives in sibling VersionedItemPerspective.cs so the source generator
   // registers PerspectiveRow<VersionedItem> with WorkCoordinationDbContext.
 
@@ -63,7 +48,6 @@ public class VersionedApplyTargetTests : EFCoreTestBase {
 
   [Test]
   public async Task StaleEventWrite_OnVersionedTarget_DoesNotRegressTerminalRowAsync() {
-    EnableAtomicPath();
     var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
@@ -103,7 +87,6 @@ public class VersionedApplyTargetTests : EFCoreTestBase {
 
   [Test]
   public async Task NewerEventWrite_OnVersionedTarget_AdvancesRowAsync() {
-    EnableAtomicPath();
     var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
@@ -139,7 +122,6 @@ public class VersionedApplyTargetTests : EFCoreTestBase {
 
   [Test]
   public async Task IdempotentReapply_OnVersionedTarget_DoesNotBumpVersionAsync() {
-    EnableAtomicPath();
     var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();

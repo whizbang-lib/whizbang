@@ -478,6 +478,20 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveSinkQueueTests.cs:FetchCollectiveSinkQueueAsync_ReturnsTheQueueInCommitOrderAsync</tests>
+  public async Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueAsync(
+    Guid streamId,
+    CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    var rows = await connection.QueryAsync<PendingPerspectiveEventDto>(
+      "SELECT * FROM wh_collective_sink_queue(@p_stream_id)",
+      new { p_stream_id = streamId });
+
+    return [.. rows.Select(r => new CollectiveSinkQueueEntry(r.out_event_work_id, r.out_event_id, r.out_commit_sequence))];
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<StreamEventData>> FetchEventsByIdsAsync(
     IReadOnlyList<Guid> eventIds,
     CancellationToken cancellationToken = default) {
@@ -985,6 +999,23 @@ public partial class DapperWorkCoordinator(
       ProcessedCount = r.ProcessedCount
     })];
   }
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/perspectives/perspective-sync#applied-ledger</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperAppliedEventStatusTests.cs</tests>
+  public async ValueTask<Whizbang.Core.Perspectives.Sync.AppliedEventStatus?> GetAppliedEventStatusAsync(
+    Whizbang.Core.Perspectives.Sync.AppliedEventInquiry inquiry, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(inquiry);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var row = await __scope.Connection.QuerySingleAsync<AppliedStatusRow>(
+      "SELECT event_id AS EventId, state AS State FROM wh_perspective_applied_status(@Name::text, @EventId::uuid, @StreamId::uuid, @Version::integer)",
+      new { Name = inquiry.PerspectiveName, inquiry.EventId, inquiry.StreamId, Version = inquiry.StreamPosition });
+    return new Whizbang.Core.Perspectives.Sync.AppliedEventStatus(
+      (Whizbang.Core.Perspectives.Sync.AppliedEventState)row.State, row.EventId);
+  }
+
+  private sealed record AppliedStatusRow(Guid? EventId, short State);
 
   /// <inheritdoc />
   public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {

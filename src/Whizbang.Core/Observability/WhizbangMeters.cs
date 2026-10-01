@@ -56,6 +56,7 @@ public static class WhizbangMeters {
     InstanceLivenessMetrics.METER_NAME,
     CompositeMetrics.METER_NAME,
     ProbeCadenceMetrics.METER_NAME,
+    RoleAssignmentMetrics.METER_NAME,
     TableStatisticsMetrics.METER_NAME,
     NotifyDebounceMetrics.METER_NAME,
     TransportDeadLetterDrainWorker.METER_NAME,

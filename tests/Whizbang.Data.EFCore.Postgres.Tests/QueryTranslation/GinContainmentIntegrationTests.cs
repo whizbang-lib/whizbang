@@ -40,6 +40,13 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
   private const int BULK_SEEDED_ROWS = 200_000;
   private const string TABLE = "wh_per_gin_probe";
 
+  // The EF-written row whose metadata and scope every SQL-seeded row copies. It is named rather
+  // than taken with LIMIT 1: Entity Framework writes a batch in key order, not list order, so the
+  // first row on disk is whichever row drew the lowest random id -- the needle one time in
+  // EF_SEEDED_ROWS. Copying the needle's metadata and scope onto the bulk rows makes both filters
+  // on those columns match every one of them (#981).
+  private const string SHAPE_SOURCE = $"(SELECT metadata, scope FROM {TABLE} WHERE data ->> 'Title' = 'hay-1')";
+
   [SuppressIndexAdvisory("the point of this fixture is to compare an indexed containment filter with an unindexed scan")]
   public class CatalogModel {
     public string Title { get; init; } = string.Empty;
@@ -182,7 +189,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
                                   'Rank', g),
                shape.metadata, shape.scope
         FROM generate_series(1, {BULK_SEEDED_ROWS}) g
-        CROSS JOIN (SELECT metadata, scope FROM {TABLE} LIMIT 1) shape;
+        CROSS JOIN {SHAPE_SOURCE} shape;
         """);
 
       await _execAsync(db, $"ANALYZE {TABLE}");
@@ -532,7 +539,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       SELECT gen_random_uuid(), now(), now(), 1,
              jsonb_build_object('Title', 'legacy'),
              shape.metadata, shape.scope
-      FROM (SELECT metadata, scope FROM {TABLE} LIMIT 1) shape;
+      FROM {SHAPE_SOURCE} shape;
       """);
 
     var byExtraction = await _scalarAsync(db,

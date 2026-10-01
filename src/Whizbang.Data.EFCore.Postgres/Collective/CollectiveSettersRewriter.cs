@@ -6,6 +6,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Serialization;
+using Whizbang.Data.Postgres.Collective;
 
 namespace Whizbang.Data.EFCore.Postgres.Collective;
 
@@ -60,12 +61,20 @@ internal static class CollectiveSettersRewriter {
   /// cannot express against a <c>ComplexProperty().ToJson()</c> sub-property via <c>ExecuteUpdate</c>).
   /// </summary>
   /// <remarks>
+  /// <para>
   /// <see cref="ElementKey"/> is set for an <c>UpsertElement</c> setter: <see cref="PathName"/> is the array
   /// property, <see cref="JsonValue"/> the element, and the adapter assigns
   /// <c>CollectiveElementUpsertSql.ValueSql(PathName, ElementKey, …)</c> instead of the value itself.
+  /// </para>
+  /// <para>
+  /// <see cref="Value"/> is the unserialized value (the comparison's constant for a computed setter): a setter
+  /// whose target, or whose compared property, is a <c>[PhysicalField]</c> binds the column from it as a typed
+  /// parameter.
+  /// </para>
   /// </remarks>
   public sealed record CollectiveSetterAssignment(
-    string PathName, string JsonValue, bool IsNull, CollectiveComputedComparison? Comparison = null, string? ElementKey = null);
+    string PathName, string JsonValue, bool IsNull, object? Value,
+    CollectiveComputedComparison? Comparison = null, string? ElementKey = null);
 
   /// <summary>
   /// A computed setter of the shape <c>j =&gt; j.SomeProp == value</c> (or <c>!=</c>): the new value is a
@@ -100,7 +109,8 @@ internal static class CollectiveSettersRewriter {
       // runtime type (comparison) or the target property type (constant).
       var valueType = a.Value?.GetType() ?? (a.Comparison is null ? a.Property.PropertyType : typeof(object));
       var json = JsonSerializer.Serialize(a.Value, valueType, _persistenceJsonOptions);
-      result.Add(new CollectiveSetterAssignment(a.Property.Name, json, a.Value is null && a.Comparison is null, a.Comparison, a.ElementKey));
+      result.Add(new CollectiveSetterAssignment(
+        a.Property.Name, json, a.Value is null && a.Comparison is null, a.Value, a.Comparison, a.ElementKey));
     }
     return result;
   }
@@ -117,7 +127,7 @@ internal static class CollectiveSettersRewriter {
     foreach (var setter in setters) {
       var valueType = setter.Value?.GetType() ?? setter.PropertyType;
       var json = JsonSerializer.Serialize(setter.Value, valueType, _persistenceJsonOptions);
-      result.Add(new CollectiveSetterAssignment(setter.PropertyName, json, setter.Value is null, Comparison: null));
+      result.Add(new CollectiveSetterAssignment(setter.PropertyName, json, setter.Value is null, setter.Value));
     }
     return result;
   }
@@ -139,6 +149,9 @@ internal static class CollectiveSettersRewriter {
           Visit(node.Object);
         }
         var collection = _extractScalarProperty(_unwrapLambda(node.Arguments[0]));
+        if (CollectivePhysicalColumns.Resolve(modelType, collection.Name) is { } column) {
+          CollectivePhysicalColumns.EnsureKeyedArrayColumn(modelType, column);
+        }
         var key = _elementMemberName(_unwrapLambda(node.Arguments[1]));
         var element = _evaluateValue(node.Arguments[2])
           ?? throw new ArgumentException($"UpsertElement on {collection.Name} needs an element; null cannot be keyed.");
@@ -192,17 +205,17 @@ internal static class CollectiveSettersRewriter {
       if (lambda.Body is BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } bin
           && _tryComparedProperty(bin.Left) is { } comparedProperty) {
         var op = bin.NodeType == ExpressionType.Equal ? "=" : "<>";
-        return (new CollectiveComputedComparison(comparedProperty, op), _evaluateValue(_stripConvert(bin.Right)));
+        return (new CollectiveComputedComparison(comparedProperty.Name, op), _evaluateValue(_stripConvert(bin.Right)));
       }
       throw new NotSupportedException(
         "CollectiveSettersRewriter supports computed SetProperty only as a property-vs-constant comparison " +
         $"(j => j.{targetProperty}, j => j.SomeProp == value). Arithmetic, string, and other computed shapes require [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)].");
     }
 
-    private string? _tryComparedProperty(Expression e) =>
+    private PropertyInfo? _tryComparedProperty(Expression e) =>
       _stripConvert(e) is MemberExpression { Expression: ParameterExpression, Member: PropertyInfo prop }
           && prop.DeclaringType == modelType
-        ? prop.Name
+        ? prop
         : null;
 
     private static Expression _stripConvert(Expression e) {

@@ -168,5 +168,51 @@ public class DispatcherSagaEventEmitterTests {
   public async Task Constructor_NullDispatcher_ThrowsAsync() {
     DispatcherSagaEventEmitter? _ = null;
     await Assert.That(() => _ = new DispatcherSagaEventEmitter(null!)).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(() => _ = new DispatcherSagaEventEmitter(null!, new Claims())).ThrowsExactly<ArgumentNullException>();
+  }
+
+  /// <summary>Claims are read from and released in the claim store <c>PublishOnceAsync</c> claims in.</summary>
+  [Test]
+  public async Task FindClaimedAndRelease_GoToTheClaimStoreAsync() {
+    var claims = new Claims { Held = { "held" } };
+    var emitter = new DispatcherSagaEventEmitter(new RecordingDispatcher(), claims);
+
+    var found = await emitter.FindClaimedAsync(["held", "free"], CancellationToken.None);
+    var released = await emitter.ReleaseClaimAsync("held", CancellationToken.None);
+
+    await Assert.That(found).IsEquivalentTo(["held"]);
+    await Assert.That(released).IsTrue();
+    await Assert.That(claims.Held).IsEmpty();
+  }
+
+  /// <summary>
+  /// A claim store that cannot say which keys are held reads as none held, and one with no claim
+  /// store at all reads and releases nothing.
+  /// </summary>
+  [Test]
+  public async Task FindClaimed_StoreCannotTellOrNoStore_ReadsAsNoneHeldAsync() {
+    var cannotTell = new DispatcherSagaEventEmitter(new RecordingDispatcher(), new ClaimOnlyStore());
+    var noStore = new DispatcherSagaEventEmitter(new RecordingDispatcher());
+
+    await Assert.That(await cannotTell.FindClaimedAsync(["k"], CancellationToken.None)).IsEmpty();
+    await Assert.That(await cannotTell.ReleaseClaimAsync("k", CancellationToken.None)).IsFalse();
+    await Assert.That(await noStore.FindClaimedAsync(["k"], CancellationToken.None)).IsEmpty();
+    await Assert.That(await noStore.ReleaseClaimAsync("k", CancellationToken.None)).IsFalse();
+  }
+
+  private sealed class Claims : IClaimedEmissionStore {
+    public HashSet<string> Held { get; } = [];
+    public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken)
+      => Task.FromResult(Held.Add(claimKey));
+    public Task<IReadOnlySet<string>?> FindClaimedAsync(IReadOnlyCollection<string> claimKeys, CancellationToken cancellationToken)
+      => Task.FromResult<IReadOnlySet<string>?>(claimKeys.Where(Held.Contains).ToHashSet());
+    public Task<bool> ReleaseAsync(string claimKey, CancellationToken cancellationToken)
+      => Task.FromResult(Held.Remove(claimKey));
+  }
+
+  /// <summary>A claim store written before claims could be read back: it only claims.</summary>
+  private sealed class ClaimOnlyStore : IClaimedEmissionStore {
+    public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken)
+      => Task.FromResult(true);
   }
 }

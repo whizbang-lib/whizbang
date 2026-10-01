@@ -8,9 +8,21 @@ namespace Whizbang.Sagas.Services;
 /// <see cref="IDispatcher"/>. Registered automatically by
 /// <see cref="SagaServiceCollectionExtensions.AddWhizbangSagas"/>.
 /// </summary>
-public sealed class DispatcherSagaEventEmitter(IDispatcher dispatcher) : ISagaEventEmitter {
+/// <remarks>
+/// The primary constructor reads and releases claims in <c>claims</c>, the store <c>PublishOnceAsync</c> claims in;
+/// the container chooses it whenever a claim store is registered. <c>claims</c> may be <see langword="null"/>.
+/// </remarks>
+/// <param name="dispatcher">The dispatcher to publish through.</param>
+/// <param name="claims">The claim store, or <see langword="null"/> for none.</param>
+public sealed class DispatcherSagaEventEmitter(IDispatcher dispatcher, IClaimedEmissionStore? claims) : ISagaEventEmitter {
 
   private readonly IDispatcher _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+  private readonly IClaimedEmissionStore? _claims = claims;
+
+  /// <summary>An emitter over <paramref name="dispatcher"/> with no claim store to read or release claims in.</summary>
+  /// <param name="dispatcher">The dispatcher to publish through.</param>
+  public DispatcherSagaEventEmitter(IDispatcher dispatcher) : this(dispatcher, claims: null) {
+  }
 
   public async Task PublishAsync<TEvent>(TEvent eventData) where TEvent : IEvent {
     await _dispatcher.PublishAsync(eventData).ConfigureAwait(false);
@@ -64,4 +76,21 @@ public sealed class DispatcherSagaEventEmitter(IDispatcher dispatcher) : ISagaEv
       ? work(cancellationToken)
       : _dispatcher.AsSystem().ForTenant(tenantId).RunAsync(work, cancellationToken);
   }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// Reads the claim store. A store that cannot tell, or no store at all, answers that none is held,
+  /// which leaves the sweep arming as it did before the abandonment claim existed.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Sagas.Tests/DispatcherSagaEventEmitterTests.cs:FindClaimedAndRelease_GoToTheClaimStoreAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/DispatcherSagaEventEmitterTests.cs:FindClaimed_StoreCannotTellOrNoStore_ReadsAsNoneHeldAsync</tests>
+  public async Task<IReadOnlySet<string>> FindClaimedAsync(IReadOnlyCollection<string> claimKeys, CancellationToken cancellationToken) {
+    var held = _claims is null ? null : await _claims.FindClaimedAsync(claimKeys, cancellationToken).ConfigureAwait(false);
+    return held ?? new HashSet<string>(StringComparer.Ordinal);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Sagas.Tests/DispatcherSagaEventEmitterTests.cs:FindClaimedAndRelease_GoToTheClaimStoreAsync</tests>
+  public Task<bool> ReleaseClaimAsync(string claimKey, CancellationToken cancellationToken)
+    => _claims is null ? Task.FromResult(false) : _claims.ReleaseAsync(claimKey, cancellationToken);
 }

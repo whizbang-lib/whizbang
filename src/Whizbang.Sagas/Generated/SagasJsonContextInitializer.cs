@@ -32,6 +32,9 @@ public static class SagasJsonContextInitializer {
 
     _registerEventRoutes<SagaCompletionWatchdogTickEvent>("Whizbang.Sagas.SagaCompletionWatchdogTickEvent");
     _registerEventRoutes<SagaCompletionAbandonedEvent>("Whizbang.Sagas.SagaCompletionAbandonedEvent");
+    // Published when a finished saga declared a continuation; it crosses the outbox, the transport and
+    // the inbox like the tick, so an unregistered name left the continuation unresolvable on arrival.
+    _registerEventRoutes<SagaContinuationRequestedEvent>("Whizbang.Sagas.SagaContinuationRequestedEvent");
   }
 
   /// <summary>

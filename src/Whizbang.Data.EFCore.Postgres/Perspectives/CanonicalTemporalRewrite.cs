@@ -212,6 +212,12 @@ public static class CanonicalTemporalRewrite {
       $"  VALUES ({tableLiteral}, {MICROSECOND_FORM}, now(), CASE WHEN v_form >= {MICROSECOND_FORM} AND v_touched = 0 THEN now() END)\n");
     sb.Append(CultureInfo.InvariantCulture,
       $"  ON CONFLICT (table_name) DO UPDATE SET temporal_form = {MICROSECOND_FORM}, applied_at = now(), settled_at = EXCLUDED.settled_at;\n");
+    // A table the statement changed is marked, so the phase analyzes it once it has committed: a mass
+    // update leaves the statistics describing the rows as they were (#1004).
+    sb.Append("  IF v_touched > 0 THEN\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      $"    {Whizbang.Data.Postgres.IndexStatistics.MarkRewrittenSql(_quoteLiteral(schema), tableLiteral)}\n");
+    sb.Append("  END IF;\n");
     // One update per row and path, so a row with three converted keys counts three times.
     sb.Append(CultureInfo.InvariantCulture,
       $"  RAISE NOTICE USING MESSAGE = format('%s: converted, %s row update(s)', {tableLiteral}, v_touched);\n");

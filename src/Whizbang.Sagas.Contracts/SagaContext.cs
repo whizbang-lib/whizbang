@@ -8,9 +8,12 @@ namespace Whizbang.Sagas;
 /// <remarks>
 /// <para>
 /// <c>SagaId</c> is the framework-level identity — the stream id of the
-/// saga's projection. <c>EntityId</c> is the consumer-domain identity
-/// (e.g. tenant id, operation id) carried on every saga event for
-/// consumer-side filtering and notification routing.
+/// saga's projection, and the one stream everything the saga emits is
+/// stored on: its lifecycle events, the watchdog tick, the abandonment and
+/// the continuation request (see <c>ISagaStreamEvent</c>). <c>EntityId</c>
+/// is the consumer-domain identity (e.g. tenant id, operation id) carried on
+/// every saga event for consumer-side filtering and notification routing;
+/// it never decides a stream.
 /// </para>
 /// <para>
 /// The two ids are <em>frequently</em> the same value (when the saga

@@ -1424,7 +1424,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: whizbang-lib/whizbang-lib.github.io
-          ref: main
+          ref: develop
           token: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
           path: docs-repo
 
@@ -1439,15 +1439,19 @@ jobs:
             --branch "${{ github.ref_name }}" \
             --library-version "${{ needs.version.outputs.semver }}"
 
-      # The docs main ruleset requires PRs (0 approvals, no required checks),
-      # so publish = push branch + create PR + instant merge. Skips when the
-      # status is byte-identical to what is already live.
-      - name: Publish to docs main
+      # Publishes to develop, never to main: main moving on its own is what let the
+      # docs site's two branches drift apart. A release carries this forward to main.
+      # The docs develop ruleset requires PRs (0 approvals, no required checks), so
+      # publish = push branch + create PR + instant merge. Skips when the status is
+      # byte-identical to what is already published.
+      - name: Publish to docs develop
+        id: publish
         if: steps.trx.outputs.have == 'true'
         working-directory: docs-repo
         env:
           GH_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
         run: |
+          # `published` is only ever set on a successful merge; unset reads as falsy.
           git config user.name "whizbang-ci"
           git config user.email "ci@whizba.ng"
           git add src/assets/data/test-status
@@ -1461,13 +1465,31 @@ jobs:
           # Force: a re-run shares the run_id, so a prior attempt that died between its
           # branch push and PR merge leaves this branch behind — overwrite, don't collide.
           git push --force origin "$BRANCH"
-          gh pr create --base main --head "$BRANCH" \
+          gh pr create --base develop --head "$BRANCH" \
             --title "chore(test-status): run ${{ github.run_id }}" \
             --body "Automated live test-status data from [whizbang CI run ${{ github.run_id }}](https://github.com/whizbang-lib/whizbang/actions/runs/${{ github.run_id }})." \
             || echo "PR for $BRANCH already exists (prior attempt) — merging it with the force-pushed content"
           for i in 1 2 3 4 5; do
-            gh pr merge "$BRANCH" --squash --delete-branch && exit 0
+            if gh pr merge "$BRANCH" --squash --delete-branch; then
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "merge attempt $i failed; retrying in 5s"
             sleep 5
           done
           echo "Could not merge test-status PR — leaving it open for manual merge"
+
+      # Carries what was just published on to main. start-release cuts a release
+      # branch from docs develop, waits for its Build, then merges — which tags,
+      # releases and deploys the site. Skipped when nothing was published, so an
+      # unchanged run does not cut an empty release.
+      - name: Release docs to main
+        if: steps.publish.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+        run: |
+          gh workflow run start-release.yml \
+            --repo whizbang-lib/whizbang-lib.github.io \
+            --ref develop \
+            -f release_type=patch \
+            -f auto_merge=true

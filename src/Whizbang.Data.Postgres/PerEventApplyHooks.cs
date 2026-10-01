@@ -27,7 +27,7 @@ public sealed record PerEventApplyHookPlan(
 /// <summary>
 /// Process-wide accessor + interpreter for the per-event (loaded-row object mutation) apply hooks, used by the
 /// EF Core upsert strategy and the Dapper perspective store. A process-wide static — mirroring
-/// <c>BaseUpsertStrategy.PathOnePersistenceOptionsProvider</c> — because the per-event write sites are
+/// <c>JsonContextRegistry</c> — because the per-event write sites are
 /// constructed in many places (often <c>new</c>'d without DI), and the default (the <c>whizbang.timestamps</c>
 /// hook) must apply everywhere with zero wiring so existing consumers keep their exact <c>updated_at</c>/version
 /// stamping. A consumer registers custom per-event hooks by adding to <see cref="Registry"/> at startup.

@@ -43,8 +43,8 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// and this paragraph used to claim otherwise.
 /// </para>
 /// <para>
-/// Each collective event carries its own stream id and so becomes its own sink stream, and sink
-/// streams on different instances apply in parallel. The per-scope advisory lock serializes two
+/// Without an ordering key each collective event carries its own stream id and so becomes its own sink
+/// stream, and sink streams on different instances apply in parallel. The per-scope advisory lock serializes two
 /// applies to the same table and scope; it does not order them. Two collectives therefore apply in
 /// whatever order they finish, not in commit order.
 /// </para>
@@ -52,8 +52,9 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// That is invisible to a collective whose setters are idempotent or commutative, and wrong for one
 /// that expresses "latest wins" as a set-based flip -- <c>IsActive = (Id == e.Chosen)</c> across a
 /// family of rows, where an older collective landing after a newer one leaves the wrong row active.
-/// A consumer writing that shape needs ordering the framework does not yet provide; see #963, which
-/// proposes an opt-in ordering key routing collectives that share it through one ordered sink.
+/// A consumer writing that shape sets <see cref="Whizbang.Core.Messaging.ICollectiveEvent.OrderingKey"/>:
+/// collectives sharing a key in one scope share one sink stream, which the worker applies in commit order,
+/// and a replay folds them in the same order.
 /// </para>
 /// <para>
 /// AOT: matches Whizbang.Data.EFCore.Postgres's established pattern of
@@ -69,6 +70,9 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 [SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "EF Core data layer inherently uses reflection for query translation")]
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Adapter is generic over TModel; static factory + execute methods match the pattern of EF Core's own generic-static helpers.")]
 public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class {
+  // The cast a bound JSON text parameter takes to become a jsonb value.
+  private const string JSONB_CAST = "::jsonb";
+
   /// <summary>
   /// Execute the collective-event mutation as a keyset-batched set-based UPDATE, bounded by the apply
   /// <paramref name="options"/>. One raw <c>jsonb_set</c> path serves every mapping (complex-JSON, scalar/
@@ -113,27 +117,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     var schema = entityType.GetSchema();
     var qualifiedTable = schema is null ? "\"" + table + "\"" : "\"" + schema + "\".\"" + table + "\"";
 
-    // Nested jsonb_set: jsonb_set(jsonb_set(data, @path0, @p0::jsonb), …). The path is bound as a text[]
-    // parameter (no '{…}' brace literal) and the property name is parameterized, not concatenated. A computed
-    // comparison setter substitutes to_jsonb((data->'X')::jsonb <op> @p::jsonb) for the plain @p::jsonb value —
-    // the compared property is compile-time model metadata (a C# identifier), so it's embedded, not injected.
-    var setExpr = new StringBuilder("data");
-    // The value each property holds so far in this spec: an element upsert starts from it, so two upserts
-    // on one list compose instead of the second rewriting the stored list over the first.
-    var assigned = new Dictionary<string, string>(StringComparer.Ordinal);
-    for (var i = 0; i < assignments.Count; i++) {
-      var idx = i.ToString(CultureInfo.InvariantCulture);
-      var valueSql = assignments[i] switch {
-        { ElementKey: { } key } => Whizbang.Data.Postgres.Collective.CollectiveElementUpsertSql.ValueSql(
-          assignments[i].PathName, key, "@p" + idx + "::jsonb", assigned.GetValueOrDefault(assignments[i].PathName)),
-        { Comparison: { } cmp } =>
-          "to_jsonb((data->'" + cmp.ComparedProperty + "')::jsonb " + cmp.SqlOperator + " @p" + idx + "::jsonb)",
-        _ => "@p" + idx + "::jsonb",
-      };
-      assigned[assignments[i].PathName] = valueSql;
-      setExpr.Insert(0, "jsonb_set(")
-        .Append(", @path").Append(idx).Append(", ").Append(valueSql).Append(')');
-    }
+    var (setList, setParameters) = _compileSetList(assignments);
 
     // Compile the predicate straight to SQL (no SELECT-id seq scan). The bare table name qualifies the outer
     // row inside any correlated EXISTS; the sibling table resolves via ICollectiveSiblingTableSource on the
@@ -164,7 +148,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     // change-detection (delta sync, downstream mirrors, "recently changed" reads) — and a consumer can override
     // or extend that stamping via hooks.
     var storeColumns = hookPlan.StoreColumns;
-    var updateSql = "UPDATE " + qualifiedTable + " SET data = " + setExpr +
+    var updateSql = "UPDATE " + qualifiedTable + " SET " + setList +
       hookPlan.RenderStoreColumnSetTail() + " WHERE id = ANY(@wb_ids)";
 
     // Per-(table,scope) exclusive advisory lock so collective applies to the same table+scope serialize
@@ -193,12 +177,16 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       // unit). CreateExecutionStrategy() returns the configured strategy (a no-op non-retrying one when
       // retries are off, e.g. tests), so this is correct either way. PostgresDeadlockRetry stays the outer
       // backstop for 40P01/40001 when the configured strategy doesn't cover them.
-      var (count, maxId) = await PostgresDeadlockRetry.ExecuteAsync(
-        () => dbContext.Database.CreateExecutionStrategy().ExecuteAsync(
-          () => _executeOneBatchAsync(dbContext, selectSql, updateSql, assignments, where, options, lockKey, storeColumns, lastCursor, cancellationToken)),
-        maxAttempts: 5,
-        logger: logger,
-        cancellationToken: cancellationToken).ConfigureAwait(false);
+      // A batch that does not get its lock inside the bounded wait waits again, renewing the lease through
+      // onBatchApplied first, so waiting behind another batch neither loses the work nor counts an attempt (#964).
+      var (count, maxId) = await CollectiveApplyContention.WaitingForTheLockAsync(
+        () => PostgresDeadlockRetry.ExecuteAsync(
+          () => dbContext.Database.CreateExecutionStrategy().ExecuteAsync(
+            () => _executeOneBatchAsync(dbContext, selectSql, updateSql, setParameters, where, options, lockKey, storeColumns, lastCursor, cancellationToken)),
+          maxAttempts: 5,
+          logger: logger,
+          cancellationToken: cancellationToken),
+        options, onBatchApplied, cancellationToken).ConfigureAwait(false);
       total += count;
       batches++;
       // Per-batch progress: lets the caller renew its work lease DURING a long apply — without
@@ -222,6 +210,104 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     return total;
   }
 
+  /// <summary>
+  /// Compiles the setters to the UPDATE's <c>SET</c> list and the parameters it binds. Document setters become one
+  /// nested <c>jsonb_set(jsonb_set(data, @path0, @p0::jsonb), …)</c>: the path is bound as a text[] parameter (no
+  /// '{…}' brace literal) and the property name is parameterized, not concatenated. A computed comparison setter
+  /// substitutes <c>to_jsonb((data-&gt;'X')::jsonb &lt;op&gt; @p::jsonb)</c> for the plain value — the compared property
+  /// is compile-time model metadata (a C# identifier), so it's embedded, not injected. A setter on a
+  /// <c>[PhysicalField]</c> assigns its column (and the document path too when the storage mode keeps both): from the
+  /// typed parameter <c>@pc{i}</c> (an enumeration as its underlying number, a vector as a pgvector value), or, for a
+  /// keyed array in a jsonb column, through the same upsert expression. A comparison over a physical field reads the
+  /// column null-safely, and when no document path changes <c>data</c> is not assigned at all.
+  /// </summary>
+  private static (string SetList, List<KeyValuePair<string, object>> Parameters) _compileSetList(
+      List<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments) {
+    var setExpr = new StringBuilder("data");
+    var documentWrites = 0;
+    var columns = new List<(string Column, string ValueSql)>();
+    var parameters = new Dictionary<string, object>(StringComparer.Ordinal);
+    // The value each property (and each jsonb column) holds so far in this spec: an element upsert starts from it,
+    // so two upserts on one list compose instead of the second rewriting the stored list over the first.
+    var assigned = new Dictionary<string, string>(StringComparer.Ordinal);
+    var assignedColumns = new Dictionary<string, string>(StringComparer.Ordinal);
+    for (var i = 0; i < assignments.Count; i++) {
+      var a = assignments[i];
+      var idx = i.ToString(CultureInfo.InvariantCulture);
+      var target = CollectivePhysicalColumns.Resolve(typeof(TModel), a.PathName);
+      // A computed comparison: the boolean over the compared property, as a column value and as a document value.
+      var (columnComparison, documentComparison) = a.Comparison is { } cmp
+        ? _compileComparison(cmp, a, idx, parameters)
+        : ((string?)null, (string?)null);
+      if (target is not { InDocument: false }) {
+        if (a.Comparison is null) {
+          parameters["p" + idx] = a.JsonValue;
+        }
+        var valueSql = a switch {
+          { ElementKey: { } key } => CollectiveElementUpsertSql.ValueSql(
+            a.PathName, key, "@p" + idx + JSONB_CAST, assigned.GetValueOrDefault(a.PathName)),
+          { Comparison: not null } => documentComparison!,
+          _ => "@p" + idx + JSONB_CAST,
+        };
+        parameters["path" + idx] = new[] { a.PathName };  // text[] path
+        assigned[a.PathName] = valueSql;
+        setExpr.Insert(0, "jsonb_set(")
+          .Append(", @path").Append(idx).Append(", ").Append(valueSql).Append(')');
+        documentWrites++;
+      }
+      if (target is { } physical) {
+        var columnSql = _columnValueSql(a, physical, idx, columnComparison, assignedColumns, parameters);
+        assignedColumns[physical.ColumnName] = columnSql;
+        columns.Add((physical.ColumnName, columnSql));
+      }
+    }
+    var setList = CollectivePhysicalColumns.RenderSetList(documentWrites > 0 ? setExpr.ToString() : null, columns);
+    return (setList, [.. parameters]);
+  }
+
+  // The new value of a physical column: a computed comparison's boolean, the same keyed upsert a document path uses
+  // (over the jsonb column, from its value so far in this spec), a typed pgvector parameter, or the column scalar
+  // (an enumeration as its underlying number).
+  private static string _columnValueSql(
+      CollectiveSettersRewriter.CollectiveSetterAssignment a, PerspectivePhysicalField physical, string idx,
+      string? columnComparison, Dictionary<string, string> assignedColumns, Dictionary<string, object> parameters) {
+    if (columnComparison is not null) {
+      return columnComparison;
+    }
+    if (a.ElementKey is { } key) {
+      parameters["p" + idx] = a.JsonValue;  // the element, shared with the document path when both are written
+      return CollectiveElementUpsertSql.ValueSql(
+        a.PathName, key, "@p" + idx + JSONB_CAST,
+        assignedColumns.GetValueOrDefault(physical.ColumnName) ?? CollectivePhysicalColumns.Quote(physical.ColumnName));
+    }
+    object? value = physical.IsVector
+      ? _vector(a.Value)
+      : CollectivePhysicalColumns.ColumnValue(physical, a.Value);
+    parameters["pc" + idx] = value ?? DBNull.Value;
+    return "@pc" + idx;
+  }
+
+  // The per-event upsert binds a vector column as a pgvector value; the collective binds the same.
+  private static Pgvector.Vector? _vector(object? value) => value is float[] vector ? new Pgvector.Vector(vector) : null;
+
+  // A computed comparison setter's boolean, as the column value and as the document value. Over a physical field it
+  // reads the column null-safely and binds the compared value typed (@pc{i}); otherwise it compares the document's
+  // jsonb and binds the value's JSON (@p{i}).
+  private static (string Column, string Document) _compileComparison(
+      CollectiveSettersRewriter.CollectiveComputedComparison cmp, CollectiveSettersRewriter.CollectiveSetterAssignment a,
+      string idx, Dictionary<string, object> parameters) {
+    if (CollectivePhysicalColumns.Resolve(typeof(TModel), cmp.ComparedProperty) is { } compared) {
+      CollectivePhysicalColumns.EnsureComparable(typeof(TModel), compared);
+      parameters["pc" + idx] = CollectivePhysicalColumns.ColumnValue(compared, a.Value) ?? DBNull.Value;
+      var column = CollectivePhysicalColumns.NullSafeComparison(
+        CollectivePhysicalColumns.Quote(compared.ColumnName), cmp.SqlOperator, "@pc" + idx);
+      return (column, "to_jsonb(" + column + ")");
+    }
+    parameters["p" + idx] = a.JsonValue;
+    var comparison = "(data->'" + cmp.ComparedProperty + "')" + JSONB_CAST + " " + cmp.SqlOperator + " @p" + idx + JSONB_CAST;
+    return ("(" + comparison + ")", "to_jsonb(" + comparison + ")");
+  }
+
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Collective apply {CollectiveEventId} on {Table} updated {AffectedRows} rows in {Batches} batch(es)")]
   private static partial void LogCollectiveApplyCompleted(ILogger logger, Guid CollectiveEventId, string Table, int AffectedRows, int Batches);
@@ -237,7 +323,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Runs one bounded batch in its own transaction: the two statements, the compiled setters and predicate, the apply options, the advisory lock key, the store columns and the cursor it resumes from. The Dapper applier's equivalent takes the same shape, and the two are read side by side.")]
   private static async Task<(int Count, Guid? MaxId)> _executeOneBatchAsync(
       DbContext dbContext, string selectSql, string updateSql,
-      List<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments,
+      List<KeyValuePair<string, object>> setParameters,
       CollectivePredicateSqlCompiler<TModel>.CompiledWhereClause where,
       CollectiveApplyOptions options, long? lockKey, IReadOnlyList<CollectiveStoreColumn> storeColumns,
       Guid lastId, CancellationToken cancellationToken) {
@@ -296,11 +382,9 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       return (0, null);
     }
 
-    var updateParams = new List<Npgsql.NpgsqlParameter>((assignments.Count * 2) + 1 + storeColumns.Count);
-    for (var i = 0; i < assignments.Count; i++) {
-      var idx = i.ToString(CultureInfo.InvariantCulture);
-      updateParams.Add(_param("path" + idx, new[] { assignments[i].PathName }));  // text[] path
-      updateParams.Add(_param("p" + idx, assignments[i].JsonValue));             // JSON text, cast ::jsonb
+    var updateParams = new List<Npgsql.NpgsqlParameter>(setParameters.Count + 1 + storeColumns.Count);
+    foreach (var (name, value) in setParameters) {
+      updateParams.Add(_param(name, value));  // text[] paths, JSON text cast ::jsonb, typed column values
     }
     updateParams.Add(_param("wb_ids", ids.ToArray()));  // uuid[]
     // Store-column values from the apply-hook plan (e.g. updated_at = ApplyTimestamp). One value per @wb_hookcol{i}.

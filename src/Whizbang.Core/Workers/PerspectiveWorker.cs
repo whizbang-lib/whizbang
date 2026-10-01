@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -227,6 +226,17 @@ public partial class PerspectiveWorker(
   // entries idle for longer than IdleEvictionWindow whose semaphore is
   // currently free. The sweep cost is amortized over real work — no thread
   // is ever woken just to GC the dictionary.
+  // Collective sink rows this pod holds that could not apply because a collective ahead of them in their stream's queue
+  // was not in the same run (#963). Two collectives sharing a key can be claimed together and split across consumer
+  // loops; the stream's affinity gate serializes the two runs but does not order them. When the later one gets the
+  // gate first it has to wait, and without this it waited out its whole lease although the run holding the head
+  // followed at once. The next sink run on the stream takes these over while their lease is still this pod's, so they
+  // apply right behind the head, in queue order. Keyed by stream; each row carries the deadline after which it is no
+  // longer assumed to be this pod's, and is then left to be re-offered as before.
+  private readonly ConcurrentDictionary<Guid, Dictionary<Guid, DateTimeOffset>> _collectiveSinkHeldBack = new();
+
+  /// <summary>How many sink streams have a row held back right now (#963); read by tests of the map's bound.</summary>
+  internal int HeldBackSinkStreamCount => _collectiveSinkHeldBack.Count;
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), StreamAffinityGateEntry> _streamAffinityGates = new();
   private readonly PerspectiveStreamAffinityOptions _streamAffinityOptions = streamAffinityOptions.Value;
   private long _lastStreamAffinitySweepTicks = DateTimeOffset.UtcNow.Ticks;
@@ -1230,7 +1240,6 @@ public partial class PerspectiveWorker(
         Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
         await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
         _markAffinityHeld(gateEntry, "standard");
-        Exception? cursorFailure = null;
         try {
           await using var groupScope = _scopeFactory.CreateAsyncScope();
           var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
@@ -1358,12 +1367,13 @@ public partial class PerspectiveWorker(
               _metrics?.EventsProcessed.Add(processedEvents.Count);
             }
           } catch (Exception ex) when (ex is not OperationCanceledException) {
-            // Captured rather than rethrown here. A rethrow from an async catch that also awaits
-            // makes the compiler hoist this handler out of the IL catch region and rewrite
-            // `throw;` as a capture-and-throw; the brace's sequence point then lands on
-            // state-machine cleanup that nothing reaches. Throwing after the block keeps the same
-            // order — record, park, report, release the gate, propagate — with no unreachable line.
-            cursorFailure = ex;
+            // Contained here, never rethrown. This handler is the group's whole failure treatment:
+            // the failure is recorded, the group's rows are parked and the cursor failure is
+            // reported. Letting it out as well made the fan-out cancel its token and stop taking
+            // groups, so every sibling group in the batch that had not yet passed its first
+            // cancellable wait (the affinity gate above) was dropped without running, and the
+            // successful groups' PostLifecycle was skipped with the rest of the batch. One poison
+            // perspective starved every other perspective that shared its batch (issue #993).
             var leasedRows = group.Select(w => w.WorkId).Where(id => id != Guid.Empty).Distinct().ToList();
             var storedForm = await _tryRecordStoredFormFailureAsync(ex, streamId, perspectiveName, leasedRows, ct);
             if (storedForm is null) {
@@ -1389,10 +1399,6 @@ public partial class PerspectiveWorker(
           _markAffinityReleased(gateEntry);
           gateEntry.Semaphore.Release();
           _sweepIdleStreamAffinityGatesIfDue();
-        }
-
-        if (cursorFailure is not null) {
-          ExceptionDispatchInfo.Capture(cursorFailure).Throw();
         }
       });
 
@@ -1685,10 +1691,10 @@ public partial class PerspectiveWorker(
     var pendingFailures = _completionStrategy.GetPendingFailures();
 
     foreach (var tc in pendingCompletions) {
-      await _perspectiveCompletionChannel!.EnqueueCursorAsync(tc.Completion, ct).ConfigureAwait(false);
+      await _perspectiveCompletionChannel.EnqueueCursorAsync(tc.Completion, ct).ConfigureAwait(false);
     }
     foreach (var f in pendingFailures.Select(tc => tc.Completion)) {
-      await _failureChannel!.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
+      await _failureChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
         MessageId = f.LastEventId,
         CompletedStatus = MessageProcessingStatus.None,
         Error = f.Error ?? "perspective failed",
@@ -1696,7 +1702,7 @@ public partial class PerspectiveWorker(
       }, ct).ConfigureAwait(false);
     }
     while (_pendingEventCompletions.TryDequeue(out var ec)) {
-      await _perspectiveCompletionChannel!.EnqueueEventWorkIdAsync(ec.EventWorkId, ct).ConfigureAwait(false);
+      await _perspectiveCompletionChannel.EnqueueEventWorkIdAsync(ec.EventWorkId, ct).ConfigureAwait(false);
     }
 
     _completionStrategy.MarkAsSent(pendingCompletions, pendingFailures, DateTimeOffset.UtcNow);
@@ -2395,6 +2401,12 @@ public partial class PerspectiveWorker(
 
         if (filteredEvents.Count > 0) {
           var processedEventIds = filteredEvents.ConvertAll(e => e.MessageId.Value);
+          // Only a committed apply marks the events applied: a waiter for an event from another service
+          // reads this as "the read model has it", which a failure must never claim (#959). Marked before
+          // the processed release, so anything that observes the release has seen the mark decided.
+          if (result.Status == PerspectiveProcessingStatus.Completed) {
+            _syncEventTracker.MarkApplied(processedEventIds, perspectiveName);
+          }
           _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
         }
 
@@ -2544,7 +2556,7 @@ public partial class PerspectiveWorker(
   private async Task _parkLeasedRowsAsync(
       IEnumerable<Guid> workIds, string error, MessageFailureReason reason, CancellationToken ct) {
     foreach (var workId in workIds) {
-      await _failureChannel!.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
+      await _failureChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
         MessageId = workId,
         CompletedStatus = MessageProcessingStatus.None,
         Error = error,
@@ -3240,6 +3252,8 @@ public partial class PerspectiveWorker(
       Guid[] sinkWorkIds,
       CancellationToken cancellationToken) {
 
+    sinkWorkIds = _takeHeldBackSinkRows(streamId, sinkWorkIds);
+
     // Drain re-offer during the completion-flush window: a prior dispatch already completed these
     // rows (they sit in the processed-event cache until the DB acks their DELETE) but the refetch
     // still sees them and the cursor read may not reflect the advance yet — without this guard the
@@ -3277,19 +3291,21 @@ public partial class PerspectiveWorker(
       streamId, CollectiveRouting.SINK_PERSPECTIVE_NAME, cancellationToken).ConfigureAwait(false);
     var lastProcessedEventId = checkpoint?.LastEventId;
 
-    var events = await eventStore.GetEventsBetweenPolymorphicAsync(
-      streamId, lastProcessedEventId, Guid.Empty, typeProvider.GetEventTypes(), cancellationToken)
+    var batch = await _loadCollectiveSinkBatchAsync(
+      workCoordinator, eventStore, typeProvider, streamId, sinkWorkIds, lastProcessedEventId, cancellationToken)
       .ConfigureAwait(false);
-
-    var collectiveEnvelopes = events.Where(e => e.Payload is ICollectiveEvent).ToList();
+    if (batch is null) {
+      return;
+    }
+    var (collectiveEnvelopes, completedWorkIds) = batch.Value;
     if (collectiveEnvelopes.Count == 0) {
       // No collective event to dispatch, yet the sink rows were leased — the cursor already advanced
       // past them (a prior run applied the event and advanced the cursor without completing the row,
       // or a stale re-lease). Complete them anyway so claim_orphaned stops re-leasing them into a
       // no-op loop; leaving them keeps processed_at=NULL and re-spins the whole death-spiral.
       // Counted as skipped (#738): a rising count is that re-lease loop showing itself.
-      _compositeMetrics?.CollectivesSkipped.Add(sinkWorkIds.Length);
-      _completeCollectiveSinkWorkRows(sinkWorkIds);
+      _compositeMetrics?.CollectivesSkipped.Add(completedWorkIds.Length);
+      _completeCollectiveSinkWorkRows(completedWorkIds);
       return;
     }
     _compositeMetrics?.CollectivesReceived.Add(collectiveEnvelopes.Count);
@@ -3301,16 +3317,16 @@ public partial class PerspectiveWorker(
       var collectiveEvent = (ICollectiveEvent)envelope.Payload;
       try {
         await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session,
-          onBatchApplied: async ct => {
-            // A tenant-wide collective apply can span many batches and outlive the sink work item's
-            // lease — renewing on every reported batch keeps the lease tracking the apply's true
-            // duration, so the (idempotent) work is not re-offered mid-apply.
-            foreach (var workId in sinkWorkIds) {
-              await _leaseRenewalChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, workId, ct).ConfigureAwait(false);
-            }
-          },
+          onBatchApplied: ct => _renewSinkLeasesAsync(sinkWorkIds, ct),
           cancellationToken: cancellationToken)
           .ConfigureAwait(false);
+      } catch (CollectiveApplyLockBusyException busy) when (!_options.CollectiveLockBusyCountsAsFailure) {
+        // Busy, not failed (#964): another batch holds the apply lock for the same table and scope, and this one
+        // waited out every renewal of its bounded wait. Nothing is wrong with the event, so no failure is reported
+        // (the failure count drives dead-lettering) and nothing is completed: the rows stay and the collective is
+        // applied later. The ones applied before it in this run are re-applied then, in the same order.
+        LogCollectiveApplyLockBusy(_logger, streamId, envelope.MessageId.Value, busy.Table, busy.WaitedSeconds);
+        return;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         // A failing collective apply must NOT crash the host. Without this guard the exception propagates out
         // of the perspective batch, re-throws at the cursor catch, and trips BackgroundServiceExceptionBehavior
@@ -3351,7 +3367,7 @@ public partial class PerspectiveWorker(
     // rows. Standard perspectives get the DELETE via _bufferCompletionsAndUpdateCache; the sink must do the
     // same here or claim_orphaned re-leases the row forever and re-dispatches the whole-cohort UPDATE — a
     // production death spiral (re-dispatch loop → ~95% table bloat → lock convoy).
-    _completeCollectiveSinkWorkRows(sinkWorkIds);
+    _completeCollectiveSinkWorkRows(completedWorkIds);
 
     // The apply is now durably complete. A collective event has no per-stream runner, so it never reaches
     // the normal PostAllPerspectives gate — but the apply finishing IS its "all perspectives complete"
@@ -3362,6 +3378,94 @@ public partial class PerspectiveWorker(
     // a failed apply returns above, so we never signal completion for an apply that did not happen.
     await _fireCollectivePostApplyLifecycleAsync(scope, streamId, collectiveEnvelopes, cancellationToken)
       .ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Renews the sink rows' leases after each committed batch of a collective apply. A tenant-wide collective apply can
+  /// span many batches and outlive the sink work item's lease; renewing on every reported batch keeps the lease
+  /// tracking the apply's true duration, so the (idempotent) work is not re-offered mid-apply.
+  /// </summary>
+  private async ValueTask _renewSinkLeasesAsync(Guid[] sinkWorkIds, CancellationToken ct) {
+    foreach (var workId in sinkWorkIds) {
+      await _leaseRenewalChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, workId, ct).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
+  /// The collectives this sink run applies and the work rows it completes when they do, or null when the run has to
+  /// wait its turn. #963: the stream's queue, in commit order, when the engine provides one. Collectives sharing an
+  /// ordering key share this stream, and the queue is what keeps them in line; without it the stream is read after
+  /// its cursor.
+  /// </summary>
+  private async Task<(List<MessageEnvelope<IEvent>> Envelopes, Guid[] WorkIds)?> _loadCollectiveSinkBatchAsync(
+      IWorkCoordinator workCoordinator, IEventStore eventStore, IEventTypeProvider typeProvider, Guid streamId,
+      Guid[] sinkWorkIds, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+    var queue = await workCoordinator.FetchCollectiveSinkQueueAsync(streamId, cancellationToken).ConfigureAwait(false);
+    if (queue is not null) {
+      return await _takeCollectiveQueueHeadAsync(
+        queue, sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
+    }
+    var events = await eventStore.GetEventsBetweenPolymorphicAsync(
+      streamId, lastProcessedEventId, Guid.Empty, typeProvider.GetEventTypes(), cancellationToken)
+      .ConfigureAwait(false);
+    return ([.. events.Where(e => e.Payload is ICollectiveEvent)], sinkWorkIds);
+  }
+
+  /// <summary>
+  /// The collectives this run applies from its stream's queue (#963), in queue order, and the work rows it completes
+  /// when they apply. The queue is the stream's unprocessed collectives in commit order; this run takes the leading
+  /// rows it holds and stops at the first it does not, because a collective ahead of it (leased elsewhere, or backing
+  /// off after a failure) has to apply first. Returns null when the head of the queue is not this run's, so nothing
+  /// applies and nothing is completed: the held rows are offered again once the one ahead has applied.
+  /// </summary>
+  /// <remarks>
+  /// A leased row the queue no longer holds was already applied and completed; it is completed again, with no apply,
+  /// so a stale lease cannot loop. A queued row whose event the store no longer returns is completed with the rest
+  /// rather than blocking the queue forever. The events are read by id, never after the cursor, so a collective
+  /// committed after one with a greater id is still applied, and in its place.
+  /// </remarks>
+  private async Task<(List<MessageEnvelope<IEvent>> Envelopes, Guid[] WorkIds)?> _takeCollectiveQueueHeadAsync(
+      IReadOnlyList<CollectiveSinkQueueEntry> queue, Guid[] sinkWorkIds, IWorkCoordinator workCoordinator,
+      IEventStore eventStore, IEventTypeProvider typeProvider, Guid streamId, CancellationToken cancellationToken) {
+    var held = new HashSet<Guid>(sinkWorkIds);
+    // A row this worker already applied is still in the queue until its completion flushes; it is behind us, not
+    // ahead, so it neither blocks the queue nor applies again.
+    var pending = queue.Where(e => !_processedEventCache.Contains(e.EventWorkId)).ToList();
+    var head = new List<CollectiveSinkQueueEntry>();
+    foreach (var entry in pending) {
+      if (!held.Contains(entry.EventWorkId)) {
+        break;
+      }
+      head.Add(entry);
+    }
+
+    var queued = new HashSet<Guid>(pending.Select(e => e.EventWorkId));
+    // Held rows behind one this run does not hold wait for the run that holds it, which is usually this pod's next.
+    _settleHeldBackSinkRows(streamId, sinkWorkIds,
+      [.. sinkWorkIds.Where(id => queued.Contains(id) && !head.Exists(e => e.EventWorkId == id))]);
+    if (head.Count == 0 && sinkWorkIds.Any(queued.Contains)) {
+      LogCollectiveSinkWaitingItsTurn(_logger, streamId, pending[0].EventId);
+      return null;
+    }
+
+    // Rows this run holds that the queue does not were applied already; completing them is harmless and stops a loop.
+    var completed = head.Select(e => e.EventWorkId).Concat(sinkWorkIds.Where(id => !queued.Contains(id))).ToArray();
+    if (head.Count == 0) {
+      return ([], completed);
+    }
+
+    var raw = await workCoordinator.FetchEventsByIdsAsync([.. head.Select(e => e.EventId)], cancellationToken).ConfigureAwait(false);
+    var byId = new Dictionary<Guid, MessageEnvelope<IEvent>>();
+    foreach (var envelope in eventStore.DeserializeStreamEvents(raw, typeProvider.GetEventTypes()).Where(e => e.Payload is ICollectiveEvent)) {
+      byId.TryAdd(envelope.MessageId.Value, envelope);
+    }
+    var envelopes = new List<MessageEnvelope<IEvent>>(head.Count);
+    foreach (var entry in head) {
+      if (byId.TryGetValue(entry.EventId, out var envelope)) {
+        envelopes.Add(envelope);
+      }
+    }
+    return (envelopes, completed);
   }
 
   /// <summary>
@@ -3404,6 +3508,64 @@ public partial class PerspectiveWorker(
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogErrorProcessingPerspectiveCursor(_logger, ex, CollectiveRouting.SINK_PERSPECTIVE_NAME, streamId);
         _metrics?.Errors.Add(1);
+      }
+    }
+  }
+
+  /// <summary>
+  /// The run's sink rows plus the rows an earlier run on this stream held back (#963) whose lease is still this pod's.
+  /// Called under the stream's affinity gate, so no other sink run on the stream is between this and the settle.
+  /// </summary>
+  private Guid[] _takeHeldBackSinkRows(Guid streamId, Guid[] sinkWorkIds) {
+    if (!_collectiveSinkHeldBack.TryGetValue(streamId, out var heldBack)) {
+      return sinkWorkIds;
+    }
+    var now = _timeProvider.GetUtcNow();
+    lock (heldBack) {
+      return [.. sinkWorkIds.Concat(heldBack.Where(kv => kv.Value > now).Select(kv => kv.Key)).Distinct()];
+    }
+  }
+
+  /// <summary>
+  /// Records which of this run's sink rows are still waiting behind a collective the run did not hold (#963), for the
+  /// next sink run on the stream; every other row of the run applied or was completed and is forgotten. A row keeps the
+  /// deadline it was first held back with, the one a lease handle would get then, so it is taken over only while no
+  /// other instance can have claimed it. Expired rows of every stream are dropped here, which bounds the map by the
+  /// streams that have a row waiting right now.
+  /// </summary>
+  private static Guid[] _expired(Dictionary<Guid, DateTimeOffset> rows, DateTimeOffset now) =>
+    [.. rows.Where(kv => kv.Value <= now).Select(kv => kv.Key)];
+
+  private void _settleHeldBackSinkRows(Guid streamId, Guid[] runWorkIds, Guid[] stillWaiting) {
+    var now = _timeProvider.GetUtcNow();
+    if (stillWaiting.Length == 0) {
+      if (_collectiveSinkHeldBack.TryGetValue(streamId, out var existing)) {
+        lock (existing) {
+          foreach (var workId in runWorkIds.Concat(_expired(existing, now))) {
+            existing.Remove(workId);
+          }
+          if (existing.Count == 0) {
+            _collectiveSinkHeldBack.TryRemove(new KeyValuePair<Guid, Dictionary<Guid, DateTimeOffset>>(streamId, existing));
+          }
+        }
+      }
+      return;
+    }
+    foreach (var (key, rows) in _collectiveSinkHeldBack) {
+      lock (rows) {
+        if (key != streamId && rows.Values.All(deadline => deadline <= now)) {
+          _collectiveSinkHeldBack.TryRemove(new KeyValuePair<Guid, Dictionary<Guid, DateTimeOffset>>(key, rows));
+        }
+      }
+    }
+    var deadline = now + TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds - _leaseHandleOptions.LeaseGraceSeconds));
+    var held = _collectiveSinkHeldBack.GetOrAdd(streamId, static _ => []);
+    lock (held) {
+      foreach (var workId in runWorkIds.Except(stillWaiting).Concat(_expired(held, now))) {
+        held.Remove(workId);
+      }
+      foreach (var workId in stillWaiting) {
+        held.TryAdd(workId, deadline);
       }
     }
   }
@@ -3834,6 +3996,10 @@ public partial class PerspectiveWorker(
           perspectiveName, streamId, processedEventIds.Count, string.Join(", ", processedEventIds));
       }
 #pragma warning restore CA1848
+      // Marked applied before the processed release (#959; see the drain-mode site). Only a committed apply
+      // reaches here with events: they are loaded for a Completed result alone, and the collective sink, which
+      // marks under its own name, reports only an apply that committed.
+      _syncEventTracker.MarkApplied(processedEventIds, perspectiveName);
       _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
     } else if (_logger.IsEnabled(LogLevel.Debug)) {
 #pragma warning disable CA1848
@@ -4949,6 +5115,18 @@ public partial class PerspectiveWorker(
   static partial void LogReconciliationFailed(ILogger logger, Exception exception);
 
   [LoggerMessage(
+    EventId = 72,
+    Level = LogLevel.Information,
+    Message = "Collective {EventId} on sink stream {StreamId} did not get its apply lock for {Table} after waiting {WaitedSeconds}s; it stays queued and is not counted as a failure")]
+  static partial void LogCollectiveApplyLockBusy(ILogger logger, Guid streamId, Guid eventId, string table, int waitedSeconds);
+
+  [LoggerMessage(
+    EventId = 71,
+    Level = LogLevel.Debug,
+    Message = "Collective sink stream {StreamId} is waiting for collective {HeadEventId}, which is ahead of it in commit order and not held by this run")]
+  static partial void LogCollectiveSinkWaitingItsTurn(ILogger logger, Guid streamId, Guid headEventId);
+
+  [LoggerMessage(
     EventId = 52,
     Level = LogLevel.Warning,
     Message = "Perspective rewind required for {PerspectiveName} stream {StreamId} — cursor at {CursorEventId}, late event {TriggerEventId} ({EventsBehind} events behind)"
@@ -5075,6 +5253,22 @@ public class PerspectiveWorkerOptions {
   /// </para>
   /// </remarks>
   public int? MaxPerspectiveEventAttempts { get; set; } = 10;
+
+  /// <summary>
+  /// Whether a collective that did not get its apply lock counts as a failed apply (#964). Default <c>false</c>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A <see cref="Whizbang.Core.Perspectives.CollectiveApplyLockBusyException"/> means another batch holds the lock
+  /// for the same table and scope and this one waited out every bounded wait, renewing its lease through each. By
+  /// default that is busy, not failed: no failure is reported, so the count that drives dead-lettering does not move,
+  /// and the collective's rows stay to be applied later. Set <c>true</c> to restore the accounting from before, where
+  /// a busy lock was reported like any failed apply.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_BusyApplyLock_IsNotReportedAsAFailure_AndKeepsItsRowAsync</tests>
+  public bool CollectiveLockBusyCountsAsFailure { get; set; }
 
   /// <summary>
   /// Lease duration in seconds.

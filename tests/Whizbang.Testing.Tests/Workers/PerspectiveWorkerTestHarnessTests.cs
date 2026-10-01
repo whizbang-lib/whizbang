@@ -122,4 +122,39 @@ public class PerspectiveWorkerTestHarnessTests {
 
     await Assert.That(harness.CompletionCapture.EventWorkIds.Count).IsEqualTo(3);
   }
+
+  [Test]
+  public async Task EventWorkIdsCaptured_WhenEveryIdIsAlreadyCaptured_IsCompleteAtOnceAsync() {
+    var capture = new CapturingPerspectiveCompletionChannel();
+    var first = Guid.NewGuid();
+    var second = Guid.NewGuid();
+    await capture.EnqueueEventWorkIdAsync(first);
+    await capture.EnqueueEventWorkIdAsync(second);
+
+    var captured = capture.EventWorkIdsCaptured(second, first);
+
+    await Assert.That(captured.IsCompletedSuccessfully).IsTrue()
+      .Because("a wait that starts after its rows were completed must not miss them");
+  }
+
+  [Test]
+  public async Task EventWorkIdsCaptured_CompletesOnlyOnceEveryIdIsCaptured_InAnyOrderAsync() {
+    var capture = new CapturingPerspectiveCompletionChannel();
+    var first = Guid.NewGuid();
+    var second = Guid.NewGuid();
+    await capture.EnqueueEventWorkIdAsync(first);
+
+    var both = capture.EventWorkIdsCaptured(first, second);
+    var onlySecond = capture.EventWorkIdsCaptured(second);
+    await capture.EnqueueEventWorkIdAsync(Guid.NewGuid());
+
+    await Assert.That(both.IsCompleted).IsFalse().Because("an unrelated row is not one of those waited for");
+    await Assert.That(onlySecond.IsCompleted).IsFalse();
+
+    await capture.EnqueueEventWorkIdAsync(second);
+
+    await both.WaitAsync(TimeSpan.FromSeconds(5));
+    await onlySecond.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(capture.FirstEventWorkId.IsCompletedSuccessfully).IsTrue();
+  }
 }

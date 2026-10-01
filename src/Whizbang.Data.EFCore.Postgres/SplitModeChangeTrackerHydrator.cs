@@ -24,6 +24,12 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// the entity.
 /// </para>
 /// <para>
+/// Only a row a query materialized is hydrated (<see cref="EntityTrackedEventArgs.FromQuery"/>). The same
+/// event fires when the application adds or attaches an entity on a context a lens has hooked, and
+/// detaching that entity would drop its write: an <c>Add</c> or <c>Update</c> saved nothing (issue #984).
+/// Such an entry is left as it is.
+/// </para>
+/// <para>
 /// <strong>Zero reflection, AOT-safe</strong>: Hydrators are registered by generated code at
 /// startup, keyed by the closed generic type <c>typeof(PerspectiveRow&lt;TModel&gt;)</c>.
 /// The runtime lookup is <c>entity.GetType()</c> (CLR vtable intrinsic) + dictionary hash.
@@ -34,6 +40,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:ChangeTrackerTracked_CanHydrateAndDetachAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:ChangeTrackerTracked_BulkResults_AllHydratedAndDetachedAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreFilterableLensQueryScopedAccessTests.cs:Query_WithFilterAndSplitModeModel_UsesTrackingQueryAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitHydratorHookedWriteTests.cs:Add_OnAHookedContext_SavesTheSplitRowAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitHydratorHookedWriteTests.cs:Update_OnAHookedContext_SavesTheChangeAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitHydratorHookedWriteTests.cs:Query_OnAHookedContext_StillHydratesAndDetachesTheRowAsync</tests>
 public static class SplitModeChangeTrackerHydrator {
   /// <summary>
   /// Hydrators keyed by closed generic type: <c>typeof(PerspectiveRow&lt;MyModel&gt;)</c>.
@@ -112,8 +121,12 @@ public static class SplitModeChangeTrackerHydrator {
   /// Event handler for <see cref="ChangeTracker.Tracked"/>.
   /// Zero-reflection: performs a single dictionary lookup by <c>entity.GetType()</c>.
   /// </summary>
+  /// <remarks>
+  /// Acts only on a row a query materialized. An entity the application added or attached is tracked
+  /// through the same event, and the hydrator's detach would discard the write it was tracked for.
+  /// </remarks>
   private static void _onEntityTracked(object? sender, EntityTrackedEventArgs args) {
-    if (_hydrators.TryGetValue(args.Entry.Entity.GetType(), out var hydrator)) {
+    if (args.FromQuery && _hydrators.TryGetValue(args.Entry.Entity.GetType(), out var hydrator)) {
       hydrator(args.Entry);
     }
   }

@@ -48,6 +48,11 @@ namespace Whizbang.Data.Postgres;
 /// converted anything returns only once no session older than its commit is left, waiting up to the
 /// command timeout, and a pass that converted nothing returns at once.
 /// </para>
+/// <para>
+/// A table a rewrite changed is analyzed after the commit (issue #1004). The rewrite marks the table
+/// with <see cref="IndexStatistics.MarkRewrittenSql"/>, in a transaction-local setting, so a rewrite
+/// rolled back to its savepoint is not analyzed.
+/// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/CanonicalTemporalRewritePhaseTests.cs</tests>
@@ -135,7 +140,12 @@ public static class CanonicalTemporalRewritePhase {
     connection.Notice += relay;
 
     var applied = 0;
+    // A rewrite that found values it cannot convert (an enum column holding a value that is neither a member
+    // name nor a number) is not reported and passed over like the rest: the framework cannot read that column,
+    // so startup stops once every rewrite that could run has been committed.
+    var blocked = new List<string>();
     string? writer;
+    IReadOnlyList<string> rewritten;
     try {
       foreach (var (name, sql) in pending) {
         await transaction.SaveAsync(SAVEPOINT, cancellationToken);
@@ -146,6 +156,10 @@ public static class CanonicalTemporalRewritePhase {
           await command.ExecuteNonQueryAsync(cancellationToken);
           await transaction.ReleaseAsync(SAVEPOINT, cancellationToken);
           applied++;
+        } catch (PostgresException ex) when (ex.SqlState == EnumColumnRewriteSql.BLOCKED_SQL_STATE) {
+          await transaction.RollbackAsync(SAVEPOINT, cancellationToken);
+          await transaction.ReleaseAsync(SAVEPOINT, cancellationToken);
+          blocked.Add(ex.MessageText);
         } catch (Exception ex) when (ex is not OperationCanceledException) {
           // Reported rather than fatal. A rewrite that did not run leaves rows in the older format,
           // and the index built over them fails with its own reason, which is a better place to read
@@ -158,6 +172,9 @@ public static class CanonicalTemporalRewritePhase {
       }
 
       writer = await SupersededRowVersionFence.CaptureWriterAsync(connection, transaction, cancellationToken);
+      // Read before the commit ends the transaction the marks live in. A rewrite rolled back to its
+      // savepoint took its mark with it.
+      rewritten = await IndexStatistics.ReadRewrittenTablesAsync(connection, transaction, cancellationToken);
       await transaction.CommitAsync(cancellationToken);
     } finally {
       connection.Notice -= relay;
@@ -165,6 +182,14 @@ public static class CanonicalTemporalRewritePhase {
 
     var elapsedMs = (long)timeProvider.GetElapsedTime(started).TotalMilliseconds;
     CanonicalTemporalRewriteLog.Applied(log, applied, pending.Count, lockId, elapsedMs);
+
+    if (blocked.Count > 0) {
+      throw new StoredFormConversionBlockedException(blocked);
+    }
+
+    // A rewrite updates every row it converts, which leaves the table's statistics describing the rows
+    // as they were (#1004). Analyzed after the commit, outside any transaction, each table once.
+    await IndexStatistics.AnalyzeAsync(connection, rewritten, log, cancellationToken);
 
     if (writer is not null) {
       // The initializer indexes the rewritten keys as soon as this returns, with a plain CREATE

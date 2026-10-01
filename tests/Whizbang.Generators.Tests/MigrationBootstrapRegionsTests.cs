@@ -39,6 +39,7 @@ public class MigrationBootstrapRegionsTests {
     "106_InstanceEvictionFencing.sql",    // the tombstone table record_capability consults
     "108_InstanceCapabilities.sql",       // record_capability itself
     "153_PerspectiveForms.sql",           // the stored-form ledger and function the elected migrator's rewrite needs
+    "176_StoredFormMigrations.sql",       // the stored-form migration journal the same rewrite phase reads and writes
   ];
 
   /// <summary>The objects an election cannot happen without.</summary>
