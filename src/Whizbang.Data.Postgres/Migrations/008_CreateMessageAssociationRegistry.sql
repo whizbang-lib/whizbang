@@ -158,7 +158,33 @@ $$ LANGUAGE plpgsql;
 -- Grant execute permission on function
 GRANT EXECUTE ON FUNCTION register_message_associations(JSONB, VARCHAR) TO PUBLIC;
 
--- Backfill normalized_message_type for existing rows (idempotent — safe to re-run)
-UPDATE __SCHEMA__.wh_message_associations
-SET normalized_message_type = __SCHEMA__.normalize_event_type(message_type)
-WHERE normalized_message_type IS NULL;
+-- Backfill normalized_message_type for existing rows (idempotent — safe to re-run).
+-- Bounded per call: this touches every unfilled row, and the registry can hold any number of them
+-- in a consumer with many message types. The whole migration is one command with one timeout, so an
+-- unbounded rewrite cannot finish once the table is large enough. ctid bounds the slice without
+-- needing a declared key, since this table is created from code rather than here.
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_backfill_normalized_message_type_batch(p_limit INT)
+RETURNS BIGINT AS $$
+DECLARE
+  v_rows BIGINT := 0;
+BEGIN
+  UPDATE __SCHEMA__.wh_message_associations
+  SET normalized_message_type = __SCHEMA__.normalize_event_type(message_type)
+  WHERE ctid IN (
+    SELECT ctid
+    FROM __SCHEMA__.wh_message_associations
+    WHERE normalized_message_type IS NULL
+    LIMIT p_limit
+  );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+  RETURN v_rows;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_backfill_normalized_message_type_batch IS
+'Fills normalized_message_type for up to p_limit association rows that still lack it, returning how many it filled. Returns 0 once none are left. The runner calls it until it returns 0.';
+
+-- @whizbang:batch-begin
+SELECT __SCHEMA__.wh_backfill_normalized_message_type_batch(@whizbang_batch_size);
+-- @whizbang:batch-end

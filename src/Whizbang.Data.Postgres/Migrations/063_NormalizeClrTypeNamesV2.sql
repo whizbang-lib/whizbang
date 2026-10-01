@@ -32,10 +32,54 @@
 --
 -- Idempotent: gated on the version; re-running after v3 is a no-op RETURN.
 
+-- The aggregate_type rewrite touches every row of the event store, so it runs as a bounded call
+-- the runner repeats until it reports none left, rather than as one statement inside the block
+-- below. A consumer's store may hold any number of rows; a single statement over all of them shares
+-- the migration's one command timeout and cannot finish once the table is large enough.
+--
+-- The same version guard the block uses lives inside here, so a store already at v3 reports zero on
+-- the first call and the runner stops. The predicate excludes rows that already hold the derived
+-- value, which is what makes the count fall to zero rather than repeating forever.
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_normalize_aggregate_type_batch(p_limit INT)
+RETURNS BIGINT AS $$
+DECLARE
+  v_current_version INTEGER;
+  v_rows BIGINT := 0;
+BEGIN
+  SELECT setting_value::INTEGER
+  INTO v_current_version
+  FROM __SCHEMA__.wh_settings
+  WHERE setting_key = 'clr_type_name_format_version';
+
+  IF COALESCE(v_current_version, 1) >= 3 THEN
+    RETURN 0;
+  END IF;
+
+  UPDATE __SCHEMA__.wh_event_store es
+  SET aggregate_type = split_part(es.event_type, ',', 1)
+  WHERE es.event_id IN (
+    SELECT es2.event_id
+    FROM __SCHEMA__.wh_event_store es2
+    WHERE es2.event_type NOT LIKE '%[[%'
+      AND es2.aggregate_type IS DISTINCT FROM split_part(es2.event_type, ',', 1)
+    LIMIT p_limit
+  );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+  RETURN v_rows;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_normalize_aggregate_type_batch IS
+'Rewrites up to p_limit event-store rows whose aggregate_type does not yet match the CLR name derived from event_type, returning how many it rewrote. Returns 0 once none are left, and 0 when the store is already at clr_type_name_format_version 3. The runner calls it until it returns 0.';
+
+-- @whizbang:batch-begin
+SELECT __SCHEMA__.wh_normalize_aggregate_type_batch(@whizbang_batch_size);
+-- @whizbang:batch-end
+
 DO $migrate$
 DECLARE
   v_current_version INTEGER;
-  v_agg_updated     BIGINT := 0;
   v_registry_upd    BIGINT := 0;
   v_registry_dedup  BIGINT := 0;
 BEGIN
@@ -57,13 +101,10 @@ BEGIN
     RETURN;
   END IF;
 
-  -- 1. aggregate_type -> CLR full name, derived from the already-correct event_type.
-  --    No-op on EF Core-written data; fixes bare-simple-name rows written by the Dapper store.
-  UPDATE __SCHEMA__.wh_event_store
-  SET aggregate_type = split_part(event_type, ',', 1)
-  WHERE event_type NOT LIKE '%[[%'
-    AND aggregate_type IS DISTINCT FROM split_part(event_type, ',', 1);
-  GET DIAGNOSTICS v_agg_updated = ROW_COUNT;
+  -- 1. aggregate_type -> CLR full name is no longer done here. It rewrites one row of the event
+  --    store per row of the event store, which cannot finish inside one command once the store is
+  --    large, and the whole of this migration is one command. It now runs above this block as a
+  --    bounded call the runner repeats; see wh_normalize_aggregate_type_batch.
 
   -- 2. wh_message_type_registry.clr_type_name : dotted-nested -> plus-nested. The '+'-nested oracle
   --    set = every column that stores a '+'-nested type name: message/command PAYLOAD types
@@ -121,7 +162,7 @@ BEGIN
         updated_at    = NOW(),
         updated_by    = EXCLUDED.updated_by;
 
-  RAISE NOTICE 'Normalized CLR type names to v3 (aggregate_type rows: %, registry renamed: %, registry stale-dupes dropped: %).',
-    v_agg_updated, v_registry_upd, v_registry_dedup;
+  RAISE NOTICE 'Normalized CLR type names to v3 (registry renamed: %, registry stale-dupes dropped: %). aggregate_type is rewritten separately, in bounded slices.',
+    v_registry_upd, v_registry_dedup;
 END
 $migrate$;

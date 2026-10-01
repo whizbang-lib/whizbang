@@ -220,18 +220,61 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_attribute
              WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
                AND attname = 'processed_at' AND NOT attisdropped) THEN
-    INSERT INTO __SCHEMA__.wh_inbox_state (
-      message_id, stream_id, received_at, partition_number, priority, is_event,
-      processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error,
-      chain_emitted_at, status)
-    SELECT
-      message_id, stream_id, received_at, partition_number, priority, is_event,
-      processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error,
-      chain_emitted_at, status
-    FROM __SCHEMA__.wh_inbox
-    ON CONFLICT (message_id) DO NOTHING;
+    -- Seeded in bounded slices below rather than here; see wh_seed_inbox_state_batch. One insert
+    -- over the whole inbox cannot finish inside the migration's single command once the inbox is
+    -- large, and how large it gets is the consumer's business, not ours.
+    NULL;
   END IF;
 END $$;
+
+-- Seeds the side table in bounded slices. The guard the block above carries lives in here too, so
+-- a replay against an inbox whose processed_at column is already gone reports zero and stops.
+--
+-- NOT EXISTS, rather than leaning on ON CONFLICT DO NOTHING, is what makes this terminate: a
+-- conflicting insert reports zero rows, so a slice of rows already seeded would read as "nothing
+-- left to do" and stop with the rest of the table unseeded. Excluding them instead means each call
+-- moves forward.
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_seed_inbox_state_batch(p_limit INT)
+RETURNS BIGINT AS $$
+DECLARE
+  v_rows BIGINT := 0;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute
+                 WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+                   AND attname = 'processed_at' AND NOT attisdropped) THEN
+    RETURN 0;
+  END IF;
+
+  INSERT INTO __SCHEMA__.wh_inbox_state (
+    message_id, stream_id, received_at, partition_number, priority, is_event,
+    processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error,
+    chain_emitted_at, status)
+  SELECT
+    i.message_id, i.stream_id, i.received_at, i.partition_number, i.priority, i.is_event,
+    i.processed_at, i.instance_id, i.lease_expiry, i.attempts, i.scheduled_for, i.failure_reason,
+    i.error, i.chain_emitted_at, i.status
+  FROM __SCHEMA__.wh_inbox i
+  WHERE i.message_id IN (
+    SELECT i2.message_id
+    FROM __SCHEMA__.wh_inbox i2
+    WHERE NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_inbox_state s WHERE s.message_id = i2.message_id
+    )
+    LIMIT p_limit
+  )
+  ON CONFLICT (message_id) DO NOTHING;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+  RETURN v_rows;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_seed_inbox_state_batch IS
+'Copies up to p_limit inbox rows that have no side-table row yet into wh_inbox_state, returning how many it copied. Returns 0 once every row is seeded, and 0 on a replay against an inbox whose processed_at column is already gone. The runner calls it until it returns 0.';
+
+-- @whizbang:batch-begin
+SELECT __SCHEMA__.wh_seed_inbox_state_batch(@whizbang_batch_size);
+-- @whizbang:batch-end
 
 -- The lanes the claim picks from. Partial on processed_at IS NULL so they track pending work rather
 -- than settled history, and split by ownership so neither lane reads the other's rows.

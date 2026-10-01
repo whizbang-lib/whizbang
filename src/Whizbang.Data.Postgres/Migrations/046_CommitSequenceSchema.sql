@@ -104,6 +104,11 @@ CREATE INDEX IF NOT EXISTS idx_event_store_commit_sequence
 -- emit paths, local handler chains). Real cross-service envelopes carry explicit values
 -- via store_inbox_messages; the trigger is purely a safety net so NOT NULL stays enforceable
 -- without rewriting every call site that pre-dated slice 26.
+-- Adding the columns, filling them, and enforcing NOT NULL were one block. Filling them is a write
+-- per inbox row, which cannot finish inside the migration's single command once the inbox is large,
+-- so the fill is now a bounded call the runner repeats and the three steps are ordered explicitly:
+-- add, then fill to completion, then enforce. Segments run in file order, so NOT NULL is only
+-- reached once the fill has reported nothing left.
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -113,10 +118,6 @@ BEGIN
       AND column_name = 'source_service_id'
   ) THEN
     ALTER TABLE __SCHEMA__.wh_inbox ADD COLUMN source_service_id UUID;
-    UPDATE __SCHEMA__.wh_inbox
-       SET source_service_id = (SELECT service_id FROM __SCHEMA__.wh_service_config LIMIT 1)
-     WHERE source_service_id IS NULL;
-    ALTER TABLE __SCHEMA__.wh_inbox ALTER COLUMN source_service_id SET NOT NULL;
   END IF;
 
   IF NOT EXISTS (
@@ -126,9 +127,62 @@ BEGIN
       AND column_name = 'source_commit_sequence'
   ) THEN
     ALTER TABLE __SCHEMA__.wh_inbox ADD COLUMN source_commit_sequence BIGINT DEFAULT 0;
-    UPDATE __SCHEMA__.wh_inbox
-       SET source_commit_sequence = 0
-     WHERE source_commit_sequence IS NULL;
+  END IF;
+END $$;
+
+-- Both fills exclude the rows they have already written, which is what makes the reported count
+-- fall to zero instead of repeating the same slice forever.
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_backfill_inbox_source_columns_batch(p_limit INT)
+RETURNS BIGINT AS $$
+DECLARE
+  v_rows BIGINT := 0;
+  v_total BIGINT := 0;
+BEGIN
+  UPDATE __SCHEMA__.wh_inbox
+     SET source_service_id = (SELECT service_id FROM __SCHEMA__.wh_service_config LIMIT 1)
+   WHERE message_id IN (
+     SELECT message_id FROM __SCHEMA__.wh_inbox WHERE source_service_id IS NULL LIMIT p_limit
+   );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  v_total := v_total + v_rows;
+
+  UPDATE __SCHEMA__.wh_inbox
+     SET source_commit_sequence = 0
+   WHERE message_id IN (
+     SELECT message_id FROM __SCHEMA__.wh_inbox WHERE source_commit_sequence IS NULL LIMIT p_limit
+   );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  v_total := v_total + v_rows;
+
+  RETURN v_total;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_backfill_inbox_source_columns_batch IS
+'Fills source_service_id and source_commit_sequence for up to p_limit inbox rows each, returning the combined count. Returns 0 once both columns are filled everywhere. The runner calls it until it returns 0, after which the columns can be made NOT NULL.';
+
+-- @whizbang:batch-begin
+SELECT __SCHEMA__.wh_backfill_inbox_source_columns_batch(@whizbang_batch_size);
+-- @whizbang:batch-end
+
+-- Only now, with no NULLs left, is the constraint enforceable. SET NOT NULL validates the whole
+-- table, so it is a scan rather than a rewrite; it is idempotent on a column that already carries
+-- the constraint.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'wh_inbox' AND column_name = 'source_service_id' AND is_nullable = 'YES'
+  ) THEN
+    ALTER TABLE __SCHEMA__.wh_inbox ALTER COLUMN source_service_id SET NOT NULL;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'wh_inbox' AND column_name = 'source_commit_sequence' AND is_nullable = 'YES'
+  ) THEN
     ALTER TABLE __SCHEMA__.wh_inbox ALTER COLUMN source_commit_sequence SET NOT NULL;
   END IF;
 END $$;

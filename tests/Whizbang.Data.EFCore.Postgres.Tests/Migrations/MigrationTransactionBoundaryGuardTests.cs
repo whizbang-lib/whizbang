@@ -60,6 +60,11 @@ public partial class MigrationTransactionBoundaryGuardTests {
     "purge_orphan_inbox", "recompute_partition_numbers", "recover_dead_letter",
     "release_unprocessed_inbox", "release_unstarted_leases", "renew_leases",
     "store_inbox_messages",
+    // Not a redirected function: the cutover's own seeding helper. It copies inbox rows into the
+    // side table a bounded slice at a time, because one insert over the whole inbox cannot finish
+    // inside the migration's single command once the inbox is large. Listed so this guard stays a
+    // statement about everything the cutover defines rather than only the part that moved.
+    "wh_seed_inbox_state_batch",
   ];
 
   /// <summary>

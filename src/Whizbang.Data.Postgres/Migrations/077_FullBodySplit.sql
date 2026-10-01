@@ -534,14 +534,61 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.wh_backfill_event_bodies IS
 'Full-split backfill (#13b4-2): copies every remaining inline wh_event_store body into wh_event_body, then NULLs the inline columns only where the body row exists. Idempotent and re-runnable; returns the number of pointers nulled. Invoked once by migration 077.';
 
+-- The backfill moves one bounded slice per call and reports how many pointers it nulled, so the
+-- runner can send it until it reports none. A single unbounded call cannot finish once the store is
+-- large: the whole migration is one command and shares one command timeout, and a loop written
+-- inside the SQL does not help because a DO block is still one command. The size of a consumer's
+-- event store is not knowable here, so the bound is rows per call rather than elapsed time.
+--
 -- Guarded for LEDGER-REPLAY idempotency: on a replay against an already-split store (078 dropped
--- the inline columns) the backfill's body would fail at execution with 42703 — there is nothing
--- left to backfill, so skip the call. First-apply behavior (columns present) is unchanged.
-DO $$
+-- the inline columns) the body would fail at execution with 42703 — there is nothing left to
+-- backfill, so the guard returns zero and the runner stops after one call. PL/pgSQL plans a
+-- statement when it first runs it, so the guarded statements are never planned on that path.
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_backfill_event_bodies_batch(p_limit INT)
+RETURNS BIGINT AS $$
+DECLARE
+  v_rows BIGINT := 0;
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_attribute
-             WHERE attrelid = to_regclass('__SCHEMA__.wh_event_store')
-               AND attname = 'event_data' AND NOT attisdropped) THEN
-    PERFORM __SCHEMA__.wh_backfill_event_bodies();
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute
+                 WHERE attrelid = to_regclass('__SCHEMA__.wh_event_store')
+                   AND attname = 'event_data' AND NOT attisdropped) THEN
+    RETURN 0;
   END IF;
-END $$;
+
+  -- Copy one slice of bodies. Bounded by p_limit so the statement stays short however large the
+  -- store is.
+  INSERT INTO __SCHEMA__.wh_event_body (event_id, event_data, metadata)
+  SELECT es.event_id, es.event_data, es.metadata
+  FROM __SCHEMA__.wh_event_store es
+  WHERE es.event_id IN (
+    SELECT es2.event_id
+    FROM __SCHEMA__.wh_event_store es2
+    WHERE es2.event_data IS NOT NULL
+    LIMIT p_limit
+  )
+  ON CONFLICT DO NOTHING;
+
+  -- A separate statement, so it sees the rows the INSERT above just wrote. The same bound inside a
+  -- single statement's CTE would not work: every arm of a CTE reads the one snapshot, so this test
+  -- would not see them and would null nothing, which never terminates.
+  UPDATE __SCHEMA__.wh_event_store es
+  SET event_data = NULL, metadata = NULL
+  WHERE es.event_id IN (
+    SELECT es2.event_id
+    FROM __SCHEMA__.wh_event_store es2
+    WHERE es2.event_data IS NOT NULL
+      AND EXISTS (SELECT 1 FROM __SCHEMA__.wh_event_body eb WHERE eb.event_id = es2.event_id)
+    LIMIT p_limit
+  );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+  RETURN v_rows;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_backfill_event_bodies_batch IS
+'Bounded full-split backfill (#13b4-2): copies up to p_limit remaining inline bodies into wh_event_body and nulls the inline columns for the slice whose body now exists, returning the number nulled. Returns 0 once nothing is left, and 0 on a replay against a store whose inline columns are already dropped. Idempotent and re-runnable; the runner calls it until it returns 0.';
+
+-- @whizbang:batch-begin
+SELECT __SCHEMA__.wh_backfill_event_bodies_batch(@whizbang_batch_size);
+-- @whizbang:batch-end
