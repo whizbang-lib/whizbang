@@ -60,7 +60,9 @@ public class ReceptorInvocationTrackingTests {
       LifecycleStage stage,
       bool isIdempotent = false,
       Action<WhizbangGuardrailsOptions>? configureGuardrails = null,
-      Func<ValueTask<object?>>? customBody = null) {
+      Func<ValueTask<object?>>? customBody = null,
+      string? serviceName = null,
+      bool isOnceAcrossServices = false) {
     var fires = new List<string>();
     var registry = new TrackingInvocationRegistry();
     registry.Add(new ReceptorInfo(
@@ -73,7 +75,8 @@ public class ReceptorInvocationTrackingTests {
         }
         return null;
       },
-      IsIdempotent: isIdempotent
+      IsIdempotent: isIdempotent,
+      IsOnceAcrossServices: isOnceAcrossServices
     ), stage);
 
     var services = new ServiceCollection();
@@ -83,6 +86,9 @@ public class ReceptorInvocationTrackingTests {
     });
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddSingleton<IReceptorDedupStore, EnvelopeReceptorDedupStore>();
+    if (serviceName is not null) {
+      services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(Guid.CreateVersion7(), serviceName, "host", 1));
+    }
     services.Configure<WhizbangOptions>(o => configureGuardrails?.Invoke(o.Guardrails));
     var provider = services.BuildServiceProvider();
     var collector = provider.GetFakeLogCollector();
@@ -271,6 +277,66 @@ public class ReceptorInvocationTrackingTests {
       await Assert.That(async () => await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline))
         .Throws<DuplicateReceptorFireException>();
       await Assert.That(fires).Count().IsEqualTo(0);
+    }
+  }
+
+  private static ReceptorInvocationRecord _firedIn(string serviceName) => new() {
+    ReceptorId = "SharedReceptor",
+    Stage = LifecycleStage.LocalImmediateInline,
+    CompletedAt = DateTimeOffset.UtcNow,
+    Duration = TimeSpan.Zero,
+    ServiceName = serviceName
+  };
+
+  /// <summary>
+  /// A receptor class registered in two services runs in each: a record the other service wrote does not
+  /// stop it here.
+  /// </summary>
+  [Test]
+  public async Task FiredInAnotherService_RunsHereAsync() {
+    var (invoker, provider, _, fires) = _buildInvoker("SharedReceptor", LifecycleStage.PostInboxInline, serviceName: "service-b");
+    await using (provider) {
+      var envelope = _envelope();
+      envelope.ReceptorInvocations = [_firedIn("service-a")];
+
+      await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+      await Assert.That(fires).Count().IsEqualTo(1)
+        .Because("each service writes to its own store, so each has to run the receptor");
+      await Assert.That(envelope.ReceptorInvocations!.Select(r => r.ServiceName)).IsEquivalentTo(["service-a", "service-b"]);
+    }
+  }
+
+  /// <summary>A record this service wrote still stops the receptor here.</summary>
+  [Test]
+  public async Task FiredInThisService_IsSkippedAsync() {
+    var (invoker, provider, _, fires) = _buildInvoker("SharedReceptor", LifecycleStage.PostInboxInline, serviceName: "service-b");
+    await using (provider) {
+      var envelope = _envelope();
+      envelope.ReceptorInvocations = [_firedIn("service-b")];
+
+      await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+      await Assert.That(fires).IsEmpty();
+    }
+  }
+
+  /// <summary>
+  /// A receptor marked <c>[ReceptorOnceAcrossServices]</c> runs once for the message wherever it is
+  /// registered: a record from any service stops it.
+  /// </summary>
+  [Test]
+  public async Task OnceAcrossServices_FiredInAnotherService_IsSkippedAsync() {
+    var (invoker, provider, _, fires) = _buildInvoker("SharedReceptor", LifecycleStage.PostInboxInline,
+      serviceName: "service-b", isOnceAcrossServices: true);
+    await using (provider) {
+      var envelope = _envelope();
+      envelope.ReceptorInvocations = [_firedIn("service-a")];
+
+      await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+      await Assert.That(fires).IsEmpty()
+        .Because("an external effect such as an email has to happen once, not once per service");
     }
   }
 }

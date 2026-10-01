@@ -173,4 +173,85 @@ public class EnvelopeReceptorDedupStoreTests {
     await Assert.That(prior.Duration).IsEqualTo(input.Duration);
     await Assert.That(prior.ServiceName).IsEqualTo(input.ServiceName);
   }
+
+  private static ReceptorInvocationRecord _recordFrom(string serviceName, string receptorId = "Shared") => new() {
+    ReceptorId = receptorId,
+    Stage = LifecycleStage.LocalImmediateInline,
+    CompletedAt = DateTimeOffset.UtcNow,
+    Duration = TimeSpan.Zero,
+    ServiceName = serviceName
+  };
+
+  /// <summary>
+  /// A record another service wrote does not count for this service: a receptor class registered in two
+  /// services runs once in each.
+  /// </summary>
+  [Test]
+  public async Task TryGetPriorInvocationForService_RecordFromAnotherService_ReturnsNullAsync() {
+    var store = new EnvelopeReceptorDedupStore();
+    var envelope = _newEnvelope();
+    envelope.ReceptorInvocations = [_recordFrom("service-a")];
+
+    var prior = await store.TryGetPriorInvocationAsync(envelope, "Shared", "service-b", CancellationToken.None);
+
+    await Assert.That(prior).IsNull();
+  }
+
+  /// <summary>A record this service wrote counts, whatever the case of the service name.</summary>
+  [Test]
+  public async Task TryGetPriorInvocationForService_RecordFromThisService_ReturnsItAsync() {
+    var store = new EnvelopeReceptorDedupStore();
+    var envelope = _newEnvelope();
+    envelope.ReceptorInvocations = [_recordFrom("service-a"), _recordFrom("Service-B")];
+
+    var prior = await store.TryGetPriorInvocationAsync(envelope, "Shared", "service-b", CancellationToken.None);
+
+    await Assert.That(prior).IsNotNull();
+    await Assert.That(prior!.ServiceName).IsEqualTo("Service-B");
+  }
+
+  /// <summary>No service name asks for a record from any service, as a once-across-services receptor does.</summary>
+  [Test]
+  public async Task TryGetPriorInvocationForService_NoServiceName_ReturnsARecordFromAnyServiceAsync() {
+    var store = new EnvelopeReceptorDedupStore();
+    var envelope = _newEnvelope();
+    envelope.ReceptorInvocations = [_recordFrom("service-a")];
+
+    var prior = await store.TryGetPriorInvocationAsync(envelope, "Shared", serviceName: null, CancellationToken.None);
+
+    await Assert.That(prior).IsNotNull();
+  }
+
+  /// <summary>A record that names no service cannot be placed, so it counts for every service, as before.</summary>
+  [Test]
+  public async Task TryGetPriorInvocationForService_RecordNamingNoService_CountsForEveryServiceAsync() {
+    var store = new EnvelopeReceptorDedupStore();
+    var envelope = _newEnvelope();
+    envelope.ReceptorInvocations = [_recordFrom(string.Empty)];
+
+    var prior = await store.TryGetPriorInvocationAsync(envelope, "Shared", "service-b", CancellationToken.None);
+
+    await Assert.That(prior).IsNotNull();
+  }
+
+  /// <summary>A record for another receptor from this service does not count.</summary>
+  [Test]
+  public async Task TryGetPriorInvocationForService_RecordForAnotherReceptor_ReturnsNullAsync() {
+    var store = new EnvelopeReceptorDedupStore();
+    var envelope = _newEnvelope();
+    envelope.ReceptorInvocations = [_recordFrom("service-b", receptorId: "Other")];
+
+    var prior = await store.TryGetPriorInvocationAsync(envelope, "Shared", "service-b", CancellationToken.None);
+
+    await Assert.That(prior).IsNull();
+  }
+
+  [Test]
+  public async Task TryGetPriorInvocationForService_NoRecords_ReturnsNullAsync() {
+    var store = new EnvelopeReceptorDedupStore();
+
+    var prior = await store.TryGetPriorInvocationAsync(_newEnvelope(), "Shared", "service-b", CancellationToken.None);
+
+    await Assert.That(prior).IsNull();
+  }
 }

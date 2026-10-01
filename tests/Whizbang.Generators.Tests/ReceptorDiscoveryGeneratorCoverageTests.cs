@@ -405,6 +405,65 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
     await Assert.That(registry).Contains("IsIdempotent: true");
   }
 
+  /// <summary>
+  /// [ReceptorOnceAcrossServices] sets IsOnceAcrossServices on the registry entry, for a void receptor
+  /// and a receptor with a response alike, so the double-fire guardrail skips it on a record from any
+  /// service. A receptor without it is once per service.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithReceptorOnceAcrossServices_SetsOnceAcrossServicesAsync() {
+    const string source = """
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Whizbang.Core;
+      using Whizbang.Core.Messaging;
+
+      namespace MyApp.Receptors;
+
+      public sealed class OrderPlaced : IEvent { }
+      public sealed class OrderShipped : IEvent { }
+      public sealed class EmailSent : IEvent { }
+      public sealed class InvoiceRaised : IEvent { }
+
+      [ReceptorOnceAcrossServices]
+      public class ConfirmationEmailReceptor : IReceptor<OrderPlaced> {
+        public ValueTask HandleAsync(OrderPlaced message, CancellationToken ct = default) => ValueTask.CompletedTask;
+      }
+
+      [ReceptorOnceAcrossServices]
+      public class ShippingEmailReceptor : IReceptor<OrderShipped, EmailSent> {
+        public ValueTask<EmailSent> HandleAsync(OrderShipped message, CancellationToken ct = default) => ValueTask.FromResult(new EmailSent());
+      }
+
+      public class InvoiceProjector : IReceptor<InvoiceRaised> {
+        public ValueTask HandleAsync(InvoiceRaised message, CancellationToken ct = default) => ValueTask.CompletedTask;
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(_onceAcrossServicesFlagsFor(registry!, "ConfirmationEmailReceptor")).IsEquivalentTo(["true"]);
+    await Assert.That(_onceAcrossServicesFlagsFor(registry!, "ShippingEmailReceptor")).IsEquivalentTo(["true"]);
+    await Assert.That(_onceAcrossServicesFlagsFor(registry!, "InvoiceProjector")).IsEquivalentTo(["false"]);
+    await Assert.That(registry).DoesNotContain("__IS_ONCE_ACROSS_SERVICES__");
+  }
+
+  /// <summary>The distinct IsOnceAcrossServices values on every registry entry for one receptor class.</summary>
+  private static string[] _onceAcrossServicesFlagsFor(string registry, string receptorClass) {
+    var flags = new HashSet<string>(StringComparer.Ordinal);
+    var at = 0;
+    var marker = $"ReceptorId: \"MyApp.Receptors.{receptorClass}\"";
+    while ((at = registry.IndexOf(marker, at, StringComparison.Ordinal)) >= 0) {
+      var valueAt = registry.IndexOf("IsOnceAcrossServices: ", at, StringComparison.Ordinal) + "IsOnceAcrossServices: ".Length;
+      flags.Add(registry[valueAt..registry.IndexOfAny(['\r', '\n', ')', ','], valueAt)].Trim());
+      at = valueAt;
+    }
+    return [.. flags];
+  }
+
   // ==================== Traced void registry snippet ====================
 
   /// <summary>

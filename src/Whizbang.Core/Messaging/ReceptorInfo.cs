@@ -46,6 +46,11 @@ namespace Whizbang.Core.Messaging;
 /// allowed through. Distinct from <see cref="FireDuringReplay"/>, which only flips when
 /// <c>AlwaysFire = true</c>.
 /// </param>
+/// <param name="IsOnceAcrossServices">
+/// Whether this receptor runs once for a message across every service that registers it, set when it
+/// is decorated with <see cref="ReceptorOnceAcrossServicesAttribute"/>. By default a prior invocation
+/// stops a receptor only in the service that recorded it; with this flag, one from any service does.
+/// </param>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed record ReceptorInfo(
@@ -55,7 +60,8 @@ public sealed record ReceptorInfo(
     IReadOnlyList<ReceptorSyncAttributeInfo>? SyncAttributes = null,
     ICallerInfo? CallerInfo = null,
     bool FireDuringReplay = false,
-    bool IsIdempotent = false
+    bool IsIdempotent = false,
+    bool IsOnceAcrossServices = false
 );
 
 /// <summary>
