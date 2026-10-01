@@ -588,6 +588,10 @@ BEGIN
 END
 $wb$;
 
+-- The planner costs each call on its own, where one sequential scan of the store really does beat a
+-- thousand index lookups. It cannot know the call repeats once per slice, which turns that choice
+-- into a full scan per slice -- the whole defect, just moved from finding the slice to joining it.
+-- Denying the sequential path leaves the keyed lookups, whose cost is the slice and not the store.
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_backfill_event_bodies_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE
@@ -653,12 +657,7 @@ BEGIN
   -- row count would stop the pass with work outstanding.
   RETURN GREATEST(v_rows, 1);
 END;
-$$ LANGUAGE plpgsql
--- The planner costs each call on its own, where one sequential scan of the store really does beat a
--- thousand index lookups. It cannot know the call repeats once per slice, which turns that choice
--- into a full scan per slice -- the whole defect, just moved from finding the slice to joining it.
--- Denying the sequential path leaves the keyed lookups, whose cost is the slice and not the store.
-SET enable_seqscan = off;
+$$ LANGUAGE plpgsql SET enable_seqscan = off;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_backfill_event_bodies_batch IS
 'Bounded full-split backfill (#13b4-2): claims the next p_limit entries from wh_body_split_todo by ascending seq, copies their bodies into wh_event_body, nulls the inline columns, and advances wh_body_split_cursor. Cost per call is p_limit, not the size of the store, because the slice is an index range scan over the worklist rather than a predicate re-evaluated against wh_event_store. Returns 0 only when the worklist is exhausted. Idempotent and re-runnable; the runner calls it until it returns 0.';

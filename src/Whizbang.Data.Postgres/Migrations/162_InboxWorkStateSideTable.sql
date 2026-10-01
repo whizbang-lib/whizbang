@@ -261,6 +261,10 @@ BEGIN
 END
 $wb$;
 
+-- The planner costs each call alone, where scanning the table beats a slice-worth of keyed lookups.
+-- It cannot know the call repeats once per slice, which turns that choice into a scan per slice --
+-- the whole defect, just moved from finding the slice to applying it. Denying the sequential path
+-- leaves the keyed lookups, whose cost is the slice and not the table.
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_seed_inbox_state_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE
@@ -307,12 +311,7 @@ BEGIN
 
   RETURN GREATEST(v_rows, 1);
 END;
-$$ LANGUAGE plpgsql
--- The planner costs each call alone, where scanning the table beats a slice-worth of keyed lookups.
--- It cannot know the call repeats once per slice, which turns that choice into a scan per slice --
--- the whole defect, just moved from finding the slice to applying it. Denying the sequential path
--- leaves the keyed lookups, whose cost is the slice and not the table.
-SET enable_seqscan = off;
+$$ LANGUAGE plpgsql SET enable_seqscan = off;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_seed_inbox_state_batch IS
 'Copies up to p_limit inbox rows that have no side-table row yet into wh_inbox_state, returning how many it copied. Returns 0 once every row is seeded, and 0 on a replay against an inbox whose processed_at column is already gone. The runner calls it until it returns 0.';

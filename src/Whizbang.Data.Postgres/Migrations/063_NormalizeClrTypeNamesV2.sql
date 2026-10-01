@@ -69,6 +69,10 @@ BEGIN
 END
 $wb$;
 
+-- The planner costs each call alone, where scanning the table beats a slice-worth of keyed lookups.
+-- It cannot know the call repeats once per slice, which turns that choice into a scan per slice --
+-- the whole defect, just moved from finding the slice to applying it. Denying the sequential path
+-- leaves the keyed lookups, whose cost is the slice and not the table.
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_normalize_aggregate_type_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE
@@ -108,12 +112,7 @@ BEGIN
 
   RETURN GREATEST(v_rows, 1);
 END;
-$$ LANGUAGE plpgsql
--- The planner costs each call alone, where scanning the table beats a slice-worth of keyed lookups.
--- It cannot know the call repeats once per slice, which turns that choice into a scan per slice --
--- the whole defect, just moved from finding the slice to applying it. Denying the sequential path
--- leaves the keyed lookups, whose cost is the slice and not the table.
-SET enable_seqscan = off;
+$$ LANGUAGE plpgsql SET enable_seqscan = off;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_normalize_aggregate_type_batch IS
 'Rewrites up to p_limit event-store rows whose aggregate_type does not yet match the CLR name derived from event_type, returning how many it rewrote. Returns 0 once none are left, and 0 when the store is already at clr_type_name_format_version 3. The runner calls it until it returns 0.';

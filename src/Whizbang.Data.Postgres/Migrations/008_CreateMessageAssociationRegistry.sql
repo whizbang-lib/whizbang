@@ -191,6 +191,9 @@ BEGIN
 END
 $wb$;
 
+-- The planner costs each call alone, where scanning a small table beats a hundred keyed lookups. It
+-- cannot know the call repeats once per slice, which turns that choice into a scan per slice. Denying
+-- the sequential path leaves the keyed lookups, whose cost is the slice and not the table.
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_backfill_normalized_message_type_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE
@@ -224,11 +227,7 @@ BEGIN
 
   RETURN GREATEST(v_rows, 1);
 END;
-$$ LANGUAGE plpgsql
--- The planner costs each call alone, where scanning a small table beats a hundred keyed lookups. It
--- cannot know the call repeats once per slice, which turns that choice into a scan per slice. Denying
--- the sequential path leaves the keyed lookups, whose cost is the slice and not the table.
-SET enable_seqscan = off;
+$$ LANGUAGE plpgsql SET enable_seqscan = off;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_backfill_normalized_message_type_batch IS
 'Fills normalized_message_type for up to p_limit association rows that still lack it, returning how many it filled. Returns 0 once none are left. The runner calls it until it returns 0.';
