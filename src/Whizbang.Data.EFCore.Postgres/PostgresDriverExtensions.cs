@@ -225,6 +225,16 @@ public static class PostgresDriverExtensions {
           return new EFCorePerspectiveSnapshotStore(ds, snapshotLogger);
         });
 
+        // TURNKEY: purged perspective rows stay purged (the markers the runner consults on a missing row), and the
+        // operator stream purge. Both are the shared Postgres implementations over the same NpgsqlDataSource.
+        // <docs>operations/infrastructure/purging-streams</docs>
+        selector.Services.TryAddSingleton<IPerspectivePurgeMarkerStore>(sp =>
+          new PostgresPerspectivePurgeMarkerStore(sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync));
+        selector.Services.TryAddSingleton<IStreamPurger>(sp =>
+          new PostgresStreamPurger(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+
         // TURNKEY: managed-resource health for the event-store DB. AlwaysRequired — a DB fault is a
         // real fault even during a migration (the migration needs it), so this replaces a consumer's
         // naive readiness check (no SELECT count(*) that a migration would make time out). The probe

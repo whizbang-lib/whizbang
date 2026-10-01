@@ -165,6 +165,9 @@ public static class ServiceCollectionExtensions {
     // Resolved explicitly (admin command / migration), not run automatically.
     services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
 
+    // Purged streams stay purged, and the operator stream purge (shared Postgres implementations).
+    AddStreamPurge(services, connectionString);
+
     // Cursor-checkpoint persistence for PerspectiveRebuilder. Without this, rebuild would
     // still update projection tables but wh_perspective_cursors would stay at whatever live
     // processing last wrote. See IPerspectiveCheckpointCompleter.
@@ -307,6 +310,9 @@ public static class ServiceCollectionExtensions {
     // Resolved explicitly (admin command / migration), not run automatically.
     services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
 
+    // Purged streams stay purged, and the operator stream purge (shared Postgres implementations).
+    AddStreamPurge(services, connectionString);
+
     // Cursor-checkpoint persistence for PerspectiveRebuilder. Without this, rebuild would
     // still update projection tables but wh_perspective_cursors would stay at whatever live
     // processing last wrote. See IPerspectiveCheckpointCompleter.
@@ -328,6 +334,31 @@ public static class ServiceCollectionExtensions {
     }
 
     return services;
+  }
+
+  /// <summary>
+  /// Registers the purge markers that keep a purged perspective row purged (<see cref="IPerspectivePurgeMarkerStore"/>)
+  /// and the operator stream purge (<see cref="IStreamPurger"/>), both the shared Postgres implementations over a
+  /// connection of their own per call. A host's own registration wins.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <param name="connectionString">The service's database.</param>
+  /// <docs>operations/infrastructure/purging-streams</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPurgeTests.cs:AddWhizbangPostgres_RegistersPurgeMarkersAndStreamPurger_BothOverloadsAsync</tests>
+  internal static void AddStreamPurge(IServiceCollection services, string connectionString) {
+    services.TryAddSingleton<IPerspectivePurgeMarkerStore>(_ =>
+      new PostgresPerspectivePurgeMarkerStore(ct => OpenConnectionAsync(connectionString, ct)));
+    services.TryAddSingleton<IStreamPurger>(sp =>
+      new PostgresStreamPurger(
+        ct => OpenConnectionAsync(connectionString, ct),
+        logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+  }
+
+  /// <summary>Opens a connection the caller disposes.</summary>
+  internal static async ValueTask<Npgsql.NpgsqlConnection> OpenConnectionAsync(string connectionString, CancellationToken cancellationToken) {
+    var connection = new Npgsql.NpgsqlConnection(connectionString);
+    await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    return connection;
   }
 
   /// <summary>
