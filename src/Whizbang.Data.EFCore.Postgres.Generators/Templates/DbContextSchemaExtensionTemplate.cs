@@ -751,6 +751,120 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// braces. Comparisons against deployed bodies must see the single-brace form.
   /// </summary>
   /// <summary>
+  /// <summary>
+  /// Runs one migration body, sending any batched region repeatedly until it changes no rows.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A migration is normally one command, which is why a statement that rewrites every row of a
+  /// large table cannot finish: the whole file shares one command timeout, and a loop written inside
+  /// the SQL does not help because a DO block is still one command. A marked region is sent on its
+  /// own instead, once per batch, so each send carries its own budget and the bound that matters is
+  /// rows per send rather than how long the table takes.
+  /// </para>
+  /// <para>
+  /// The loop ends when a send reports no rows, which is the only signal that needs no extra query
+  /// and cannot disagree with the work actually done. A region whose statement does not shrink its
+  /// own candidate set would never report zero, so the iteration cap turns that into a named failure
+  /// rather than a service that never starts — the same outcome as today, but explained.
+  /// </para>
+  /// </remarks>
+  private static async Task _executeMigrationBodyAsync(
+      Microsoft.EntityFrameworkCore.DbContext dbContext,
+      string sql,
+      string migrationName,
+      Microsoft.Extensions.Logging.ILogger? logger,
+      System.Threading.CancellationToken cancellationToken) {
+    var segments = Whizbang.Data.Postgres.MigrationBatchRegions.Segment(sql);
+
+    // The overwhelming majority of migrations carry no marker and come back as one plain segment,
+    // which is sent exactly as it was before this path existed.
+    foreach (var segment in segments) {
+      if (segment.Kind == Whizbang.Data.Postgres.MigrationSegmentKind.Plain) {
+        await dbContext.Database.ExecuteSqlRawAsync(segment.Sql, cancellationToken);
+        continue;
+      }
+
+      var pass = 0;
+      long totalRows = 0;
+      while (true) {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // A batched region reports how many rows it handled, rather than the runner reading rows
+        // affected. Two reasons, both load-bearing. A backfill often has to be guarded — on a replay
+        // the column it rewrites may no longer exist — and a guard needs a function body, which a
+        // bare DML statement cannot carry. And a function can do several statements that see each
+        // other's effects, which a single statement's CTEs cannot: a CTE reads the snapshot, so an
+        // UPDATE in one arm cannot see rows an INSERT in another arm just wrote.
+        var rows = await _scalarRowCountAsync(dbContext, segment.Sql, migrationName, cancellationToken);
+        if (rows <= 0) {
+          break;
+        }
+
+        pass++;
+        totalRows += rows;
+        logger?.LogDebug(
+          "Migration {Migration}: batch {Pass} moved {Rows} row(s) ({Total} so far)",
+          migrationName, pass, rows, totalRows);
+
+        if (pass >= MAX_BATCH_PASSES) {
+          throw new InvalidOperationException(
+            $"Migration {migrationName} ran {pass} batches of {segment.BatchSize} without finishing "
+            + $"({totalRows} rows so far). A batch has to exclude the rows it already handled, or it "
+            + "reports the same rows forever; check the region's WHERE clause.");
+        }
+      }
+
+      if (pass > 0) {
+        logger?.LogInformation(
+          "Migration {Migration}: backfilled {Total} row(s) in {Passes} batch(es) of {Size}",
+          migrationName, totalRows, pass, segment.BatchSize);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Runs one pass of a batched region and reads the row count it reports.
+  /// </summary>
+  /// <remarks>
+  /// The region's statement returns a single whole number: how many rows this pass handled. Zero
+  /// ends the loop. A region that returns nothing at all is a defect in the migration rather than a
+  /// finished backfill, and is reported as such instead of being read as "done" — that reading would
+  /// skip the backfill silently and leave the table half migrated.
+  /// </remarks>
+  private static async Task<long> _scalarRowCountAsync(
+      Microsoft.EntityFrameworkCore.DbContext dbContext,
+      string sql,
+      string migrationName,
+      System.Threading.CancellationToken cancellationToken) {
+    var connection = dbContext.Database.GetDbConnection();
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = sql;
+    cmd.CommandTimeout = SCHEMA_COMMAND_TIMEOUT_SECONDS;
+    if (dbContext.Database.CurrentTransaction is not null) {
+      cmd.Transaction = dbContext.Database.CurrentTransaction.GetDbTransaction();
+    }
+
+    var result = await cmd.ExecuteScalarAsync(cancellationToken);
+    if (result is null || result is DBNull) {
+      throw new InvalidOperationException(
+        $"Migration {migrationName} has a batched region that returned no value. A batched region "
+        + "has to report the number of rows it handled, so the runner knows whether to send it "
+        + "again; it is normally 'SELECT <schema>.some_backfill(@whizbang_batch_size);'.");
+    }
+
+    return System.Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  /// <summary>
+  /// How many batches one marked region may run before it is treated as not converging.
+  /// </summary>
+  /// <remarks>
+  /// At the default size this is a hundred million rows, far past any real backfill, so reaching it
+  /// means the statement is not excluding what it already did rather than that the table is large.
+  /// </remarks>
+  private const int MAX_BATCH_PASSES = 10_000;
+
   /// How long any one schema statement may take.
   /// </summary>
   /// <remarks>
@@ -1433,7 +1547,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           logger?.LogDebug("Executing migration: {Migration}{UpdateFlag}", name, isUpdate ? " (updated)" : "");
 
           var migSw = System.Diagnostics.Stopwatch.StartNew();
-          await dbContext.Database.ExecuteSqlRawAsync(transformedSql, cancellationToken);
+          await _executeMigrationBodyAsync(dbContext, transformedSql, name, logger, cancellationToken);
           migSw.Stop();
           applied++;
 
@@ -1457,7 +1571,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
         try {
           logger?.LogDebug("Executing migration: {Migration}", name);
           var migSw = System.Diagnostics.Stopwatch.StartNew();
-          await dbContext.Database.ExecuteSqlRawAsync(transformedSql, cancellationToken);
+          await _executeMigrationBodyAsync(dbContext, transformedSql, name, logger, cancellationToken);
           migSw.Stop();
           applied++;
           logger?.LogDebug("Migration {Migration}: {ElapsedMs}ms", name, migSw.ElapsedMilliseconds);

@@ -36,6 +36,17 @@ public sealed class PostgresSchemaInitializer {
   private readonly string _connectionString;
   private readonly string? _perspectiveSchemaSql;
   private readonly KeyValuePair<string, string>[]? _perspectiveEntries;
+  /// <summary>
+  /// How many times one batched region may be sent before it is treated as not converging.
+  /// </summary>
+  /// <remarks>
+  /// At any sensible batch size this is far past a real backfill, so reaching it means the region's
+  /// statement is not excluding what it already handled rather than that the table is large. Settable
+  /// so a test can prove the guard fires without sending ten thousand statements; nothing outside a
+  /// test changes it.
+  /// </remarks>
+  internal static int MaxBatchPasses { get; set; } = 10_000;
+
   private readonly IMigrationProvider _migrationProvider;
   private readonly string? _applicationVersion;
   private readonly IApplicationSchemaObjects? _applicationObjects;
@@ -487,9 +498,39 @@ public sealed class PostgresSchemaInitializer {
       try {
         await using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
-        cmd.CommandText = migration.Sql;
         cmd.CommandTimeout = 30;
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+
+        // Sent in segments, the same way the EF Core runner sends them. A migration that marks a
+        // batched region is several commands — the marked one repeatedly, until it reports no rows —
+        // because one statement over a whole table cannot finish inside a single command once the
+        // table is large. A driver that sent the file whole would push the unsubstituted size token
+        // at the server; both drivers read the same migration files, so both have to read the marks.
+        foreach (var segment in Whizbang.Data.Postgres.MigrationBatchRegions.Segment(migration.Sql)) {
+          cmd.CommandText = segment.Sql;
+
+          if (segment.Kind == Whizbang.Data.Postgres.MigrationSegmentKind.Plain) {
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+            continue;
+          }
+
+          var passes = 0;
+          while (true) {
+            var reported = await cmd.ExecuteScalarAsync(cancellationToken);
+            var rows = reported is null or DBNull
+              ? 0L
+              : Convert.ToInt64(reported, System.Globalization.CultureInfo.InvariantCulture);
+            if (rows <= 0) {
+              break;
+            }
+
+            if (++passes > MaxBatchPasses) {
+              throw new InvalidOperationException(
+                $"Migration {migration.Name} ran {passes} batches without finishing. A batched "
+                + "region has to exclude the rows it already handled, or it reports the same rows "
+                + "forever.");
+            }
+          }
+        }
 
         var status = isUpdate ? 2 : 1; // Updated vs Applied
         var desc = (existingHash == hash, isUpdate) switch {
