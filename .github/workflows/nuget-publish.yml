@@ -187,7 +187,17 @@ jobs:
             echo "Created tag: $TAG"
           fi
 
-      - name: Create GitHub Release
+      # Created as a draft, then published in the step below. GitHub only accepts asset uploads
+      # while a release is unpublished, and this repository has immutable releases on, so creating
+      # it published and attaching files in the same breath is refused:
+      #
+      #   Cannot upload asset …nupkg.sha256 to an immutable release.
+      #
+      # The packages were already on NuGet by then, so the run went red after a successful publish
+      # (0.2607.0-beta.1) and the release carried no assets. Nothing subscribes to the release event
+      # in this repository, so moving the publish into a second step changes which event fires
+      # (published rather than prereleased) without stranding a listener.
+      - name: Create GitHub Release (draft, so assets can be attached)
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: v${{ inputs.version }}
@@ -199,7 +209,16 @@ jobs:
             ./packages/*.sha256
             ./attestations/*
           fail_on_unmatched_files: false
-          draft: false
+          draft: true
+
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          # The assets are attached by now, so publishing is the last step rather than the first.
+          gh release edit "v$VERSION" --draft=false --repo "$GITHUB_REPOSITORY"
+          echo "Published release v$VERSION with its assets attached."
 
       - name: Summary
         env:
