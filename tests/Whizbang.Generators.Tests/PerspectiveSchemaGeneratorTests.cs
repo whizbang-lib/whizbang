@@ -87,8 +87,8 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(sql).IsNotNull();
     await Assert.That(sql).Contains("vector(1536)")
       .Because("an index type it cannot name is no reason to drop the column");
-    // Scoped to the VECTOR index: the schema always emits a GIN index on the JSONB column, so
-    // asserting on "USING" alone would be answered by an index that has nothing to do with this.
+    // Scoped to the VECTOR index: the schema can emit a GIN index on a JSONB column, so asserting
+    // on "USING" alone could be answered by an index that has nothing to do with this.
     await Assert.That(sql).DoesNotContain("_vec")
       .Because("an index method the generator cannot name must produce no index statement at "
              + "all — a malformed one fails the whole schema file, not just this field");
@@ -1119,5 +1119,59 @@ public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, Orde
     await Assert.That(generatedSource).Contains("ix_wh_per_customer_perspective_organization ON wh_per_customer_perspective((scope->>'o'))");
     await Assert.That(generatedSource).Contains("ix_wh_per_customer_perspective_customer ON wh_per_customer_perspective((scope->>'c'))");
     await Assert.That(generatedSource).Contains("DROP INDEX IF EXISTS ix_wh_per_customer_perspective_tenant");
+  }
+
+  /// <summary>A perspective whose model declares the given document-matching stance.</summary>
+  private static string _metadataPerspective(string modelAttribute) => $$"""
+            using System;
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+
+            namespace MyApp.Perspectives;
+
+            {{modelAttribute}}
+            public record AuditModel {
+              public Guid Id { get; set; }
+              public string Actor { get; set; } = "";
+            }
+
+            public class AuditPerspective : IPerspectiveFor<AuditModel, AuditRecorded> {
+              public AuditModel Apply(AuditModel currentData, AuditRecorded @event) => currentData;
+            }
+
+            public record AuditRecorded : IEvent;
+            """;
+
+  /// <summary>
+  /// The metadata index follows [PerspectiveQueries] here as it does on the other driver: nothing the
+  /// framework runs matches on metadata, so the index is written on every change and read by nothing
+  /// unless the model's own queries ask for it.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Arguments("")]
+  [Arguments("[PerspectiveQueries(MatchOnMetadata = false)]")]
+  [Arguments("[PerspectiveQueries(MatchOnAnyField = true)]")]
+  public async Task Generator_WithoutTheMetadataOptIn_BuildsNoMetadataIndexAsync(string modelAttribute) {
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(_metadataPerspective(modelAttribute));
+    var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+
+    await Assert.That(sql).IsNotNull();
+    await Assert.That(sql).DoesNotContain("_metadata_gin");
+    await Assert.That(sql).DoesNotContain("GIN (metadata");
+    await Assert.That(sql).Contains("ix_wh_per_audit_perspective_tenant")
+      .Because("the scope indexes serve tenant isolation, which this declaration is not about");
+  }
+
+  /// <summary>Declaring that queries match on metadata builds the metadata index.</summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithTheMetadataOptIn_BuildsTheMetadataIndexAsync() {
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
+      _metadataPerspective("[PerspectiveQueries(MatchOnMetadata = true)]"));
+    var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+
+    await Assert.That(sql).Contains(
+      "CREATE INDEX IF NOT EXISTS ix_wh_per_audit_perspective_metadata_gin ON wh_per_audit_perspective USING GIN (metadata jsonb_path_ops);");
   }
 }

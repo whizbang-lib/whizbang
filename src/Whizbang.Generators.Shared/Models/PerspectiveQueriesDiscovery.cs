@@ -34,11 +34,12 @@ public sealed record DocumentMatching(DocumentMatchDeclaration AnyField, Documen
     new(DocumentMatchDeclaration.Undeclared, DocumentMatchDeclaration.Undeclared);
 
   /// <summary>
-  /// Whether the index over the whole model document is built. Kept unless declared off, because
-  /// every perspective had it before the declaration existed and a query depending on it cannot be
-  /// seen from every assembly that might issue one.
+  /// Whether the index over the whole model document is built. Only when declared on: it is the
+  /// largest index on the table and every change to the document rewrites its entries, so it is a
+  /// decision a model makes rather than a default it inherits. An index an earlier release built is
+  /// never dropped for an undeclared model; that stays an operator step.
   /// </summary>
-  public bool BuildsDataIndex => AnyField != DocumentMatchDeclaration.Off;
+  public bool BuildsDataIndex => AnyField == DocumentMatchDeclaration.On;
 
   /// <summary>Whether the index over the metadata document is built. Only when declared on.</summary>
   public bool BuildsMetadataIndex => Metadata == DocumentMatchDeclaration.On;
@@ -89,20 +90,27 @@ public static class PerspectiveQueriesDiscovery {
   );
 
   /// <summary>
-  /// WHIZ308: Info - a filter relies on the whole-document index a model keeps only because it has
-  /// not declared whether its queries match on any field.
+  /// WHIZ308: Warning - a filter compiles to a whole-document match on a model that has not declared
+  /// whether its queries match on any field, and so does not get the index that answers it.
   /// </summary>
+  /// <remarks>
+  /// Separate from WHIZ307 because the fix differs: nothing was decided here, so declaring the lookup
+  /// is as good an answer as indexing the field, and the message offers both.
+  /// </remarks>
   public static readonly DiagnosticDescriptor WholeDocumentMatchReliesOnDefault = new(
       id: "WHIZ308",
-      title: "Whole-document match relies on the default index",
-      messageFormat: "{0} compiles to a whole-document match, answered by the index over the whole document that '{1}' has only because it does not declare [PerspectiveQueries(MatchOnAnyField = ...)]. Declare MatchOnAnyField = true to keep that index as a decision{2}.",
+      title: "Whole-document match has no index by default",
+      messageFormat: "{0} compiles to a whole-document match, and the index over the whole document is not built for '{1}', which does not declare [PerspectiveQueries(MatchOnAnyField = ...)], so the database reads every row of the perspective. Declare [PerspectiveQueries(MatchOnAnyField = true)] to build that index{2}.",
       category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Info,
+      defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "A model that does not declare MatchOnAnyField still gets the index over its whole document, because " +
-                   "every perspective had it before the declaration existed and a query that depends on it cannot be seen " +
-                   "from every assembly that might issue one. This note lists the filters that depend on it, which is the " +
-                   "list to check before declaring MatchOnAnyField = false."
+      description: "A model that does not declare MatchOnAnyField does not get the index over its whole document: it is " +
+                   "the largest index on the table and every change rewrites its entries, so it is built only when a model " +
+                   "asks for it. An equality or set-membership filter on a field with no index of its own compiles to a " +
+                   "whole-document match that only that index answers, so on a new database it reads every row. Declare " +
+                   "MatchOnAnyField = true to build the index, mark the field [Indexed] for an index of its own, or record a " +
+                   "deliberate scan with [SuppressIndexAdvisory(\"reason\")]. A database an earlier release created keeps " +
+                   "the index it already has: nothing is dropped automatically."
   );
 
   /// <summary>

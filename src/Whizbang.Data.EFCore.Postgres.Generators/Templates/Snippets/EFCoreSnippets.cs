@@ -154,8 +154,8 @@ __PHYSICAL_FIELD_CONFIGS__
       // Indexes
       entity.HasIndex(e => e.CreatedAt);
 
-      // GIN indexes for JSONB columns
-      entity.HasIndex(e => e.Data).HasMethod("gin");
+      // GIN indexes for JSONB columns. The data one only for [PerspectiveQueries(MatchOnAnyField = true)].
+      __DATA_GIN_INDEX__
       entity.HasIndex(e => e.Scope).HasMethod("gin");
 
       // Physical fields (shadow properties for database columns)

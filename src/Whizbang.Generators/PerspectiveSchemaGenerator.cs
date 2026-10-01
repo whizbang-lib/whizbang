@@ -151,7 +151,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         PropertyCount: propertyCount,
         EstimatedSizeBytes: estimatedSize,
         StorageMode: storageMode,
-        PhysicalFields: physicalFields
+        PhysicalFields: physicalFields,
+        BuildsMetadataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsMetadataIndex
     );
   }
 
@@ -173,7 +174,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         PropertyCount: candidate.PropertyCount,
         EstimatedSizeBytes: candidate.EstimatedSizeBytes,
         StorageMode: candidate.StorageMode,
-        PhysicalFields: candidate.PhysicalFields
+        PhysicalFields: candidate.PhysicalFields,
+        BuildsMetadataIndex: candidate.BuildsMetadataIndex
     );
   }
 
@@ -502,8 +504,14 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _appendPostTableSql(
       StringBuilder perspectiveSqlBuilder, PerspectiveSchemaInfo perspective, string createIndexesSnippet) {
-    // Generate standard indexes from snippet
+    // Generate standard indexes from snippet. The metadata index follows [PerspectiveQueries] as it
+    // does on the other driver: nothing the framework runs matches on metadata, so it is built only
+    // for a model whose own queries do.
+    var metadataIndex = perspective.BuildsMetadataIndex
+        ? "CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___metadata_gin ON __TABLE_NAME__ USING GIN (metadata jsonb_path_ops);"
+        : "-- No metadata index: the model does not declare [PerspectiveQueries(MatchOnMetadata = true)].";
     var indexesCode = createIndexesSnippet
+        .Replace("__METADATA_GIN_INDEX__", metadataIndex)
         .Replace("__TABLE_NAME__", perspective.TableName);
 
     perspectiveSqlBuilder.AppendLine(indexesCode);
@@ -729,6 +737,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 /// <param name="EstimatedSizeBytes">Estimated JSON size in bytes</param>
 /// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+/// <param name="BuildsMetadataIndex">Whether the model's [PerspectiveQueries] asks for the metadata index</param>
 internal sealed record PerspectiveSchemaInfo(
     string ClassName,
     string FullyQualifiedClassName,
@@ -737,7 +746,8 @@ internal sealed record PerspectiveSchemaInfo(
     int PropertyCount,
     int EstimatedSizeBytes,
     GeneratorFieldStorageMode StorageMode,
-    PhysicalFieldInfo[] PhysicalFields
+    PhysicalFieldInfo[] PhysicalFields,
+    bool BuildsMetadataIndex
 );
 
 /// <summary>
@@ -767,6 +777,7 @@ public enum GeneratorFieldStorageMode {
 /// <param name="EstimatedSizeBytes">Estimated JSON size in bytes</param>
 /// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+/// <param name="BuildsMetadataIndex">Whether the model's [PerspectiveQueries] asks for the metadata index</param>
 internal sealed record PerspectiveCandidate(
     string ClassName,
     string FullyQualifiedClassName,
@@ -775,5 +786,6 @@ internal sealed record PerspectiveCandidate(
     int PropertyCount,
     int EstimatedSizeBytes,
     GeneratorFieldStorageMode StorageMode,
-    PhysicalFieldInfo[] PhysicalFields
+    PhysicalFieldInfo[] PhysicalFields,
+    bool BuildsMetadataIndex
 );

@@ -1,5 +1,6 @@
 using ECommerce.Contracts.Commands;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.BFF.API.Lenses;
 
@@ -47,6 +48,12 @@ public record OrderReadModel {
   public required OrderId OrderId { get; init; }
   public required CustomerId CustomerId { get; init; }
   public string? TenantId { get; init; }
+
+  /// <summary>
+  /// Indexed because <c>GetByStatusAsync</c> filters on it. Without an index of its own the filter is a
+  /// whole-document match, which only the opt-in whole-document index answers (WHIZ308).
+  /// </summary>
+  [Indexed]
   public required string Status { get; init; }
   public decimal TotalAmount { get; init; }
   public DateTime CreatedAt { get; init; }
