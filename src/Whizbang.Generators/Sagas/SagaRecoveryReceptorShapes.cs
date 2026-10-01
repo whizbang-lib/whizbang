@@ -38,6 +38,14 @@ public static class SagaRecoveryReceptorShapes {
   private const string POST_ALL_PERSPECTIVES_INLINE =
       "global::Whizbang.Core.Messaging.LifecycleStage.PostAllPerspectivesInline";
 
+  /// <summary>
+  /// Stage the watchdog tick handler declares via <c>[FireAt]</c>: the receiving side, once per inbox row
+  /// whichever service published the tick. The post-inbox default skips a message whose last hop is this
+  /// same service, which is nearly every tick a saga has, so a saga's own scheduled ticks reached nothing.
+  /// </summary>
+  private const string PRE_INBOX_INLINE =
+      "global::Whizbang.Core.Messaging.LifecycleStage.PreInboxInline";
+
   /// <summary>The framework-owned tick event the watchdog handler receives — shared by every saga.</summary>
   internal const string WATCHDOG_TICK_EVENT = "Whizbang.Sagas.SagaCompletionWatchdogTickEvent";
 
@@ -65,11 +73,11 @@ public static class SagaRecoveryReceptorShapes {
         FrameworkMessageType: null,
         LifecycleStage: POST_ALL_PERSPECTIVES_INLINE),
 
-    // The safety net. No [FireAt] — it takes the default stage. Its message is the framework's own
-    // tick type, NOT a per-saga generated one, so all sagas share the tick shape.
+    // The safety net, received at the pre-inbox stage like the framework's router (#942). Its message
+    // is the framework's own tick type, NOT a per-saga generated one, so all sagas share the tick shape.
     new("SagaCompletionWatchdogTickHandler",
         SagaEventClassName: null,
         FrameworkMessageType: WATCHDOG_TICK_EVENT,
-        LifecycleStage: null),
+        LifecycleStage: PRE_INBOX_INLINE),
   ];
 }

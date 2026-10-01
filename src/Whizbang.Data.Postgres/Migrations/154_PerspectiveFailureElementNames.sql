@@ -15,6 +15,15 @@
 --              caller writes that name, and the reason from Reason or FailureReason likewise.
 --              Everything else is reproduced verbatim from 139.
 --
+--              One failed lease is counted once (issue #987). A claim re-offers a row it leased until
+--              the row completes or fails, so one stream can be queued for two drains that both fetch
+--              the leased row before either applies it; both applies fail and both report the same
+--              lease's failure. Counting both advanced the backoff two steps and brought the row to
+--              the dead-letter threshold in half the retries configured. The first report sets the
+--              Failed bit and releases the lease; a report that finds the row failed and not leased
+--              again since is that same failure and changes nothing. A retry takes a new lease, so
+--              its failure counts.
+--
 -- Dependencies: 139 (process_perspective_event_failures)
 -- Objects: process_perspective_event_failures
 
@@ -44,12 +53,15 @@ BEGIN
         scheduled_for = p_now + (INTERVAL '30 seconds' * LEAST(POWER(2, LEAST(pe.failures + 1, 10)), 10)),
         instance_id = NULL,
         lease_expiry = NULL
-    WHERE pe.event_work_id = v_failure.work_id;
+    WHERE pe.event_work_id = v_failure.work_id
+      -- Not a second report of a failure already recorded for this lease (issue #987).
+      AND NOT (pe.instance_id IS NULL AND (pe.status & 32768) <> 0);
   END LOOP;
 END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.process_perspective_event_failures(JSONB, TIMESTAMPTZ) IS
   'Records apply failures: sets the Failed bit and error, bumps failures (never attempts), schedules '
-  'the retry with a backoff that escalates on failures, and releases the lease. Reads the element the '
+  'the retry with a backoff that escalates on failures, and releases the lease. A report for a row already '
+  'failed and not leased again since is the same failure and is ignored. Reads the element the '
   'runtime writes (MessageId, Reason) as well as the older names (EventWorkId, FailureReason).';

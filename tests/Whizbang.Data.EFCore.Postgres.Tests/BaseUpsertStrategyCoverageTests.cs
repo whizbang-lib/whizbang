@@ -149,9 +149,8 @@ public class BaseUpsertStrategyCoverageTests {
 /// forceUpdateScope forwarding.
 /// </summary>
 /// <remarks>
-/// Mutates the process-wide <see cref="BaseUpsertStrategy.PathOnePersistenceOptionsProvider"/> and
-/// <see cref="PerspectiveTtlRegistry"/>, so it joins the "EFCorePostgresTests" group with every other suite
-/// that flips those statics.
+/// Mutates the process-wide <see cref="PerspectiveTtlRegistry"/>, so it joins the "EFCorePostgresTests"
+/// group with every other suite that flips it.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/BaseUpsertStrategy.cs</code-under-test>
 [NotInParallel("EFCorePostgresTests")]
@@ -161,16 +160,9 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
 
   [After(Test)]
   public Task ResetProcessWideStateAsync() {
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = null;
     PerspectiveTtlRegistry.Register(typeof(UpsertCoverageWidgetModel), -1);
     return Task.CompletedTask;
   }
-
-  private static void _enablePathOne() =>
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>
-      Generated.PerspectivePersistenceJsonContext.CreateOptions(
-        Generated.MessageJsonContext.Default,
-        global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
 
   // Raw DDL rather than EnsureCreatedAsync(): EFCoreTestBase already created this test's database via its
   // own raw-SQL schema script, so EnsureCreatedAsync (a database-existence check, not a per-table one) would
@@ -190,8 +182,13 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private UpsertCoverageWidgetDbContext _createWidgetDbContext() =>
-    new(new DbContextOptionsBuilder<UpsertCoverageWidgetDbContext>().UseNpgsql(ConnectionString).Options);
+  private UpsertCoverageWidgetDbContext _createWidgetDbContext(EntityFrameworkCommandCounter? counter = null) {
+    var builder = new DbContextOptionsBuilder<UpsertCoverageWidgetDbContext>().UseNpgsql(ConnectionString);
+    if (counter is not null) {
+      builder.AddInterceptors(counter);
+    }
+    return new(builder.Options);
+  }
 
   private sealed class UpsertCoverageWidgetDbContext(DbContextOptions<UpsertCoverageWidgetDbContext> options) : DbContext(options) {
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder) {
@@ -273,7 +270,6 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   // land via the EF-mapped fallback, which never consults this string.
   [Test]
   public async Task Upsert_WithAnEmptyTableName_DeclinesTheAtomicPathAndStillPersistsAsync() {
-    _enablePathOne();
     await using var context = CreateDbContext();
     var strategy = new PostgresUpsertStrategy();
     var testId = Guid.CreateVersion7();
@@ -298,7 +294,6 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   // atomicity would see the whole operation fail instead of joining the transaction as intended.
   [Test]
   public async Task Upsert_InsideAnAmbientTransaction_JoinsItAndPersistsOnCommitAsync() {
-    _enablePathOne();
     await using var context = CreateDbContext();
     var strategy = new PostgresUpsertStrategy();
     var testId = Guid.CreateVersion7();
@@ -325,7 +320,6 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   // EF-mapped write, which never places the caller's string into SQL.
   [Test]
   public async Task UpsertPerspectiveRowWithPhysicalFieldsAsync_WithAMalformedPhysicalFieldKey_DeclinesTheAtomicPathAndStillPersistsAsync() {
-    _enablePathOne();
     await _createWidgetTableAsync();
     await using var context = _createWidgetDbContext();
     var strategy = new PostgresUpsertStrategy();
@@ -353,7 +347,6 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task Upsert_ForATtlRegisteredModel_StampsExpiresAtViaTheAtomicPathAsync() {
     PerspectiveTtlRegistry.Register(typeof(UpsertCoverageWidgetModel), 3600);
-    _enablePathOne();
     await _createWidgetTableAsync();
     await using var context = _createWidgetDbContext();
     var strategy = new PostgresUpsertStrategy();
@@ -382,7 +375,6 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task Upsert_OnTheVersionItRead_ForATtlRegisteredModel_SlidesExpiresAtAsync() {
     PerspectiveTtlRegistry.Register(typeof(UpsertCoverageWidgetModel), 3600);
-    _enablePathOne();
     await _createWidgetTableAsync();
     await using var context = _createWidgetDbContext();
     var strategy = new PostgresUpsertStrategy();
@@ -412,7 +404,6 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   // path, and a checked version must be honored there too, or a stale write would land through the back door.
   [Test]
   public async Task UpsertPerspectiveRowWithPhysicalFieldsAsync_OnTheFallbackPath_HonorsTheVersionAsync() {
-    _enablePathOne();
     await _createWidgetTableAsync();
     var strategy = new PostgresUpsertStrategy();
     var testId = Guid.CreateVersion7();
@@ -453,9 +444,9 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
   // turning a routine CLR/column mismatch into an apply failure that stalls the perspective's checkpoint.
   [Test]
   public async Task UpsertPerspectiveRowWithPhysicalFieldsAsync_WithAnUnbindableClrType_FallsBackToTheLegacyPathAndPersistsAsync() {
-    _enablePathOne();
     await _createWidgetTableAsync();
-    await using var context = _createWidgetDbContext();
+    var counter = new EntityFrameworkCommandCounter();
+    await using var context = _createWidgetDbContext(counter);
     var strategy = new PostgresUpsertStrategy();
     var testId = Guid.CreateVersion7();
     var refId = TrackedGuid.New();
@@ -475,5 +466,8 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
 
     await Assert.That(storedRefId).IsEqualTo(refId.Value)
       .Because("the legacy fallback's own value converter must still land the value the atomic path's raw binding rejected");
+    await Assert.That(counter.Created).IsGreaterThan(0)
+      .Because("a physical-field value Npgsql cannot bind is a case that still legitimately falls back: the "
+        + "Entity Framework path wrote this row, through the context");
   }
 }

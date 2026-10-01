@@ -94,6 +94,32 @@ A date's index used to cast through `int4`; it now casts through `int8` like eve
 `CREATE INDEX IF NOT EXISTS` would keep the old index under the old name, `JsonIndexInfo.Superseded`
 renames it and drops the old one.
 
+## App-declared stored-form migrations (#986)
+
+An app whose model changed shape declares how its stored documents change: `[StoredForm(Previously,
+PreviousName, DefaultWhenMissing)]` on the property, `[StoredFormRemoved("Path")]` on the type, or an
+`IStoredFormMigration<TModel>` (raw SQL, stable `Name`). `StoredFormDiscovery` (Generators.Shared) walks
+the model (own, inherited and nested-object properties; a declaration inside a collection element is
+WHIZ832, an ungeneratable one WHIZ830, a custom migration that never runs WHIZ831) and the EF generator
+emits `GetStoredFormMigrations()` as calls to `StoredFormMigrationSql.Generated(..., StoredFormStep.X)` and
+`.Custom(...)`: the SQL lives in the runtime library, not in generated strings.
+
+- They run in `CanonicalTemporalRewritePhase` **before** the temporal rewrite (a renamed temporal key is
+  then converted in the same pass), one savepoint each, blocking with the shared SQLSTATE `WH980`.
+- Journal `wh_stored_form_migrations` (migration 176, bootstrap region). A generated migration settles on
+  the first pass that changes nothing (so a converting pass is followed by one more, catching rows an older
+  release wrote during a rollout); a custom one settles on its first run. Settled means one lookup, no scan.
+- `StoredFormMigrationSql.DeclareAsync` records every declaration as pending **outside** the phase
+  transaction. Inside it, the declaration's write would assign an xid and make the #949 fence wait on
+  every first start for nothing. A settling pass does write (its journal row), so the fence may wait once
+  there, like the temporal ledger's settle.
+- Physical fields: a type change retypes the column (`RetypeColumn`), a rename renames it; an enum target
+  is left to `EnumColumnRewriteSql`; a Split model has no document step.
+- Status: generated `GetStoredFormMigrationStatusAsync(dbContext)` and `whizbang stored-forms status`.
+
+Tests: `StoredFormMigrationTests`, `StoredFormMigrationSqlTests`, `StoredFormMigrationGenerationTests`,
+`StoredFormAttributeTests`, and the end-to-end recovery in `StoredFormScalarMismatchWorkerTests`.
+
 ## Objects a consumer owns over a temporal key
 
 Anything a consumer creates over a perspective document's temporal key reads the canonical number:
@@ -129,22 +155,36 @@ cycle. Removing it earlier makes a row the rewrite did not reach a stopped featu
 ## When a row cannot be read
 
 `StoredFormUnreadable.TryClassify(exception, out failure)` finds a reader's `JsonException` anywhere
-in a chain of wrappers or an aggregate and carries the path and the message. The perspective worker,
-in both the drain path and the channel path:
+in a chain of wrappers or an aggregate and carries the path and the message.
+
+A mapped document is read by Entity Framework's own materializer, which reports a scalar of the wrong
+JSON type (a number where the property is a string) as the reader's bare `InvalidOperationException`,
+with no path and no `JsonException` anywhere in it. `EFCorePostgresPerspectiveStore` therefore catches a
+failed row read, and `MappedDocumentReadFailure` walks the row's stored documents against the model
+Entity Framework read them with. The first value the property mapped at its place cannot take is raised
+as a `JsonException` carrying the path (`$.Status`), with the original inside it; when the walk finds
+nothing, the original is rethrown as it was. Temporals are left to their own readers, which already
+refuse with a `JsonException`. The opaque path and the Dapper store read with System.Text.Json, whose
+refusal is already a `JsonException` with the path.
+
+The perspective worker, in both the drain path and the channel path:
 
 1. records the failure in `StoredFormFailureRegistry` and logs event id 65 at Error once per
    (perspective, stream), event id 66 at Debug after that, until the stream reads again;
 2. counts `whizbang.perspective.read_failures{perspective_name, reason=stored_form_unreadable}`;
 3. reports every leased row of the group through `IFailureChannel` as `WorkCategory.PerspectiveEvent`
    with `MessageFailureReason.SerializationError`, so `process_perspective_event_failures` records the
-   failure, schedules the retry with backoff and the dead-letter check reads the counter;
+   failure, schedules the retry with backoff and the dead-letter check reads the counter. The function
+   counts one failure per lease: a claim re-offers a leased row, so one stream can be drained twice at
+   once and both drains report the same lease's failure; the second finds the row failed and not leased
+   again, and changes nothing (issue #987);
 4. the `perspective-stored-forms` health component (`StoredFormHealthSource`) reports Degraded with the
    count while any are remembered.
 
 The inbox lifecycle "(continuing)" swallow logs at Error instead of Warning when the cause is a
 deserialization failure (event id 74).
 
-## Three defects found underneath, two fixed here
+## Three defects found underneath
 
 - **The generated message facade cached metadata by type alone.** `MessageJsonContext`'s thread-local
   `TypeInfoCache` was keyed by `Type`, but a `JsonTypeInfo` is bound to the `JsonSerializerOptions` it
@@ -159,7 +199,7 @@ deserialization failure (event id 74).
   `EventWorkId`/`FailureReason` while the runtime serializes `MessageFailure` as `MessageId`/`Reason`.
   No perspective failure sent through the failure channel was ever recorded. Migration 154 reads both
   spellings. The outbox and inbox failure functions read `FailureReason` the same way, so
-  `failure_reason` on those rows has always been Unknown; that is a follow-up, not fixed here.
+  `failure_reason` on those rows was always Unknown until migration 156 made them read both too.
 - **A drain-path apply failure parks nothing.** The cursor failure carries `LastEventId = Guid.Empty`,
   which the EF coordinator skips, and the batched strategy then sends that same empty id as the row id.
   Stored-form failures now report per row (above). Any other apply failure still parks nothing; making
@@ -176,6 +216,11 @@ file). EF: `CanonicalTemporalStorageTests`, `CanonicalTemporalConventionTests`,
 `OpaqueDocumentRoundTripTests`, `PerspectiveDocumentSerializationTests`,
 `CanonicalTemporalRewriteTests`, `CanonicalTemporalRewriteIntegrationTests`,
 `CanonicalTemporalRewritePhaseTests` (the wait, the budget, savepoints, notices), `FreshTableFormTests`,
-`FleetVersionsTests`, `CanonicalTemporalFunctionTests`, `PerspectiveFailureCounterSqlTests`.
+`FleetVersionsTests`, `CanonicalTemporalFunctionTests`, `PerspectiveFailureCounterSqlTests`,
+`MappedDocumentReadFailureTests`, `StoredFormScalarMismatchReadTests`, and
+`StoredFormScalarMismatchWorkerTests` (a scalar of the wrong type through the real claim loop, worker
+and runner: classified, parked with backoff, dead-lettered at the threshold, other streams flowing,
+Degraded health, recovery after the value is corrected, and many poisoned streams not starving
+healthy ones). Dapper: `DapperPostgresPerspectiveStoreTests`.
 Generators: `CanonicalTemporalConfigurationTests`, `CanonicalTemporalRewriteWiringTests`,
 `JsonIndexGenerationTests`.

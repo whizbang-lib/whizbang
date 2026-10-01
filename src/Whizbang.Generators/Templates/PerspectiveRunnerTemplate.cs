@@ -88,10 +88,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // refuses a discard-close of any stream it consumes. Empty for resumable (unmarked) perspectives.
   #endregion
 
+  #region PHYSICAL_FIELD_REGISTRATION
+  // Generated: a model with [PhysicalField]/[VectorField] properties registers each column and the model's
+  // storage mode via a [ModuleInitializer], so a collective apply can write and filter the column without
+  // reflection. Empty when the model has no physical fields.
+  #endregion
+
   #region STREAM_GROUP_REGISTRATION
   // Generated: each [StreamGroup] membership registers via a [ModuleInitializer] (key + the
   // Announce/Follow/Bridge dials) so the maintenance cascade computes the eviction closure without
   // reflection. Empty for perspectives that joined no group — untouchable by cascades.
+  #endregion
+
+  #region SPLIT_PHYSICAL_FIELD_REGISTRATION
+  // Generated: a Split model registers its promoted columns via a [ModuleInitializer], with the code that
+  // copies them into a model loaded from its document, so the store can read back the fields the document
+  // never holds (issue #977). Empty for every other storage mode.
   #endregion
 
   private readonly IServiceProvider _serviceProvider;
@@ -708,6 +720,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // concurrency configured — need to know whether DB write or in-memory apply or
         // lifecycle dominates per drain.
         var saveStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
+        JsonDocument? snapshotBeforeWrite = null;
         if (pendingPurge) {
           // Hard delete: Remove model from database entirely
           await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
@@ -719,6 +733,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         } else if (updatedModel != null && hasWrittenUpdate) {
           var checkpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
               lastSuccessfulEventId!.Value, cancellationToken);
+          snapshotBeforeWrite = SnapshotBeforeWrite(updatedModel);
           await SaveModelAndCheckpointAsync(
               streamId,
               updatedModel,
@@ -779,12 +794,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             await _snapshotStore.CreateSnapshotAsync(
                 streamId, perspectiveName, lastSuccessfulEventId.Value,
                 snapshotCommitSequence,
-                ToSnapshotJson(updatedModel), cancellationToken);
+                snapshotBeforeWrite ?? ToSnapshotJson(updatedModel), cancellationToken);
+            snapshotBeforeWrite = null; // handed to the store
             await _snapshotStore.PruneOldSnapshotsAsync(
                 streamId, perspectiveName, snapshotRetention, cancellationToken);
             _eventsSinceLastSnapshot = 0;
           }
         }
+        snapshotBeforeWrite?.Dispose(); // not due this run
 
         // Fire PostPerspectiveDetached lifecycle hooks AFTER perspective data is flushed
         // PostPerspectiveDetached is for early, non-blocking notification (data committed but checkpoint not yet saved)
@@ -1418,12 +1435,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // would be refused by the upsert's cross-pod lost-update guard — discarding the very
     // correction the rewind computed.
     if (eventsProcessed > 0) {
+      // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
+      JsonDocument? snapshotBeforeWrite = null;
       if (pendingPurge) {
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
       } else if (updatedModel != null) {
         var checkpointEventId = frontierEventId ?? lastSuccessfulEventId!.Value;
         var replayCheckpointCommitSequence = frontierCommitSequence
             ?? await _eventStore.GetCommitSequenceAsync(checkpointEventId, cancellationToken);
+        snapshotBeforeWrite = SnapshotBeforeWrite(updatedModel);
         await SaveModelAndCheckpointAsync(
             streamId, updatedModel, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
             replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
@@ -1447,11 +1467,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         await _snapshotStore.CreateSnapshotAsync(
             streamId, perspectiveName, lastSuccessfulEventId.Value,
             afterReplayCommitSequence,
-            ToSnapshotJson(updatedModel), cancellationToken);
+            snapshotBeforeWrite ?? ToSnapshotJson(updatedModel), cancellationToken);
+        snapshotBeforeWrite = null; // handed to the store
         await _snapshotStore.PruneOldSnapshotsAsync(
             streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
         _eventsSinceLastSnapshot = 0;
       }
+      snapshotBeforeWrite?.Dispose(); // no snapshot taken
     }
 
     var resultStatus = eventsProcessed > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.None;
@@ -1498,6 +1520,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         "Bootstrap snapshot created for {PerspectiveName} stream {StreamId} at event {EventId}",
         perspectiveName, streamId, lastProcessedEventId);
   }
+
+  #region SNAPSHOT_BEFORE_WRITE
+  // Generated (issue #983): the snapshot of a model the write strips in place, serialized before the write
+  // when snapshots are on. A Split class model's promoted fields are stripped from the instance itself, so a
+  // snapshot taken after the write would lack them and a rewind from it would write their defaults back.
+  // Null for every other model, whose snapshot after the write is the model it applied.
+  private static JsonDocument? SnapshotBeforeWrite(__MODEL_TYPE_NAME__ model) => null;
+  #endregion
 
   #region SNAPSHOT_SERIALIZATION
   // Snapshot (de)serialization routes through the source-generated JSON type registry

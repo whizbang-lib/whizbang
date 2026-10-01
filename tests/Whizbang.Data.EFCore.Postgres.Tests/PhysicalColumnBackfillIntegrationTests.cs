@@ -112,15 +112,10 @@ public class PhysicalColumnBackfillIntegrationTests : IAsyncDisposable {
     }.ConnectionString;
     await using var ctx = _context();
     await ctx.Database.EnsureCreatedAsync();
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>
-      Generated.PerspectivePersistenceJsonContext.CreateOptions(
-        Generated.MessageJsonContext.Default,
-        global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
   }
 
   [After(Test)]
   public async Task TeardownAsync() {
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = null;
     if (!string.IsNullOrEmpty(_testDatabaseName)) {
       await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
       await admin.OpenAsync();

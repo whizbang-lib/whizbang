@@ -88,6 +88,7 @@ public sealed class StartupPipelineRunner {
   private readonly IReadOnlyList<IStartupStep> _steps;
   private readonly IReadOnlyList<IStartupStepObserver> _observers;
   private readonly IDutyElector _dutyElector;
+  private readonly IPendingDutyWorkStore _pendingWork;
 
   /// <summary>Creates a runner over the registered steps.</summary>
   /// <param name="steps">The registered steps, in any order — the resolver decides the real one.</param>
@@ -105,11 +106,32 @@ public sealed class StartupPipelineRunner {
   public StartupPipelineRunner(
       IReadOnlyList<IStartupStep> steps,
       IReadOnlyList<IStartupStepObserver> observers,
-      IDutyElector dutyElector) {
+      IDutyElector dutyElector)
+    : this(steps, observers, dutyElector, NullPendingDutyWorkStore.Instance) {
+  }
+
+  /// <summary>Creates a runner over the registered steps, owing skipped duty steps to their holder.</summary>
+  /// <param name="steps">The registered steps, in any order.</param>
+  /// <param name="observers">The observers to notify around each step and at run completion.</param>
+  /// <param name="dutyElector">Wins duties for steps that require an exclusive capability.</param>
+  /// <param name="pendingWork">
+  /// Durable duty work. When configured, a <see cref="NonHolderBehavior.Skip"/> step this instance
+  /// skipped because another instance holds the duty is OWED to that duty, and whichever instance
+  /// holds it runs the step (#966). The framework's null default owes nothing, and a skipped step
+  /// simply does not run here.
+  /// </param>
+  /// <exception cref="ArgumentNullException"><paramref name="steps"/> or <paramref name="pendingWork"/> is <see langword="null"/>.</exception>
+  public StartupPipelineRunner(
+      IReadOnlyList<IStartupStep> steps,
+      IReadOnlyList<IStartupStepObserver> observers,
+      IDutyElector dutyElector,
+      IPendingDutyWorkStore pendingWork) {
     ArgumentNullException.ThrowIfNull(steps);
+    ArgumentNullException.ThrowIfNull(pendingWork);
     _steps = steps;
     _observers = observers;
     _dutyElector = dutyElector;
+    _pendingWork = pendingWork;
   }
 
   /// <summary>
@@ -216,10 +238,11 @@ public sealed class StartupPipelineRunner {
       // Skip is a single non-blocking attempt by definition — nobody blocks on this class of
       // step. A transient failure must not quietly promote it into a waiter, so the outcome is
       // still Skipped; only the reason distinguishes "lost the race" from "could not ask".
+      var reason = transient is null
+        ? "capability not held"
+        : $"capability undetermined: the elector failed with {transient.GetType().Name}: {transient.Message}";
       return new StartupStepReport(StartupStepOutcome.Skipped,
-        transient is null
-          ? "capability not held"
-          : $"capability undetermined: the elector failed with {transient.GetType().Name}: {transient.Message}");
+        reason + await _oweAsync(descriptor, cancellationToken).ConfigureAwait(false));
     }
 
     var waited = TimeSpan.Zero;
@@ -265,6 +288,26 @@ public sealed class StartupPipelineRunner {
     }
     await using (attempt.Grant.ConfigureAwait(false)) {
       return await _executeAsync(step, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
+  /// Owes a skipped duty step to whichever instance holds the duty, and says so in the reason. Best
+  /// effort: failing to owe it leaves the step exactly as skipped as it was before owing existed.
+  /// </summary>
+  private async ValueTask<string> _oweAsync(StartupStepDescriptor descriptor, CancellationToken cancellationToken) {
+    if (!_pendingWork.IsConfigured) {
+      return "";
+    }
+    try {
+      await _pendingWork.OweAsync(descriptor.RequiredCapability, descriptor.Name, cancellationToken).ConfigureAwait(false);
+      return "; owed to the duty's holder";
+    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+      throw;
+#pragma warning disable CA1031 // reported in the step's reason; the step stays skipped exactly as without owing
+    } catch (Exception ex) {
+#pragma warning restore CA1031
+      return $"; could not be owed to the duty's holder ({ex.GetType().Name})";
     }
   }
 

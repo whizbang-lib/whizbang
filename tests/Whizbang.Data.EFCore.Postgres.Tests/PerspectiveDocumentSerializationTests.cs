@@ -28,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/PerspectiveDocumentSerialization.cs</code-under-test>
-[NotInParallel("PathOneProvider")]
+[NotInParallel("PersistenceProfileRegistry")]
 [Category("Shard4")]
 public class PerspectiveDocumentSerializationTests {
   private static readonly DateTime _startedAt = new(2026, 3, 4, 5, 6, 7, 890, DateTimeKind.Utc);
@@ -36,7 +36,6 @@ public class PerspectiveDocumentSerializationTests {
   [Before(Test)]
   public void Setup() {
     OpaqueDocumentFixture.EnsureRegistered();
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = null;
   }
 
   private static OpaqueDocument _document() => new() {
@@ -122,23 +121,18 @@ public class PerspectiveDocumentSerializationTests {
   }
 
   /// <summary>
-  /// A caller-supplied options provider, when the atomic path has one, is folded in exactly as the
-  /// upsert folds it: the union first, the caller's resolver as a fallback, the profile's
-  /// converters still reaching everything.
+  /// The options come from the registry alone (#967): a context an assembly registers under the
+  /// persistence profile is what the atomic upsert writes with, with no startup hook to run and no
+  /// process-wide slot for a sibling test to have cleared.
   /// </summary>
   [Test]
-  public async Task ACallerProviderIsFoldedInBehindTheUnionAsync() {
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () => new JsonSerializerOptions {
-      TypeInfoResolver = OpaqueDocumentJsonContext.Default,
-    };
-
-    var options = PerspectiveDocumentSerialization.Options;
-    var info = (JsonTypeInfo<OpaqueDocument>)options.GetTypeInfo(typeof(OpaqueDocument));
+  public async Task TheOptionsResolveWhatTheRegistryHoldsWithNoStartupHookAsync() {
+    var info = (JsonTypeInfo<OpaqueDocument>)PerspectiveDocumentSerialization.Options.GetTypeInfo(typeof(OpaqueDocument));
     var stored = JsonSerializer.Serialize(_document(), info);
 
     await Assert.That(JsonDocument.Parse(stored).RootElement.GetProperty("StartedAt").ValueKind)
       .IsEqualTo(JsonValueKind.Number)
-      .Because("the caller's resolver answers for the type, and the profile's converters still apply");
+      .Because("the registered context answers for the type, and the profile's converters apply to it");
   }
 
   private sealed class NothingResolver : IJsonTypeInfoResolver {

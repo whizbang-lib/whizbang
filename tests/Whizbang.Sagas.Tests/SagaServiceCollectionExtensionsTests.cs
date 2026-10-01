@@ -98,6 +98,52 @@ public class SagaServiceCollectionExtensionsTests {
     }
   }
 
+  /// <summary>
+  /// A consumer's own saga emitter, registered before <c>AddWhizbangSagas</c>, is the one saga services
+  /// get; the framework's dispatcher-backed emitter is only the default.
+  /// </summary>
+  [Test]
+  public async Task AddWhizbangSagas_ConsumerEmitterRegisteredFirst_IsKeptAsync() {
+    var prior = SagaItemStreams.AppDefaultNamespace;
+    try {
+      var consumerEmitter = new ConsumerEmitter();
+      var services = new ServiceCollection();
+      services.AddSingleton<Whizbang.Sagas.Services.ISagaEventEmitter>(consumerEmitter);
+      services.AddWhizbangSagas();
+
+      await using var sp = services.BuildServiceProvider();
+      await using var scope = sp.CreateAsyncScope();
+
+      await Assert.That(scope.ServiceProvider.GetRequiredService<Whizbang.Sagas.Services.ISagaEventEmitter>()).IsSameReferenceAs(consumerEmitter)
+        .Because("registering the framework default over it silently replaced the consumer's emitter");
+    } finally {
+      SagaItemStreams.AppDefaultNamespace = prior;
+    }
+  }
+
+  /// <summary>With no emitter of the consumer's own, saga services publish through the dispatcher.</summary>
+  [Test]
+  public async Task AddWhizbangSagas_NoEmitterRegistered_RegistersTheDispatcherBackedOneAsync() {
+    var prior = SagaItemStreams.AppDefaultNamespace;
+    try {
+      var services = new ServiceCollection();
+      services.AddWhizbangSagas();
+
+      var registration = services.Single(d => d.ServiceType == typeof(Whizbang.Sagas.Services.ISagaEventEmitter));
+
+      await Assert.That(registration.ImplementationType).IsEqualTo(typeof(Whizbang.Sagas.Services.DispatcherSagaEventEmitter));
+      await Assert.That(registration.Lifetime).IsEqualTo(ServiceLifetime.Scoped);
+    } finally {
+      SagaItemStreams.AppDefaultNamespace = prior;
+    }
+  }
+
+  private sealed class ConsumerEmitter : Whizbang.Sagas.Services.ISagaEventEmitter {
+    public Task PublishAsync<TEvent>(TEvent eventData) where TEvent : Whizbang.Core.IEvent => Task.CompletedTask;
+    public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken)
+      where TEvent : Whizbang.Core.IEvent => Task.FromResult(true);
+  }
+
   [Test]
   public async Task AddWhizbangSagas_NullServices_ThrowsAsync() {
     await Assert.That(() => ((IServiceCollection)null!).AddWhizbangSagas())

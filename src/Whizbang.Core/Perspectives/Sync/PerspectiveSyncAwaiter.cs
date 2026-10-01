@@ -40,13 +40,16 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <param name="logger">The logger for sync operations.</param>
 /// <param name="syncEventTracker">The singleton event tracker for event-driven sync.</param>
 /// <param name="tracker">Optional scoped event tracker for capturing emitted events.</param>
+/// <param name="lifecycleContextAccessor">The lifecycle context, to refuse a wait inside an Inline stage.</param>
+/// <param name="timeProvider">The time source for the applied-event wait's timeout and re-read backoff (system time when null).</param>
 public sealed partial class PerspectiveSyncAwaiter(
     IWorkCoordinator coordinator,
     IDebuggerAwareClock clock,
     ILogger<PerspectiveSyncAwaiter> logger,
     ISyncEventTracker syncEventTracker,
     IScopedEventTracker tracker,
-    ILifecycleContextAccessor lifecycleContextAccessor) : IPerspectiveSyncAwaiter {
+    ILifecycleContextAccessor lifecycleContextAccessor,
+    TimeProvider? timeProvider = null) : IPerspectiveSyncAwaiter {
   private const string TAG_SYNC_OUTCOME = "whizbang.sync.outcome";
   private const string TAG_SYNC_EVENT_COUNT = "whizbang.sync.event_count";
 
@@ -59,6 +62,13 @@ public sealed partial class PerspectiveSyncAwaiter(
   private readonly IDebuggerAwareClock _clock = clock ?? throw new ArgumentNullException(nameof(clock));
   private readonly ILogger<PerspectiveSyncAwaiter> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly ILifecycleContextAccessor _lifecycleContextAccessor = lifecycleContextAccessor;
+  private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
+  /// <summary>The first re-read of the applied-event ledger follows the first read by this long.</summary>
+  private static readonly TimeSpan _firstLedgerReread = TimeSpan.FromMilliseconds(50);
+
+  /// <summary>The re-read backoff doubles up to this cap.</summary>
+  private static readonly TimeSpan _maxLedgerReread = TimeSpan.FromSeconds(1);
 
 
   /// <inheritdoc />
@@ -225,8 +235,19 @@ public sealed partial class PerspectiveSyncAwaiter(
       ActivityKind.Internal);
     _setStreamSyncActivityTags(syncActivity, perspectiveType, streamId, timeout, eventIdToAwait);
 
-    var stopwatch = _clock.StartNew();
     var perspectiveName = _getPerspectiveName(perspectiveType);
+
+    // An explicit event this process never tracked (it arrived from another service, or it is a collective
+    // event) is answered from the applied-event ledger. Reporting it synced at once was the defect (#959).
+    if (eventIdToAwait is { } explicitEventId && !_isTrackedLocally(explicitEventId, streamId, perspectiveName)) {
+      var ledgerResult = await _waitForAppliedCoreAsync(
+        new AppliedEventInquiry(perspectiveName, explicitEventId), timeout, requireLedger: false, ct);
+      if (ledgerResult is { } answered) {
+        return answered;
+      }
+    }
+
+    var stopwatch = _clock.StartNew();
     var expectedEventIds = _resolveExpectedEventIds(eventIdToAwait, streamId, perspectiveName, eventTypes);
 
     LogStreamSyncWaitStarting(_logger, perspectiveName, streamId);
@@ -243,6 +264,151 @@ public sealed partial class PerspectiveSyncAwaiter(
     LogSyncDebugNoEventsFound(_logger, streamId);
     return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.ActiveElapsed,
         EventsTracked: 0, PerspectiveName: perspectiveName);
+  }
+
+  private bool _isTrackedLocally(Guid eventId, Guid streamId, string perspectiveName) =>
+    _syncEventTracker.GetPendingEvents(streamId, perspectiveName).Any(e => e.EventId == eventId);
+
+  /// <inheritdoc />
+  public Task<SyncResult> WaitForAppliedAsync(
+      Type perspectiveType,
+      Guid eventId,
+      TimeSpan timeout,
+      CancellationToken ct = default) {
+    ArgumentNullException.ThrowIfNull(perspectiveType);
+    _throwIfInsideInlineStage();
+    return _waitForAppliedAsync(
+      new AppliedEventInquiry(_getPerspectiveName(perspectiveType), eventId), timeout, ct);
+  }
+
+  /// <inheritdoc />
+  public Task<SyncResult> WaitForAppliedAsync(
+      Type perspectiveType,
+      Guid streamId,
+      int streamPosition,
+      TimeSpan timeout,
+      CancellationToken ct = default) {
+    ArgumentNullException.ThrowIfNull(perspectiveType);
+    ArgumentOutOfRangeException.ThrowIfLessThan(streamPosition, 1);
+    _throwIfInsideInlineStage();
+    return _waitForAppliedAsync(
+      new AppliedEventInquiry(_getPerspectiveName(perspectiveType), null, streamId, streamPosition), timeout, ct);
+  }
+
+  private async Task<SyncResult> _waitForAppliedAsync(AppliedEventInquiry inquiry, TimeSpan timeout, CancellationToken ct) =>
+    (await _waitForAppliedCoreAsync(inquiry, timeout, requireLedger: true, ct)).GetValueOrDefault();
+
+  /// <summary>
+  /// The applied-event wait. Registers for the in-process applied signal first, then reads the ledger on a
+  /// growing backoff until the event is applied, has nothing to apply, or the timeout passes.
+  /// </summary>
+  /// <param name="inquiry">The perspective and the event.</param>
+  /// <param name="timeout">The longest to wait.</param>
+  /// <param name="requireLedger">
+  /// True for <see cref="WaitForAppliedAsync(Type, Guid, TimeSpan, CancellationToken)"/>: a coordinator that
+  /// cannot read the ledger leaves the in-process signal alone to answer. False for the explicit-id stream wait,
+  /// which returns <see langword="null"/> instead so the caller keeps its previous behavior.
+  /// </param>
+  /// <param name="ct">The caller's cancellation.</param>
+  private async Task<SyncResult?> _waitForAppliedCoreAsync(
+      AppliedEventInquiry inquiry, TimeSpan timeout, bool requireLedger, CancellationToken ct) {
+    using var syncActivity = WhizbangActivitySource.Tracing.StartActivity(
+      $"PerspectiveSync {inquiry.PerspectiveName} Applied",
+      ActivityKind.Internal);
+    syncActivity?.SetTag("whizbang.sync.perspective", inquiry.PerspectiveName);
+    syncActivity?.SetTag("whizbang.sync.timeout_ms", timeout.TotalMilliseconds);
+
+    var stopwatch = _clock.StartNew();
+    using var timeoutCts = new CancellationTokenSource(timeout, _timeProvider);
+    using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+    var token = waitCts.Token;
+    var eventId = inquiry.EventId;
+    // Registered before the first read, so an apply committed between the read and the wait is not missed.
+    Task? appliedHere = _whenAppliedHereOrNull(eventId, inquiry.PerspectiveName, token);
+    var reread = _firstLedgerReread;
+    try {
+      while (true) {
+        // The re-read timer starts before the read, so the backoff is measured from the read's start.
+        var nextRead = Task.Delay(reread, _timeProvider, token);
+        var status = await _coordinator.GetAppliedEventStatusAsync(inquiry with { EventId = eventId }, token);
+        if (status is null) {
+          return await _appliedWithoutLedgerAsync(requireLedger, appliedHere, inquiry, stopwatch, syncActivity);
+        }
+        if (status.Value.IsSettled) {
+          return _appliedResult(_settledOutcome(status.Value.State), inquiry, stopwatch, syncActivity);
+        }
+        if (appliedHere is null && status.Value.EventId is { } resolved) {
+          eventId = resolved;
+          appliedHere = _whenAppliedHereAsync(resolved, inquiry.PerspectiveName, token);
+        }
+        if (await _appliedBeforeRereadAsync(appliedHere, nextRead)) {
+          return _appliedResult(SyncOutcome.Synced, inquiry, stopwatch, syncActivity);
+        }
+        reread = _nextReread(reread);
+      }
+    } catch (OperationCanceledException) when (!ct.IsCancellationRequested) {
+      LogSyncWaitTimedOut(_logger, inquiry.PerspectiveName, 1, stopwatch.ActiveElapsed.TotalMilliseconds);
+      return _appliedResult(SyncOutcome.TimedOut, inquiry, stopwatch, syncActivity);
+    } finally {
+      // Releases the in-process waiters this wait registered; disposing alone would leave them registered.
+      await waitCts.CancelAsync();
+    }
+  }
+
+  /// <summary>
+  /// The wait when the coordinator cannot read the ledger: the in-process signal alone answers, which needs the
+  /// event's id; an event named only by stream position cannot be resolved without the ledger.
+  /// </summary>
+  /// <remarks>
+  /// Returns <see langword="null"/> when the caller does not require the ledger (the explicit-id stream wait), so it
+  /// keeps its previous behavior.
+  /// </remarks>
+  private async Task<SyncResult?> _appliedWithoutLedgerAsync(
+      bool requireLedger, Task? appliedHere, AppliedEventInquiry inquiry, IActiveStopwatch stopwatch, Activity? syncActivity) {
+    if (!requireLedger) {
+      return null;
+    }
+    if (appliedHere is null) {
+      throw new NotSupportedException(
+        $"{_coordinator.GetType().Name} cannot read the applied-event ledger, so an event named by stream "
+        + "position cannot be resolved. Name the event by id, or use a work coordinator that reads the ledger.");
+    }
+    await appliedHere;
+    return _appliedResult(SyncOutcome.Synced, inquiry, stopwatch, syncActivity);
+  }
+
+  /// <summary>The in-process applied signal for an event named by id; none yet for one named by stream position.</summary>
+  private Task? _whenAppliedHereOrNull(Guid? eventId, string perspectiveName, CancellationToken token) =>
+    eventId is { } known ? _whenAppliedHereAsync(known, perspectiveName, token) : null;
+
+  /// <summary>A settled event was applied, or had nothing to apply.</summary>
+  private static SyncOutcome _settledOutcome(AppliedEventState state) =>
+    state == AppliedEventState.Applied ? SyncOutcome.Synced : SyncOutcome.NoPendingEvents;
+
+  /// <summary>The next ledger re-read interval: doubled, up to the ceiling.</summary>
+  private static TimeSpan _nextReread(TimeSpan reread) =>
+    reread * 2 < _maxLedgerReread ? reread * 2 : _maxLedgerReread;
+
+  /// <summary>True when the in-process applied signal came first; false when it is time to read the ledger again.</summary>
+  private static async Task<bool> _appliedBeforeRereadAsync(Task? appliedHere, Task nextRead) {
+    var woke = await Task.WhenAny(appliedHere ?? nextRead, nextRead);
+    await woke;
+    return woke == appliedHere;
+  }
+
+  /// <summary>Completes when this process applies the event for the perspective, or for the collective sink.</summary>
+  private async Task _whenAppliedHereAsync(Guid eventId, string perspectiveName, CancellationToken token) {
+    var first = await Task.WhenAny(
+      _syncEventTracker.WhenAppliedAsync(eventId, perspectiveName, token),
+      _syncEventTracker.WhenAppliedAsync(eventId, CollectiveRouting.SINK_PERSPECTIVE_NAME, token));
+    await first;
+  }
+
+  private static SyncResult _appliedResult(
+      SyncOutcome outcome, AppliedEventInquiry inquiry, IActiveStopwatch stopwatch, Activity? syncActivity) {
+    stopwatch.Halt();
+    _setSyncActivityOutcome(syncActivity, outcome.ToString(), 1, stopwatch.ActiveElapsed);
+    return new SyncResult(outcome, 1, stopwatch.ActiveElapsed, EventsTracked: 1, PerspectiveName: inquiry.PerspectiveName);
   }
 
   private static void _setStreamSyncActivityTags(

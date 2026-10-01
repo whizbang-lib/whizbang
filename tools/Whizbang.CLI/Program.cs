@@ -26,6 +26,7 @@ try {
   return args[0].ToLower(CultureInfo.InvariantCulture) switch {
     "schema" => await _handleSchemaCommandAsync(args),
     "migrate" => await _handleMigrateCommandAsync(args),
+    "stored-forms" => await _handleStoredFormsCommandAsync(args),
     _ => throw new InvalidOperationException($"Unknown command: {args[0]}")
   };
 } catch (Exception ex) {
@@ -48,6 +49,59 @@ async Task<int> _handleSchemaCommandAsync(string[] commandArgs) {
     "validate" => await _validateSchemaAsync(commandArgs),
     _ => throw new InvalidOperationException($"Unknown schema subcommand: {commandArgs[1]}")
   };
+}
+
+async Task<int> _handleStoredFormsCommandAsync(string[] commandArgs) {
+  // Usage: whizbang stored-forms status --connection <connection string> [--schema <schema>]
+  if (commandArgs.Length < 2 || commandArgs[1] is "--help" or "-h") {
+    _showStoredFormsHelp();
+    return commandArgs.Length < 2 ? 1 : 0;
+  }
+  if (!string.Equals(commandArgs[1], "status", StringComparison.OrdinalIgnoreCase)) {
+    throw new InvalidOperationException($"Unknown stored-forms subcommand: {commandArgs[1]}");
+  }
+
+  var connectionString = _option(commandArgs, "--connection", "-c");
+  if (string.IsNullOrWhiteSpace(connectionString)) {
+    Console.WriteLine("❌ Error: Missing --connection");
+    Console.WriteLine();
+    _showStoredFormsHelp();
+    return 1;
+  }
+  var schema = _option(commandArgs, "--schema", "-s") ?? "public";
+
+  await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+  await connection.OpenAsync();
+  var statuses = await Whizbang.Data.Postgres.StoredFormMigrationJournal.ReadAsync(connection, schema);
+  Console.WriteLine($"Stored-form migrations in schema {schema}");
+  Console.WriteLine();
+  Console.WriteLine(Whizbang.Data.Postgres.StoredFormMigrationJournal.Format(statuses));
+  return 0;
+}
+
+string? _option(string[] commandArgs, string name, string alias) {
+  for (var i = 2; i < commandArgs.Length - 1; i++) {
+    if (commandArgs[i] == name || commandArgs[i] == alias) {
+      return commandArgs[i + 1];
+    }
+  }
+  return null;
+}
+
+void _showStoredFormsHelp() {
+  Console.WriteLine("Stored-Form Migration Commands");
+  Console.WriteLine();
+  Console.WriteLine("Usage: whizbang stored-forms <subcommand> [options]");
+  Console.WriteLine();
+  Console.WriteLine("Subcommands:");
+  Console.WriteLine("  status    List the stored-form migrations a schema's journal records: Pending, Applied or Settled");
+  Console.WriteLine();
+  Console.WriteLine("Options:");
+  Console.WriteLine("  --connection, -c <string>   PostgreSQL connection string of the environment");
+  Console.WriteLine("  --schema, -s <name>         The schema the application uses (default: public)");
+  Console.WriteLine();
+  Console.WriteLine("Example:");
+  Console.WriteLine("  whizbang stored-forms status --connection \"Host=...;Database=...;Username=...\" --schema public");
 }
 
 async Task<int> _handleMigrateCommandAsync(string[] commandArgs) {
@@ -465,6 +519,7 @@ void _showHelp() {
   Console.WriteLine("Commands:");
   Console.WriteLine("  schema          Manage database schemas");
   Console.WriteLine("  migrate         Migrate from Marten/Wolverine to Whizbang");
+  Console.WriteLine("  stored-forms    List pending and applied stored-form migrations of perspective data");
   Console.WriteLine();
   Console.WriteLine("Options:");
   Console.WriteLine("  --help, -h      Show this help message");

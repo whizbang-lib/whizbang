@@ -182,7 +182,7 @@ public class PhysicalFieldTypeMappingTests {
 
             namespace MyApp.Perspectives;
 
-            public enum Grade { Low, High }
+            public readonly record struct Grade(int Low, int High);
 
             [PerspectiveStorage(FieldStorageMode.Extracted)]
             public record ProbeModel {

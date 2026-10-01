@@ -66,11 +66,13 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
   /// </summary>
   /// <remarks>
   /// <para>
-  /// All three carry a GIN index built by the perspective's schema pass, and containment is the only
-  /// shape any of those indexes can answer. The rewrite used to name <c>Data</c> alone, so a filter
-  /// on the other two compiled to an extraction: the index was built, maintained on every applied
-  /// event, and never read. Scope is the one that matters, because tenant isolation filters on it on
-  /// every perspective read.
+  /// Each can carry a GIN index built by the perspective's schema pass, and containment is the only
+  /// shape any of those indexes can answer. Scope always has one. Data has one unless the model
+  /// declares <c>[PerspectiveQueries(MatchOnAnyField = false)]</c>, and metadata only with
+  /// <c>MatchOnMetadata = true</c>; WHIZ307 reports a filter here that the declaration leaves
+  /// without one. The rewrite used to name <c>Data</c> alone, so a filter on the other two compiled
+  /// to an extraction: the index was built, maintained on every applied event, and never read. Scope
+  /// is the one that matters, because tenant isolation filters on it on every perspective read.
   /// </para>
   /// <para>
   /// Naming the three rather than accepting any complex property keeps the rewrite to documents the
@@ -315,8 +317,13 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
     // The collection arrives already parameterized, so it cannot be wrapped or converted: the
     // overload has to accept the shape as it stands. Arrays and lists are the two Npgsql maps to a
     // PostgreSQL array; anything else keeps the IN form, which is correct and unindexed.
+    //
+    // A field with an ordered index of its own stands down here exactly as it does for equality: its
+    // btree answers "= ANY" directly, and rewriting would send the planner to the whole-document
+    // index instead, which a model declaring [PerspectiveQueries(MatchOnAnyField = false)] does not
+    // have at all. Before this, an "in" filter on an indexed field of such a model read every row.
     var overload = JsonbContainment.SetOverloadFor(m.Type, collection.Type);
-    if (overload is null || _isValueConverted(m)) {
+    if (overload is null || _isValueConverted(m) || _hasOwnIndex(m)) {
       return false;
     }
 

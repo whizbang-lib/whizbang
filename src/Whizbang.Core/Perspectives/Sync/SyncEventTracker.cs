@@ -44,6 +44,89 @@ public sealed class SyncEventTracker : ISyncEventTracker {
   // Used by WaitForAllPerspectivesAsync / MarkProcessedByPerspective — outer key is eventId
   private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<Guid, TaskCompletionSource<bool>>> _allPerspectivesWaiters = new();
 
+  /// <summary>How many recently applied (event, perspective) pairs <see cref="MarkApplied"/> remembers.</summary>
+  internal const int RECENTLY_APPLIED_CAPACITY = 16_384;
+
+  // (eventId, perspectiveName) pairs recently marked applied, so a wait that starts just after a local apply
+  // returns at once. Bounded: the queue holds insertion order and the oldest pair is forgotten first.
+  private readonly ConcurrentDictionary<(Guid EventId, string PerspectiveName), byte> _recentlyApplied = new();
+  private readonly ConcurrentQueue<(Guid EventId, string PerspectiveName)> _recentlyAppliedOrder = new();
+
+  // Used by WhenAppliedAsync / MarkApplied — outer key is (eventId, perspectiveName), inner key a waiter id.
+  private readonly ConcurrentDictionary<(Guid EventId, string PerspectiveName), ConcurrentDictionary<Guid, TaskCompletionSource>> _appliedWaiters = new();
+
+  /// <summary>The number of recently applied pairs remembered (for tests).</summary>
+  internal int RecentlyAppliedCount => _recentlyApplied.Count;
+
+  /// <summary>The number of registered applied waiters (for tests).</summary>
+  internal int AppliedWaiterCount => _appliedWaiters.Values.Sum(w => w.Count);
+
+  /// <inheritdoc />
+  public void MarkApplied(IEnumerable<Guid> eventIds, string perspectiveName) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    ArgumentNullException.ThrowIfNull(perspectiveName);
+
+    foreach (var eventId in eventIds) {
+      var key = (eventId, perspectiveName);
+      // Remembered BEFORE waiters are released, so a waiter registering concurrently either finds its
+      // entry here on its re-check or is in the dictionary drained below.
+      if (_recentlyApplied.TryAdd(key, 0)) {
+        _recentlyAppliedOrder.Enqueue(key);
+        while (_recentlyAppliedOrder.Count > RECENTLY_APPLIED_CAPACITY && _recentlyAppliedOrder.TryDequeue(out var oldest)) {
+          _recentlyApplied.TryRemove(oldest, out _);
+        }
+      }
+      if (_appliedWaiters.TryRemove(key, out var waiters)) {
+        foreach (var waiter in waiters.Values) {
+          waiter.TrySetResult();
+        }
+      }
+    }
+  }
+
+  /// <inheritdoc />
+  public Task WhenAppliedAsync(Guid eventId, string perspectiveName, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(perspectiveName);
+    if (cancellationToken.IsCancellationRequested) {
+      return Task.FromCanceled(cancellationToken);
+    }
+
+    var key = (eventId, perspectiveName);
+    var waiterId = TrackedGuid.New().Value;
+    var waiter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var waiters = _appliedWaiters.GetOrAdd(key, _ => new ConcurrentDictionary<Guid, TaskCompletionSource>());
+    waiters[waiterId] = waiter;
+
+    // Checked only AFTER registering. MarkApplied remembers the pair before it drains the waiters, so an
+    // apply marked before this line is found here, and one marked after it finds the waiter: none is lost.
+    if (_recentlyApplied.ContainsKey(key)) {
+      _removeAppliedWaiter(key, waiters, waiterId);
+      return Task.CompletedTask;
+    }
+
+    var registration = cancellationToken.Register(() => {
+      _removeAppliedWaiter(key, waiters, waiterId);
+      waiter.TrySetCanceled(cancellationToken);
+    });
+    _ = waiter.Task.ContinueWith(
+      static (_, state) => ((CancellationTokenRegistration)state!).Dispose(),
+      registration,
+      CancellationToken.None,
+      TaskContinuationOptions.ExecuteSynchronously,
+      TaskScheduler.Default);
+    return waiter.Task;
+  }
+
+  private void _removeAppliedWaiter(
+      (Guid EventId, string PerspectiveName) key,
+      ConcurrentDictionary<Guid, TaskCompletionSource> waiters,
+      Guid waiterId) {
+    waiters.TryRemove(waiterId, out _);
+    if (waiters.IsEmpty) {
+      _appliedWaiters.TryRemove(new KeyValuePair<(Guid, string), ConcurrentDictionary<Guid, TaskCompletionSource>>(key, waiters));
+    }
+  }
+
   /// <inheritdoc />
   public void TrackEvent(Type eventType, Guid eventId, Guid streamId, string perspectiveName) {
     var tracked = new TrackedSyncEvent(eventType, eventId, streamId, perspectiveName, DateTime.UtcNow);

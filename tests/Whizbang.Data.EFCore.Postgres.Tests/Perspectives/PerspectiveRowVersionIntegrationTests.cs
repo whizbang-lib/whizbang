@@ -32,7 +32,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// The interleaving is forced, never timed: <see cref="InterleavingStore"/> runs the collective (on its
 /// own context, committed) after the runner's read and before its write. Every case runs on both write
 /// paths: the atomic single-statement path and the EF fallback the strategy uses when the atomic path
-/// declines a row. Mutates the process-wide atomic-path provider, hence the shared serialization key.
+/// declines a row. Each case chooses its path on the strategy it hands the store
+/// (<see cref="UpsertWritePath"/>), so no case can choose it for another.
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives</docs>
 [Category("Integration")]
@@ -41,31 +42,17 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   private const string TABLE = "wh_per_action_test";
 
-  [After(Test)]
-  public Task ClearPathOneProviderAsync() {
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = null;
-    return Task.CompletedTask;
-  }
-
-  private static void _usePath(bool atomic) =>
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = atomic
-      ? () => PerspectivePersistenceJsonContext.CreateOptions(
-          MessageJsonContext.Default,
-          global::Whizbang.Core.Generated.InfrastructureJsonContext.Default)
-      : null;
-
   // ── The race, end to end through the generated runner ──────────────────────────────────────────
 
   [Test]
   [Arguments(true)]
   [Arguments(false)]
   public async Task CollectiveCommittedBetweenReadAndWrite_IsNotOverwritten_FinalRowReflectsBothAsync(bool atomicPath) {
-    _usePath(atomicPath);
     var id = Guid.CreateVersion7();
     await _seedAsync(id, "member", 1);
 
     await using var context = CreateDbContext();
-    var store = new InterleavingStore(new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE)) {
+    var store = new InterleavingStore(new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE, UpsertWritePath.Strategy(atomicPath))) {
       BeforeWrite = attempt => attempt == 1 ? _commitCollectiveAsync(id, "collective") : Task.CompletedTask,
     };
 
@@ -86,13 +73,12 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   [Arguments(true)]
   [Arguments(false)]
   public async Task NoInterleaving_OneReadOneWrite_BehaviorUnchangedAsync(bool atomicPath) {
-    _usePath(atomicPath);
     var id = Guid.CreateVersion7();
     await _seedAsync(id, "member", 1);
     var versionBefore = (await _rowAsync(id)).Version;
 
     await using var context = CreateDbContext();
-    var store = new InterleavingStore(new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE));
+    var store = new InterleavingStore(new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE, UpsertWritePath.Strategy(atomicPath)));
 
     await _runner(store).RunWithEventsAsync(id, TABLE, null,
       [_envelope(new ActionTestUpdatedEvent { StreamId = id, NewValue = 2 })], CancellationToken.None);
@@ -109,12 +95,11 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   [Arguments(true)]
   [Arguments(false)]
   public async Task CollectiveLandsBeforeEveryWrite_TheApplyGivesUpWithAConflict_AndNothingStaleLandsAsync(bool atomicPath) {
-    _usePath(atomicPath);
     var id = Guid.CreateVersion7();
     await _seedAsync(id, "member", 1);
 
     await using var context = CreateDbContext();
-    var store = new InterleavingStore(new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE)) {
+    var store = new InterleavingStore(new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE, UpsertWritePath.Strategy(atomicPath))) {
       BeforeWrite = attempt => _commitCollectiveAsync(id, "collective-" + attempt),
     };
 
@@ -135,7 +120,6 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task ReadForApplyAsync_ReportsAbsence_ThenTheRowsVersionAndMetadata_AndSeesACollectiveAsync() {
-    _usePath(true);
     var id = Guid.CreateVersion7();
     await using var context = CreateDbContext();
     var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
@@ -163,7 +147,6 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task ReadForApplyAsync_OnARowWithoutCommitSequence_LeavesItNullAsync() {
-    _usePath(true);
     var id = Guid.CreateVersion7();
     await using var context = CreateDbContext();
     var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
@@ -177,7 +160,6 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task ReadForApplyAsync_InsideAnAmbientTransaction_ReadsWithinItAsync() {
-    _usePath(true);
     var id = Guid.CreateVersion7();
     await using var context = CreateDbContext();
     var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
@@ -196,11 +178,10 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   [Arguments(true)]
   [Arguments(false)]
   public async Task Upsert_WithAVersionReadBeforeACollective_IsRefused_AndTheCollectiveSurvivesAsync(bool atomicPath) {
-    _usePath(atomicPath);
     var id = Guid.CreateVersion7();
     await _seedAsync(id, "member", 1);
     await using var context = CreateDbContext();
-    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
+    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE, UpsertWritePath.Strategy(atomicPath));
     var read = await store.ReadForApplyAsync(id);
 
     await _commitCollectiveAsync(id, "collective");
@@ -221,11 +202,10 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   [Arguments(true)]
   [Arguments(false)]
   public async Task Upsert_ExpectingNoRow_WhenARowAppeared_IsRefusedAsync(bool atomicPath) {
-    _usePath(atomicPath);
     var id = Guid.CreateVersion7();
     await _seedAsync(id, "first-writer", 1);
     await using var context = CreateDbContext();
-    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
+    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE, UpsertWritePath.Strategy(atomicPath));
 
     var conflict = await Assert.That(async () => await store.UpsertAsync(id,
         new ActionTestModel { Id = id, Name = "second-writer", Value = 9 }, new PerspectiveScope(), false, _meta(),
@@ -241,11 +221,10 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   [Arguments(true)]
   [Arguments(false)]
   public async Task Upsert_ExpectingARow_WhenItWasDeleted_IsRefused_AndDoesNotResurrectItAsync(bool atomicPath) {
-    _usePath(atomicPath);
     var id = Guid.CreateVersion7();
     await _seedAsync(id, "member", 1);
     await using var context = CreateDbContext();
-    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
+    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE, UpsertWritePath.Strategy(atomicPath));
     var read = await store.ReadForApplyAsync(id);
     await using (var other = CreateDbContext()) {
       await new EFCorePostgresPerspectiveStore<ActionTestModel>(other, TABLE).PurgeAsync(id);
@@ -264,10 +243,9 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   [Arguments(true)]
   [Arguments(false)]
   public async Task Upsert_OnTheCurrentVersion_ThatTheCommitSequenceGuardRefuses_IsSkippedQuietlyAsync(bool atomicPath) {
-    _usePath(atomicPath);
     var id = Guid.CreateVersion7();
     await using var context = CreateDbContext();
-    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
+    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE, UpsertWritePath.Strategy(atomicPath));
     await store.UpsertAsync(id, new ActionTestModel { Id = id, Name = "newer", Value = 10 }, new PerspectiveScope(), false,
       _meta(commitSequence: 10), PerspectiveRowVersion.Absent);
     var read = await store.ReadForApplyAsync(id);
@@ -283,7 +261,6 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task Upsert_OnTheCurrentVersion_ForAVersionedTarget_WithAnOlderEvent_IsSkippedQuietlyAsync() {
-    _usePath(true);
     var id = Guid.CreateVersion7();
     await using var context = CreateDbContext();
     var store = new EFCorePostgresPerspectiveStore<VersionedItem>(context, "wh_per_versioned_item");
@@ -301,7 +278,6 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task Upsert_OnTheCurrentVersion_WithForceUpdateScope_RewritesTheScopeAsync() {
-    _usePath(true);
     var id = Guid.CreateVersion7();
     await using var context = CreateDbContext();
     var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
@@ -341,11 +317,10 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task Upsert_OnTheFallbackPath_InsideAnAmbientTransaction_ChecksWithinItAsync() {
-    _usePath(false);
     var id = Guid.CreateVersion7();
     await _seedAsync(id, "member", 1);
     await using var context = CreateDbContext();
-    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
+    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE, new EntityFrameworkPathUpsertStrategy());
 
     await using (var transaction = await context.Database.BeginTransactionAsync()) {
       var read = await store.ReadForApplyAsync(id);

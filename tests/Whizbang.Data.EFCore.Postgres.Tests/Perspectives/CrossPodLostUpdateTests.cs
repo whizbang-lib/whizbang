@@ -31,7 +31,7 @@ public class CrossPodLostUpdateTests : EFCoreTestBase {
   [Test]
   public async Task ConcurrentApplyFromTwoInstances_FresherApplyMustNotBeLost() {
     var streamId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
-    const string table = "action_test";
+    const string table = "wh_per_action_test";
 
     // Two independent "pods": each its own DbContext + store over the SAME database. They share no
     // apply lock (the coordinator is a per-container singleton), mirroring two real instances.

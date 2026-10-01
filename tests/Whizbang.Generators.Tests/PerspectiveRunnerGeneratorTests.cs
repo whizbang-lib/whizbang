@@ -2988,6 +2988,157 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_SplitModeRecordModel_RegistersTheCopyOfItsColumnsWithAWithExpressionAsync() {
+    // Arrange - issue #977: a Split field lives only in its column, so the store has to copy it back into the
+    // model it loads. A record's copy is a 'with' expression, which sets init-only properties too.
+    const string source = """
+#nullable enable
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class ProductUpdatedEvent : IEvent {
+    public Guid Id { get; set; }
+  }
+
+  [PerspectiveStorage(FieldStorageMode.Split)]
+  public record ProductModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [PhysicalField(ColumnName = "product_status")]
+    public string? Status { get; init; }
+
+    [PhysicalField]
+    public int Priority { get; init; }
+
+    [VectorField(3)]
+    public float[]? Embedding { get; init; }
+  }
+
+  public class ProductPerspective : IPerspectiveFor<ProductModel, ProductUpdatedEvent> {
+    public ProductModel Apply(ProductModel currentData, ProductUpdatedEvent @event) => currentData;
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("internal static void _registerSplitPhysicalFields() =>");
+    await Assert.That(runnerSource).Contains(
+        "new[] { new global::Whizbang.Core.Perspectives.SplitPhysicalColumn(\"product_status\", false), " +
+        "new global::Whizbang.Core.Perspectives.SplitPhysicalColumn(\"priority\", false), " +
+        "new global::Whizbang.Core.Perspectives.SplitPhysicalColumn(\"embedding\", true) }");
+    await Assert.That(runnerSource).Contains(
+        "static (model, read) => model with { Status = read.Read<string?>(\"product_status\"), " +
+        "Priority = read.Read<int>(\"priority\"), Embedding = read.GetVector(\"embedding\") }")
+      .Because("a nullable property reads a null column as null, a vector as its components");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_SplitModeClassModel_RegistersTheCopyOfItsColumnsByAssignmentAsync() {
+    // Arrange - a class is assigned in place; a vector that cannot be null takes an empty array for a null
+    // column, as the strip before the write does.
+    const string source = """
+#nullable enable
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class ProductUpdatedEvent : IEvent {
+    public Guid Id { get; set; }
+  }
+
+  [PerspectiveStorage(FieldStorageMode.Split)]
+  public class ProductModel {
+    [StreamId]
+    public Guid Id { get; set; }
+
+    [PhysicalField]
+    public string Status { get; set; } = "";
+
+    [VectorField(3)]
+    public float[] Embedding { get; set; } = [];
+  }
+
+  public class ProductPerspective : IPerspectiveFor<ProductModel, ProductUpdatedEvent> {
+    public ProductModel Apply(ProductModel currentData, ProductUpdatedEvent @event) => currentData;
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains(
+        "static (model, read) => { model.Status = read.Read<string>(\"status\"); " +
+        "model.Embedding = read.GetVector(\"embedding\") ?? global::System.Array.Empty<float>(); return model; }");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_ExtractedModeAndSplitWithoutPhysicalFields_RegisterNoCopyAsync() {
+    // Arrange - an Extracted document holds every field, and a Split model with nothing promoted has nothing
+    // to copy, so neither registers.
+    const string source = """
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class ProductUpdatedEvent : IEvent {
+    public Guid Id { get; set; }
+  }
+
+  [PerspectiveStorage(FieldStorageMode.Extracted)]
+  public class ExtractedModel {
+    [StreamId]
+    public Guid Id { get; set; }
+
+    [PhysicalField]
+    public string Status { get; set; } = "";
+  }
+
+  [PerspectiveStorage(FieldStorageMode.Split)]
+  public class BareSplitModel {
+    [StreamId]
+    public Guid Id { get; set; }
+  }
+
+  public class ExtractedPerspective : IPerspectiveFor<ExtractedModel, ProductUpdatedEvent> {
+    public ExtractedModel Apply(ExtractedModel currentData, ProductUpdatedEvent @event) => currentData;
+  }
+
+  public class BareSplitPerspective : IPerspectiveFor<BareSplitModel, ProductUpdatedEvent> {
+    public BareSplitModel Apply(BareSplitModel currentData, ProductUpdatedEvent @event) => currentData;
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert
+    var extracted = GeneratorTestHelper.GetGeneratedSource(result, "ExtractedPerspectiveRunner.g.cs");
+    var bareSplit = GeneratorTestHelper.GetGeneratedSource(result, "BareSplitPerspectiveRunner.g.cs");
+    await Assert.That(extracted).IsNotNull();
+    await Assert.That(bareSplit).IsNotNull();
+    await Assert.That(extracted).DoesNotContain("SplitPhysicalFieldRegistry");
+    await Assert.That(bareSplit).DoesNotContain("SplitPhysicalFieldRegistry");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_JsonOnlyMode_DoesNotStripPhysicalFieldsAsync() {
     // Arrange - explicit JsonOnly storage mode keeps physical fields in the JSONB payload
     const string source = """

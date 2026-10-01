@@ -14,11 +14,10 @@ namespace Whizbang.Core.Messaging;
 /// The event does NOT enumerate the streams that happened to be in
 /// scope at write time. Replay re-evaluates the predicate against
 /// the projection state at the moment the collective event is being
-/// processed. Because event sourcing guarantees that projection state
-/// at any point in a replay is fully determined by the event sequence
-/// up to that point, the predicate's result is deterministic — and it
-/// reflects the logically correct state, not the original execution's
-/// possibly-wrong (e.g. out-of-order delivery) result.
+/// processed. That makes the result deterministic <em>given an order</em>
+/// of collectives. Two collectives are ordered against each other only
+/// when they share an <see cref="OrderingKey"/>; without one they apply
+/// in whatever order their applies finish.
 /// </para>
 /// <para>
 /// <strong>Pairs complementarily with <see cref="ICompositeEvent"/>:</strong>
@@ -57,4 +56,27 @@ public interface ICollectiveEvent : IEvent {
   /// </para>
   /// </summary>
   CollectiveScope Scope { get; }
+
+  /// <summary>
+  /// Opt-in ordering. Collectives that carry the same key, in the same scope, are applied one at a time and in
+  /// the order the database committed them, so a later collective always lands after an earlier one. Null (the
+  /// default) leaves the collective unordered against every other: each is its own stream, and two collectives apply
+  /// in whatever order their applies finish.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use a key when collectives express "latest wins" across a family of rows, such as
+  /// <c>IsActive = (Id == e.Chosen)</c>, or when two collectives are the halves of one change (deactivate the old
+  /// record, activate the new one). Pick the key at the grain of the family (<c>"activation:" + familyId</c>):
+  /// everything sharing a key is serialized, so a key wider than the family costs throughput for nothing.
+  /// </para>
+  /// <para>
+  /// The key places the collective on the stream <see cref="CollectiveOrdering.StreamIdFor"/> derives from its scope
+  /// and the key. <see cref="CollectiveEventBase"/> does that for you; a hand-written collective that returns a key
+  /// must return that stream from its <c>[StreamId]</c> property as well.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveOrderingKeyTests.cs:AHandWrittenCollective_HasNoOrderingKeyAsync</tests>
+  string? OrderingKey => null;
 }

@@ -2049,6 +2049,36 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return results;
   }
 
+  /// <inheritdoc />
+  /// <docs>fundamentals/perspectives/perspective-sync#applied-ledger</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveAppliedLedgerSqlTests.cs</tests>
+  public async ValueTask<Whizbang.Core.Perspectives.Sync.AppliedEventStatus?> GetAppliedEventStatusAsync(
+    Whizbang.Core.Perspectives.Sync.AppliedEventInquiry inquiry, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(inquiry);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "wh_perspective_applied_status");
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.CommandText = $"SELECT event_id, state FROM {functionName}(@p_name, @p_event, @p_stream, @p_version)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_name", NpgsqlTypes.NpgsqlDbType.Text) { Value = inquiry.PerspectiveName });
+    cmd.Parameters.Add(new NpgsqlParameter("p_event", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)inquiry.EventId ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("p_stream", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)inquiry.StreamId ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("p_version", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)inquiry.StreamPosition ?? DBNull.Value });
+
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    await reader.ReadAsync(cancellationToken);
+    return new Whizbang.Core.Perspectives.Sync.AppliedEventStatus(
+      (Whizbang.Core.Perspectives.Sync.AppliedEventState)reader.GetInt16(1),
+      await reader.IsDBNullAsync(0, cancellationToken) ? null : reader.GetGuid(0));
+  }
+
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Writes the inquiry array by hand, and a hand-written JSON array needs a separator decision at every element of every nested array. The loops and their index tests are the format.")]
   private static string _buildInquiriesJson(IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries) {
     var sb = new System.Text.StringBuilder("[");
@@ -5280,6 +5310,35 @@ public class EFCoreWorkCoordinator<TDbContext>(
         EventWorkId: reader.GetGuid(0),
         EventId: reader.GetGuid(1),
         CommitSequence: await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetInt64(2)));
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueAsync_ReturnsTheQueueInCommitOrderAsync</tests>
+  public async Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueAsync(
+    Guid streamId,
+    CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "wh_collective_sink_queue");
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var dbConnection = __scope.Connection;
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
+    cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_id)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
+
+    var results = new List<CollectiveSinkQueueEntry>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new CollectiveSinkQueueEntry(
+        EventWorkId: reader.GetGuid(0),
+        EventId: reader.GetGuid(1),
+        CommitSequence: await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(2)));
     }
     return results;
   }

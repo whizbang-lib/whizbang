@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Models;
 using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
@@ -530,6 +531,17 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // eviction closure without reflection.
     result = TemplateUtilities.ReplaceRegion(result, "STREAM_GROUP_REGISTRATION",
         _buildStreamGroupRegistrations(perspective.StreamGroupSpec, modelTypeName));
+    // Physical fields register turnkey too: the collective apply path reads the column names and storage mode
+    // to send a setter or a condition on a physical property to its column (no reflection at run time).
+    result = TemplateUtilities.ReplaceRegion(result, "PHYSICAL_FIELD_REGISTRATION",
+        _buildPhysicalFieldRegistration(perspective, modelTypeName));
+    // Issue #977: a Split model's promoted fields live only in their columns, so the store has to read them
+    // back into the model the next event is applied to. The copy is generated here, where the fields are known.
+    result = TemplateUtilities.ReplaceRegion(result, "SPLIT_PHYSICAL_FIELD_REGISTRATION",
+        _buildSplitPhysicalFieldRegistration(perspective, modelTypeName));
+    // Issue #983: a model the write strips in place has to be snapshotted before the write.
+    result = TemplateUtilities.ReplaceRegion(result, "SNAPSHOT_BEFORE_WRITE",
+        _buildSnapshotBeforeWrite(perspective, modelTypeName));
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
@@ -656,6 +668,67 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return resolveTargetStreamId;
   }
 
+  /// <summary>
+  /// Emits the <c>[ModuleInitializer]</c> that registers a Split model's promoted columns and the code that
+  /// copies them into a model loaded from its document. Empty for any other storage mode, whose document
+  /// already holds every field.
+  /// </summary>
+  /// <remarks>
+  /// A record is copied with a <c>with</c> expression, so an init-only property is set the same way the
+  /// runner strips it before the write; a class is assigned in place. A vector property that is not
+  /// nullable takes an empty array for a null column, as the strip does.
+  /// </remarks>
+  private static string _buildSplitPhysicalFieldRegistration(PerspectiveInfo perspective, string modelTypeName) {
+    if (perspective.StorageMode != 2 || perspective.PhysicalFields is not { Length: > 0 } fields) {
+      return "";
+    }
+
+    var columns = string.Join(", ", fields.Select(f =>
+        $"new global::Whizbang.Core.Perspectives.SplitPhysicalColumn(\"{f.ColumnName}\", {_csharpBool(f.IsVectorField)})"));
+    var reads = fields.Select(f => (f.PropertyName, Read: _splitColumnRead(f))).ToArray();
+    var hydrate = perspective.IsModelRecord
+        ? $"static (model, read) => model with {{ {string.Join(", ", reads.Select(r => $"{r.PropertyName} = {r.Read}"))} }}"
+        : $"static (model, read) => {{ {string.Concat(reads.Select(r => $"model.{r.PropertyName} = {r.Read}; "))}return model; }}";
+
+    return "[global::System.Runtime.CompilerServices.ModuleInitializer]\n" +
+        "  internal static void _registerSplitPhysicalFields() =>\n" +
+        $"      global::Whizbang.Core.Perspectives.SplitPhysicalFieldRegistry.Register(new global::Whizbang.Core.Perspectives.SplitPhysicalFieldMap<{modelTypeName}>(\n" +
+        $"          new[] {{ {columns} }},\n" +
+        $"          {hydrate}));";
+  }
+
+  /// <summary>
+  /// Emits <c>SnapshotBeforeWrite</c>, which the runner calls just before each write that a snapshot follows.
+  /// </summary>
+  /// <remarks>
+  /// The write of a Split model strips its promoted fields so the document never holds them. A record is
+  /// stripped as a copy, but a class is stripped in place (it has no <c>with</c>), so the instance the runner
+  /// snapshots after the write has lost them, and a rewind that starts from that snapshot writes their
+  /// defaults over the columns (issue #983). For that model this serializes the snapshot before the write,
+  /// when snapshots are on; for every other model it returns null and the snapshot is taken after the write
+  /// as before.
+  /// </remarks>
+  private static string _buildSnapshotBeforeWrite(PerspectiveInfo perspective, string modelTypeName) {
+    var strippedInPlace = perspective.StorageMode == 2
+        && perspective.PhysicalFields is { Length: > 0 }
+        && !perspective.IsModelRecord;
+    return strippedInPlace
+        ? "// The write strips this model's promoted fields in place, so its snapshot is taken first (issue #983).\n" +
+          $"private JsonDocument? SnapshotBeforeWrite({modelTypeName} model) =>\n" +
+          "    _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true ? ToSnapshotJson(model) : null;"
+        : "// The write does not strip this model in place, so its snapshot is taken after the write.\n" +
+          $"private static JsonDocument? SnapshotBeforeWrite({modelTypeName} model) => null;";
+  }
+
+  /// <summary>The expression that reads one promoted column as its property's type.</summary>
+  private static string _splitColumnRead(PhysicalFieldInfoCompact field) {
+    if (!field.IsVectorField) {
+      return $"read.Read<{field.TypeName}>(\"{field.ColumnName}\")";
+    }
+    var read = $"read.GetVector(\"{field.ColumnName}\")";
+    return field.TypeName.EndsWith("?", StringComparison.Ordinal) ? read : $"{read} ?? global::System.Array.Empty<float>()";
+  }
+
   private static string _buildStreamGroupRegistrations(string? streamGroupSpec, string modelTypeName) {
     if (string.IsNullOrEmpty(streamGroupSpec)) {
       return "";
@@ -671,6 +744,40 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerStreamGroup{i}() =>\n      global::Whizbang.Core.Perspectives.PerspectiveStreamGroupRegistry.Register(typeof({modelTypeName}), \"{parts[0]}\", {_csharpBool(parts[1] == "1")}, {_csharpBool(parts[2] == "1")}, {_csharpBool(parts[3] == "1")});");
     }
     return string.Join("\n\n  ", registrations);
+  }
+
+  /// <summary>
+  /// Emits the <c>[ModuleInitializer]</c> that registers the model's physical fields in
+  /// <c>PerspectivePhysicalFieldRegistry</c>: one call per field with its column name, the model's storage mode
+  /// and whether it is a vector. Empty when the model has no physical fields.
+  /// </summary>
+  private static string _buildPhysicalFieldRegistration(PerspectiveInfo perspective, string modelTypeName) {
+    if (perspective.PhysicalFields is not { Length: > 0 } fields) {
+      return "";
+    }
+    var mode = perspective.StorageMode switch {
+      1 => "Extracted",
+      2 => "Split",
+      _ => "JsonOnly",
+    };
+    var sb = new StringBuilder();
+    sb.Append("[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerPhysicalFields() {");
+    foreach (var field in fields) {
+      sb.Append("\n    global::Whizbang.Core.Perspectives.PerspectivePhysicalFieldRegistry.Register(typeof(")
+        .Append(modelTypeName).Append("), \"").Append(field.PropertyName).Append("\", \"").Append(field.ColumnName)
+        .Append("\", global::Whizbang.Core.Perspectives.FieldStorageMode.").Append(mode)
+        .Append(", isVector: ").Append(_csharpBool(field.IsVectorField));
+      // An enumeration's column holds its underlying number unless the author declared the column's type.
+      if (field.EnumScalarType is { } scalar && string.IsNullOrWhiteSpace(field.ColumnType)) {
+        sb.Append(", scalarType: typeof(global::").Append(scalar).Append(')');
+      }
+      if (!string.IsNullOrWhiteSpace(field.ColumnType)) {
+        sb.Append(", columnType: \"").Append(field.ColumnType!.Replace("\\", "\\\\").Replace("\"", "\\\"")).Append('"');
+      }
+      sb.Append(");");
+    }
+    sb.Append("\n  }");
+    return sb.ToString();
   }
 
   /// <summary>
@@ -1204,12 +1311,14 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
       var isVectorField = attrClassName == VECTOR_FIELD_ATTRIBUTE;
 
-      // Extract ColumnName from named argument if provided
+      // Extract ColumnName (and a declared ColumnType) from the named arguments if provided
       string? columnName = null;
+      string? columnType = null;
       foreach (var namedArg in attribute.NamedArguments) {
         if (namedArg.Key == "ColumnName" && namedArg.Value.Value is string cn) {
           columnName = cn;
-          break;
+        } else if (namedArg.Key == "ColumnType" && namedArg.Value.Value is string ct) {
+          columnType = ct;
         }
       }
 
@@ -1218,7 +1327,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return new PhysicalFieldInfoCompact(
           PropertyName: property.Name,
           ColumnName: columnName,
-          IsVectorField: isVectorField
+          IsVectorField: isVectorField,
+          EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
+          ColumnType: columnType,
+          TypeName: TypeNameUtilities.FullyQualifiedWithNullability(property.Type)
       );
     }
 

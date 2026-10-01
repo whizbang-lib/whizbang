@@ -73,7 +73,7 @@ public static class OpaqueDocumentFixture {
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/PerspectiveDocumentSerialization.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard4")]
-[NotInParallel("PathOneProvider")]
+[NotInParallel("PersistenceProfileRegistry")]
 public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
   private const string TABLE = "wh_per_opaque_document";
 
@@ -144,15 +144,10 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
       connection);
     await table.ExecuteNonQueryAsync();
 
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>
-      Generated.PerspectivePersistenceJsonContext.CreateOptions(
-        Generated.MessageJsonContext.Default,
-        global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
   }
 
   [After(Test)]
   public async ValueTask DisposeAsync() {
-    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = null;
     if (_dataSource is not null) {
       await _dataSource.DisposeAsync();
     }

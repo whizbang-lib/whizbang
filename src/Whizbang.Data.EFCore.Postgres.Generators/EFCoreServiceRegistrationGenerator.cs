@@ -100,6 +100,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractMultiLensQueryInfo(ctx, ct)
     ).Where(static info => info is not null);
 
+    // Discover the app's custom stored-form migrations (IStoredFormMigration<TModel>)
+    var storedFormMigrations = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        transform: static (ctx, ct) => _extractStoredFormMigration(ctx, ct)
+    ).Where(static info => info is not null);
+
     // Combine perspectives with DbContext info and compilation
     var allData = perspectives.Collect()
         .Combine(dbContextClasses.Collect())
@@ -180,18 +186,20 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Generate DbContext schema extensions (EnsureWhizbangTablesCreatedAsync)
     context.RegisterSourceOutput(
-        allData,
+        allData.Combine(storedFormMigrations.Collect()),
         static (ctx, data) => {
-          var perspectives = data.Left.Left;
-          var dbContexts = data.Left.Right;
+          var perspectives = data.Left.Left.Left;
+          var dbContexts = data.Left.Left.Right;
 
           try {
             // Filter nulls to ensure type safety - OfType<> both filters and changes type to non-nullable
             var validPerspectives = perspectives.OfType<PerspectiveModelInfo>().ToImmutableArray();
             var validDbContexts = dbContexts.OfType<DbContextInfo>().ToImmutableArray();
-            var compilation = data.Right;
+            var compilation = data.Left.Right;
+            var customMigrations = data.Right.OfType<StoredFormMigrationClassInfo>().ToImmutableArray();
 
-            _generateSchemaExtensions(ctx, validPerspectives, validDbContexts, compilation);
+            _reportStoredFormDiagnostics(ctx, validPerspectives, customMigrations);
+            _generateSchemaExtensions(ctx, validPerspectives, validDbContexts, compilation, customMigrations);
           } catch (Exception ex) {
             var descriptor = new DiagnosticDescriptor(
                 id: "EFCORE995",
@@ -483,6 +491,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Extract physical fields from model type
     var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);
+    var (storedForms, storedFormProblems) = StoredFormDiscovery.From(modelType as INamedTypeSymbol);
 
     // Check for [WhizbangPerspective] attribute (optional)
     var perspectiveAttribute = symbol.GetAttributes()
@@ -507,8 +516,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: keys,
         PhysicalFields: physicalFields,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
+        PromotedIndexes: _promotedIndexes(modelType as INamedTypeSymbol),
         CompositeIndexes: _reachableComposites(modelType as INamedTypeSymbol),
-        CoalesceBody: _buildDataCoalesceStatements(modelType)
+        DocumentMatching: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol),
+        CoalesceBody: _buildDataCoalesceStatements(modelType),
+        StoredForms: storedForms,
+        StoredFormProblems: storedFormProblems,
+        IsModelRecord: modelType.IsRecord
     );
   }
 
@@ -534,6 +548,16 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       MappedPathDiscovery.MustStoreOpaquely(modelType)
         ? []
         : JsonIndexDiscovery.From(modelType);
+
+  /// <summary>
+  /// The document indexes the promoted fields declare, or none when the model's document is stored
+  /// opaquely and so never had any.
+  /// </summary>
+  /// <remarks>See <see cref="JsonIndexDiscovery.PromotedFrom"/> and <see cref="_appendPromotedFieldIndexes"/>.</remarks>
+  private static ImmutableArray<JsonIndexInfo> _promotedIndexes(INamedTypeSymbol? modelType) =>
+      MappedPathDiscovery.MustStoreOpaquely(modelType)
+        ? []
+        : JsonIndexDiscovery.PromotedFrom(modelType);
 
   /// <summary>
   /// The composite and partial indexes the model declares, or none when its document is stored
@@ -562,7 +586,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     foreach (var index in perspective.CompositeIndexes) {
       var statement = CompositeIndexSql.CreateStatement(index, table, shortName);
       if (!string.IsNullOrEmpty(statement)) {
-        sb.AppendLine(statement);
+        sb.AppendLine(PerspectiveIndexSql.Ensure(statement, quotedSchema));
       }
     }
   }
@@ -596,8 +620,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: candidate.Keys,
         PhysicalFields: candidate.PhysicalFields,
         JsonIndexes: candidate.JsonIndexes,
+        PromotedIndexes: candidate.PromotedIndexes,
         CompositeIndexes: candidate.CompositeIndexes,
-        CoalesceBody: candidate.CoalesceBody
+        DocumentMatching: candidate.DocumentMatching,
+        CoalesceBody: candidate.CoalesceBody,
+        StoredForms: candidate.StoredForms,
+        StoredFormProblems: candidate.StoredFormProblems,
+        IsModelRecord: candidate.IsModelRecord
     );
   }
 
@@ -922,7 +951,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         VectorIndexType: null,
         VectorIndexLists: null,
         ColumnType: columnType,
-        IsSearch: isSearch
+        IsSearch: isSearch,
+        EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
+        EnumMembers: PhysicalFieldScalar.EnumMembers(property.Type),
+        EnumIsFlags: PhysicalFieldScalar.IsFlagsEnum(property.Type),
+        IsInitOnly: property.SetMethod?.IsInitOnly == true,
+        IsReadOnly: property.SetMethod is null
     );
   }
 
@@ -983,7 +1017,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         VectorDimensions: dimensions,
         VectorDistanceMetric: distanceMetric,
         VectorIndexType: indexType,
-        VectorIndexLists: indexLists
+        VectorIndexLists: indexLists,
+        IsInitOnly: property.SetMethod?.IsInitOnly == true,
+        IsReadOnly: property.SetMethod is null
     );
   }
 
@@ -1031,11 +1067,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates multi-model ILensQuery transient registrations for a DbContext.
   /// Generates PhysicalFieldHydratorRegistry.Register call for a model with physical fields.
   /// The hydrator reads shadow property values via MaterializationInterceptionData.GetPropertyValue
   /// and copies them into the Data model (AOT-safe, no reflection).
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PhysicalFieldHydratorInitOnlyTests.cs:Record_MaterializationHydrator_CopiesTheColumnsWithAWithExpressionAsync</tests>
   private static void _generatePhysicalFieldHydratorRegistration(
       StringBuilder sb,
       PerspectiveModelInfo model) {
@@ -1044,33 +1080,18 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.PhysicalFieldHydratorRegistry.Register<{model.ModelTypeName}>((materializationData, entity) => {{");
     sb.AppendLine($"          var row = (global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>)entity;");
     sb.AppendLine("          if (row.Data is null) return; // ComplexProperty().ToJson() materializes Data after InitializedInstance");
-
-    foreach (var field in model.PhysicalFields) {
-      if (field.IsVector) {
-        // Vector fields: GetPropertyValue returns Pgvector.Vector, convert to float[]
-        sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<global::Pgvector.Vector?>(\"{field.ColumnName}\");");
-        sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
-        sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
-        sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
-      } else {
-        // Non-vector fields: direct type cast
-        var clrType = field.TypeName;
-        var isNullable = clrType.EndsWith("?", StringComparison.Ordinal);
-        if (isNullable) {
-          sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
-          sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
-          sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
-          sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
-        } else {
-          sb.AppendLine($"          row.Data.{field.PropertyName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
-        }
-      }
-    }
-
+    _appendColumnCopy(sb, model, static field => field.IsVector
+        ? $"materializationData.GetPropertyValue<global::Pgvector.Vector?>(\"{field.ColumnName}\")"
+        : $"materializationData.GetPropertyValue<{field.TypeName}>(\"{field.ColumnName}\")");
     sb.AppendLine(CLOSE_BRACE_INDENT_8);
     sb.AppendLine();
   }
 
+  /// <summary>
+  /// Generates the SplitModeChangeTrackerHydrator.Register call for a model with physical fields: the
+  /// hydrator copies each shadow property's current value into the Data model, then detaches the row.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PhysicalFieldHydratorInitOnlyTests.cs:Record_ChangeTrackerHydrator_CopiesTheColumnsWithAWithExpressionAsync</tests>
   private static void _generateChangeTrackerHydratorRegistration(
       StringBuilder sb,
       PerspectiveModelInfo model) {
@@ -1080,32 +1101,70 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.SplitModeChangeTrackerHydrator.Register(typeof({rowType}), entry => {{");
     sb.AppendLine($"          var row = ({rowType})entry.Entity;");
     sb.AppendLine("          if (row.Data is null) { return; }");
-
-    foreach (var field in model.PhysicalFields) {
+    _appendColumnCopy(sb, model, static field => {
       if (field.IsVector) {
-        // Vector: read as Pgvector.Vector?, convert to float[]
-        sb.AppendLine($"          var _{field.ColumnName} = (global::Pgvector.Vector?)entry.Property(\"{field.ColumnName}\").CurrentValue;");
-        sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
-        sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
-        sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
-      } else {
-        var clrType = field.TypeName;
-        var isNullable = clrType.EndsWith("?", StringComparison.Ordinal);
-        if (isNullable) {
-          sb.AppendLine($"          var _{field.ColumnName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue;");
-          sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
-          sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
-          sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_10);
-        } else {
-          sb.AppendLine($"          row.Data.{field.PropertyName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue!;");
-        }
+        return $"(global::Pgvector.Vector?)entry.Property(\"{field.ColumnName}\").CurrentValue";
       }
-    }
-
+      // A value that cannot be null is unwrapped; a nullable one keeps its null for the copy to test.
+      var suppress = _isNullableTypeName(field.TypeName) ? "" : "!";
+      return $"({field.TypeName})entry.Property(\"{field.ColumnName}\").CurrentValue{suppress}";
+    });
     sb.AppendLine("          entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;");
     sb.AppendLine(CLOSE_BRACE_INDENT_8);
     sb.AppendLine();
   }
+
+  /// <summary>
+  /// Emits the body both hydrators share: one local per promoted column, read with
+  /// <paramref name="read"/>, then the copy of those locals into <c>row.Data</c>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A record is copied with one <c>with</c> expression, which sets an <c>init</c>-only property as well as a
+  /// settable one; assigning an <c>init</c>-only property is CS8852, which is how a record model documented
+  /// with <c>init</c> properties failed to compile in every storage mode (issue #982). A class is assigned in
+  /// place, and a property it cannot assign once the instance exists (<c>init</c>-only) is left as the
+  /// document has it: a Split class model cannot declare one, because the runner strips it in place before the
+  /// write, so only a mode whose document also holds the value reaches here. A property with no setter is
+  /// computed rather than stored, and is never copied into.
+  /// </para>
+  /// <para>
+  /// A null vector column, and a null column of a nullable type, keep the value the document holds.
+  /// </para>
+  /// </remarks>
+  private static void _appendColumnCopy(
+      StringBuilder sb,
+      PerspectiveModelInfo model,
+      Func<PhysicalFieldInfo, string> read) {
+    var copied = model.PhysicalFields
+        .Where(f => !f.IsReadOnly && (model.IsModelRecord || !f.IsInitOnly))
+        .ToList();
+
+    foreach (var field in copied) {
+      sb.AppendLine($"          var _{field.ColumnName} = {read(field)};");
+    }
+
+    if (model.IsModelRecord) {
+      var members = string.Join(", ", copied.Select(f => $"{f.PropertyName} = {_copiedValue(f)}"));
+      sb.AppendLine($"          row.Data = row.Data with {{ {members} }};");
+      return;
+    }
+
+    foreach (var field in copied) {
+      sb.AppendLine($"          row.Data.{field.PropertyName} = {_copiedValue(field)};");
+    }
+  }
+
+  /// <summary>The value a hydrator copies into one property from the local holding its column.</summary>
+  private static string _copiedValue(PhysicalFieldInfo field) {
+    var local = $"_{field.ColumnName}";
+    if (field.IsVector) {
+      return $"{local} is not null ? {local}.ToArray() : row.Data.{field.PropertyName}";
+    }
+    return _isNullableTypeName(field.TypeName) ? $"{local} ?? row.Data.{field.PropertyName}" : local;
+  }
+
+  private static bool _isNullableTypeName(string typeName) => typeName.EndsWith("?", StringComparison.Ordinal);
 
   /// <summary>
   /// Generates multi-model ILensQuery registrations for perspective lens queries.
@@ -1218,7 +1277,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Map .NET types to PostgreSQL types
     // The TypeName is fully qualified with global:: prefix
-    var typeName = field.TypeName
+    // An enumeration is stored as its underlying number, so its column is typed from that scalar.
+    var typeName = (field.EnumScalarType ?? field.TypeName)
         .Replace(PLACEHOLDER_GLOBAL, "")
         .TrimEnd('?'); // Remove nullable suffix
 
@@ -2281,7 +2341,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,
       ImmutableArray<DbContextInfo> dbContexts,
-      Compilation compilation) {
+      Compilation compilation,
+      ImmutableArray<StoredFormMigrationClassInfo> customMigrations) {
 
     if (dbContexts.IsEmpty) {
       return; // No DbContext found
@@ -2333,8 +2394,15 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__PERSPECTIVE_TABLES_SCHEMA__", perspectiveTablesSchema);
       // Replace PERSPECTIVE_ENTRIES region with per-perspective (name, sql) tuples for hash tracking
       template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_ENTRIES", perspectiveEntriesCode);
-      // No stored-form rewrite is generated. The template derives it at runtime from the model
+      // One rewrite per enumeration in a physical column, converting a column an earlier release created as text
+      // (the member names) to the number it now holds, applied by the stored-format rewrite phase.
+      template = TemplateUtilities.ReplaceRegion(template, "PHYSICAL_COLUMN_REWRITES",
+        _generatePhysicalColumnRewritesCode(matchingPerspectives, dbContext.Schema));
+      // No canonical temporal rewrite is generated. The template derives it at runtime from the model
       // Entity Framework built and the serializer's metadata, the two things that read a document.
+      // The app's own stored-form migrations are generated: each is a declaration, not a discovery.
+      template = TemplateUtilities.ReplaceRegion(template, "STORED_FORM_MIGRATIONS",
+        _generateStoredFormMigrationsCode(matchingPerspectives, dbContext.Schema, customMigrations));
 
       // Replace MIGRATIONS region with embedded migration scripts
       template = TemplateUtilities.ReplaceRegion(
@@ -2773,84 +2841,117 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </remarks>
   /// <param name="tableName">The table the constraint sits on.</param>
   /// <param name="columnName">The column whose length is constrained.</param>
-  private static string _lengthConstraintName(string tableName, string columnName) {
-    const int postgresIdentifierLimit = 63;
-    var name = $"ck_{tableName}_{columnName}_len";
-
-    if (name.Length <= postgresIdentifierLimit) {
-      return name;
-    }
-
-    // FNV-1a rather than a cryptographic digest: this runs in an analyzer, which targets a surface
-    // where the one-call hashing APIs do not exist, and the requirement here is that the same name
-    // comes out every run rather than that the input cannot be recovered.
-    unchecked {
-      const uint offsetBasis = 2166136261;
-      const uint prime = 16777619;
-
-      var hash = offsetBasis;
-      foreach (var c in name) {
-        hash = (hash ^ c) * prime;
-      }
-
-      var digest = hash.ToString("x8", System.Globalization.CultureInfo.InvariantCulture);
-      return name[..(postgresIdentifierLimit - digest.Length - 1)] + "_" + digest;
-    }
-  }
+  private static string _lengthConstraintName(string tableName, string columnName) =>
+    // The same scheme every derived index name uses, and the same output this always produced: the
+    // name as it is when it fits, otherwise its first 54 characters and an FNV-1a digest of the
+    // whole. FNV-1a rather than a cryptographic digest because this runs in an analyzer, which
+    // targets a surface where the one-call hashing APIs do not exist.
+    PostgresIdentifiers.WithinLimit($"ck_{tableName}_{columnName}_len");
 
   /// <summary>
-  /// Appends standard indexes (created_at B-tree, JSONB GIN) for a perspective table.
+  /// Appends the standard and declared indexes of one perspective table to the fallback script.
   /// </summary>
+  /// <remarks>
+  /// The same statements, in the same order, as the hash-tracked entry: both come from
+  /// <see cref="_standardIndexStatements"/> and <see cref="_appendDeclaredIndexes"/>, so the script the
+  /// pass falls back to cannot build a different set of indexes from the one it tracks.
+  /// </remarks>
   private static void _appendStandardIndexes(
       StringBuilder sb,
       PerspectiveModelInfo perspective,
       string quotedSchema) {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
 
-    // Add B-tree index on created_at for time-based queries (matches EF Core configuration)
-    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_created_at");
-    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} (created_at);");
-    sb.AppendLine();
-    // updated_at carries the sliding retention predicate (updated_at < NOW() - interval). Written with
-    // the arithmetic on the NOW() side it is sargable; unindexed the reaper degrades to a sequential
-    // scan of every enrolled table on every maintenance cycle.
-    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_updated_at");
-    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} (updated_at);");
-    sb.AppendLine();
+    foreach (var statement in _standardIndexStatements(perspective, quotedSchema, shortName)) {
+      sb.AppendLine(PerspectiveIndexSql.Ensure(statement, quotedSchema));
+    }
 
-    // Add GIN indexes on JSONB columns for full LINQ query support
-    // GIN indexes enable efficient containment queries, key/value lookups, and path expressions
-    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_data_gin");
-    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (data);");
-    sb.AppendLine();
-    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_metadata_gin");
-    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (metadata);");
-    sb.AppendLine();
-    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin");
-    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (scope);");
-    sb.AppendLine();
-
-    // Btree EXPRESSION index over the tenant scope key. gin(scope) above serves containment (@>) but NOT
-    // `scope->>'t' = ?` btree equality — the filter both tenant-scoped lens queries and every collective
-    // apply (§2) AND onto their WHERE. Without this the planner seq-scans the whole perspective table (the
-    // production hazard the removed apply-time index ensurer used to paper over). Emitting it here means the
-    // index is created once at service startup through the normal schema-init path, never in a live apply.
-    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_tenant");
-    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} ((scope->>'t'));");
-    sb.AppendLine();
-
-    // Declared indexes over JSON-only fields. The GIN index above answers containment and nothing
-    // else, so a field filtered by a range or used as a sort key is read by scanning until it has one
-    // of these. Emitted here so it is created once through the normal schema path.
     // This is the fallback script the perspective pass applies when it cannot read the tracking
     // tables, and it carries the same trigram indexes as the hash-tracked one, so it needs the same
     // block: one CREATE EXTENSION per table, inside markers the pass can skip as a whole. Emitted
     // outside a block, a trigram index reaches a server with no gin_trgm_ops operator class as an
     // ordinary statement and fails the pass with nothing to skip.
-    JsonIndexSql.AppendScript(
-      sb, perspective.JsonIndexes, $"{quotedSchema}.{perspective.TableName}", shortName);
-    _appendCompositeIndexes(sb, perspective, quotedSchema, shortName);
+    _appendDeclaredIndexes(sb, perspective, quotedSchema, shortName);
     sb.AppendLine();
+  }
+
+  /// <summary>
+  /// The indexes every perspective table carries, less the document indexes its model does not
+  /// need, as plain statements in the order they are emitted.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>created_at</c> serves time-based queries. <c>updated_at</c> carries the sliding retention
+  /// predicate (<c>updated_at &lt; NOW() - interval</c>): written with the arithmetic on the NOW() side
+  /// it is sargable, and unindexed the reaper degrades to a sequential scan of every enrolled table on
+  /// every maintenance cycle.
+  /// </para>
+  /// <para>
+  /// The index over the model's document answers a whole-document match, which is what an equality
+  /// filter on a field without its own index compiles to. It is the largest index on the table and
+  /// every change to the document rewrites its entries, so a model that declares its queries never
+  /// match that way (<c>[PerspectiveQueries(MatchOnAnyField = false)]</c>) does not get it. Left
+  /// undeclared it is still built, because a query that depends on it cannot be seen from every
+  /// assembly that might issue one. The metadata document is indexed only when the model declares
+  /// <c>MatchOnMetadata</c>: nothing the framework runs matches on it, and a query that does is
+  /// reported at build time (WHIZ307).
+  /// </para>
+  /// <para>
+  /// A btree EXPRESSION index over the tenant scope key. gin(scope) serves containment (@&gt;) but NOT
+  /// <c>scope-&gt;&gt;'t' = ?</c> btree equality, the filter both tenant-scoped lens queries and every
+  /// collective apply AND onto their WHERE. Without this the planner seq-scans the whole perspective
+  /// table. It is created once at service startup through the normal schema-init path, never in a
+  /// live apply: an earlier release created the same index at apply time under its own name, which
+  /// is why every statement here goes through <see cref="PerspectiveIndexSql.Ensure"/> and is skipped
+  /// when the table already has an index with its definition.
+  /// </para>
+  /// <para>
+  /// Nothing here ever drops an index. An index an earlier release built that this one no longer
+  /// declares stays until an operator removes it, since removing one a production query relies on
+  /// is worse than keeping one nobody reads. The one exception is a promoted field's document index,
+  /// which no query can read once the field is redirected to its column and which is replaced by an
+  /// index of the same kind on the column; see <see cref="_appendPromotedFieldIndexes"/>.
+  /// </para>
+  /// </remarks>
+  private static IEnumerable<string> _standardIndexStatements(
+      PerspectiveModelInfo perspective, string quotedSchema, string shortName) {
+    var table = $"{quotedSchema}.{perspective.TableName}";
+
+    yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_created_at")} ON {table} (created_at);";
+    yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_updated_at")} ON {table} (updated_at);";
+    if (perspective.DocumentMatching.BuildsDataIndex) {
+      yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_data_gin")} ON {table} USING gin (data);";
+    }
+    if (perspective.DocumentMatching.BuildsMetadataIndex) {
+      yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_metadata_gin")} ON {table} USING gin (metadata);";
+    }
+    yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_scope_gin")} ON {table} USING gin (scope);";
+    yield return $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_scope_tenant")} ON {table} ((scope->>'t'));";
+  }
+
+  /// <summary>An index name the schema derives, kept within PostgreSQL's identifier limit.</summary>
+  /// <remarks>
+  /// A long table or column name used to push derived names past 63 bytes, where PostgreSQL truncates
+  /// rather than refuses, so two indexes of one table could arrive under one name and the second was
+  /// never created. See <see cref="PostgresIdentifiers.WithinLimit"/>.
+  /// </remarks>
+  private static string _indexName(string derived) => PostgresIdentifiers.WithinLimit(derived);
+
+  /// <summary>
+  /// Appends the model's declared field and composite indexes: the plain ones through
+  /// <see cref="PerspectiveIndexSql.Ensure"/>, the trigram ones inside their optional-extension block.
+  /// </summary>
+  /// <remarks>
+  /// Declared indexes over JSON-only fields. The document index answers containment and nothing
+  /// else, so a field filtered by a range or used as a sort key is read by scanning until it has one
+  /// of these.
+  /// </remarks>
+  private static void _appendDeclaredIndexes(
+      StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema, string shortName) {
+    JsonIndexSql.AppendScript(
+      sb, perspective.JsonIndexes, $"{quotedSchema}.{perspective.TableName}", shortName,
+      statement => PerspectiveIndexSql.Ensure(statement, quotedSchema));
+    _appendCompositeIndexes(sb, perspective, quotedSchema, shortName);
   }
 
   /// <summary>
@@ -2866,7 +2967,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       PerspectiveModelInfo perspective,
       string quotedSchema) {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
-    _appendPhysicalSearchIndexes(sb, perspective, quotedSchema, shortName);
+    _appendPromotedFieldIndexes(sb, perspective, quotedSchema, shortName);
 
     foreach (var field in perspective.PhysicalFields) {
       if (!field.IsIndexed) {
@@ -2877,32 +2978,94 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         _appendVectorIndex(sb, field, shortName, perspective.TableName, quotedSchema);
       } else {
         // Regular B-tree index
-        sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}");
-        sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} ({field.ColumnName});");
+        sb.AppendLine(PerspectiveIndexSql.Ensure(
+          $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_{field.ColumnName}")} ON {quotedSchema}.{perspective.TableName} ({field.ColumnName});",
+          quotedSchema));
         sb.AppendLine();
       }
     }
   }
 
   /// <summary>
-  /// The trigram index over the fold of each promoted Search field's column, in one optional-extension
-  /// block so a server that refuses the trigram extension skips them with a warning rather than failing.
+  /// The indexes a promoted field's declarations call for beyond its plain btree: first the drop of each
+  /// document index the schema built for the field before it was promoted, then the column's trigram
+  /// indexes (search and substring) in one optional-extension block, then its case-folded btree.
   /// </summary>
-  /// <remarks>Over <c>wh_fold(column)</c>: exactly what the query side produces for a <c>Contains</c> on the
-  /// field once the promoted-field redirect has pointed it at the column.</remarks>
-  private static void _appendPhysicalSearchIndexes(
+  /// <remarks>
+  /// <para>
+  /// A promoted field's queries are redirected to its column, so an index over its extraction is never
+  /// read again while every write still maintains it (issue #1009). Each one is dropped by the name the
+  /// schema gave it, and only when its definition is over the document: an index under another name is an
+  /// operator's and stays, and a column index that took the same name is not over the document.
+  /// </para>
+  /// <para>
+  /// The drops come first because a column index can share a document index's name (field <c>Name</c>,
+  /// column <c>name</c>), and <c>IF NOT EXISTS</c> would otherwise find the old one and build nothing.
+  /// The column indexes come from the same declarations, so a database that promoted the field and one
+  /// created with it promoted end up with the same indexes.
+  /// </para>
+  /// <para>
+  /// The search index is over <c>wh_fold(column)</c>: exactly what the query side produces for a
+  /// <c>Contains</c> on the field once the redirect has pointed it at the column. A plain btree the field
+  /// asks for with <c>[Indexed]</c> is emitted with the other physical-field indexes, and is not repeated.
+  /// </para>
+  /// </remarks>
+  private static void _appendPromotedFieldIndexes(
       StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema, string shortName) {
-    var search = perspective.PhysicalFields.Where(f => f.IsSearch).ToList();
-    if (search.Count == 0) {
+    var table = $"{quotedSchema}.{perspective.TableName}";
+    var trigram = perspective.PhysicalFields
+      .Where(f => f.IsSearch && !f.IsVector)
+      .Select(f => JsonIndexSql.ColumnSearchStatement(f.ColumnName, table, shortName))
+      .ToList();
+    var plain = new List<string>();
+
+    if (!perspective.PromotedIndexes.IsDefaultOrEmpty) {
+      foreach (var index in perspective.PromotedIndexes) {
+        _collectPromotedIndex(sb, perspective, index, table, shortName, trigram, plain);
+      }
+    }
+
+    if (trigram.Count > 0) {
+      sb.AppendLine(JsonIndexSql.OPTIONAL_EXTENSION_BEGIN + JsonIndexSql.TRIGRAM_EXTENSION);
+      sb.AppendLine($"CREATE EXTENSION IF NOT EXISTS {JsonIndexSql.TRIGRAM_EXTENSION};");
+      foreach (var statement in trigram) {
+        sb.AppendLine(statement);
+      }
+      sb.AppendLine(JsonIndexSql.OPTIONAL_EXTENSION_END);
+    }
+    foreach (var statement in plain) {
+      sb.AppendLine(PerspectiveIndexSql.Ensure(statement, quotedSchema));
+    }
+  }
+
+  /// <summary>
+  /// One promoted declaration: appends the drops of its document indexes, and collects the column indexes that
+  /// replace them, the trigram ones apart because they need the extension. The plain btree of an
+  /// <c>[Indexed]</c> field is emitted with the other physical-field indexes, so it is not collected again.
+  /// </summary>
+  private static void _collectPromotedIndex(
+      StringBuilder sb, PerspectiveModelInfo perspective, JsonIndexInfo index, string table, string shortName,
+      List<string> trigram, List<string> plain) {
+    if (perspective.PhysicalFields.FirstOrDefault(f => !f.IsVector && f.PropertyName == index.PropertyName) is not { } field) {
       return;
     }
-    sb.AppendLine(JsonIndexSql.OPTIONAL_EXTENSION_BEGIN + JsonIndexSql.TRIGRAM_EXTENSION);
-    sb.AppendLine($"CREATE EXTENSION IF NOT EXISTS {JsonIndexSql.TRIGRAM_EXTENSION};");
-    foreach (var field in search) {
-      sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_fold_trgm ON {quotedSchema}.{perspective.TableName} "
-        + $"USING gin ({quotedSchema}.wh_fold({field.ColumnName}) gin_trgm_ops);");
+    foreach (var drop in JsonIndexSql.DropDocumentIndexStatements(index, table, shortName)) {
+      sb.AppendLine(drop);
     }
-    sb.AppendLine(JsonIndexSql.OPTIONAL_EXTENSION_END);
+    var fieldBtreeEmittedElsewhere = field.IsIndexed && !index.CaseInsensitive;
+    foreach (var statement in JsonIndexSql.ColumnCreateStatements(index, field.ColumnName, table, shortName)) {
+      if (statement.IndexOf("gin_trgm_ops", StringComparison.Ordinal) >= 0) {
+        _addOnce(trigram, statement);
+      } else if (!fieldBtreeEmittedElsewhere) {
+        _addOnce(plain, statement);
+      }
+    }
+  }
+
+  private static void _addOnce(List<string> statements, string statement) {
+    if (!statements.Contains(statement)) {
+      statements.Add(statement);
+    }
   }
 
   /// <summary>
@@ -2921,8 +3084,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // The column still works for queries, just without index acceleration
     var dimensions = field.VectorDimensions!.Value;
     if (dimensions <= 2000) {
-      sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_vec");
-      sb.AppendLine($"  ON {quotedSchema}.{tableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);");
+      sb.AppendLine(PerspectiveIndexSql.Ensure(
+        $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_{field.ColumnName}_vec")} ON {quotedSchema}.{tableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);",
+        quotedSchema));
       sb.AppendLine();
     } else {
       sb.AppendLine($"-- NOTE: Skipping vector index for {field.ColumnName} ({dimensions} dimensions > 2000 limit)");
@@ -3053,11 +3217,153 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
     var table = $"{quotedSchema}.{perspective.TableName}";
     foreach (var field in perspective.PhysicalFields) {
+      // Armed before the column is added, so only the pass that adds it arms it (#1009).
+      if (PhysicalColumnSql.Arm(table, field) is { } arm) {
+        sb.AppendLine(arm);
+      }
       sb.AppendLine(PhysicalColumnSql.AddColumn(table, field.ColumnName, _getPostgresColumnType(field)));
       if (PhysicalColumnSql.Backfill(table, field) is { } backfill) {
         sb.AppendLine(backfill);
       }
     }
+  }
+
+
+  /// <summary>
+  /// The app's stored-form migrations for one DbContext, as <c>StoredFormMigration</c> entries: per table (in table
+  /// order) the generated ones in the order the model declares them to run, then the custom ones in class-name order.
+  /// A declaration on a physical field also retypes or renames the field's column, and on a Split model, which keeps
+  /// no copy of the field in the document, only the column.
+  /// </summary>
+  private static string _generateStoredFormMigrationsCode(
+      IReadOnlyList<PerspectiveModelInfo> perspectives, string schema, ImmutableArray<StoredFormMigrationClassInfo> customMigrations) {
+    var sb = new StringBuilder();
+    foreach (var perspective in perspectives.GroupBy(p => p.TableName).Select(g => g.First()).OrderBy(p => p.TableName, StringComparer.Ordinal)) {
+      foreach (var form in perspective.StoredForms) {
+        sb.AppendLine($"      global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"{schema}\", \"{perspective.TableName}\", "
+          + $"\"{perspective.TableName}.{form.NameSuffix}\", {string.Join(", ", _storedFormSteps(perspective, form))}),");
+      }
+      foreach (var custom in customMigrations
+          .Where(m => m.Problem is null && m.ModelTypeName == perspective.ModelTypeName)
+          .OrderBy(m => m.ClassName, StringComparer.Ordinal)) {
+        sb.AppendLine($"      global::Whizbang.Data.Postgres.StoredFormMigrationSql.Custom(\"{schema}\", \"{perspective.TableName}\", new {custom.ClassName}()),");
+      }
+    }
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// The steps of one generated stored-form migration: the document step, unless the field lives only in its column
+  /// (a Split model), then the column's retype or rename when the declaration is on a physical field.
+  /// </summary>
+  private static List<string> _storedFormSteps(PerspectiveModelInfo perspective, StoredFormInfo form) {
+    const string STEP = "global::Whizbang.Data.Postgres.StoredFormStep.";
+    var field = form.ColumnProperty is null
+      ? null
+      : perspective.PhysicalFields.FirstOrDefault(f => !f.IsVector && f.PropertyName == form.ColumnProperty);
+    var steps = new List<string>();
+    if (field?.IsSplit != true) {
+      steps.Add(form.DocumentStep);
+    }
+    if (field is null) {
+      return steps;
+    }
+    if (form.ColumnAction == StoredFormColumnAction.Retype) {
+      steps.Add($"{STEP}RetypeColumn(\"{field.ColumnName}\", \"{_getPostgresColumnType(field)}\", {form.ColumnNumber}, {form.ColumnEnumNames})");
+    } else if (form.ColumnAction == StoredFormColumnAction.Rename && form.PreviousColumn != field.ColumnName) {
+      steps.Add($"{STEP}RenameColumn(\"{form.PreviousColumn}\", \"{field.ColumnName}\")");
+    }
+    return steps;
+  }
+
+  /// <summary>
+  /// Finds a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>. An abstract class is a base for
+  /// migrations rather than one, and is passed over; a class the generated code cannot create carries the reason.
+  /// </summary>
+  private static StoredFormMigrationClassInfo? _extractStoredFormMigration(GeneratorSyntaxContext context, CancellationToken ct) {
+    var classDecl = (ClassDeclarationSyntax)context.Node;
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol
+        || symbol.IsAbstract
+        || symbol.AllInterfaces.FirstOrDefault(i =>
+             TypeNameUtilities.Display(i.OriginalDefinition) == "Whizbang.Core.Perspectives.IStoredFormMigration<TModel>") is not { } migration) {
+      return null;
+    }
+
+    string? problem = null;
+    if (symbol.IsGenericType) {
+      problem = "a generic class cannot be created by the generated code";
+    } else if (!symbol.InstanceConstructors.Any(c => c.Parameters.Length == 0 && c.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal)) {
+      problem = "it has no public or internal parameterless constructor";
+    } else {
+      for (var type = symbol; type is not null; type = type.ContainingType) {
+        if (type.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal)) {
+          problem = "it is not visible to the generated code (make it public or internal)";
+          break;
+        }
+      }
+    }
+
+    return new StoredFormMigrationClassInfo(
+        ClassName: TypeNameUtilities.FullyQualified(symbol),
+        DisplayName: TypeNameUtilities.Display(symbol),
+        ModelTypeName: TypeNameUtilities.FullyQualified(migration.TypeArguments[0]),
+        Problem: problem);
+  }
+
+  /// <summary>
+  /// Reports the stored-form declarations that are not generated (WHIZ830, WHIZ832), once each however many
+  /// contexts include the model, and the custom migrations that never run (WHIZ831).
+  /// </summary>
+  private static void _reportStoredFormDiagnostics(
+      SourceProductionContext context,
+      ImmutableArray<PerspectiveModelInfo> perspectives,
+      ImmutableArray<StoredFormMigrationClassInfo> customMigrations) {
+    var reported = new HashSet<StoredFormProblem>();
+    foreach (var problem in perspectives.SelectMany(p => p.StoredFormProblems)) {
+      if (reported.Add(problem)) {
+        var descriptor = problem.Id == StoredFormDiscovery.INSIDE_COLLECTION
+          ? DiagnosticDescriptors.StoredFormInsideCollection
+          : DiagnosticDescriptors.StoredFormCannotBeGenerated;
+        context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, problem.Subject, problem.Reason));
+      }
+    }
+
+    var models = new HashSet<string>(perspectives.Select(p => p.ModelTypeName), StringComparer.Ordinal);
+    foreach (var custom in customMigrations.Distinct()) {
+      var reason = custom.Problem
+        ?? (models.Contains(custom.ModelTypeName) ? null : $"{custom.ModelTypeName.Replace(PLACEHOLDER_GLOBAL, "")} is not the model of any perspective");
+      if (reason is not null) {
+        context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.StoredFormMigrationNeverRuns, Location.None, custom.DisplayName, reason));
+      }
+    }
+  }
+
+  /// <summary>
+  /// The (name, SQL) entries of the generated physical-column rewrites: for each enumeration in a physical column
+  /// (whose type the author did not declare), a call building the rewrite from the enum's members.
+  /// </summary>
+  private static string _generatePhysicalColumnRewritesCode(List<PerspectiveModelInfo> perspectives, string schema) {
+    var sb = new StringBuilder();
+    foreach (var perspective in perspectives) {
+      foreach (var field in perspective.PhysicalFields) {
+        if (field.EnumMembers is not { } members || !string.IsNullOrWhiteSpace(field.ColumnType)) {
+          continue;
+        }
+        string[] pairs = members.Length == 0
+          ? []
+          : [.. members.Split(';').Select(m => {
+            var at = m.IndexOf('=');
+            return $"(\"{m[..at]}\", \"{m[(at + 1)..]}\")";
+          })];
+        var enumName = field.TypeName.Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
+        enumName = enumName[(enumName.LastIndexOf('.') + 1)..];
+        var build = field.EnumIsFlags ? "BuildFlags" : "Build";
+        sb.AppendLine($"      (\"enum-column:{perspective.TableName}.{field.ColumnName}\", global::Whizbang.Data.Postgres.EnumColumnRewriteSql.{build}("
+          + $"\"{schema}\", \"{perspective.TableName}\", \"{field.ColumnName}\", \"{enumName}\", \"{_getPostgresColumnType(field)}\", "
+          + $"new (string Name, string Value)[] {{ {string.Join(", ", pairs)} }})),");
+      }
+    }
+    return sb.ToString();
   }
 
   /// <summary>
@@ -3084,31 +3390,31 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static void _generatePerspectiveIndexSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
-    _appendPhysicalSearchIndexes(perspSql, perspective, quotedSchema, shortName);
-    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_created_at ON {quotedSchema}.{perspective.TableName} (created_at);");
-    // See _appendStandardIndexes: updated_at serves the sliding retention predicate.
-    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_updated_at ON {quotedSchema}.{perspective.TableName} (updated_at);");
-    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_data_gin ON {quotedSchema}.{perspective.TableName} USING gin (data);");
-    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_metadata_gin ON {quotedSchema}.{perspective.TableName} USING gin (metadata);");
-    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin ON {quotedSchema}.{perspective.TableName} USING gin (scope);");
-    // Btree expression index over scope->>'t' — see _appendStandardIndexes for the rationale (gin can't
-    // serve ->> equality; the tenant filter of lens + collective apply needs a btree). Kept in sync here so
-    // the per-perspective schema-hash entries match the concatenated init SQL.
-    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_tenant ON {quotedSchema}.{perspective.TableName} ((scope->>'t'));");
+    _appendPromotedFieldIndexes(perspSql, perspective, quotedSchema, shortName);
 
-    // See _appendStandardIndexes: a declared index is what makes a range or an ordering on a
+    // See _standardIndexStatements for what each is for and why the document indexes are declared.
+    // The same statements as the fallback script, so the per-perspective schema-hash entries match
+    // the concatenated init SQL.
+    foreach (var statement in _standardIndexStatements(perspective, quotedSchema, shortName)) {
+      perspSql.AppendLine(PerspectiveIndexSql.Ensure(statement, quotedSchema));
+    }
+
+    // See _appendDeclaredIndexes: a declared index is what makes a range or an ordering on a
     // JSON-only field a lookup rather than a scan. The trigram indexes go inside one
     // optional-extension block, which creates the extension once, and the schema pass skips that
     // whole block with one warning on a server that refuses the extension.
-    JsonIndexSql.AppendScript(perspSql, perspective.JsonIndexes, $"{quotedSchema}.{perspective.TableName}", shortName);
-    _appendCompositeIndexes(perspSql, perspective, quotedSchema, shortName);
+    _appendDeclaredIndexes(perspSql, perspective, quotedSchema, shortName);
 
     foreach (var field in perspective.PhysicalFields) {
       if (field.IsIndexed) {
         if (field.IsVector && field.VectorDimensions.HasValue && field.VectorDimensions.Value <= 2000) {
-          perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_vec ON {quotedSchema}.{perspective.TableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);");
+          perspSql.AppendLine(PerspectiveIndexSql.Ensure(
+            $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_{field.ColumnName}_vec")} ON {quotedSchema}.{perspective.TableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);",
+            quotedSchema));
         } else if (!field.IsVector) {
-          perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName} ON {quotedSchema}.{perspective.TableName} ({field.ColumnName});");
+          perspSql.AppendLine(PerspectiveIndexSql.Ensure(
+            $"CREATE INDEX IF NOT EXISTS {_indexName($"idx_{shortName}_{field.ColumnName}")} ON {quotedSchema}.{perspective.TableName} ({field.ColumnName});",
+            quotedSchema));
         }
       }
     }
@@ -3198,12 +3504,18 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static List<IndexSchema> _buildPerspectiveSchemaIndexes(PerspectiveModelInfo perspective) {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
     var schemaIndexes = new List<IndexSchema> {
-      new($"idx_{shortName}_created_at", ["created_at"], "btree", false),
-      new($"idx_{shortName}_updated_at", ["updated_at"], "btree", false),
-      new($"idx_{shortName}_data_gin", ["data"], "gin", false),
-      new($"idx_{shortName}_metadata_gin", ["metadata"], "gin", false),
-      new($"idx_{shortName}_scope_gin", ["scope"], "gin", false)
+      new(_indexName($"idx_{shortName}_created_at"), ["created_at"], "btree", false),
+      new(_indexName($"idx_{shortName}_updated_at"), ["updated_at"], "btree", false),
     };
+    // The same decisions the DDL makes (_standardIndexStatements), so drift detection expects the
+    // indexes the table is meant to have rather than ones this release no longer builds.
+    if (perspective.DocumentMatching.BuildsDataIndex) {
+      schemaIndexes.Add(new(_indexName($"idx_{shortName}_data_gin"), ["data"], "gin", false));
+    }
+    if (perspective.DocumentMatching.BuildsMetadataIndex) {
+      schemaIndexes.Add(new(_indexName($"idx_{shortName}_metadata_gin"), ["metadata"], "gin", false));
+    }
+    schemaIndexes.Add(new(_indexName($"idx_{shortName}_scope_gin"), ["scope"], "gin", false));
 
     foreach (var field in perspective.PhysicalFields) {
       if (!field.IsIndexed) {
@@ -3216,7 +3528,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
       var indexType = field.IsVector ? "ivfflat" : "btree";
       schemaIndexes.Add(new IndexSchema(
-          $"idx_{shortName}_{field.ColumnName}" + (field.IsVector ? "_vec" : ""),
+          _indexName($"idx_{shortName}_{field.ColumnName}" + (field.IsVector ? "_vec" : "")),
           [field.ColumnName],
           indexType,
           false
@@ -3269,6 +3581,14 @@ internal sealed record DbContextInfo(
 /// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective. Empty = default context only</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model (for DDL generation)</param>
+/// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
+/// <param name="PromotedIndexes">The document indexes each promoted field declares, which its column indexes answer and whose document versions are dropped</param>
+/// <param name="CompositeIndexes">Composite and partial indexes the model declares</param>
+/// <param name="DocumentMatching">Which document indexes the model's queries need, from [PerspectiveQueries]</param>
+/// <param name="CoalesceBody">Pre-rendered null-coalesce statements for the model's collection graph</param>
+/// <param name="StoredForms">The stored-form migrations the model declares, in the order they run</param>
+/// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
+/// <param name="IsModelRecord">True when the model is a record, which the hydrators copy with a <c>with</c> expression</param>
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3279,8 +3599,13 @@ internal sealed record PerspectiveModelInfo(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<JsonIndexInfo> PromotedIndexes,
     ImmutableArray<CompositeIndexInfo> CompositeIndexes,
-    string CoalesceBody);
+    DocumentMatching DocumentMatching,
+    string CoalesceBody,
+    ImmutableArray<StoredFormInfo> StoredForms,
+    ImmutableArray<StoredFormProblem> StoredFormProblems,
+    bool IsModelRecord);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -3295,8 +3620,14 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
+/// <param name="PromotedIndexes">The document indexes each promoted field declares, which its column indexes answer and whose document versions are dropped</param>
+/// <param name="CompositeIndexes">Composite and partial indexes the model declares</param>
+/// <param name="DocumentMatching">Which document indexes the model's queries need, from [PerspectiveQueries]</param>
 /// <param name="CoalesceBody">Pre-rendered null-coalesce statements for the model's collection graph
 /// (WORKAROUND(dotnet/efcore#38625)); empty when the model has no coalescible collections</param>
+/// <param name="StoredForms">The stored-form migrations the model declares, in the order they run</param>
+/// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
+/// <param name="IsModelRecord">True when the model is a record, which the hydrators copy with a <c>with</c> expression</param>
 internal sealed record PerspectiveModelCandidate(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3307,8 +3638,26 @@ internal sealed record PerspectiveModelCandidate(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<JsonIndexInfo> PromotedIndexes,
     ImmutableArray<CompositeIndexInfo> CompositeIndexes,
-    string CoalesceBody);
+    DocumentMatching DocumentMatching,
+    string CoalesceBody,
+    ImmutableArray<StoredFormInfo> StoredForms,
+    ImmutableArray<StoredFormProblem> StoredFormProblems,
+    bool IsModelRecord);
+
+/// <summary>
+/// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.
+/// </summary>
+/// <param name="ClassName">The class, fully qualified with <c>global::</c>, for <c>new</c>.</param>
+/// <param name="DisplayName">The class as a diagnostic names it.</param>
+/// <param name="ModelTypeName">The model, fully qualified, matched against the perspectives' models.</param>
+/// <param name="Problem">Why it cannot be created, or <see langword="null"/> when it can.</param>
+internal sealed record StoredFormMigrationClassInfo(
+    string ClassName,
+    string DisplayName,
+    string ModelTypeName,
+    string? Problem);
 
 /// <summary>
 /// Information about a discovered multi-model ILensQuery constructor parameter.
