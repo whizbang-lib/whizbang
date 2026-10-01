@@ -256,6 +256,29 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
   private async Task _execAsync(string sql) {
     await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
-    await conn.ExecuteAsync(sql);
+
+    // Applied in segments, the way both drivers apply it. 063 marks its aggregate_type rewrite as a
+    // batched region, so sending the file whole would push the unsubstituted size token at the
+    // server. A test that applies a migration differently from production can fail on a migration
+    // that is correct, and pass one that is not.
+    foreach (var segment in MigrationBatchRegions.Segment(sql)) {
+      if (segment.Kind == MigrationSegmentKind.Plain) {
+        await conn.ExecuteAsync(segment.Sql);
+        continue;
+      }
+
+      var passes = 0;
+      while (true) {
+        var rows = await conn.ExecuteScalarAsync<long?>(segment.Sql) ?? 0L;
+        if (rows <= 0) {
+          break;
+        }
+
+        if (++passes > 10_000) {
+          throw new InvalidOperationException(
+            "A batched region reported rows without finishing; it has to exclude what it handled.");
+        }
+      }
+    }
   }
 }

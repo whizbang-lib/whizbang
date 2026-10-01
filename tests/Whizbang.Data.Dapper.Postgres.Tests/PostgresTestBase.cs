@@ -1,3 +1,4 @@
+using System.Globalization;
 using Dapper;
 using Npgsql;
 using TUnit.Core;
@@ -167,9 +168,36 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       await using var transaction = (NpgsqlTransaction)connection.BeginTransaction();
       await using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
       functionCommand.Transaction = transaction;
-      functionCommand.CommandText = functionSql;
       try {
-        await functionCommand.ExecuteNonQueryAsync();
+        // Segment the file the way the runner does. A migration that marks a batched region is sent
+        // as several commands — the marked one repeatedly, until it reports no rows left — and a
+        // harness that sent the file whole would push the unsubstituted size token at the server and
+        // fail every test here while the migration itself was correct. Same reasoning as the
+        // one-transaction-per-file note above: this has to apply migrations the way production does.
+        foreach (var segment in MigrationBatchRegions.Segment(functionSql)) {
+          if (segment.Kind == MigrationSegmentKind.Plain) {
+            functionCommand.CommandText = segment.Sql;
+            await functionCommand.ExecuteNonQueryAsync();
+            continue;
+          }
+
+          var passes = 0;
+          while (true) {
+            functionCommand.CommandText = segment.Sql;
+            var reported = await functionCommand.ExecuteScalarAsync();
+            var rows = reported is null or DBNull ? 0L : Convert.ToInt64(reported, CultureInfo.InvariantCulture);
+            if (rows <= 0) {
+              break;
+            }
+
+            if (++passes > 10_000) {
+              throw new InvalidOperationException(
+                $"{functionFile}: a batched region reported rows {passes} times without finishing. "
+                + "Its statement has to exclude the rows it already handled.");
+            }
+          }
+        }
+
         await transaction.CommitAsync();
       } catch (Exception ex) {
         await transaction.RollbackAsync();

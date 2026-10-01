@@ -107,6 +107,102 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
       .Because("a rolled-back swap must never leave the renamed-to-active table in place");
   }
 
+  // --- Batched regions ---
+
+  /// <summary>
+  /// A migration that marks a batched region is sent as several commands, the marked one repeatedly
+  /// until it reports no rows. If that regresses, the driver sends the file whole and the
+  /// unsubstituted size token reaches the server, so every migration carrying a region fails at
+  /// startup.
+  /// </summary>
+  /// <remarks>
+  /// The work is deliberately larger than one slice, so the loop runs more than once. A region that
+  /// finished in a single pass would exercise the same lines while proving nothing about repetition,
+  /// which is the only behavior this mechanism adds.
+  /// </remarks>
+  [Test]
+  [NotInParallel]
+  public async Task InitializeSchemaAsync_BatchedRegion_IsSentUntilItReportsNoRowsAsync() {
+    const int rows = 7;
+    const int size = 2;
+    var batched = new MigrationScript("911_coverage_batched", $"""
+      CREATE TABLE IF NOT EXISTS wh_coverage_batch_src (id INT PRIMARY KEY, done BOOLEAN NOT NULL DEFAULT FALSE);
+      INSERT INTO wh_coverage_batch_src (id)
+        SELECT g FROM generate_series(1, {rows}) g ON CONFLICT DO NOTHING;
+
+      CREATE OR REPLACE FUNCTION wh_coverage_drain(p_limit INT)
+      RETURNS BIGINT AS $fn$
+      DECLARE v_rows BIGINT := 0;
+      BEGIN
+        UPDATE wh_coverage_batch_src
+           SET done = TRUE
+         WHERE id IN (SELECT id FROM wh_coverage_batch_src WHERE NOT done LIMIT p_limit);
+        GET DIAGNOSTICS v_rows = ROW_COUNT;
+        RETURN v_rows;
+      END;
+      $fn$ LANGUAGE plpgsql;
+
+      {MigrationBatchRegions.BEGIN} size={size}
+      SELECT wh_coverage_drain({MigrationBatchRegions.SIZE_TOKEN});
+      {MigrationBatchRegions.END}
+      """);
+
+    var provider = new CustomMigrationProvider("9.9.21-coverage", [_realBootstrapForBatch(), batched]);
+    await new PostgresSchemaInitializer(_testConnectionString, perspectiveSchemaSql: null, migrationProvider: provider)
+      .InitializeSchemaAsync();
+
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    await connection.OpenAsync();
+
+    var remaining = await connection.ExecuteScalarAsync<long>(
+      "SELECT count(*) FROM wh_coverage_batch_src WHERE NOT done");
+    await Assert.That(remaining).IsEqualTo(0L)
+      .Because("the runner has to keep sending the region until it reports nothing left");
+
+    var status = await connection.ExecuteScalarAsync<int>(
+      "SELECT status FROM wh_schema_migrations WHERE file_name = '911_coverage_batched'");
+    await Assert.That(status).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// A region whose statement does not exclude the rows it already handled reports the same rows
+  /// forever. Without this guard that is a service which never finishes starting and gives no
+  /// reason; with it the migration fails by name.
+  /// </summary>
+  [Test]
+  // The cap is a static, so this cannot run beside the convergence test above without the two
+  // disagreeing about what it is.
+  [NotInParallel]
+  public async Task InitializeSchemaAsync_BatchedRegionThatNeverConverges_FailsByNameAsync() {
+    var original = PostgresSchemaInitializer.MaxBatchPasses;
+    PostgresSchemaInitializer.MaxBatchPasses = 3;
+    try {
+      // Reports one row every time and changes nothing, which is what a missing exclusion looks like.
+      var runaway = new MigrationScript("912_coverage_runaway", $"""
+        CREATE OR REPLACE FUNCTION wh_coverage_never_done(p_limit INT)
+        RETURNS BIGINT AS $fn$ BEGIN RETURN 1; END; $fn$ LANGUAGE plpgsql;
+
+        {MigrationBatchRegions.BEGIN}
+        SELECT wh_coverage_never_done({MigrationBatchRegions.SIZE_TOKEN});
+        {MigrationBatchRegions.END}
+        """);
+
+      var provider = new CustomMigrationProvider("9.9.22-coverage", [_realBootstrapForBatch(), runaway]);
+      var initializer = new PostgresSchemaInitializer(
+        _testConnectionString, perspectiveSchemaSql: null, migrationProvider: provider);
+
+      await Assert.That(() => initializer.InitializeSchemaAsync())
+        .Throws<InvalidOperationException>()
+        .Because("a region that never reports zero has to stop by name, not spin");
+    } finally {
+      PostgresSchemaInitializer.MaxBatchPasses = original;
+    }
+  }
+
+  private static MigrationScript _realBootstrapForBatch() =>
+    new PostgresMigrationProvider().GetMigrations()
+      .First(m => m.Name.StartsWith("000", StringComparison.Ordinal));
+
   // --- Core migration failure rethrow ---
 
   /// <summary>
