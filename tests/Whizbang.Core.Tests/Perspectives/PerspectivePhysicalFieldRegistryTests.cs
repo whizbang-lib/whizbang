@@ -83,6 +83,21 @@ public class PerspectivePhysicalFieldRegistryTests {
     await Assert.That(kind.IsJsonbColumn).IsFalse();
   }
 
+  private sealed class JsonbColumnModel;
+
+  /// <summary>A writer keyed by column name asks whether that column is jsonb.</summary>
+  [Test]
+  public async Task IsJsonbColumn_AnswersByModelAndColumnNameAsync() {
+    PerspectivePhysicalFieldRegistry.Register(typeof(JsonbColumnModel), "Filters", "filters", FieldStorageMode.Extracted, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(JsonbColumnModel), "Lane", "lane", FieldStorageMode.Extracted);
+
+    await Assert.That(PerspectivePhysicalFieldRegistry.IsJsonbColumn(typeof(JsonbColumnModel), "filters")).IsTrue();
+    await Assert.That(PerspectivePhysicalFieldRegistry.IsJsonbColumn(typeof(JsonbColumnModel), "lane")).IsFalse();
+    await Assert.That(PerspectivePhysicalFieldRegistry.IsJsonbColumn(typeof(JsonbColumnModel), "Filters")).IsFalse()
+      .Because("the runner keys its values by column name, not property name.");
+    await Assert.That(PerspectivePhysicalFieldRegistry.IsJsonbColumn(typeof(UnregisteredModel), "filters")).IsFalse();
+  }
+
   [Test]
   public async Task TryResolve_Unregistered_ReturnsFalseAsync() {
     PerspectivePhysicalFieldRegistry.Register(typeof(ExtractedModel), "Priority", "priority", FieldStorageMode.Extracted);

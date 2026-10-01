@@ -58,7 +58,8 @@ public static class CollectivePhysicalColumns {
     if (!field.IsJsonbColumn) {
       throw new NotSupportedException(
         $"UpsertElement on {modelType.Name}.{field.PropertyName} targets a physical column that is not jsonb. Keyed " +
-        "elements need a jsonb column: declare it with [PhysicalField(ColumnType = \"jsonb\")], or keep the array in the document.");
+        "elements need a jsonb column, which a promoted list is unless another ColumnType is declared; drop the " +
+        "declared type, or keep the array in the document.");
     }
   }
 

@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 using Whizbang.Core.Lenses;
@@ -464,11 +465,11 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       cmd.Parameters.Add(new NpgsqlParameter("wb_versionbump", hookPlan.BumpVersion ? 1 : 0));
       if (pfCount > 0) {
         var i = 0;
-        foreach (var value in args.PhysicalFieldValues!.Values) {
+        foreach (var (columnName, value) in args.PhysicalFieldValues!) {
           // value is what the consumer's source generator already coerced to the
           // EF-mapped CLR type (Vector for embedding columns, string/decimal/etc.
           // for scalars). Null values bind as DBNull so nullable columns work.
-          cmd.Parameters.Add(new NpgsqlParameter("pf_" + i, value ?? (object)DBNull.Value));
+          cmd.Parameters.Add(PhysicalColumnParameter("pf_" + i, entityType?.FindProperty(columnName), value));
           i++;
         }
       }
@@ -490,6 +491,35 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         await connection.CloseAsync();
       }
     }
+  }
+
+  /// <summary>
+  /// The parameter for one physical column's value in the atomic upsert.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A jsonb column is bound as jsonb text produced by the column's own converter, the one the model
+  /// reads it back with, so the atomic write and the change-tracker write store the same bytes under the
+  /// persistence profile. Left to Npgsql's inference, a list of strings becomes a <c>text[]</c> the column
+  /// refuses, a <c>Dictionary&lt;string, string&gt;</c> becomes an <c>hstore</c>, and any other object is
+  /// written with the data source's options rather than the document's.
+  /// </para>
+  /// <para>
+  /// Every other column binds the value as it is, which is what the generated runner already coerced it to.
+  /// </para>
+  /// </remarks>
+  /// <param name="name">The parameter name.</param>
+  /// <param name="property">The column's property in the model, if the model has one.</param>
+  /// <param name="value">The value.</param>
+  /// <returns>The parameter.</returns>
+  internal static NpgsqlParameter PhysicalColumnParameter(string name, IReadOnlyProperty? property, object? value) {
+    if (value is not null
+        && property?.GetValueConverter() is { } converter
+        && string.Equals(property.GetColumnType(), "jsonb", StringComparison.OrdinalIgnoreCase)) {
+      return new NpgsqlParameter(name, NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = converter.ConvertToProvider(value)! };
+    }
+
+    return new NpgsqlParameter(name, value ?? DBNull.Value);
   }
 
   /// <summary>

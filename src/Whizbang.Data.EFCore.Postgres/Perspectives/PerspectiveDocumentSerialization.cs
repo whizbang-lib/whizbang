@@ -81,5 +81,34 @@ public static class PerspectiveDocumentSerialization {
     JsonSerializer.Deserialize(stored, _typeInfo<T>())
       ?? throw new JsonException($"A stored {typeof(T).Name} document was null, which no document is");
 
+  /// <summary>
+  /// A converter for a promoted jsonb column: a <c>[PhysicalField]</c> holding an object, a list or a
+  /// dictionary, stored as one value under the persistence profile.
+  /// </summary>
+  /// <typeparam name="T">The property's type, which may be a value type.</typeparam>
+  /// <returns>The converter.</returns>
+  /// <remarks>
+  /// <para>
+  /// The column has to be read with the options the atomic upsert writes it with, for the same reason
+  /// the document does: left to the data source, a date inside it written as the canonical number
+  /// would be read under the default profile, which expects a rendering.
+  /// </para>
+  /// <para>
+  /// Unlike a document, a column can hold the JSON literal <c>null</c>: a property set to null and
+  /// written by a path that keeps the value rather than sending SQL NULL. Entity Framework never hands
+  /// a converter a SQL NULL, so the literal is the only null that arrives here, and it reads back as
+  /// the property's default rather than failing the row.
+  /// </para>
+  /// </remarks>
+  public static ValueConverter<T, string> ColumnConverterFor<T>() =>
+    new(value => JsonSerializer.Serialize(value, _typeInfo<T>()), stored => DeserializeColumn<T>(stored));
+
+  /// <summary>Reads a promoted jsonb column's stored text with <see cref="Options"/>.</summary>
+  /// <typeparam name="T">The property's type.</typeparam>
+  /// <param name="stored">The stored text.</param>
+  /// <returns>The value, or the type's default for the JSON literal <c>null</c>.</returns>
+  public static T DeserializeColumn<T>(string stored) =>
+    JsonSerializer.Deserialize(stored, _typeInfo<T>())!;
+
   private static JsonTypeInfo<T> _typeInfo<T>() => (JsonTypeInfo<T>)Options.GetTypeInfo(typeof(T));
 }

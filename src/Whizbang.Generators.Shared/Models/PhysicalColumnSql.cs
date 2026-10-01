@@ -15,6 +15,19 @@ public static class PhysicalColumnSql {
     $"ALTER TABLE {qualifiedTable} ADD COLUMN IF NOT EXISTS {columnName} {columnType};";
 
   /// <summary>
+  /// The containment index a jsonb column declares with <c>[Indexed(IndexKinds.Containment)]</c>: GIN with
+  /// <c>jsonb_path_ops</c>, the operator class that answers <c>@&gt;</c> and is smaller and faster than the
+  /// default one, which also answers key existence that no compiled filter asks.
+  /// </summary>
+  /// <param name="indexName">The index name.</param>
+  /// <param name="qualifiedTable">The table.</param>
+  /// <param name="columnName">The jsonb column.</param>
+  /// <returns>The statement.</returns>
+  /// <docs>fundamentals/perspectives/physical-fields#jsonb-columns</docs>
+  public static string ContainmentIndex(string indexName, string qualifiedTable, string columnName) =>
+    $"CREATE INDEX IF NOT EXISTS {indexName} ON {qualifiedTable} USING gin ({columnName} jsonb_path_ops);";
+
+  /// <summary>
   /// Fills the column from the document for rows that have the value there but not in the column, or
   /// null when the value cannot be reproduced exactly from the document.
   /// </summary>
@@ -26,8 +39,9 @@ public static class PhysicalColumnSql {
   /// <para>
   /// The extraction reproduces what the writer stores, type by type. Dates and times are microsecond
   /// counts in the document, not renderings, so they are rebuilt by exact integer arithmetic from the
-  /// epoch (or from midnight) rather than parsed. A field stored only in the column (Split), a vector, a
-  /// column whose type the author chose, and a type outside the known set are not backfilled: the
+  /// epoch (or from midnight) rather than parsed. A jsonb column is copied from the member as it is. A field
+  /// stored only in the column (Split), a vector, any other column whose type the author chose, and a type
+  /// outside the known set are not backfilled: the
   /// document either has no copy or the column's encoding of it is not something this can know.
   /// </para>
   /// </remarks>
@@ -84,7 +98,15 @@ public static class PhysicalColumnSql {
 
   /// <summary>The expression that reads the field's value out of the document as the column's type, or null.</summary>
   public static string? Extraction(PhysicalFieldInfo field) {
-    if (field.IsSplit || field.IsVector || !string.IsNullOrWhiteSpace(field.ColumnType)) {
+    if (field.IsSplit || field.IsVector) {
+      return null;
+    }
+    // A jsonb column holds exactly the JSON the document holds for the member, written by the same
+    // serializer under the same profile, so the member is copied as it is.
+    if (PhysicalFieldScalar.IsJsonb(field.ColumnType)) {
+      return $"(data -> '{field.PropertyName}')";
+    }
+    if (!string.IsNullOrWhiteSpace(field.ColumnType)) {
       return null;
     }
     var text = $"(data ->> '{field.PropertyName}')";

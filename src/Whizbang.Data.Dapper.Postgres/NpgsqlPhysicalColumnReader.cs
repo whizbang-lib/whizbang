@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Npgsql;
 using Whizbang.Core.Perspectives;
 
@@ -13,7 +15,8 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <c>numeric</c>), which is converted back to the member, and a column still holding names is parsed from them.
 /// </remarks>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperSplitPhysicalFieldReloadTests.cs</tests>
-internal sealed class NpgsqlPhysicalColumnReader(NpgsqlDataReader reader, IReadOnlyList<SplitPhysicalColumn> columns)
+internal sealed class NpgsqlPhysicalColumnReader(
+    NpgsqlDataReader reader, IReadOnlyList<SplitPhysicalColumn> columns, JsonSerializerOptions jsonOptions)
     : IPhysicalColumnReader {
 
   /// <inheritdoc/>
@@ -21,6 +24,12 @@ internal sealed class NpgsqlPhysicalColumnReader(NpgsqlDataReader reader, IReadO
     var ordinal = _ordinal(column);
     if (reader.IsDBNull(ordinal)) {
       return default!;
+    }
+    // A jsonb column is read with the options it was written with, the store's, rather than the
+    // driver's: the driver can only map an object or a list by dynamic JSON, which this connection
+    // does not enable and which would not apply the persistence profile if it did.
+    if (string.Equals(reader.GetDataTypeName(ordinal), "jsonb", StringComparison.Ordinal)) {
+      return JsonSerializer.Deserialize(reader.GetString(ordinal), (JsonTypeInfo<T>)jsonOptions.GetTypeInfo(typeof(T)))!;
     }
     var type = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
     return type.IsEnum

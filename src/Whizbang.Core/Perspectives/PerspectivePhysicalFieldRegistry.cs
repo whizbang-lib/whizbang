@@ -49,6 +49,24 @@ public static class PerspectivePhysicalFieldRegistry {
       propertyName, columnName, InDocument: storageMode != FieldStorageMode.Split, isVector, scalarType, columnType);
   }
 
+  /// <summary>
+  /// Whether the model's promoted column with this name is a jsonb column, which a writer binds as JSON
+  /// text under the persistence profile rather than as the value's own driver type.
+  /// </summary>
+  /// <param name="modelType">The model type.</param>
+  /// <param name="columnName">The column name, as the runner's physical values are keyed.</param>
+  /// <returns>True when a field of the model is registered with that column and a jsonb column type.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs</tests>
+  public static bool IsJsonbColumn(Type modelType, string columnName) {
+    foreach (var ((type, _), field) in _fields) {
+      if (type == modelType && field.IsJsonbColumn && string.Equals(field.ColumnName, columnName, StringComparison.Ordinal)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   /// <summary>The physical field registered for a model property, if there is one.</summary>
   public static bool TryResolve(Type modelType, string propertyName, out PerspectivePhysicalField field) {
     if (modelType is null) {

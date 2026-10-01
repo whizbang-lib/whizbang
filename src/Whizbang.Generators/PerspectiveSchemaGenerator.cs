@@ -151,7 +151,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         PropertyCount: propertyCount,
         EstimatedSizeBytes: estimatedSize,
         StorageMode: storageMode,
-        PhysicalFields: physicalFields
+        PhysicalFields: physicalFields,
+        TableStorage: TableStorageInfo.From(modelType)
     );
   }
 
@@ -173,7 +174,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         PropertyCount: candidate.PropertyCount,
         EstimatedSizeBytes: candidate.EstimatedSizeBytes,
         StorageMode: candidate.StorageMode,
-        PhysicalFields: candidate.PhysicalFields
+        PhysicalFields: candidate.PhysicalFields,
+        TableStorage: candidate.TableStorage
     );
   }
 
@@ -213,7 +215,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         if (attrClassName == PHYSICAL_FIELD_ATTRIBUTE) {
           var fieldInfo = _extractPhysicalFieldInfo(property, attribute);
           if (fieldInfo != null) {
-            physicalFields.Add(fieldInfo);
+            physicalFields.Add(ColumnStorageSql.WithStorage(fieldInfo, attribute));
           }
         } else if (attrClassName == VECTOR_FIELD_ATTRIBUTE) {
           var fieldInfo = _extractVectorFieldInfo(property, attribute);
@@ -237,7 +239,9 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Extract named arguments
     // [Indexed] is how any field asks for an index, promoted or not, so this reads it rather than a
     // flag on the promotion attribute.
-    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0;
+    // Containment is a GIN index of its own over a jsonb column, never a btree.
+    var declaredKind = JsonIndexDiscovery.DeclaredKind(property) ?? 0;
+    bool isIndexed = JsonIndexDiscovery.WithoutContainment(declaredKind) > 0;
     bool isUnique = false;
     int? maxLength = null;
     string? columnName = null;
@@ -284,7 +288,10 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         VectorDistanceMetric: null,
         VectorIndexType: null,
         VectorIndexLists: null,
-        ColumnType: columnType,
+        // An object, a collection or a dictionary is a jsonb column unless the author declared otherwise.
+        ColumnType: columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type),
+        IsContainmentIndexed: PhysicalFieldScalar.IsContainmentIndexed(
+          declaredKind, columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type)),
         EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
         EnumMembers: PhysicalFieldScalar.EnumMembers(property.Type),
         EnumIsFlags: PhysicalFieldScalar.IsFlagsEnum(property.Type)
@@ -519,6 +526,17 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       perspectiveSqlBuilder.AppendLine(lengthConstraintsSql);
     }
 
+    // The declared storage options of the table and its promoted columns, the same statements the EF Core
+    // schema emits. Each alters only what differs from the catalog, so a re-apply changes nothing.
+    foreach (var statement in ColumnStorageSql.ForTable(perspective.TableName, perspective.TableStorage)) {
+      perspectiveSqlBuilder.AppendLine(statement);
+    }
+    foreach (var field in perspective.PhysicalFields) {
+      foreach (var statement in ColumnStorageSql.ForColumn(perspective.TableName, perspective.TableName, field)) {
+        perspectiveSqlBuilder.AppendLine(statement);
+      }
+    }
+
     // Fill each physical column from the document for rows written before it existed. Post-table DDL, so
     // a column-copy migration runs it against the swapped-in table; idempotent, so a re-apply finds
     // nothing to do. The same statements the EF Core schema emits, so both drivers agree.
@@ -650,6 +668,10 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     var sb = new StringBuilder();
 
     foreach (var field in physicalFields) {
+      if (field.IsContainmentIndexed) {
+        sb.AppendLine(PhysicalColumnSql.ContainmentIndex($"ix_{tableName}_{field.ColumnName}_gin", tableName, field.ColumnName));
+      }
+
       if (!field.IsIndexed && !field.IsUnique) {
         continue;
       }
@@ -729,6 +751,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 /// <param name="EstimatedSizeBytes">Estimated JSON size in bytes</param>
 /// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+/// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 internal sealed record PerspectiveSchemaInfo(
     string ClassName,
     string FullyQualifiedClassName,
@@ -737,7 +760,8 @@ internal sealed record PerspectiveSchemaInfo(
     int PropertyCount,
     int EstimatedSizeBytes,
     GeneratorFieldStorageMode StorageMode,
-    PhysicalFieldInfo[] PhysicalFields
+    PhysicalFieldInfo[] PhysicalFields,
+    TableStorageInfo? TableStorage = null
 );
 
 /// <summary>
@@ -767,6 +791,7 @@ public enum GeneratorFieldStorageMode {
 /// <param name="EstimatedSizeBytes">Estimated JSON size in bytes</param>
 /// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+/// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 internal sealed record PerspectiveCandidate(
     string ClassName,
     string FullyQualifiedClassName,
@@ -775,5 +800,6 @@ internal sealed record PerspectiveCandidate(
     int PropertyCount,
     int EstimatedSizeBytes,
     GeneratorFieldStorageMode StorageMode,
-    PhysicalFieldInfo[] PhysicalFields
+    PhysicalFieldInfo[] PhysicalFields,
+    TableStorageInfo? TableStorage = null
 );

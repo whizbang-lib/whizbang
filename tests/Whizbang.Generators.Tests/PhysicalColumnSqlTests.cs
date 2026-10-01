@@ -108,6 +108,18 @@ public class PhysicalColumnSqlTests {
     await Assert.That(PhysicalColumnSql.Backfill("t", _field("global::TestApp.Status"))).IsNull();
   }
 
+  [Test]
+  [Arguments("jsonb")]
+  [Arguments(" JSONB ")]
+  public async Task Extraction_AJsonbColumn_IsCopiedFromTheMemberAsItIsAsync(string columnType) {
+    var field = _field("global::System.Collections.Generic.List<string>") with { ColumnType = columnType };
+
+    await Assert.That(PhysicalColumnSql.Extraction(field)).IsEqualTo("(data -> 'P')")
+      .Because("the column holds exactly the JSON the document holds for the member, written by the same serializer");
+    await Assert.That(PhysicalColumnSql.Extraction(field with { IsSplit = true })).IsNull()
+      .Because("a Split document has no copy to fill the column from");
+  }
+
   private static PhysicalFieldInfo _field(string typeName) =>
     new("P", "p", typeName, IsIndexed: false, IsUnique: false, MaxLength: null, IsVector: false,
       VectorDimensions: null, VectorDistanceMetric: null, VectorIndexType: null, VectorIndexLists: null);

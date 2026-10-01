@@ -55,7 +55,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     var model = (TModel?)JsonSerializer.Deserialize(json, typeInfo);
     return model is null || split is null
       ? model
-      : split.Hydrate(model, new NpgsqlPhysicalColumnReader(reader, split.Columns));
+      : split.Hydrate(model, new NpgsqlPhysicalColumnReader(reader, split.Columns, jsonOptions));
   }
 
   /// <summary>
@@ -353,7 +353,10 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       if (!_isPlainIdentifier(column)) {
         throw new ArgumentException($"'{column}' is not a plain column name.", nameof(values));
       }
-      columns.Add((column, _physicalParameter($"p_pf{columns.Count}", value, jsonOptions)));
+      var name = $"p_pf{columns.Count}";
+      columns.Add((column, PerspectivePhysicalFieldRegistry.IsJsonbColumn(typeof(TModel), column)
+        ? _jsonbParameter(name, value, jsonOptions)
+        : _physicalParameter(name, value, jsonOptions)));
     }
     return columns;
   }
@@ -378,6 +381,18 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       new NpgsqlParameter(name, NpgsqlDbType.Unknown) { Value = JsonSerializer.Serialize(value, typeInfo) },
     _ => new NpgsqlParameter(name, NpgsqlDbType.Unknown) { Value = value.ToString() },
   };
+
+  /// <summary>
+  /// A jsonb column's value as JSON text under the store's options, the same options the document is written
+  /// with. Sent by its runtime type's metadata, so an object, a record, an array or a dictionary is written as
+  /// the JSON it is rather than as a native array or its type's name.
+  /// </summary>
+  private static NpgsqlParameter _jsonbParameter(string name, object? value, JsonSerializerOptions jsonOptions) =>
+    value is null
+      ? new NpgsqlParameter(name, NpgsqlDbType.Jsonb) { Value = DBNull.Value }
+      : new NpgsqlParameter(name, NpgsqlDbType.Jsonb) {
+        Value = JsonSerializer.Serialize(value, jsonOptions.GetTypeInfo(value.GetType())),
+      };
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 used for deterministic GUID generation, not for cryptographic security")]
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S4790:Using weak hashing algorithms is security-sensitive",

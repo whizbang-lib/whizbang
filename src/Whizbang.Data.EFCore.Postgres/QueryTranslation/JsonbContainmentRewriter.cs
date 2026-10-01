@@ -101,7 +101,7 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
   /// yields null where containment yields false. In a filter both exclude the row, so the difference
   /// cannot be observed; in a projection or an ordering it can.
   /// </remarks>
-  private static readonly HashSet<string> _predicateOperators = new(StringComparer.Ordinal) {
+  internal static readonly HashSet<string> PredicateOperators = new(StringComparer.Ordinal) {
     "Where", "Any", "All", "Count", "LongCount", "TakeWhile", "SkipWhile",
     "First", "FirstOrDefault", "Single", "SingleOrDefault", "Last", "LastOrDefault",
   };
@@ -119,7 +119,7 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
       name = name[..^"Async".Length];
     }
 
-    if (!_predicateOperators.Contains(name) || node.Arguments.Count < 2) {
+    if (!PredicateOperators.Contains(name) || node.Arguments.Count < 2) {
       // Not a filtering operator. Inside one, an Equals call is the same comparison as == and is
       // rewritten the same way; outside one, nothing here applies.
       if (_enabled && _predicateDepth > 0 && _negationDepth == 0) {

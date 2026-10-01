@@ -274,6 +274,56 @@ public class PerspectiveModelDictionaryAnalyzerTests {
   }
 
   /// <summary>
+  /// A dictionary promoted to a jsonb column is stored and read as that column and kept out of the mapped
+  /// document, so the mapping's refusal does not apply to it; one promoted to a column of another declared
+  /// type is still mapped, and still flagged.
+  /// </summary>
+  [Test]
+  [Arguments("[PhysicalField]", false)]
+  [Arguments("[PhysicalField(ColumnType = \"jsonb\")]", false)]
+  [Arguments("[PhysicalField(ColumnName = \"f\")]", false)]
+  [Arguments("[PhysicalField(ColumnType = \"hstore\")]", true)]
+  [Arguments("[Other]", true)]
+  public async Task PerspectiveModel_DictionaryPromotedToAJsonbColumn_NoDiagnosticAsync(string attribute, bool flagged) {
+    var source = $$"""
+            using System;
+            using System.Collections.Generic;
+
+            namespace Whizbang.Core.Perspectives {
+                public interface IPerspectiveFor<TModel> { }
+                public interface IPerspectiveFor<TModel, TEvent1> : IPerspectiveFor<TModel> { }
+                [AttributeUsage(AttributeTargets.Property)]
+                public sealed class PhysicalFieldAttribute : Attribute {
+                    public string? ColumnType { get; init; }
+                    public string? ColumnName { get; init; }
+                }
+                [AttributeUsage(AttributeTargets.Property)]
+                public sealed class OtherAttribute : Attribute { }
+            }
+
+            namespace TestNamespace {
+                using Whizbang.Core.Perspectives;
+
+                public class TestModel {
+                    public Guid Id { get; set; }
+                    {{attribute}}
+                    public Dictionary<string, string[]> Fields { get; set; } = new();
+                }
+
+                public record TestEvent(Guid Id);
+
+                public class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
+                    public TestModel Apply(TestModel? model, TestEvent evt) => model ?? new();
+                }
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelDictionaryAnalyzer>(source);
+
+    await Assert.That(diagnostics.Any(d => d.Id == "WHIZ810")).IsEqualTo(flagged);
+  }
+
+  /// <summary>
   /// Verifies that [JsonIgnore] Dictionary properties are NOT flagged.
   /// </summary>
   [Test]
