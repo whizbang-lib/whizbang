@@ -591,6 +591,21 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.wh_backfill_event_bodies_batch IS
 'Bounded full-split backfill (#13b4-2): copies up to p_limit remaining inline bodies into wh_event_body and nulls the inline columns for the slice whose body now exists, returning the number nulled. Returns 0 once nothing is left, and 0 on a replay against a store whose inline columns are already dropped. Idempotent and re-runnable; the runner calls it until it returns 0.';
 
+-- ── Make the slice cheap to find ───────────────────────────────────────────────────────────────
+-- Without this the backfill is bounded per statement but quadratic overall: each call looks for the
+-- next rows with `event_data IS NOT NULL`, nothing indexes that predicate, and the rows it already
+-- nulled sit in front of the ones it has not, so call N reads past everything calls 1..N-1 handled.
+-- Measured on a store of ~3.9M events, that was ~120s per 10,000-row slice and getting worse --
+-- hours of work for a table that takes minutes with the index.
+--
+-- The index is partial on the same predicate, so a row leaves it the moment its body moves out and
+-- every call finds its slice immediately. 072 has already relaxed the column to nullable by here,
+-- which is what makes the predicate selective rather than always-true. 078 drops `event_data`, and
+-- dropping a column drops the indexes that depend on it -- so this needs no separate cleanup.
+CREATE INDEX IF NOT EXISTS idx_event_store_body_backfill
+  ON __SCHEMA__.wh_event_store (event_id)
+  WHERE event_data IS NOT NULL;
+
 -- @whizbang:batch-begin
 SELECT __SCHEMA__.wh_backfill_event_bodies_batch(@whizbang_batch_size);
 -- @whizbang:batch-end
