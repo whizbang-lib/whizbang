@@ -4,7 +4,7 @@ The answers entered for the **passing** level of the OpenSSF Best Practices badg
 <https://www.bestpractices.dev/criteria/0>) in the project's entry at <https://www.bestpractices.dev/>.
 This file is the record of what the entry says: when an answer changes on the site, change it here too.
 
-**Status**: registration in progress (started 2026-09-29). Project id: not yet assigned.
+**Status**: passing badge earned (project [15090](https://www.bestpractices.dev/projects/15090), badge in the README).
 
 Every claim was checked against the repository, GitHub and the
 docs site on 2026-09-27. Criteria are in the order the form presents them; the 67 listed are every
