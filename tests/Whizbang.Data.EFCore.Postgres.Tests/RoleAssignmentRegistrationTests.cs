@@ -19,10 +19,12 @@ using Whizbang.Data.Postgres.Notifications;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Role assignment is opt-in for its first release (#966): <c>AddWhizbangRoleAssignment()</c>
-/// replaces the duty elector with the role elector, keeps the session-lock elector as its delegate
-/// for every duty it does not manage, and releases held roles when the host stops. Composed through
-/// the real driver against the real container, in either registration order.
+/// Role assignment is the Postgres driver's default (#966 phase 3): the driver registers the role
+/// elector unless the host registered its own, keeps the session-lock elector as its delegate for
+/// every duty it does not manage, holds the commit-order stamper's leadership as a role, binds the
+/// options from configuration, and releases held roles when the host stops.
+/// <c>AddWhizbangRoleAssignment()</c> tunes it in code, before or after the driver. Composed
+/// through the real driver against the real container.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/RoleAssignmentServiceCollectionExtensions.cs</code-under-test>
 [Category("Integration")]
@@ -75,7 +77,7 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
   [Timeout(120000)]
   [Arguments(true)]
   [Arguments(false)]
-  public async Task AddWhizbangRoleAssignment_ReplacesTheElector_AndDelegatesTheMigratorAsync(
+  public async Task AddWhizbangRoleAssignment_ReplacesTheElector_AndHoldsTheMigratorByAssignmentAsync(
       bool roleAssignmentFirst, CancellationToken cancellationToken) {
     var pod = new Pod();
     await using var dataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
@@ -93,8 +95,13 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
 
     var migrator = await elector.TryAcquireAsync(StartupDuties.MIGRATOR, cancellationToken);
     await Assert.That(migrator.Grant).IsNotNull();
-    await Assert.That(migrator.Grant!.Epoch).IsNull().Because("the migrator stays on the session-lock elector");
+    await Assert.That(migrator.Grant!.Epoch).IsEqualTo(1L).Because("the migrator is held by assignment too (#966 phase 4)");
     await migrator.Grant.DisposeAsync();
+    var stamper = await elector.TryAcquireAsync(Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE, cancellationToken);
+    await Assert.That(stamper.Grant!.Epoch).IsEqualTo(1L).Because("the stamper's leadership is a role");
+    var unmanaged = await elector.TryAcquireAsync("host-duty", cancellationToken);
+    await Assert.That(unmanaged.Grant!.Epoch).IsNull().Because("a duty that is not a role stays on the session-lock elector");
+    await unmanaged.Grant.DisposeAsync();
 
     await Assert.That(provider.GetServices<IReleasesDutiesOnShutdown>().Single()).IsSameReferenceAs(elector);
     await Assert.That(provider.GetRequiredService<IRoleAssignmentReader>()).IsSameReferenceAs(elector);
@@ -103,7 +110,8 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
         && d.ImplementationType == typeof(Whizbang.Core.Health.RoleAssignmentHealthSource))).IsEqualTo(1);
     var health = ActivatorUtilities.CreateInstance<Whizbang.Core.Health.RoleAssignmentHealthSource>(provider);
     await Assert.That((await health.ReportAsync(cancellationToken)).State).IsEqualTo(Whizbang.Core.Health.ComponentState.Operational)
-      .Because("this instance holds the maintainer role right now");
+      .Because("this instance holds the maintainer and stamper roles right now, and the migrator is idle between migrations");
+    await stamper.Grant.DisposeAsync();
     var holder = provider.GetRequiredService<DutyHolderWorker>();
     await Assert.That(holder.Roles).IsEquivalentTo([StartupDuties.MAINTAINER])
       .Because("a duty-bound startup step becomes owed work for its role; an every-instance step does not");
@@ -149,5 +157,81 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
   public async Task AddWhizbangRoleAssignment_RefusesANullCollectionAsync() {
     await Assert.That(() => RoleAssignmentServiceCollectionExtensions.AddWhizbangRoleAssignment(null!))
       .Throws<ArgumentNullException>();
+  }
+
+  private sealed class HostElector : IDutyElector {
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) =>
+      Task.FromResult(DutyAttempt.Lost(DutyRefusal.Contended, "the host decides"));
+  }
+
+  private static ServiceCollection _driverOnly(Pod pod, NpgsqlDataSource dataSource, IDictionary<string, string?>? settings = null, Action<IServiceCollection>? before = null) {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(settings ?? new Dictionary<string, string?>()).Build());
+    services.AddSingleton<IServiceInstanceProvider>(pod);
+    before?.Invoke(services);
+    services.AddDbContext<WorkCoordinationDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
+    return services;
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task TheDriver_HoldsDutiesByAssignment_WithoutAnExplicitCall_AndTheStamperIsARoleAsync(CancellationToken cancellationToken) {
+    var pod = new Pod();
+    await using var dataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
+    await using var provider = _driverOnly(pod, dataSource).BuildServiceProvider();
+
+    await Assert.That(provider.GetRequiredService<IDutyElector>()).IsTypeOf<PgRoleElector>();
+    var options = provider.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value;
+    await Assert.That(options.Roles).Contains(Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE);
+    await Assert.That(options.HoldLegacySessionLock).IsFalse();
+    var stamperKey = options.LegacyLockKeys[Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE];
+    await Assert.That(stamperKey("svc")).IsEqualTo(Whizbang.Data.Postgres.CommitOrderStamperLockKey.Compute(
+      "svc", new Whizbang.Core.Notifications.CommitOrderStamperOptions().AdvisoryLockKey))
+      .Because("a bridged stamper holds, and a vote looks for, the lock an older stamper takes");
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task TheDriver_LeavesAHostsOwnElector_AndRegistersNoRoleElectorAsync(CancellationToken cancellationToken) {
+    var pod = new Pod();
+    await using var dataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
+    var services = _driverOnly(pod, dataSource, before: s => s.AddSingleton<IDutyElector, HostElector>());
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetRequiredService<IDutyElector>()).IsTypeOf<HostElector>();
+    await Assert.That(services.Any(d => d.ServiceType == typeof(PgRoleElector))).IsFalse();
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task TheOptions_BindFromConfiguration_AndADisabledStamperIsNoRoleAsync(CancellationToken cancellationToken) {
+    var pod = new Pod();
+    await using var dataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
+    var settings = new Dictionary<string, string?> {
+      ["Whizbang:Database:RoleAssignment:Enabled"] = "false",
+      ["Whizbang:Database:RoleAssignment:HoldLegacySessionLock"] = "true",
+      ["Whizbang:Database:RoleAssignment:RenewInterval"] = "00:00:02",
+      ["Whizbang:Database:RoleAssignment:MissedRenewalsBeforeLapse"] = "4",
+      ["Whizbang:Database:RoleAssignment:CooldownAfterLapse"] = "00:00:20",
+      ["Whizbang:Database:RoleAssignment:OwedWorkRetryBase"] = "00:01:00",
+      ["Whizbang:Database:Stamper:DisableStamper"] = "true",
+    };
+    await using var provider = _driverOnly(pod, dataSource, settings).BuildServiceProvider();
+
+    var options = provider.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value;
+    await Assert.That(options.Enabled).IsFalse();
+    await Assert.That(options.HoldLegacySessionLock).IsTrue();
+    await Assert.That(options.RenewInterval).IsEqualTo(TimeSpan.FromSeconds(2));
+    await Assert.That(options.MissedRenewalsBeforeLapse).IsEqualTo(4);
+    await Assert.That(options.CooldownAfterLapse).IsEqualTo(TimeSpan.FromSeconds(20));
+    await Assert.That(options.OwedWorkRetryBase).IsEqualTo(TimeSpan.FromMinutes(1));
+    await Assert.That(options.Roles).DoesNotContain(Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE)
+      .Because("a disabled stamper has no leader to elect");
+    var elector = (PgRoleElector)provider.GetRequiredService<IDutyElector>();
+    await Assert.That(elector.Manages(StartupDuties.MAINTAINER)).IsFalse()
+      .Because("disabled, every duty goes back to the session-lock elector");
+    await Assert.That(provider.GetRequiredService<DutyHolderWorker>().Roles).IsEmpty();
   }
 }

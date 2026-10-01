@@ -90,6 +90,7 @@ public class PgCommitOrderStamperWorkerCoverageTests {
       config,
       new NoOpSharedNotifyConnection(),
       logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
+      dutyElector: null,
       schemaReadyGate: schemaReadyGate);
   }
 

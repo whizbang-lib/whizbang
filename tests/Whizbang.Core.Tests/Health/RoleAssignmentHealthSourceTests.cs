@@ -75,6 +75,34 @@ public class RoleAssignmentHealthSourceTests {
   }
 
   [Test]
+  public async Task TheMigrator_IsIdleBetweenMigrations_AndUnassignedOnlyWhenItLapsedMidRunAsync() {
+    var idle = await _reportAsync(new RoleAssignmentOptions(),
+      _snapshot(StartupDuties.MAINTAINER, RoleAssignmentState.Held),
+      _snapshot(StartupDuties.MIGRATOR, RoleAssignmentState.Vacant, lastReason: "released"));
+    await Assert.That(idle.State).IsEqualTo(ComponentState.Operational)
+      .Because("the migrator is held for one migration at a time; vacant between them is its normal state");
+    await Assert.That(idle.Detail).Contains("'migrator' idle (held only while it runs)");
+
+    var neverElected = await _reportAsync(new RoleAssignmentOptions(), _snapshot(StartupDuties.MAINTAINER, RoleAssignmentState.Held));
+    await Assert.That(neverElected.State).IsEqualTo(ComponentState.Operational);
+
+    var lapsed = await _reportAsync(new RoleAssignmentOptions(),
+      _snapshot(StartupDuties.MAINTAINER, RoleAssignmentState.Held),
+      _snapshot(StartupDuties.MIGRATOR, RoleAssignmentState.Lapsed, voidReason: "lapsed"));
+    await Assert.That(lapsed.State).IsEqualTo(ComponentState.Degraded).Because("a migrator that stopped mid-run is worth seeing");
+    await Assert.That(lapsed.Detail).Contains("'migrator' lapsed (lapsed)");
+  }
+
+  [Test]
+  public async Task AHeldRoleAskedToDrain_SaysSoAsync() {
+    var health = await _reportAsync(new RoleAssignmentOptions(),
+      _snapshot(StartupDuties.MAINTAINER, RoleAssignmentState.Held) with { DrainRequestedAt = DateTimeOffset.UnixEpoch });
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Operational);
+    await Assert.That(health.Detail).Contains("2 owed, draining");
+  }
+
+  [Test]
   public async Task AReadThatFails_IsDegraded_NotThrownAsync() {
     var reader = new IRoleAssignmentReaderCreateExpectations();
     reader.Setups.ReadAssignmentsAsync(Arg.Any<CancellationToken>())

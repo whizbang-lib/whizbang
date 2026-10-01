@@ -1,6 +1,8 @@
 # Duty role assignment: the advisory lock decides the vote, the row is the role
 
-Status: phases 1 and 2 delivered on `feat/966-role-assignment`, opt-in, shipping as one PR (see sections 2.1 and 3.1). Issue #966. Design and requirement mapping:
+Status: phases 1 and 2 shipped opt-in (PR #988, release 0.2606.0). Phases 3 and 4 delivered on
+`feat/966-phases-3-4` (sections 4.1 and 5.1), with the design questions decided on #968 (section 7).
+Issue #966. Design and requirement mapping:
 docs site `proposals/duty-role-assignment`. This file is the build plan. It records what each phase
 ships, how it is verified, and the decisions made along the way.
 
@@ -155,6 +157,38 @@ change.
 - Progress-tied renewal for long single statements (see open questions in the proposal).
 - A multi-role vote, `wh_elect_roles(text[])`, if measurement shows per-role votes cost anything.
 
+### 4.1 Phase 3 as delivered
+
+- **Migration `184_RoleAssignmentResilience.sql`** is the last word on every role function. The whole
+  file is a bootstrap region (the migrator is elected before migrations run), so it re-creates the
+  table and the 173 helpers it needs; the status function and the multi-role vote sit outside the
+  region because they read `wh_role_pending_work`. The phase 1 entry points (`wh_elect_role`,
+  `wh_renew_role`) keep their signatures as wrappers, so a 0.2606 instance keeps working during a
+  rolling deploy; its version counts as the oldest and it never drains.
+- **Default registration.** `AddWhizbangPostgresNotifications` registers role assignment unless the
+  host registered its own elector (`AddWhizbangRoleAssignmentByDefault`). The options bind from
+  `Whizbang:Database:RoleAssignment` (`Enabled`, `HoldLegacySessionLock`, `RenewInterval`,
+  `MissedRenewalsBeforeLapse`, `CooldownAfterLapse`, `OwedWorkRetryBase`). `Enabled = false` makes
+  the role elector delegate every duty.
+- **The stamper's leader is the `commit-stamper` role** (`CommitOrderStamperOptions.ROLE`), added to
+  the roles by a post-configure while the stamper is enabled, with its leader lock as the role's
+  legacy key (`RoleAssignmentOptions.LegacyLockKeys`). The stamping loop verifies the grant before
+  every iteration and never waits longer than a renew interval; every stamp is fenced in the same
+  transaction (`PgRoleElector.AssertEpochAsync`). A non-holder waits for `LeaderElectionRetry` or the
+  role's release NOTIFY. New event `OnStoppedLeading`.
+- **Long statements: per-duty leases plus the duty-backend backstop** (decision 1 of #968), not a
+  renewal timer: `RoleAssignmentOptions.RoleLeases` and `PgRoleElector.MarkDutyBackendAsync`.
+- **Multi-role vote** `wh_vote_roles`, used through a new default member
+  `IDutyElector.TryAcquireManyAsync`; the holder loop votes for every unheld role in one call. No
+  measurement was needed to justify it: the holder loop now has two standing roles by default.
+- **Cooperative drain and the newest-version preference** (decisions 2 and 3): `IDutyGrant.DrainRequested`,
+  `LibraryVersionKey`, `wh_role_candidates`.
+
+Tests: `RoleAssignmentResilienceSqlTests` 19, `RoleAssignmentResilienceE2ETests` 12,
+`CommitOrderStamperRoleTests` 6, `MigratorWatchTests` 4, `RoleAssignmentRegistrationTests` +3,
+`DutyHolderWorkerTests` +4, `RoleAssignmentHealthSourceTests` +2, `RoleAssignmentOptionsTests` +4,
+`DutyGrantContractTests` +2.
+
 ## 5. Phase 4: chaos and the end of the bridge
 
 - The chaos suite: kill, `SIGSTOP`, partition, clock skew, database restart, a rolling deploy with
@@ -162,6 +196,30 @@ change.
   failover, and exactly-once pending work.
 - `HoldLegacySessionLock` defaults to false, and the session-lock elector remains only for
   `migrator` until that duty joins the bootstrap closure and its waiters watch the assignment row.
+
+### 5.1 Phase 4 as delivered
+
+- **The chaos suite**, `RoleAssignmentChaosTests` (kill -9, SIGSTOP mid-duty, partition through a
+  TCP forwarder the test cuts and heals, clock skew, a database outage longer than a lease, rolling
+  deploys from the session-lock release bridged and not, a rolling deploy from an older
+  role-assignment release, ten concurrent starts) and `RoleAssignmentDatabaseRestartChaosTests` (a
+  real restart of a server started for that test). Each asserts at most one epoch writes (the work
+  writes its effect under the fence), the takeover bound in database time, and exactly-once owed work.
+- **The bridge is off by default.** Phases 3 and 4 ship in one release, so there is no release in
+  which role assignment is the default and the bridge is on: a rolling deploy from a session-lock
+  release must turn it on for that deploy. As defense in depth, an unbridged holder's renewal looks
+  for the legacy lock and steps aside (`legacy_holder`) within one renewal.
+- **The migrator is held by assignment.** Its vote is in the bootstrap closure; the template's waiter
+  watches `MigratorWatch` (the row and the legacy session lock); the migrator renews between phases
+  and marks its DDL backend; its lease is 30 seconds. The holder loop never holds it and the health
+  component reports it only when lapsed (`RoleAssignmentOptions.IsEpisodic`).
+- **A lapsed bridged holder's session is ended** by the next would-be winner (decision 4):
+  `wh_end_lapsed_bridge`, metric `whizbang.roles.bridge_sessions_ended`.
+- **A fleet-wide lapse skips the cool-down** (decision 5): `_role_lapse_is_fleet_wide`, recorded as
+  `last_vacated_fleet_wide`.
+
+Tests: `RoleAssignmentChaosTests` 9, `RoleAssignmentDatabaseRestartChaosTests` 1,
+`SchemaMigratorDeferralGenerationTests` (the waiter watches the migrator; the migrator renews and marks).
 
 ## 6. Decisions
 
@@ -207,15 +265,16 @@ change.
 - **The `roles` health component is Degraded, never Faulted**, both when a role is unassigned and
   when its read fails: restarting this instance would not give the role a holder.
 
-## 7. Open questions (to be filed as `question` issues)
+## 7. The design questions, decided on #968
 
-- Long single statements (`VACUUM FULL`, a large migration statement) can outlast a lease, and the
-  loop cannot renew while it waits. Should the lease be sized for them, or should renewal be tied
-  to the duty backend being observed `active` in `pg_stat_activity`?
-- Should a newer-version instance be able to ask a live older holder to drain and hand over?
-- Selection policy for a vacant role: first valid caller (today), newest library version, or
-  longest-lived instance?
-- While bridged, a stuck new holder keeps its session lock. Should a vote winner be allowed to
-  terminate a lapsed bridge holder's session?
-- An outage longer than the lease lapses every holder, which then pays the cool-down although the
-  database was at fault. Should a lapse that coincides with a database outage be exempt?
+1. **Long single statements: both.** A lease per duty, and the vote treats a holder as live while the
+   backend it marked for its duty is running a statement (pid and backend start, state `active`).
+2. **Hand-off while alive: cooperative drain.** A newer-version caller asks once; the holder learns it
+   on a renewal, finishes its step and releases.
+3. **Vacant role: newest library version**, among equals the first valid caller. A live, registered,
+   untombstoned candidate that is not cooling down holds the role up for at most one lease.
+4. **Stuck holder while bridged: end its lock session** once the row says it lapsed, and only that
+   session; logged and counted.
+5. **Fleet-wide lapse: no cool-down.** Decided when the vote voids a lapsed assignment: fleet-wide when
+   other assignments were held at the holder's last renewal and none shows the database was reachable
+   during its final lease. With no witness, the cool-down applies.

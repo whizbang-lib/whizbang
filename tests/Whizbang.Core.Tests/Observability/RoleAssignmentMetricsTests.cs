@@ -27,6 +27,8 @@ public class RoleAssignmentMetricsTests {
     metrics.Held.Add(1, role);
     metrics.Held.Add(-1, role);
     metrics.WorkRuns.Add(2, role, new KeyValuePair<string, object?>(RoleAssignmentMetrics.OUTCOME_TAG, RoleAssignmentMetrics.OUTCOME_COMPLETED));
+    metrics.Drains.Add(1, role);
+    metrics.BridgeSessionsEnded.Add(3, role);
 
     var meter = factory.CreatedMeters.Single(m => m.Name == RoleAssignmentMetrics.METER_NAME);
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.roles.elections")).IsEqualTo(1);
@@ -37,6 +39,8 @@ public class RoleAssignmentMetricsTests {
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.roles.released")).IsEqualTo(1);
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.roles.held")).IsEqualTo(0);
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.roles.work_runs")).IsEqualTo(2);
+    await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.roles.drains")).IsEqualTo(1);
+    await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.roles.bridge_sessions_ended")).IsEqualTo(3);
   }
 
   [Test]

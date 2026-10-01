@@ -31,7 +31,13 @@ namespace Whizbang.Core.Startup;
 /// <para>
 /// Which instance runs work is the vote's call, not this loop's: work owed during a rolling deploy
 /// runs when the old holder stops and a new instance wins the role, which is the gap a single
-/// startup-time attempt left open.
+/// startup-time attempt left open. Every role not held is voted for in one call, which the role
+/// elector turns into one statement.
+/// </para>
+/// <para>
+/// A newer-version instance can ask this holder to drain (<see cref="IDutyGrant.DrainRequested"/>):
+/// the loop finishes the piece of work it is on, then releases the role so the newer release takes
+/// it over at once. The migrator is never held here: it is held for one migration at a time.
 /// </para>
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
@@ -92,7 +98,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     // First registration of a (role, key) wins, so a host can override a framework handler by
     // registering its own first.
     _handlers = [];
-    foreach (var handler in handlers.Where(h => _options.Manages(h.Role))) {
+    foreach (var handler in handlers.Where(h => _options.Manages(h.Role) && !RoleAssignmentOptions.IsEpisodic(h.Role))) {
       _ = _handlers.TryAdd((handler.Role, handler.WorkKey), handler);
     }
     _roles = [.. _handlers.Keys.Select(k => k.Role).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
@@ -117,10 +123,17 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   public async Task RunOnceAsync(CancellationToken cancellationToken) {
     await _passGate.WaitAsync(cancellationToken).ConfigureAwait(false);
     try {
+      var unheld = new List<string>();
       foreach (var role in _roles) {
-        var grant = await _holdAsync(role, cancellationToken).ConfigureAwait(false);
-        if (grant is not null) {
+        if (!await _keepAsync(role, cancellationToken).ConfigureAwait(false)) {
+          unheld.Add(role);
+        }
+      }
+      await _voteAsync(unheld, cancellationToken).ConfigureAwait(false);
+      foreach (var role in _roles) {
+        if (_held.TryGetValue(role, out var grant)) {
           await _runOwedAsync(role, grant, cancellationToken).ConfigureAwait(false);
+          await _drainIfAskedAsync(role, cancellationToken).ConfigureAwait(false);
         }
       }
     } finally {
@@ -178,35 +191,54 @@ public sealed partial class DutyHolderWorker : BackgroundService {
 
   private static TaskCompletionSource _newWake() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-  /// <summary>Keeps the role this instance holds, or votes for one it does not. Null when not held.</summary>
-  private async Task<IDutyGrant?> _holdAsync(string role, CancellationToken cancellationToken) {
-    if (_held.TryGetValue(role, out var held)) {
-      if (await held.VerifyStillHeldAsync(cancellationToken).ConfigureAwait(false)) {
-        return held;
-      }
-      _ = _held.Remove(role);
-      await held.DisposeAsync().ConfigureAwait(false);
-      LogNoLongerHolder(_logger, role);
+  /// <summary>Keeps a role this instance holds, which renews it. False when it is not held (any more).</summary>
+  private async Task<bool> _keepAsync(string role, CancellationToken cancellationToken) {
+    if (!_held.TryGetValue(role, out var held)) {
+      return false;
     }
+    if (await held.VerifyStillHeldAsync(cancellationToken).ConfigureAwait(false)) {
+      return true;
+    }
+    _ = _held.Remove(role);
+    await held.DisposeAsync().ConfigureAwait(false);
+    LogNoLongerHolder(_logger, role);
+    return false;
+  }
 
-    DutyAttempt attempt;
+  /// <summary>Votes for every role not held, in one call.</summary>
+  private async Task _voteAsync(List<string> roles, CancellationToken cancellationToken) {
+    if (roles.Count == 0) {
+      return;
+    }
+    IReadOnlyList<DutyAttempt> attempts;
     try {
-      attempt = await _elector.TryAcquireAsync(role, cancellationToken).ConfigureAwait(false);
+      attempts = await _elector.TryAcquireManyAsync(roles, cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
       throw;
 #pragma warning disable CA1031 // a vote that could not run is retried on the next pass; it is logged, not swallowed
     } catch (Exception ex) {
 #pragma warning restore CA1031
-      LogVoteFailed(_logger, role, ex);
-      return null;
+      LogVoteFailed(_logger, string.Join(", ", roles), ex);
+      return;
     }
+    for (var i = 0; i < roles.Count; i++) {
+      if (attempts[i].Grant is { } grant) {
+        _held[roles[i]] = grant;
+        LogBecameHolder(_logger, roles[i], grant.Epoch);
+      }
+    }
+  }
 
-    if (attempt.Grant is not { } grant) {
-      return null;
+  /// <summary>A newer-version instance asked for the role: the step is finished, so release it now.</summary>
+  private async Task _drainIfAskedAsync(string role, CancellationToken cancellationToken) {
+    if (!_held.TryGetValue(role, out var grant) || !grant.DrainRequested) {
+      return;
     }
-    _held[role] = grant;
-    LogBecameHolder(_logger, role, grant.Epoch);
-    return grant;
+    cancellationToken.ThrowIfCancellationRequested();
+    _ = _held.Remove(role);
+    await grant.DisposeAsync().ConfigureAwait(false);
+    _metrics?.Drains.Add(1, RoleAssignmentMetrics.RoleTag(role));
+    LogDrained(_logger, role, grant.Epoch);
   }
 
   /// <summary>The acquisition hook: runs every due piece of owed work this instance has a handler for.</summary>
@@ -241,6 +273,9 @@ public sealed partial class DutyHolderWorker : BackgroundService {
         await grant.DisposeAsync().ConfigureAwait(false);
         LogNoLongerHolder(_logger, role);
         return;
+      }
+      if (grant.DrainRequested) {
+        return;   // the step is done; the caller releases the role for the newer instance
       }
     }
   }
@@ -339,4 +374,8 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   [LoggerMessage(EventId = 8, Level = LogLevel.Information,
     Message = "DutyHolderWorker: owed work '{WorkKey}' for role '{Role}' is done (epoch {Epoch})")]
   static partial void LogWorkCompleted(ILogger logger, string role, string workKey, long? epoch);
+
+  [LoggerMessage(EventId = 9, Level = LogLevel.Information,
+    Message = "DutyHolderWorker: released role '{Role}' (epoch {Epoch}) because a newer-version instance asked it to drain")]
+  static partial void LogDrained(ILogger logger, string role, long? epoch);
 }

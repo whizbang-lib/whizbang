@@ -74,7 +74,7 @@ public class PendingDutyWorkE2ETests : EFCoreTestBase {
 
   private PgRoleElector _electorFor(Pod pod, bool bridge = true) => new(
     _notification(), Options.Create(new RoleAssignmentOptions { HoldLegacySessionLock = bridge }), _config(), pod, _legacyFor(pod),
-    NullLogger<PgRoleElector>.Instance);
+    NullLogger<PgRoleElector>.Instance, libraryVersion: null);
 
   private PgPendingDutyWorkStore _storeFor(Pod pod) =>
     new(_notification(), Options.Create(new RoleAssignmentOptions()), _config(), pod);
