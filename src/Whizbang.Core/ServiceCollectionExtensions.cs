@@ -151,6 +151,9 @@ public static class ServiceCollectionExtensions {
     services.TryAddEnumerable(
       ServiceDescriptor.Singleton<IHostedService, Whizbang.Core.Diagnostics.InertConcurrencyStartupReporter>());
 
+    // #1003: the previous collective published on each ordering key, stamped on the next as its predecessor link.
+    services.TryAddSingleton<Whizbang.Core.Messaging.CollectivePredecessorTracker>();
+
     // #587: runtime re-emission cascade diagnostic — fires at the dispatcher's publish seam.
     // Nullable dependencies throughout: a host without the registry or metrics stays inert.
     services.TryAddSingleton(sp => new Whizbang.Core.Observability.ReEmissionDiagnostic(

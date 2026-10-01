@@ -204,6 +204,37 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   }
 
   // ========================================
+  // READ POLYMORPHIC: COMMIT ORDER (#1003)
+  // ========================================
+
+  /// <summary>
+  /// A stream is read in the order its events committed (commit_sequence, an unstamped row last, event_id breaking
+  /// ties), as the EF Core store reads it, not in event_id order: an event id is minted before commit, so two
+  /// producers can commit in the opposite order to their ids.
+  /// </summary>
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task ReadPolymorphicAsync_IdsRunBackwardToCommits_ReadsInCommitOrderAsync(bool fromAnEvent) {
+    var store = _createStore();
+    var streamId = (Guid)TrackedGuid.New();
+    var before = Guid.Parse("00000000-0000-7000-8000-000000000001");
+    var laterCommit = Guid.Parse("00000000-0000-7000-8000-000000000002");
+    var unstamped = Guid.Parse("00000000-0000-7000-8000-000000000003");
+    var earlierCommit = Guid.Parse("00000000-0000-7000-8000-000000000004");
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "before"), _metadataJson(before), eventId: before, commitSequence: 1);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "later"), _metadataJson(laterCommit), eventId: laterCommit, commitSequence: 30);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "unstamped"), _metadataJson(unstamped), eventId: unstamped);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "earlier"), _metadataJson(earlierCommit), eventId: earlierCommit, commitSequence: 20);
+
+    var events = await _readPolymorphicAsync(store, streamId, [typeof(TestEvent)], fromAnEvent ? before : null);
+
+    Guid[] expected = fromAnEvent ? [earlierCommit, laterCommit, unstamped] : [before, earlierCommit, laterCommit, unstamped];
+    await Assert.That(events.Select(e => e.MessageId.Value)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a replay applies a stream in commit order, so the later commit wins whatever its id");
+  }
+
+  // ========================================
   // READ POLYMORPHIC: HOPS ARMS
   // ========================================
 
@@ -450,19 +481,21 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     string eventDataJson,
     string metadataJson,
     string? scopeJson = null,
-    int version = 0) {
+    int version = 0,
+    Guid? eventId = null,
+    long? commitSequence = null) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await Executor.ExecuteAsync(
       connection,
       @"INSERT INTO wh_event_store
-          (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope, created_at)
+          (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope, created_at, commit_sequence)
         VALUES
           (@EventId, @StreamId, @AggregateId, @AggregateType, @Version, @EventType,
-           @Scope::jsonb, @CreatedAt);
+           @Scope::jsonb, @CreatedAt, @CommitSequence);
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@EventId, @EventData::jsonb, @Metadata::jsonb)",
       new {
-        EventId = (Guid)TrackedGuid.New(),
+        EventId = eventId ?? (Guid)TrackedGuid.New(),
         StreamId = streamId,
         AggregateId = streamId,
         AggregateType = eventType,
@@ -471,16 +504,18 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
         EventData = eventDataJson,
         Metadata = metadataJson,
         Scope = scopeJson,
-        CreatedAt = DateTimeOffset.UtcNow
+        CreatedAt = DateTimeOffset.UtcNow,
+        CommitSequence = commitSequence
       });
   }
 
   private static async Task<List<MessageEnvelope<IEvent>>> _readPolymorphicAsync(
     DapperPostgresEventStore store,
     Guid streamId,
-    IReadOnlyList<Type> eventTypes) {
+    IReadOnlyList<Type> eventTypes,
+    Guid? fromEventId = null) {
     var events = new List<MessageEnvelope<IEvent>>();
-    await foreach (var evt in store.ReadPolymorphicAsync(streamId, fromEventId: null, eventTypes)) {
+    await foreach (var evt in store.ReadPolymorphicAsync(streamId, fromEventId, eventTypes)) {
       events.Add(evt);
     }
     return events;

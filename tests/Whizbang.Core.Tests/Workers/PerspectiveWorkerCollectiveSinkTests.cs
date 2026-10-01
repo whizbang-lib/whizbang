@@ -30,7 +30,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// dispatch path, the not-configured short-circuit, and the no-collective-event short-circuit.
 /// </summary>
 [NotInParallel("CollectiveSinkWorker")]
-public class PerspectiveWorkerCollectiveSinkTests {
+public partial class PerspectiveWorkerCollectiveSinkTests {
 
   [Test]
   public async Task CollectiveSink_DispatchesEventOnceAndSkipsRunner_Async() {
@@ -1206,6 +1206,150 @@ public class PerspectiveWorkerCollectiveSinkTests {
     await Assert.That(coordinator.ReportedFailures.Count).IsEqualTo(1);
   }
 
+  /// <summary>
+  /// A collective whose every batch committed is complete at once, even though one behind it in the same run found its
+  /// lock busy, so the retry starts at the busy one and the one before it is not applied again (#1003).
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_BusyApplyLock_CollectivesAppliedBeforeIt_AreCompleteAndNotReappliedAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var applied = _sinkWork(streamId);
+    var busy = _sinkWork(streamId);
+    var appliedId = Guid.CreateVersion7();
+    var busyId = Guid.CreateVersion7();
+    var dispatcher = new FlipDispatcher(expected: 2) { BusyOnceOn = "b" };
+    var receptorInvoker = new CapturingReceptorInvoker();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [applied, busy],
+      eventStore: new EventStore {
+        Deserialized = [
+          _envelope(appliedId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "a" }),
+          _envelope(busyId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "b" }),
+        ],
+      },
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher,
+      receptorInvoker: receptorInvoker);
+    coordinator.SinkQueue = [
+      new CollectiveSinkQueueEntry(applied.WorkId, appliedId, CommitSequence: 1),
+      new CollectiveSinkQueueEntry(busy.WorkId, busyId, CommitSequence: 2),
+    ];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.Busy.WaitAsync(TimeSpan.FromSeconds(10));
+    await harness.CompletionCapture.EventWorkIdsCaptured(applied.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await receptorInvoker.FirstPostAllPerspectives.WaitAsync(TimeSpan.FromSeconds(10));
+    var completedBeforeTheRetry = harness.CompletionCapture.EventWorkIds.ToList();
+    List<Guid> postApplyBeforeTheRetry;
+    lock (receptorInvoker.Invocations) {
+      postApplyBeforeTheRetry = [.. receptorInvoker.Invocations.Where(i => i.Stage == LifecycleStage.PostAllPerspectivesDetached).Select(i => i.EventId)];
+    }
+    // The retry: the busy collective's row is leased again; the applied one's row is complete and is not.
+    coordinator.OfferWork([busy]);
+    await dispatcher.AllDispatched.WaitAsync(TimeSpan.FromSeconds(10));
+    await harness.CompletionCapture.EventWorkIdsCaptured(busy.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(completedBeforeTheRetry).DoesNotContain(busy.WorkId)
+      .Because("A collective that found its lock busy is not complete; it applies in full on the retry.");
+    await Assert.That(postApplyBeforeTheRetry).IsEquivalentTo([appliedId])
+      .Because("The applied collective is complete, so its completion receptors fire without waiting for the busy one.");
+    await Assert.That(dispatcher.Applied).IsEquivalentTo(["a", "b"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("The retry starts at the busy collective; the one applied before it is not applied again.");
+    await Assert.That(coordinator.ReportedFailures.Count).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// A collective whose every batch committed is complete at once, even though the one behind it in the same run
+  /// failed, so the failure's retry does not apply it again (#1003).
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_Failure_CollectivesAppliedBeforeIt_AreCompleteAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var applied = _sinkWork(streamId);
+    var failing = _sinkWork(streamId);
+    var appliedId = Guid.CreateVersion7();
+    var failingId = Guid.CreateVersion7();
+    var dispatcher = new FlipDispatcher(expected: 1) { FailOn = "x" };
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [applied, failing],
+      eventStore: new EventStore {
+        Deserialized = [
+          _envelope(appliedId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "a" }),
+          _envelope(failingId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "x" }),
+        ],
+      },
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher);
+    coordinator.SinkQueue = [
+      new CollectiveSinkQueueEntry(applied.WorkId, appliedId, CommitSequence: 1),
+      new CollectiveSinkQueueEntry(failing.WorkId, failingId, CommitSequence: 2),
+    ];
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+    await harness.CompletionCapture.EventWorkIdsCaptured(applied.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(failing.WorkId);
+    await Assert.That(coordinator.ReportedFailures.Single().LastEventId).IsEqualTo(appliedId)
+      .Because("The failure is reported at the collective that failed, after the one that applied.");
+  }
+
+  /// <summary>
+  /// An engine without a sink queue reads the stream after its cursor. A busy lock there moves the cursor past the
+  /// collectives applied before it, so the retry reads from the busy one (#1003).
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_BusyApplyLock_WithoutAQueue_MovesTheCursorPastTheAppliedOnesAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var appliedId = Guid.CreateVersion7();
+    var busyId = Guid.CreateVersion7();
+    var sinkWork = _sinkWork(streamId);
+    var dispatcher = new FlipDispatcher(expected: 1) { BusyOnceOn = "b" };
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [sinkWork],
+      eventStore: new EventStore {
+        Envelopes = {
+          [streamId] = [
+            _envelope(appliedId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "a" }),
+            _envelope(busyId, new FlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), Chosen = "b" }),
+          ],
+        },
+      },
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.Busy.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    PerspectiveCursorCompletion cursor;
+    lock (coordinator.ReportedCompletions) {
+      cursor = coordinator.ReportedCompletions.Single(c => c.StreamId == streamId);
+    }
+    await Assert.That(cursor.LastEventId).IsEqualTo(appliedId);
+    await Assert.That(cursor.ProcessedEventIds).IsEquivalentTo([appliedId]);
+    await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(sinkWork.WorkId)
+      .Because("Without a queue the run's rows are not tied to collectives, so none is completed until all apply.");
+  }
+
   [Test]
   public async Task PerspectiveWorkerOptions_BusyApplyLock_IsNotAFailureByDefaultAsync() {
     await Assert.That(new PerspectiveWorkerOptions().CollectiveLockBusyCountsAsFailure).IsFalse();
@@ -1246,7 +1390,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
       IReceptorInvoker? receptorInvoker = null, ILeaseRenewalChannel? leaseRenewalChannel = null,
       LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null,
       CompositeMetrics? compositeMetrics = null, bool lockBusyCountsAsFailure = false,
-      ISyncEventTracker? syncEventTracker = null, TimeProvider? timeProvider = null) {
+      ISyncEventTracker? syncEventTracker = null, TimeProvider? timeProvider = null, int predecessorWaitSeconds = 30) {
     var instanceProvider = new InstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -1276,6 +1420,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts,
         CollectiveLockBusyCountsAsFailure = lockBusyCountsAsFailure,
+        CollectivePredecessorWaitSeconds = predecessorWaitSeconds,
       }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
@@ -1318,6 +1463,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
   private sealed record FlipCollectiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
     public string Chosen { get; init; } = "";
+    public Guid? PredecessorId { get; init; }
+    public string? PredecessorType { get; init; }
   }
 
   /// <summary>
@@ -1331,6 +1478,12 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public Task FirstApplied => _firstApplied.Task;
     public string? State { get; private set; }
     public string? FailOn { get; init; }
+    /// <summary>A choice whose first apply finds its lock busy after committing one batch; it applies on its retry.</summary>
+    public string? BusyOnceOn { get; init; }
+    private int _busyOnce;
+    private readonly TaskCompletionSource _busy = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    /// <summary>Completes when the busy choice has found its lock busy.</summary>
+    public Task Busy => _busy.Task;
     public Task AllDispatched => _all.Task;
 
     public Task<CollectiveDispatchResult> DispatchAsync(
@@ -1338,6 +1491,10 @@ public class PerspectiveWorkerCollectiveSinkTests {
       var chosen = ((FlipCollectiveEvent)evt).Chosen;
       if (chosen == FailOn) {
         throw new InvalidOperationException("simulated collective apply failure");
+      }
+      if (chosen == BusyOnceOn && Interlocked.Exchange(ref _busyOnce, 1) == 0) {
+        _busy.TrySetResult();
+        throw new CollectiveApplyLockBusyException("wh_per_probe", 30);
       }
       lock (Applied) {
         Applied.Add(chosen);
@@ -1568,6 +1725,15 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public List<PerspectiveCursorFailure> ReportedFailures { get; } = [];
     /// <summary>Completes on the first reported perspective failure — the collective-apply-failed signal.</summary>
     public Task FirstFailure => _firstFailure.Task;
+    private readonly TaskCompletionSource _firstCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public List<PerspectiveCursorCompletion> ReportedCompletions { get; } = [];
+    /// <summary>Completes on the first reported cursor completion.</summary>
+    public Task FirstCompletion => _firstCompletion.Task;
+    Task IWorkCoordinator.ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken) {
+      lock (ReportedCompletions) { ReportedCompletions.Add(completion); }
+      _firstCompletion.TrySetResult();
+      return Task.CompletedTask;
+    }
     Task IWorkCoordinator.ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken) {
       lock (ReportedFailures) { ReportedFailures.Add(failure); }
       _firstFailure.TrySetResult();
@@ -1619,9 +1785,13 @@ public class PerspectiveWorkerCollectiveSinkTests {
       _sinkQueueRead.TrySetResult();
       return Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(SinkQueues.TryGetValue(streamId, out var own) ? own : SinkQueue);
     }
+    /// <summary>Events the store does not hold: a predecessor that has not arrived.</summary>
+    public HashSet<Guid> MissingEventIds { get; } = [];
     Task<IReadOnlyList<StreamEventData>> IWorkCoordinator.FetchEventsByIdsAsync(IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken) {
       lock (EventsFetchedById) { EventsFetchedById.AddRange(eventIds); }
-      return Task.FromResult<IReadOnlyList<StreamEventData>>([.. eventIds.Select(id => _raw(Guid.Empty, id))]);
+      lock (MissingEventIds) {
+        return Task.FromResult<IReadOnlyList<StreamEventData>>([.. eventIds.Where(id => !MissingEventIds.Contains(id)).Select(id => _raw(Guid.Empty, id))]);
+      }
     }
     // Explicit interface implementation so the worker's interface call routes here, overriding the
     // IWorkCoordinator default (which returns empty and would short-circuit the drain fetch).

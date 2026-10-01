@@ -344,8 +344,12 @@ public class DispatcherCoverageSweepOutboxTests {
     Whizbang.Core.Perspectives.Sync.ITrackedEventTypeRegistry? trackedEventTypeRegistry = null,
     DispatcherMetrics? metrics = null,
     List<string>? logs = null,
-    List<RecordingScope>? scopes = null) {
+    List<RecordingScope>? scopes = null,
+    Whizbang.Core.Messaging.CollectivePredecessorTracker? collectivePredecessors = null) {
     var services = new ServiceCollection();
+    if (collectivePredecessors is not null) {
+      services.AddSingleton(collectivePredecessors);
+    }
     var scopeList = scopes ?? [];
     services.AddSingleton<IServiceScopeFactory>(sp => new RecordingScopeFactory(sp, scopeList));
     if (strategy is not null) {
@@ -789,6 +793,27 @@ public class DispatcherCoverageSweepOutboxTests {
     // Assert
     await Assert.That(strategy.Queued).Count().IsEqualTo(0);
     await Assert.That(logs.Any(m => m.Contains("Suppressed re-broadcast", StringComparison.Ordinal))).IsTrue();
+  }
+
+  /// <summary>
+  /// A keyed collective cascaded by its runtime type is stamped with the collective published before it on its key,
+  /// as one published by its static type is (#1003).
+  /// </summary>
+  [Test]
+  public async Task PublishToOutboxDynamic_SecondKeyedCollective_CarriesTheFirstAsItsPredecessorAsync() {
+    var strategy = new SweepWorkStrategy();
+    var dispatcher = new SweepOutboxDispatcher(_buildProvider(strategy: strategy, collectivePredecessors: new Whizbang.Core.Messaging.CollectivePredecessorTracker()));
+    var firstId = MessageId.New();
+    var first = new DispatcherKeyedCollectiveStreamTests.KeyedFlipCollectiveEvent { Scope = new Whizbang.Core.Messaging.TenantCollectiveScope("t-1"), OrderingKey = "family-7" };
+    var second = new DispatcherKeyedCollectiveStreamTests.KeyedFlipCollectiveEvent { Scope = new Whizbang.Core.Messaging.TenantCollectiveScope("t-1"), OrderingKey = "family-7" };
+
+    await dispatcher.CallPublishToOutboxDynamicAsync(first, first.GetType(), firstId);
+    await dispatcher.CallPublishToOutboxDynamicAsync(second, second.GetType(), MessageId.New());
+
+    await Assert.That(first.PredecessorId).IsNull();
+    await Assert.That(second.PredecessorId).IsEqualTo(firstId.Value);
+    await Assert.That(strategy.Queued[1].Envelope.Payload.GetRawText()).Contains(firstId.Value.ToString())
+      .Because("the link is stamped before the payload is serialized, so it travels with the collective");
   }
 
   [Test]
