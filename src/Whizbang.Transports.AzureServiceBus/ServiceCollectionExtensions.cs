@@ -97,6 +97,9 @@ public static class ServiceCollectionExtensions {
 
   private static readonly Dictionary<string, string> _noNonDefaultNamespaces = new(StringComparer.Ordinal);
 
+  /// <summary>This transport's key under <c>Whizbang:Transports</c>.</summary>
+  private const string TRANSPORT_SECTION_NAME = "AzureServiceBus";
+
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup initialization logging - infrequent calls during DI registration")]
   private static IServiceCollection _addTransport(
     IServiceCollection services,
@@ -119,6 +122,12 @@ public static class ServiceCollectionExtensions {
 
     services.TryAddSingleton<Microsoft.Extensions.Options.IPostConfigureOptions<AzureServiceBusOptions>>(sp =>
       new AzureServiceBusOptionsPostConfigure(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
+
+    // #1012: the transport consumer reads Whizbang:Transports:AzureServiceBus:{MessageProcessing,
+    // Batch,SubscriptionResilience,Consumer} over its code values; ServiceBusConsumerWorker's
+    // subscriptions bind from the same section's Consumer:Subscriptions.
+    TransportConfigurationSection.Register(services, TRANSPORT_SECTION_NAME);
+    services.AddWhizbangServiceBusConsumerOptions();
 
     // Topology arc phase 8.5 — hand this transport's lock/delivery knobs to Core's poison
     // threshold derivation, so the age default tracks the transport's own configuration.

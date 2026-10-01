@@ -139,8 +139,9 @@ public static class TransportConsumerBuilderExtensions {
     var additionalDestinations = config.AdditionalDestinations.ToList();
     var resilienceOptions = config.ResilienceOptions;
 
-    // Register SubscriptionResilienceOptions as singleton
-    builder.Services.AddSingleton(resilienceOptions);
+    // Register SubscriptionResilienceOptions as singleton, bound from the transport's
+    // Whizbang:Transports:<transport>:SubscriptionResilience section over the code values (#1012)
+    builder.Services.AddSingleton(sp => TransportConsumerOptionsBinder.Bind(sp, resilienceOptions));
 
     // Register TransportConsumerOptions as singleton using factory pattern (AOT-safe)
     // The factory resolves dependencies at runtime and populates destinations
@@ -177,10 +178,10 @@ public static class TransportConsumerBuilderExtensions {
 
       subscriptionBuilder.ConfigureOptions(options);
 
-      // Add any additional custom destinations
+      // Add any additional custom destinations, then the configured ones (#1012)
       options.Destinations.AddRange(additionalDestinations);
 
-      return options;
+      return TransportConsumerOptionsBinder.Bind(sp, options);
     });
 
     // Manifest-driven DARK provisioning wiring (topology arc phase 5): make the
@@ -215,11 +216,10 @@ public static class TransportConsumerBuilderExtensions {
       return new NullReceptorInvoker();
     });
 
-    // Register MessageProcessingOptions (consumer can override by registering before this)
-    builder.Services.TryAddSingleton(new MessageProcessingOptions());
-
-    // Register TransportBatchOptions (consumer can override by registering before this)
-    builder.Services.TryAddSingleton(new TransportBatchOptions());
+    // Register MessageProcessingOptions and TransportBatchOptions (consumer can override by
+    // registering before this), bound from the transport's section over the code values (#1012)
+    TransportConsumerOptionsBinder.AddBound(builder.Services, () => new MessageProcessingOptions(), TransportConsumerOptionsBinder.Bind);
+    TransportConsumerOptionsBinder.AddBound(builder.Services, () => new TransportBatchOptions(), TransportConsumerOptionsBinder.Bind);
 
     // Register inbox channel for routing claimed inbox work to publisher worker
     builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
@@ -296,8 +296,9 @@ public static class TransportConsumerBuilderExtensions {
     var additionalDestinations = config.AdditionalDestinations.ToList();
     var resilienceOptions = config.ResilienceOptions;
 
-    // Register SubscriptionResilienceOptions as singleton
-    builder.Services.AddSingleton(resilienceOptions);
+    // Register SubscriptionResilienceOptions as singleton, bound from the transport's
+    // Whizbang:Transports:<transport>:SubscriptionResilience section over the code values (#1012)
+    builder.Services.AddSingleton(sp => TransportConsumerOptionsBinder.Bind(sp, resilienceOptions));
 
     // Register TransportConsumerOptions as singleton using factory pattern (AOT-safe)
     builder.Services.AddSingleton<TransportConsumerOptions>(sp => {
@@ -333,10 +334,10 @@ public static class TransportConsumerBuilderExtensions {
 
       subscriptionBuilder.ConfigureOptions(options);
 
-      // Add any additional custom destinations
+      // Add any additional custom destinations, then the configured ones (#1012)
       options.Destinations.AddRange(additionalDestinations);
 
-      return options;
+      return TransportConsumerOptionsBinder.Bind(sp, options);
     });
 
     // Manifest-driven DARK provisioning wiring (topology arc phase 5): make the
@@ -371,11 +372,10 @@ public static class TransportConsumerBuilderExtensions {
       return new NullReceptorInvoker();
     });
 
-    // Register MessageProcessingOptions (consumer can override by registering before this)
-    builder.Services.TryAddSingleton(new MessageProcessingOptions());
-
-    // Register TransportBatchOptions (consumer can override by registering before this)
-    builder.Services.TryAddSingleton(new TransportBatchOptions());
+    // Register MessageProcessingOptions and TransportBatchOptions (consumer can override by
+    // registering before this), bound from the transport's section over the code values (#1012)
+    TransportConsumerOptionsBinder.AddBound(builder.Services, () => new MessageProcessingOptions(), TransportConsumerOptionsBinder.Bind);
+    TransportConsumerOptionsBinder.AddBound(builder.Services, () => new TransportBatchOptions(), TransportConsumerOptionsBinder.Bind);
 
     // Register inbox channel for routing claimed inbox work to publisher worker
     builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
