@@ -177,6 +177,7 @@ public static class ServiceCollectionExtensions {
     // rows into wh_dead_letters. The store is singleton-safe (only stashes the
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
+    _addPerspectiveTableSwapper(services, connectionString);
 
     // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
     // Runs only when the schema was just initialized here (we know the table exists) and
@@ -319,6 +320,7 @@ public static class ServiceCollectionExtensions {
     // rows into wh_dead_letters. The store is singleton-safe (only stashes the
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
+    _addPerspectiveTableSwapper(services, connectionString);
 
     // See the first overload for the rationale: the prior `services.BuildServiceProvider()`
     // + `using` pattern silently disposed the host's shared ConfigurationManager. Defer
@@ -343,6 +345,18 @@ public static class ServiceCollectionExtensions {
 
     return services;
   }
+
+  /// <summary>
+  /// Blue-green perspective rebuilds build a shadow table and swap it in (#1025), on connections of the swapper's
+  /// own from the connection string, in the connection's search path, where the Dapper stores' tables are.
+  /// </summary>
+  private static void _addPerspectiveTableSwapper(IServiceCollection services, string connectionString) =>
+    services.TryAddSingleton<IPerspectiveTableSwapper>(_ =>
+      new Whizbang.Data.Postgres.Perspectives.PostgresPerspectiveTableSwapper(async ct => {
+        var connection = new Npgsql.NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        return connection;
+      }, schema: null));
 
   /// <summary>
   /// Registers <see cref="IDeadLetterStore"/> with the Dapper implementation. Called

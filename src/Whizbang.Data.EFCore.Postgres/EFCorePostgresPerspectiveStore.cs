@@ -48,6 +48,34 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     _loadAsync(streamId, cancellationToken);
 
   /// <summary>
+  /// The rows this store reads: the mapped table, or the shadow table a blue-green rebuild redirected this flow to
+  /// (<see cref="PerspectiveTableRedirect"/>), read through the same mapping.
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "EF1002:Risk of vulnerability to SQL injection",
+    Justification = "The only text is a quoted table identifier from the EF model and the rebuild's own shadow-table name; there are no values.")]
+  private IQueryable<PerspectiveRow<TModel>> _rows() {
+    var rows = _context.Set<PerspectiveRow<TModel>>();
+    if (!PerspectiveTableRedirect.IsActive || PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is not { } shadow) {
+      return rows;
+    }
+    var sql = "SELECT * FROM " + shadow;
+    return rows.FromSqlRaw(sql);
+  }
+
+  /// <summary>
+  /// Deletes the row from the shadow table when a blue-green rebuild redirected this flow, and says whether it did;
+  /// the mapped table is never touched by a rebuild.
+  /// </summary>
+  private async Task<bool> _purgeRedirectedAsync(Guid id, CancellationToken cancellationToken) {
+    if (!PerspectiveTableRedirect.IsActive || PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is not { } shadow) {
+      return false;
+    }
+    var sql = "DELETE FROM " + shadow + " WHERE id = @id";
+    await _context.Database.ExecuteSqlRawAsync(sql, [new Npgsql.NpgsqlParameter("id", id)], cancellationToken);
+    return true;
+  }
+
+  /// <summary>
   /// Reads the model stored under <paramref name="id"/>, with its promoted fields when it is stored Split.
   /// </summary>
   /// <remarks>
@@ -108,7 +136,7 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     PerspectiveRow<TModel>? row = null;
     Exception? failure = null;
     try {
-      var rows = _context.Set<PerspectiveRow<TModel>>();
+      var rows = _rows();
       row = await (tracked ? rows : rows.AsNoTracking())
           .OrderBy(r => r.Id)
           .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
@@ -129,7 +157,7 @@ public class EFCorePostgresPerspectiveStore<TModel>(
 
   /// <inheritdoc/>
   public async Task<PerspectiveMetadata?> GetMetadataByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
-    var row = await _context.Set<PerspectiveRow<TModel>>()
+    var row = await _rows()
         .AsNoTracking()
         .OrderBy(r => r.Id)
         .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
@@ -361,6 +389,9 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeAsync_WhenRecordExists_RemovesRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeAsync_WhenRecordDoesNotExist_DoesNotThrowAsync</tests>
   public async Task PurgeAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    if (await _purgeRedirectedAsync(streamId, cancellationToken)) {
+      return;
+    }
     // Use ExecuteDeleteAsync to bypass change tracker JSON serialization,
     // which fails on entities with complex collections in deleted state (EF Core bug with Npgsql JSON columns)
     if (_context.Database.IsRelational()) {
@@ -390,6 +421,9 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     // Convert partition key to Guid for storage
     var partitionGuid = _convertPartitionKeyToGuid(partitionKey);
 
+    if (await _purgeRedirectedAsync(_convertPartitionKeyToGuid(partitionKey), cancellationToken)) {
+      return;
+    }
     // Use ExecuteDeleteAsync to bypass change tracker JSON serialization,
     // which fails on entities with complex collections in deleted state (EF Core bug with Npgsql JSON columns)
     if (_context.Database.IsRelational()) {

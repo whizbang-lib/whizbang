@@ -41,4 +41,14 @@ public interface ICollectiveReplayApplier {
   /// it matches, applies its setters — the in-memory twin of the live set-based UPDATE, scoped to this one row.
   /// </summary>
   object ApplyInMemory(Type modelType, object currentModel, Guid streamId, IEvent collectiveEvent);
+
+  /// <summary>
+  /// The stored event-type names of the collective events that apply to the model named
+  /// <paramref name="modelTypeName"/> (its fully qualified name, as the perspective registry records it). A
+  /// blue-green rebuild reads them to notice a collective committed while it ran. The default names none.
+  /// </summary>
+  /// <param name="modelTypeName">The model's fully qualified name, <c>global::</c> prefix optional.</param>
+  /// <docs>fundamentals/perspectives/rebuild#blue-green</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveReplayApplierCoverageTests.cs:CollectiveEventTypeNamesFor_NamesTheModelsCollectivesOnlyAsync</tests>
+  IReadOnlyList<string> CollectiveEventTypeNamesFor(string modelTypeName) => [];
 }
