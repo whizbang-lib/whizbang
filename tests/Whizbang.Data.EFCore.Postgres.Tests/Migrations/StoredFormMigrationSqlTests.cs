@@ -162,8 +162,6 @@ public class StoredFormMigrationSqlTests {
   private sealed class Named(string name, string sql = "SELECT 1") : IStoredFormMigration {
     public string Name => name;
 
-    public int Order => 0;
-
     public string BuildSql(StoredFormMigrationTarget target) => sql;
   }
 }

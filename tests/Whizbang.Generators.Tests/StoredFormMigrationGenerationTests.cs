@@ -94,19 +94,16 @@ public class StoredFormMigrationGenerationTests {
 
     public sealed class SplitFullName : IStoredFormMigration<OrderModel> {
       public string Name => "2026-10-split";
-      public int Order => 1;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
     public sealed class AnotherOne : IStoredFormMigration<OrderModel> {
       public string Name => "2026-09-another";
-      public int Order => 2;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
     public abstract class NotConstructible : IStoredFormMigration<OrderModel> {
       public string Name => "never";
-      public int Order => 0;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
@@ -114,7 +111,6 @@ public class StoredFormMigrationGenerationTests {
 
     public sealed class Orphan : IStoredFormMigration<UnusedModel> {
       public string Name => "orphan";
-      public int Order => 0;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
@@ -182,8 +178,8 @@ public class StoredFormMigrationGenerationTests {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Migrations_RunRenamesThenConversionsThenDefaultsThenRemovals_ThenCustomByOrderAsync() {
-    var (code, _) = await _runAsync(MODEL);
+  public async Task Migrations_RunRenamesThenConversionsThenDefaultsThenRemovals_ThenCustomByNameWithoutAnOrderAsync() {
+    var (code, diagnostics) = await _runAsync(MODEL);
 
     int at(string text) => code.IndexOf(text, StringComparison.Ordinal);
     await Assert.That(at("DisplayName:renamed-from:Name")).IsLessThan(at("Status:Int32->String"));
@@ -194,8 +190,11 @@ public class StoredFormMigrationGenerationTests {
     await Assert.That(code).Contains(
       "global::Whizbang.Data.Postgres.StoredFormMigrationSql.Custom(\"testapp\", \"wh_per_order\", new global::TestApp.AnotherOne(), \"TestApp.OrderPerspective\"),")
       .Because("A custom migration brings forward the retries of the table's parked streams too.");
-    await Assert.That(at("new global::TestApp.SplitFullName()")).IsLessThan(at("new global::TestApp.AnotherOne()"))
-      .Because("Custom migrations of a table run in the Order their authors state, not in type-name order.");
+    await Assert.That(at("new global::TestApp.AnotherOne()")).IsLessThan(at("new global::TestApp.SplitFullName()"))
+      .Because("Migrations that state no Order compile against the default and run in type-name order, as before.");
+    await Assert.That(diagnostics.Where(d => d.Id is "WHIZ831" or "WHIZ833").Select(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)))
+      .DoesNotContain(m => m.Contains("SplitFullName", StringComparison.Ordinal) || m.Contains("AnotherOne", StringComparison.Ordinal))
+      .Because("Two migrations that both take the default Order are not a clash anyone declared.");
     await Assert.That(code).DoesNotContain("NotConstructible").Because("An abstract class cannot be instantiated.");
     await Assert.That(code).DoesNotContain("TestApp.Orphan");
   }
@@ -495,20 +494,17 @@ public class StoredFormMigrationGenerationTests {
 
     public sealed class Generic<T> : IStoredFormMigration<EdgeModel> {
       public string Name => "generic";
-      public int Order => 0;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
     public sealed class NeedsArgs(int x) : IStoredFormMigration<EdgeModel> {
       public string Name => "args" + x;
-      public int Order => 0;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
     public static class Holder {
       private sealed class Hidden : IStoredFormMigration<EdgeModel> {
         public string Name => "hidden";
-        public int Order => 0;
         public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
       }
     }
@@ -727,6 +723,16 @@ public class StoredFormMigrationGenerationTests {
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
+    // No Order stated: both take the default, 0, and run in class-name order without a warning.
+    public sealed class H_Default : IStoredFormMigration<OModel> {
+      public string Name => "h";
+      public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+    }
+    public sealed class G_Default : IStoredFormMigration<OModel> {
+      public string Name => "g";
+      public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+    }
+
     // Another table: the same Order there is no clash.
     public sealed class P_Same : IStoredFormMigration<PModel> {
       public string Name => "p";
@@ -750,6 +756,10 @@ public class StoredFormMigrationGenerationTests {
 
     int at(string type) => code.IndexOf($"new global::TestApp.{type}()", StringComparison.Ordinal);
     await Assert.That(at("B_First")).IsGreaterThan(-1);
+    await Assert.That(at("B_First")).IsLessThan(at("G_Default"));
+    await Assert.That(at("G_Default")).IsLessThan(at("H_Default"))
+      .Because("A migration without an Order is at 0, among the others by class name.");
+    await Assert.That(at("H_Default")).IsLessThan(at("E_Inherits"));
     await Assert.That(at("B_First")).IsLessThan(at("E_Inherits"))
       .Because("An initializer, a const of another integral type and an inherited Order are all read at build time.");
     await Assert.That(at("E_Inherits")).IsLessThan(at("C_Tied"));
@@ -766,7 +776,7 @@ public class StoredFormMigrationGenerationTests {
 
     var shared = diagnostics.Where(d => d.Id == "WHIZ833").ToList();
     await Assert.That(shared).Count().IsEqualTo(1)
-      .Because("Only C_Tied and D_Tied share an Order on one table; P_Same's table is another.");
+      .Because("Only C_Tied and D_Tied state the same Order on one table; G_Default and H_Default state none, and P_Same's table is another.");
     await Assert.That(shared[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
     var message = shared[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture);
     await Assert.That(message).Contains("TestApp.C_Tied, TestApp.D_Tied");

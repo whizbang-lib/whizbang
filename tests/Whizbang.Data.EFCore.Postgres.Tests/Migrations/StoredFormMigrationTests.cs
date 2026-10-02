@@ -612,8 +612,6 @@ public class StoredFormMigrationTests : IAsyncDisposable {
   private sealed class IncrementCount : IStoredFormMigration {
     public string Name => "2026-10-increment-count";
 
-    public int Order => 0;
-
     public string BuildSql(StoredFormMigrationTarget target) =>
       $"UPDATE {target.QualifiedTable} SET data = jsonb_set(data, '{{Count}}', to_jsonb((data ->> 'Count')::int + 1));";
   }
@@ -621,16 +619,12 @@ public class StoredFormMigrationTests : IAsyncDisposable {
   private sealed class Refuses : IStoredFormMigration {
     public string Name => "2026-10-refuses";
 
-    public int Order => 0;
-
     public string BuildSql(StoredFormMigrationTarget target) =>
       $"DO $$ BEGIN RAISE EXCEPTION USING ERRCODE = '{StoredFormMigrationTarget.BLOCKED_SQL_STATE}', MESSAGE = 'custom refusal'; END $$;";
   }
 
   private sealed class HoldsTheDelimiter : IStoredFormMigration {
     public string Name => "2026-10-holds-the-delimiter";
-
-    public int Order => 0;
 
     public string BuildSql(StoredFormMigrationTarget target) =>
       $"UPDATE {target.QualifiedTable} SET data = data || jsonb_build_object('Tag', '$wh_sfm_sql$ and $wh_sfm$')";

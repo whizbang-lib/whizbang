@@ -68,7 +68,7 @@ public class StoredFormAttributeTests {
     IStoredFormMigration migration = new SampleMigration();
 
     await Assert.That(migration.Name).IsEqualTo("2026-10-sample");
-    await Assert.That(migration.Order).IsEqualTo(10);
+    await Assert.That(migration.Order).IsEqualTo(0).Because("A migration that states no order takes the default.");
     await Assert.That(migration.BuildSql(new StoredFormMigrationTarget("public", "wh_per_sample")))
       .IsEqualTo("UPDATE \"public\".\"wh_per_sample\" SET data = data");
     await Assert.That(typeof(IStoredFormMigration).IsAssignableFrom(typeof(IStoredFormMigration<SampleModel>))).IsTrue();
@@ -78,8 +78,6 @@ public class StoredFormAttributeTests {
 
   private sealed class SampleMigration : IStoredFormMigration<SampleModel> {
     public string Name => "2026-10-sample";
-
-    public int Order => 10;
 
     public string BuildSql(StoredFormMigrationTarget target) => $"UPDATE {target.QualifiedTable} SET data = data";
   }

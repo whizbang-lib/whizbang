@@ -3354,7 +3354,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
 
-    var order = _constantOrder(symbol, migration, context.SemanticModel, ct);
+    var (order, stated) = _constantOrder(symbol, migration, context.SemanticModel, ct);
     problem ??= order is null
       ? "its Order is not a compile-time constant (return a literal or a const), so the build cannot place it"
       : null;
@@ -3364,30 +3364,36 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         DisplayName: TypeNameUtilities.Display(symbol),
         ModelTypeName: TypeNameUtilities.FullyQualified(migration.TypeArguments[0]),
         Problem: problem,
-        Order: order ?? 0);
+        Order: order ?? 0,
+        OrderStated: stated);
   }
 
   /// <summary>
   /// The <c>Order</c> a custom stored-form migration states, read at build time: the constant its implementation
   /// returns from an expression body, from a getter that only returns it, or from an initializer. Null when the
-  /// implementation is anything else, because the build then cannot know where the migration runs.
+  /// implementation is anything else, because the build then cannot know where the migration runs. A migration that
+  /// does not implement <c>Order</c> takes the interface's default, 0, and has not stated one.
   /// </summary>
-  private static int? _constantOrder(
+  private static (int? Order, bool Stated) _constantOrder(
       INamedTypeSymbol symbol, INamedTypeSymbol migration, SemanticModel semanticModel, CancellationToken ct) {
     var member = migration.AllInterfaces.SelectMany(i => i.GetMembers("Order")).OfType<IPropertySymbol>().First();
-    var expression = (symbol.FindImplementationForInterfaceMember(member) as IPropertySymbol)?.DeclaringSyntaxReferences
+    var implementation = symbol.FindImplementationForInterfaceMember(member);
+    if (implementation!.ContainingType.TypeKind == TypeKind.Interface) {
+      return (0, false);
+    }
+    var expression = implementation.DeclaringSyntaxReferences
       .Select(r => r.GetSyntax(ct))
       .OfType<PropertyDeclarationSyntax>()
       .Select(_orderExpression)
       .FirstOrDefault(e => e is not null);
     if (expression is null) {
-      return null;
+      return (null, true);
     }
     var constant = semanticModel.Compilation.GetSemanticModel(expression.SyntaxTree).GetConstantValue(expression, ct);
     // The property is an int, so any constant it returns converts to one (a byte or a char const, say).
     return constant is { HasValue: true, Value: IConvertible value }
-      ? Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture)
-      : null;
+      ? (Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture), true)
+      : (null, true);
   }
 
   /// <summary>The expression an <c>Order</c> property returns, when its declaration is one the build can read.</summary>
@@ -3433,9 +3439,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
 
-    // Two migrations of one table that state the same order still run in a stable order, but one nobody chose.
+    // Two migrations of one table that state the same order still run in a stable order, but one nobody chose. Two
+    // that state none are ordered by class name, as they always were, and are not reported.
     var shared = customMigrations.Distinct()
-      .Where(m => m.Problem is null && models.Contains(m.ModelTypeName))
+      .Where(m => m.Problem is null && m.OrderStated && models.Contains(m.ModelTypeName))
       .GroupBy(m => (m.ModelTypeName, m.Order))
       .Where(g => g.Count() > 1)
       .OrderBy(g => g.Key.ModelTypeName, StringComparer.Ordinal)
@@ -3770,13 +3777,15 @@ internal sealed record PerspectiveModelCandidate(
 /// <param name="DisplayName">The class as a diagnostic names it.</param>
 /// <param name="ModelTypeName">The model, fully qualified, matched against the perspectives' models.</param>
 /// <param name="Problem">Why it cannot be created, or <see langword="null"/> when it can.</param>
-/// <param name="Order">The <c>Order</c> it states, read at build time; 0 when it has a problem.</param>
+/// <param name="Order">The <c>Order</c> it states, read at build time; 0 when it states none or has a problem.</param>
+/// <param name="OrderStated">Whether the class implements <c>Order</c> itself rather than taking the default.</param>
 internal sealed record StoredFormMigrationClassInfo(
     string ClassName,
     string DisplayName,
     string ModelTypeName,
     string? Problem,
-    int Order = 0);
+    int Order = 0,
+    bool OrderStated = false);
 
 /// <summary>
 /// Information about a discovered multi-model ILensQuery constructor parameter.

@@ -116,9 +116,11 @@ emits `GetStoredFormMigrations()` as calls to `StoredFormMigrationSql.Generated(
 - Physical fields: a type change retypes the column (`RetypeColumn`), a rename renames it; an enum target
   is left to `EnumColumnRewriteSql`; a Split model has no document step.
 - Status: generated `GetStoredFormMigrationStatusAsync(dbContext)` and `whizbang stored-forms status`.
-- Custom order (#1007): `IStoredFormMigration.Order`, read by the generator as a compile-time constant (a non-constant
-  one is WHIZ831 and the migration is not emitted). Custom migrations run after the table's generated ones by
-  `Order`, class name breaking a tie, and a tie is WHIZ833. `Order` over `DependsOn`: a number is decided and checked
+- Custom order (#1007): `IStoredFormMigration.Order`, optional (a default interface member, `=> 0`, so migrations
+  written before it compile and keep class-name order). A stated one is read by the generator as a compile-time
+  constant (a non-constant one is WHIZ831 and the migration is not emitted). Custom migrations run after the table's
+  generated ones by `Order`, class name breaking a tie; WHIZ833 only when two migrations of a table STATE the same
+  order (two defaults are silent). `Order` over `DependsOn`: a number is decided and checked
   at build time; a dependency list needs missing-name and cycle checks and means nothing across tables.
 - Stale-cast indexes (#1007): a type change gets `StoredFormStep.ReplaceIndex` steps, ahead of the conversion, for the
   field's own ordered `[Indexed]` index and each composite over the key. Each drops the index only when it is the
