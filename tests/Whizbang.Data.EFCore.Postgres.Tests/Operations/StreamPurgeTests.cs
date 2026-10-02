@@ -234,6 +234,7 @@ public class StreamPurgeTests : EFCoreTestBase {
   private static readonly bool[] _ranThenSkipped = [true, false];
 
   private readonly Dictionary<Guid, Guid[]> _eventIdsByStream = [];
+  private readonly Guid _instance = Guid.CreateVersion7();
 
   private PostgresStreamPurger _purger(ListLogger? logger = null) {
     var dataSource = NpgsqlDataSource.Create(ConnectionString);
@@ -265,7 +266,7 @@ public class StreamPurgeTests : EFCoreTestBase {
   /// (inbox, claim into the event store and perspective work, completion into the cursor and the applied ledger),
   /// directly where the row is written by machinery a test cannot drive cheaply.
   /// </summary>
-  private static async Task _seedStreamAsync(WorkCoordinationDbContext ctx, NpgsqlConnection conn, Guid stream) {
+  private async Task _seedStreamAsync(WorkCoordinationDbContext ctx, NpgsqlConnection conn, Guid stream) {
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
     await _executeAsync(conn, """
       INSERT INTO wh_message_associations
@@ -287,28 +288,28 @@ public class StreamPurgeTests : EFCoreTestBase {
       IsEvent = true,
       Metadata = new EnvelopeMetadata { MessageId = MessageId.From(eventId), Hops = [] },
     }], partitionCount: 100);
-    var instance = Guid.CreateVersion7();
+    // One instance claims for every seeded stream: a second instance would find the partitions owned.
+    var instance = _instance;
     await _executeAsync(conn, """
       INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at)
       VALUES ($1, 'service-b', 'test-host', 1, NOW(), NOW())
+      ON CONFLICT DO NOTHING
       """, instance);
     await _executeAsync(conn, "SELECT count(*) FROM claim_work($1, 'service-b', 'test-host', 1, 10, 100, 300, 0.5, 10, FALSE, NULL)", instance);
 
     // The work row survives the completion below only for a second event; complete the first, keep the second's.
     var workId = await _scalarAsync<Guid>(conn, "SELECT event_work_id FROM wh_perspective_events WHERE event_id = $1", eventId);
-    await coordinator.CompletePerspectiveAsync(
-      cursors: [new PerspectiveCursorCompletion {
-        StreamId = stream,
-        PerspectiveName = PERSPECTIVE,
-        LastEventId = eventId,
-        Status = PerspectiveProcessingStatus.Completed,
-      }],
-      eventWorkIds: [workId], debugMode: false);
+    await coordinator.CompletePerspectiveAsync(cursors: [], eventWorkIds: [workId], debugMode: false);
+    // The cursor points at the stream's event, so the purge must remove it before the events (the FK is RESTRICT).
+    await _executeAsync(conn, """
+      INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, processed_at)
+      VALUES ($1, $2, $3, 2, NOW())
+      """, stream, PERSPECTIVE, eventId);
     await _executeAsync(conn, """
       INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id)
       VALUES (gen_random_uuid(), $1, $2, $3)
       """, stream, PERSPECTIVE + ".Second", eventId);
-    await _executeAsync(conn, "INSERT INTO wh_active_streams (stream_id) VALUES ($1) ON CONFLICT DO NOTHING", stream);
+    await _executeAsync(conn, "INSERT INTO wh_active_streams (stream_id, partition_number) VALUES ($1, 0) ON CONFLICT DO NOTHING", stream);
 
     // Outbound: the stream emitted a message.
     await coordinator.StoreOutboxMessagesAsync([new OutboxMessage {

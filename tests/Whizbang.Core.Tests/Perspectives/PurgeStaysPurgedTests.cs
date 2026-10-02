@@ -107,26 +107,25 @@ public class PurgeStaysPurgedTests {
     await Assert.That(completion.Status).IsEqualTo(PerspectiveProcessingStatus.Completed)
       .Because("the skipped event is done, so its work row is released and the cursor moves past it");
     await Assert.That(completion.LastEventId).IsEqualTo(bumped.MessageId.Value);
-    var skipped = harness.Metrics.GetByName("whizbang.perspective.purged_events_skipped");
-    await Assert.That(skipped.Sum(m => m.Value)).IsEqualTo(1);
-    await Assert.That(skipped[0].Tags["perspective_name"]).IsEqualTo(PERSPECTIVE_NAME);
+    await Assert.That(harness.Skipped()).IsEqualTo(1);
   }
 
   [Test]
   public async Task SameBatch_PurgeThenFollowUp_LeavesNoRow_AndMarksAsync() {
     var streamId = Guid.NewGuid();
     var harness = new Harness();
+    var created = _envelope(new PurgeStaysCreated { StreamId = streamId, Name = "order" });
     var deleted = _envelope(new PurgeStaysDeleted { StreamId = streamId });
 
     await harness.Runner.RunWithEventsAsync(streamId, PERSPECTIVE_NAME, null, [
-      _envelope(new PurgeStaysCreated { StreamId = streamId, Name = "order" }),
+      created,
       deleted,
       _envelope(new PurgeStaysBumped { StreamId = streamId }),
     ], CancellationToken.None);
 
     await Assert.That(await harness.Rows.GetByStreamIdAsync(streamId)).IsNull();
     await Assert.That(harness.Markers.Marked).Contains((streamId, PERSPECTIVE_NAME, (Guid?)deleted.MessageId.Value));
-    await Assert.That(harness.Metrics.GetByName("whizbang.perspective.purged_events_skipped").Sum(m => m.Value)).IsEqualTo(1);
+    await Assert.That(harness.Skipped()).IsEqualTo(1);
   }
 
   [Test]
@@ -183,7 +182,7 @@ public class PurgeStaysPurgedTests {
       .Because("with no row, Apply receives an empty model (stream key set, everything else default), never null");
     await Assert.That(row.Id).IsEqualTo(streamId);
     await Assert.That(harness.Markers.Lookups).IsEqualTo(1);
-    await Assert.That(harness.Metrics.GetByName("whizbang.perspective.purged_events_skipped")).IsEmpty();
+    await Assert.That(harness.Skipped()).IsEqualTo(0);
   }
 
   [Test]
@@ -225,7 +224,7 @@ public class PurgeStaysPurgedTests {
     await Assert.That(completion.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
     await Assert.That(completion.LastEventId).IsEqualTo(broken.MessageId.Value);
     await Assert.That(await harness.Rows.GetByStreamIdAsync(streamId)).IsNull();
-    await Assert.That(harness.Metrics.GetByName("whizbang.perspective.purged_events_skipped").Sum(m => m.Value)).IsEqualTo(1);
+    await Assert.That(harness.Skipped()).IsEqualTo(1);
   }
 
   [Test]
@@ -246,14 +245,16 @@ public class PurgeStaysPurgedTests {
   public async Task Rebuild_OfDeletedThenBumpedStream_LeavesNoRowAsync() {
     var streamId = Guid.NewGuid();
     var harness = new Harness();
-    var deleted = _envelope(new PurgeStaysDeleted { StreamId = streamId });
     await harness.Events.AppendAsync(streamId, _envelope(new PurgeStaysCreated { StreamId = streamId, Name = "order" }));
+    var deleted = _envelope(new PurgeStaysDeleted { StreamId = streamId });
     await harness.Events.AppendAsync(streamId, deleted);
     await harness.Events.AppendAsync(streamId, _envelope(new PurgeStaysBumped { StreamId = streamId }));
 
     await harness.Runner.RunRebuildAsync(streamId, PERSPECTIVE_NAME, CancellationToken.None);
 
     await Assert.That(await harness.Rows.GetByStreamIdAsync(streamId)).IsNull();
+    await Assert.That(harness.Skipped()).IsEqualTo(1)
+      .Because("the create applies, the delete purges, and only the bump after it is skipped");
     await Assert.That(harness.Markers.Marked).Contains((streamId, PERSPECTIVE_NAME, (Guid?)deleted.MessageId.Value));
   }
 
@@ -342,6 +343,18 @@ public class PurgeStaysPurgedTests {
     public MetricAssertionHelper Metrics { get; }
     public IPerspectiveRunner Runner { get; }
 
+    /// <summary>Events counted as skipped for this perspective (the tagged series; the untagged one is always 0).</summary>
+    public double Skipped() {
+      var tagged = Metrics.GetByName("whizbang.perspective.purged_events_skipped")
+        .Where(m => m.Tags.TryGetValue("perspective_name", out var name) && name == PERSPECTIVE_NAME)
+        .ToList();
+      return tagged.Count switch {
+        0 => 0,
+        1 => tagged[0].Value,
+        _ => throw new InvalidOperationException($"expected one tagged series, got {tagged.Count}: {string.Join(", ", tagged.Select(t => t.Value))}"),
+      };
+    }
+
     public Harness(bool withMarkers = true, bool withMetrics = true) {
       var services = new ServiceCollection();
       services.AddLogging();
@@ -372,8 +385,14 @@ public class PurgeStaysPurgedTests {
     }
   }
 
+  private static long _clock = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+  /// <summary>
+  /// An envelope whose id sorts after every earlier one: a millisecond apart, so the runner's id order is the
+  /// order the test wrote the events in (two ids minted in the same millisecond need not sort that way).
+  /// </summary>
   private static MessageEnvelope<IEvent> _envelope(IEvent payload) => new() {
-    MessageId = MessageId.New(),
+    MessageId = MessageId.From(Guid.CreateVersion7(DateTimeOffset.FromUnixTimeMilliseconds(Interlocked.Increment(ref _clock)))),
     Payload = payload,
     Hops = [
       new MessageHop {
