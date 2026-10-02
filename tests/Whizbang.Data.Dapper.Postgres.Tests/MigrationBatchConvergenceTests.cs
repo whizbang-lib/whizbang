@@ -200,7 +200,7 @@ public class MigrationBatchConvergenceTests : PostgresTestBase {
 
   private static async Task _seedBodiesAsync(NpgsqlConnection connection, int rows) {
     await using var cmd = connection.CreateCommand();
-    cmd.CommandText = @"
+    cmd.CommandText = """
       INSERT INTO public.wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, event_type, version,
          event_data, metadata, created_at)
@@ -211,13 +211,14 @@ public class MigrationBatchConvergenceTests : PostgresTestBase {
         'Some.Aggregate, Some.Assembly',
         'Some.Event, Some.Assembly',
         g,
-        ('{""n"":' || g || '}')::jsonb,
+        ('{"n":' || g || '}')::jsonb,
         '{}'::jsonb,
         NOW()
       FROM generate_series(1, @rows) AS g;
       INSERT INTO public.wh_body_split_todo (event_id)
-      SELECT event_id FROM public.wh_event_store WHERE event_data IS NOT NULL ORDER BY event_id;";
-    cmd.Parameters.AddWithValue("rows", rows);
+      SELECT event_id FROM public.wh_event_store WHERE event_data IS NOT NULL ORDER BY event_id;
+      """;
+    cmd.Parameters.AddWithValue(nameof(rows), rows);
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -247,7 +248,7 @@ public class MigrationBatchConvergenceTests : PostgresTestBase {
 
       // One call per slice, plus the call that finds the worklist exhausted. More than that means
       // slices overlap or the cursor is not advancing — the shape that made this quadratic.
-      await Assert.That(calls).IsEqualTo(rows / limit + 1);
+      await Assert.That(calls).IsEqualTo((rows / limit) + 1);
 
       // The cursor only ever moves forward, so no entry is claimed twice.
       for (var i = 1; i < cursors.Count; i++) {
@@ -359,7 +360,7 @@ public class MigrationBatchConvergenceTests : PostgresTestBase {
         moved = await _scalarAsync(connection,
           $"SELECT public.wh_backfill_event_bodies_batch({limit});");
         calls++;
-        await Assert.That(calls).IsLessThanOrEqualTo(rows / limit + 5);
+        await Assert.That(calls).IsLessThanOrEqualTo((rows / limit) + 5);
       } while (moved > 0);
 
       await Task.Delay(1500);

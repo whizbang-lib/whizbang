@@ -61,7 +61,7 @@ public class MigrationWorklistBatchTests : PostgresTestBase {
       moved = await _scalarAsync(c, $"SELECT public.{function}({LIMIT});");
       await Assert.That(moved).IsLessThanOrEqualTo(LIMIT);
       calls++;
-      await Assert.That(calls).IsLessThanOrEqualTo(ROWS / LIMIT + 10);
+      await Assert.That(calls).IsLessThanOrEqualTo((ROWS / LIMIT) + 10);
     } while (moved > 0);
 
     await Task.Delay(1500);

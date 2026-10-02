@@ -234,8 +234,6 @@ END $$;
 -- conflicting insert reports zero rows, so a slice of rows already seeded would read as "nothing
 -- left to do" and stop with the rest of the table unseeded. Excluding them instead means each call
 -- moves forward.
--- <docs>operations/infrastructure/migrations#batched-regions</docs>
--- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheGuardedBackfillsReportZeroRatherThanFailingAsync</tests>
 -- Driven off a worklist for the same reason as the full-body split in 077: a slice taken from a
 -- predicate re-reads the rows it already handled, so the pass is bounded per statement and quadratic
 -- overall. Measured there at 23.0s against 1.8s over 200k rows, and the gap grows with the table.
@@ -265,6 +263,9 @@ $wb$;
 -- It cannot know the call repeats once per slice, which turns that choice into a scan per slice --
 -- the whole defect, just moved from finding the slice to applying it. Denying the sequential path
 -- leaves the keyed lookups, whose cost is the slice and not the table.
+-- <docs>operations/infrastructure/migrations#batched-regions</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheGuardedBackfillsReportZeroRatherThanFailingAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationWorklistBatchTests.cs:TheInboxStateSeedReadsItsWorklistNotTheInboxAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_seed_inbox_state_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE

@@ -544,8 +544,6 @@ COMMENT ON FUNCTION __SCHEMA__.wh_backfill_event_bodies IS
 -- the inline columns) the body would fail at execution with 42703 — there is nothing left to
 -- backfill, so the guard returns zero and the runner stops after one call. PL/pgSQL plans a
 -- statement when it first runs it, so the guarded statements are never planned on that path.
--- <docs>operations/infrastructure/migrations#batched-regions</docs>
--- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheGuardedBackfillsReportZeroRatherThanFailingAsync</tests>
 -- ── The worklist ───────────────────────────────────────────────────────────────────────────────
 -- The slice has to come off a list built once, not from a predicate evaluated again on every call.
 -- A predicate leaves the rows already handled in front of the ones still to do, so call N re-reads
@@ -592,6 +590,11 @@ $wb$;
 -- thousand index lookups. It cannot know the call repeats once per slice, which turns that choice
 -- into a full scan per slice -- the whole defect, just moved from finding the slice to joining it.
 -- Denying the sequential path leaves the keyed lookups, whose cost is the slice and not the store.
+-- <docs>operations/infrastructure/migrations#batched-regions</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheGuardedBackfillsReportZeroRatherThanFailingAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheBackfillClaimsEachWorklistEntryExactlyOnceAndThenStopsAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:AClaimedSliceThatMovesNothingStillAdvancesThePassAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheWholePassCostsBlocksInProportionToTheRowsNotTheirSquareAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_backfill_event_bodies_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE

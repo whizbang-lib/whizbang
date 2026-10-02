@@ -163,9 +163,6 @@ GRANT EXECUTE ON FUNCTION register_message_associations(JSONB, VARCHAR) TO PUBLI
 -- in a consumer with many message types. The whole migration is one command with one timeout, so an
 -- unbounded rewrite cannot finish once the table is large enough. ctid bounds the slice without
 -- needing a declared key, since this table is created from code rather than here.
--- <docs>operations/infrastructure/migrations#batched-regions</docs>
--- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheBackfillMovesOneBoundedSliceAtATimeAndThenStopsAsync</tests>
--- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheBackfillReportsNothingWhenThereIsNothingToDoAsync</tests>
 -- Driven off a worklist for the same reason as the full-body split in 077: a slice taken from a
 -- predicate re-reads the rows it already handled, so the pass is bounded per statement and quadratic
 -- overall. Measured there at 23.0s against 1.8s over 200k rows, and the gap grows with the table.
@@ -194,6 +191,10 @@ $wb$;
 -- The planner costs each call alone, where scanning a small table beats a hundred keyed lookups. It
 -- cannot know the call repeats once per slice, which turns that choice into a scan per slice. Denying
 -- the sequential path leaves the keyed lookups, whose cost is the slice and not the table.
+-- <docs>operations/infrastructure/migrations#batched-regions</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheBackfillMovesOneBoundedSliceAtATimeAndThenStopsAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheBackfillReportsNothingWhenThereIsNothingToDoAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationWorklistBatchTests.cs:TheMessageTypeNormalizationReadsItsWorklistNotTheRegistryAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_backfill_normalized_message_type_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE

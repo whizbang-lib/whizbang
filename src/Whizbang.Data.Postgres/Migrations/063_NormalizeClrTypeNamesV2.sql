@@ -40,8 +40,6 @@
 -- The same version guard the block uses lives inside here, so a store already at v3 reports zero on
 -- the first call and the runner stops. The predicate excludes rows that already hold the derived
 -- value, which is what makes the count fall to zero rather than repeating forever.
--- <docs>operations/infrastructure/migrations#batched-regions</docs>
--- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheGuardedBackfillsReportZeroRatherThanFailingAsync</tests>
 -- Driven off a worklist for the same reason as the full-body split in 077: a slice taken from a
 -- predicate re-reads the rows it already handled, so the pass is bounded per statement and quadratic
 -- overall. Measured there at 23.0s against 1.8s over 200k rows, and the gap grows with the table.
@@ -73,6 +71,9 @@ $wb$;
 -- It cannot know the call repeats once per slice, which turns that choice into a scan per slice --
 -- the whole defect, just moved from finding the slice to applying it. Denying the sequential path
 -- leaves the keyed lookups, whose cost is the slice and not the table.
+-- <docs>operations/infrastructure/migrations#batched-regions</docs>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationBatchConvergenceTests.cs:TheGuardedBackfillsReportZeroRatherThanFailingAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/MigrationWorklistBatchTests.cs:TheAggregateTypeNormalizationReadsItsWorklistNotTheStoreAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_normalize_aggregate_type_batch(p_limit INT)
 RETURNS BIGINT AS $$
 DECLARE
