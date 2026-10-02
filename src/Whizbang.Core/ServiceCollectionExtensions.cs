@@ -429,6 +429,8 @@ public static class ServiceCollectionExtensions {
     // Cursor persistence is routed through IPerspectiveCheckpointCompleter, which is
     // registered by the storage driver extension (.WithDriver.Postgres or AddWhizbangPostgres).
     services.TryAddSingleton<Perspectives.IPerspectiveRebuilder, Perspectives.PerspectiveRebuilder>();
+    // The operator's repair for events lost in transport: ask an origin to republish named streams (#1028).
+    services.TryAddSingleton<Messaging.IStreamRedeliveryRequester, Messaging.StreamRedeliveryRequester>();
   }
 
   /// <summary>

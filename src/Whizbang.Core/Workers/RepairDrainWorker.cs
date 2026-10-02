@@ -139,29 +139,19 @@ public sealed partial class RepairDrainWorker(
         fromSeq = from > 0 ? from - 1 : null;
         toSeq = until - 1;
       }
-      var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
-        Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
-        MessageId = new MessageId(TrackedGuid.New()),
-        Payload = new RequestRedeliveryCommand {
-          TenantScope = string.IsNullOrEmpty(group.Key.TenantScope) ? null : group.Key.TenantScope,
-          EventTypes = [group.Key.EventType],
-          StreamIds = items.ConvertAll(i => i.StreamId),
-          RequesterService = requester,
-          Topic = replyTopic,
-          FromCommitSequence = fromSeq,
-          ToCommitSequence = toSeq,
-        },
-        Hops = [
-          Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, now)
-        ],
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
-        Target = origin.OriginServiceName,
+      var command = new RequestRedeliveryCommand {
+        TenantScope = string.IsNullOrEmpty(group.Key.TenantScope) ? null : group.Key.TenantScope,
+        EventTypes = [group.Key.EventType],
+        StreamIds = items.ConvertAll(i => i.StreamId),
+        RequesterService = requester,
+        Topic = replyTopic,
+        FromCommitSequence = fromSeq,
+        ToCommitSequence = toSeq,
       };
-      var serialized = serializer.SerializeEnvelope(envelope);
       try {
-        await transport.PublishAsync(serialized.JsonEnvelope,
-          ControlPlaneDestination.For(origin.RequestTopic!, items[0].StreamId, typeof(RequestRedeliveryCommand)),
-          serialized.EnvelopeType, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await RedeliveryRequestDispatch.PublishAsync(
+          transport, serializer, instanceProvider, command, origin.OriginServiceName, origin.RequestTopic!, items[0].StreamId,
+          now, cancellationToken).ConfigureAwait(false);
       } catch (OperationCanceledException) {
         throw;
       } catch (Exception ex) {
