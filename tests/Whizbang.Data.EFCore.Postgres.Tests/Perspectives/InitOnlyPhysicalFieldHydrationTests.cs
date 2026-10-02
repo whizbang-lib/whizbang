@@ -170,7 +170,9 @@ public class InitOnlyPhysicalFieldHydrationTests : EFCoreTestBase {
           provider.GetRequiredService<IServiceScopeFactory>(),
           snapshotStore: snapshotStore,
           snapshotOptions: Microsoft.Extensions.Options.Options.Create(new PerspectiveSnapshotOptions {
-            Enabled = true, SnapshotEveryNEvents = 1, MaxSnapshotsPerStream = 10
+            Enabled = true,
+            SnapshotEveryNEvents = 1,
+            MaxSnapshotsPerStream = 10
           }));
       var result = await runner.RunAsync(streamId, SPLIT_CLASS_TABLE, null, CancellationToken.None);
       await Assert.That(result.EventsProcessed).IsEqualTo(1);
