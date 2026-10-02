@@ -3,8 +3,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
-using Whizbang.Generators.Shared.Models;
 using Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
+using Whizbang.Generators.Shared.Models;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
