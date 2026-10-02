@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -53,6 +54,9 @@ public class PhysicalJsonbContainmentIntegrationTests {
   }
 
   internal static JsonbColumnsDbContext Context(string connectionString, DbCommandInterceptor? interceptor = null) {
+    // The generated registration an application's AddWhizbang runs: it fills the query and hydrator
+    // registries for this context's models. Once per collection, so calling it per context is harmless.
+    ModelRegistrationRegistry.InvokeRegistration(new ServiceCollection(), typeof(JsonbColumnsDbContext), new PostgresUpsertStrategy());
     var builder = new DbContextOptionsBuilder<JsonbColumnsDbContext>()
       .UseNpgsql(connectionString)
       .UseWhizbangPhysicalFields()
@@ -93,9 +97,11 @@ public class PhysicalJsonbContainmentIntegrationTests {
     await Assert.That(read.Place!.City).IsEqualTo("Springfield");
     await Assert.That(read.Stamp).IsEqualTo(model.Stamp);
 
-    var sameBytes = await _scalarAsync($"SELECT grid_filter = data -> 'GridFilter' FROM {EXTRACTED_TABLE} WHERE id = '{id}'");
-    await Assert.That(sameBytes).IsEqualTo("True")
-      .Because("the column and the document are written by the same serializer under the same profile.");
+    // The atomic upsert serializes the whole model, so its document carries the field as well, in the same
+    // bytes. The change-tracker path writes the document through the mapping, which leaves the field out:
+    // the column is the copy every reader uses.
+    var copy = await _scalarAsync($"SELECT coalesce((grid_filter = data -> 'GridFilter')::text, 'absent') FROM {EXTRACTED_TABLE} WHERE id = '{id}'");
+    await Assert.That(copy).IsEqualTo(atomic ? "true" : "absent");
   }
 
   /// <summary>
@@ -113,7 +119,7 @@ public class PhysicalJsonbContainmentIntegrationTests {
     await using (var context = Context(_connectionString)) {
       var store = new EFCorePostgresPerspectiveStore<JsonbSplitItem.Model>(context, SPLIT_TABLE, UpsertWritePath.Strategy(atomic));
       // Stripped as the generated runner strips a Split model before the write.
-      await store.UpsertWithPhysicalFieldsAsync(id, new JsonbSplitItem.Model { Id = id, Title = "t" }, physical);
+      await store.UpsertWithPhysicalFieldsAsync(id, new JsonbSplitItem.Model { Id = id, Title = "t", GridFilter = null! }, physical);
     }
 
     await using var reading = Context(_connectionString);

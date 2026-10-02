@@ -60,14 +60,16 @@ public class PhysicalJsonbContainmentSqlTests {
 
     var sql = _sql(rows => rows.Where(r => r.Data.GridFilter[key].Contains(value)));
 
-    await Assert.That(sql).Contains("r.grid_filter @> jsonb_build_object(@key, jsonb_build_array(to_jsonb(@value)))");
+    // Entity Framework evaluates a dictionary indexer's captured key into the query as a literal, so the key
+    // is part of the compiled query's shape and only the value is a parameter.
+    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_object('region', jsonb_build_array(to_jsonb(@value)))");
   }
 
   [Test]
   public async Task DictionaryKeyContains_Constant_CompilesToContainmentAsync() {
     var sql = _sql(rows => rows.Where(r => r.Data.GridFilter["region"].Contains("north")));
 
-    await Assert.That(sql).Contains("r.grid_filter @> jsonb_build_object('region', jsonb_build_array(to_jsonb('north'::text)))");
+    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_object('region', jsonb_build_array(to_jsonb('north'::text)))");
   }
 
   [Test]
@@ -76,7 +78,7 @@ public class PhysicalJsonbContainmentSqlTests {
 
     var sql = _sql(rows => rows.Where(r => r.Data.GridFilter["region"].Any(v => v == value)));
 
-    await Assert.That(sql).Contains("r.grid_filter @> jsonb_build_object('region', jsonb_build_array(to_jsonb(@value)))");
+    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_object('region', jsonb_build_array(to_jsonb(@value)))");
   }
 
   [Test]
@@ -85,7 +87,7 @@ public class PhysicalJsonbContainmentSqlTests {
 
     var sql = _sql(rows => rows.Where(r => r.Data.Counts["open"] == count));
 
-    await Assert.That(sql).Contains("r.counts @> jsonb_build_object('open', to_jsonb(@count))");
+    await Assert.That(sql).Contains("w.counts @> jsonb_build_object('open', to_jsonb(@count))");
   }
 
   // ------------------------------------------------------------------
@@ -98,7 +100,7 @@ public class PhysicalJsonbContainmentSqlTests {
 
     var sql = _sql(rows => rows.Where(r => r.Data.Tags.Contains(tag)));
 
-    await Assert.That(sql).Contains("r.tags @> jsonb_build_array(to_jsonb(@tag))");
+    await Assert.That(sql).Contains("w.tags @> jsonb_build_array(to_jsonb(@tag))");
   }
 
   [Test]
@@ -107,7 +109,7 @@ public class PhysicalJsonbContainmentSqlTests {
 
     var sql = _sql(rows => rows.Where(r => r.Data.Owners.Contains(id)));
 
-    await Assert.That(sql).Contains("r.owners @> jsonb_build_array(to_jsonb(@id))");
+    await Assert.That(sql).Contains("w.owners @> jsonb_build_array(to_jsonb(@id))");
   }
 
   [Test]
@@ -118,7 +120,7 @@ public class PhysicalJsonbContainmentSqlTests {
     var sql = _sql(rows => rows.Where(r => r.Data.Labels.Any(l => l.Key == key && l.Label == label)));
 
     await Assert.That(sql).Contains(
-      "r.labels @> jsonb_build_array(jsonb_build_object('k', to_jsonb(@key)) || jsonb_build_object('Label', to_jsonb(@label)))");
+      "w.labels @> jsonb_build_array(jsonb_build_object('k', to_jsonb(@key)) || jsonb_build_object('Label', to_jsonb(@label)))");
   }
 
   // ------------------------------------------------------------------
@@ -132,7 +134,7 @@ public class PhysicalJsonbContainmentSqlTests {
     var sql = _sql(rows => rows.Where(r => r.Data.Location!.Address.City == city));
 
     await Assert.That(sql).Contains(
-      "r.location @> jsonb_build_object('Address', jsonb_build_object('City', to_jsonb(@city)))");
+      "w.location @> jsonb_build_object('Address', jsonb_build_object('City', to_jsonb(@city)))");
   }
 
   [Test]
@@ -141,7 +143,7 @@ public class PhysicalJsonbContainmentSqlTests {
 
     var sql = _sql(rows => rows.Where(r => zone == r.Data.Location!.Zone));
 
-    await Assert.That(sql).Contains("r.location @> jsonb_build_object('Zone', to_jsonb(@zone))");
+    await Assert.That(sql).Contains("w.location @> jsonb_build_object('Zone', to_jsonb(@zone))");
   }
 
   [Test]
@@ -150,7 +152,7 @@ public class PhysicalJsonbContainmentSqlTests {
 
     var sql = _sql(rows => rows.Where(r => !r.Data.Tags.Contains(tag)));
 
-    await Assert.That(sql).Contains("NOT (r.tags @> jsonb_build_array(to_jsonb(@tag)))");
+    await Assert.That(sql).Contains("NOT (w.tags @> jsonb_build_array(to_jsonb(@tag)))");
   }
 
   [Test]
@@ -160,8 +162,8 @@ public class PhysicalJsonbContainmentSqlTests {
 
     var sql = _sql(rows => rows.Where(r => r.Data.Tags.Contains(tag) && r.Data.GridFilter["region"].Contains(value)));
 
-    await Assert.That(sql).Contains("r.tags @> jsonb_build_array(to_jsonb(@tag))");
-    await Assert.That(sql).Contains("r.grid_filter @> jsonb_build_object('region', jsonb_build_array(to_jsonb(@value)))");
+    await Assert.That(sql).Contains("w.tags @> jsonb_build_array(to_jsonb(@tag))");
+    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_object('region', jsonb_build_array(to_jsonb(@value)))");
   }
 
   [Test]
@@ -172,7 +174,7 @@ public class PhysicalJsonbContainmentSqlTests {
     try {
       var sql = context.Set<PerspectiveRow<JsonbColumnsModel>>().Where(r => r.Data.Tags.Contains(tag)).ToQueryString();
 
-      await Assert.That(sql).Contains("r.tags @> jsonb_build_array(to_jsonb(@tag))");
+      await Assert.That(sql).Contains("w.tags @> jsonb_build_array(to_jsonb(@tag))");
     } finally {
       JsonbContainmentSwitch.Reset();
     }
@@ -203,6 +205,10 @@ public class PhysicalJsonbContainmentSqlTests {
     /// <summary>Never stored, so a filter on it has no stored name to compile against.</summary>
     [JsonIgnore]
     public string? Hidden { get; set; }
+
+    /// <summary>Left out only when null, so a value is stored under its name.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Note { get; set; }
   }
 
   /// <summary>A read model whose filter values live in promoted jsonb columns.</summary>

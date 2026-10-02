@@ -1,8 +1,11 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
+using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Query.Expressions.Internal;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Storage.Internal.Mapping;
 
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 
@@ -149,29 +152,46 @@ public static class JsonbDocument {
     return null;
   }
 
-  /// <summary><c>to_jsonb(value)</c>.</summary>
-  internal static SqlExpression EmitValue(IReadOnlyList<SqlExpression> args) =>
-    new SqlFunctionExpression(
-      "to_jsonb", [args[0]], nullable: true, argumentsPropagateNullability: _one, typeof(string), typeMapping: null);
+  /// <summary>
+  /// The type every built document carries: jsonb. Typed here so the containment operator takes the document
+  /// as it is, without a cast, and so a concatenation of two documents has a type to render with.
+  /// </summary>
+  [SuppressMessage("Usage", "EF1001:Internal EF Core API usage",
+    Justification = "The provider's jsonb mapping is the only one a built document can carry; it has no public " +
+      "constructor surface, and ProviderCapabilities pins the provider versions this was validated against.")]
+  private static readonly RelationalTypeMapping _jsonb = new NpgsqlJsonTypeMapping("jsonb", typeof(string), null);
+
+  /// <summary><c>to_jsonb(value)</c>, with a literal cast to its own type.</summary>
+  /// <remarks>
+  /// A literal reaches SQL without a type, and <c>to_jsonb</c> is polymorphic: <c>to_jsonb('north')</c> is
+  /// refused because the type cannot be decided. A parameter is already typed and is passed as it is.
+  /// </remarks>
+  internal static SqlExpression EmitValue(IReadOnlyList<SqlExpression> args) {
+    var value = args[0] is SqlConstantExpression { TypeMapping: { } mapping } constant
+      ? new SqlUnaryExpression(ExpressionType.Convert, constant, constant.Type, mapping)
+      : args[0];
+
+    return new SqlFunctionExpression(
+      "to_jsonb", [value], nullable: true, argumentsPropagateNullability: _one, typeof(string), _jsonb);
+  }
 
   /// <summary><c>jsonb_build_object(key, value)</c>.</summary>
   internal static SqlExpression EmitMember(IReadOnlyList<SqlExpression> args) =>
     new SqlFunctionExpression(
       "jsonb_build_object", [args[0], args[1]], nullable: true, argumentsPropagateNullability: _two, typeof(string),
-      typeMapping: null);
+      _jsonb);
 
   /// <summary><c>jsonb_build_array(element)</c>.</summary>
   internal static SqlExpression EmitArray(IReadOnlyList<SqlExpression> args) =>
     new SqlFunctionExpression(
-      "jsonb_build_array", [args[0]], nullable: true, argumentsPropagateNullability: _one, typeof(string),
-      typeMapping: null);
+      "jsonb_build_array", [args[0]], nullable: true, argumentsPropagateNullability: _one, typeof(string), _jsonb);
 
   /// <summary><c>left || right</c>.</summary>
   [SuppressMessage("Usage", "EF1001:Internal EF Core API usage",
     Justification = "PgUnknownBinaryExpression is the provider's only seam for an arbitrary operator, the same one " +
       "the containment translation already relies on; jsonb concatenation has no public expression type.")]
   internal static SqlExpression EmitMerge(IReadOnlyList<SqlExpression> args) =>
-    new PgUnknownBinaryExpression(args[0], args[1], "||", typeof(string), typeMapping: null);
+    new PgUnknownBinaryExpression(args[0], args[1], "||", typeof(string), _jsonb);
 
   /// <summary>Registers every marker's translation.</summary>
   /// <param name="modelBuilder">The model being built.</param>

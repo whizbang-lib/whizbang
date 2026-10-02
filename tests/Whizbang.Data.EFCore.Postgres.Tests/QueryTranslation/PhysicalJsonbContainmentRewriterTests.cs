@@ -67,6 +67,8 @@ public class PhysicalJsonbContainmentRewriterTests {
     await Assert.That(_containments(r => Enumerable.Contains(r.Data.Tags, tag))).IsEqualTo(1);
     await Assert.That(_containments(r => r.Data.Labels.Any(l => l.Key == key && l.Label == tag))).IsEqualTo(1);
     await Assert.That(_containments(r => r.Data.Location!.Address.City == tag)).IsEqualTo(1);
+    await Assert.That(_containments(r => r.Data.Location!.Note == tag)).IsEqualTo(1)
+      .Because("a member ignored only when null is stored under its name whenever it has a value.");
     await Assert.That(_containments(r => !r.Data.Tags.Contains(tag))).IsEqualTo(1);
     await Assert.That(_containments(r => r.Data.Tags.Contains(null!))).IsEqualTo(1)
       .Because("a null element is a stored null element, which is what the in-memory Contains matches.");
@@ -133,52 +135,43 @@ public class PhysicalJsonbContainmentRewriterTests {
     var key = "k";
     var when = DateTime.UtcNow;
     Func<string, bool> isRed = v => v == "red";
-
-    // Not equality, not membership.
-    await Assert.That(_containments(r => r.Data.Tags.Count() > 1)).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.GridFilter.ContainsKey(key))).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Location!.Zone > 3)).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Location!.Address.City.Contains(tag))).IsEqualTo(0)
-      .Because("a substring test is not membership.");
-    await Assert.That(_containments(r => r.Data.Tags.Contains(tag, StringComparer.Ordinal))).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Tags.Any())).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Tags.Any(isRed))).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Labels.AsQueryable().Any(l => l.Key == key))).IsEqualTo(0);
-
-    // Not a value.
-    await Assert.That(_containments(r => r.Data.Location!.Zone == r.Version)).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Tags.Contains(r.Data.Title))).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.GridFilter[r.Data.Title].Contains(tag))).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Labels.Any(l => l.Key == l.Label))).IsEqualTo(0);
-
-    // A literal null, the whole column, a type whose rendering may differ.
-    await Assert.That(_containments(r => r.Data.Location!.Address.City == null)).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Labels.Any(l => l.Key == null))).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Location == null)).IsEqualTo(0);
     var place = new PhysicalJsonbContainmentSqlTests.JsonbLocation();
-    await Assert.That(_containments(r => r.Data.Location == place)).IsEqualTo(0)
-      .Because("the whole column is not a member of it.");
-    await Assert.That(_containments(r => r.Data.Stamps.Contains(when))).IsEqualTo(0);
 
-    // Element predicates containment cannot express as one element.
-    await Assert.That(_containments(r => r.Data.Labels.Any(l => l.Key == key || l.Label == tag))).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Tags.Any(v => v == key && v == tag))).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Places.Any(p => p.Address.City == key && p.Address.City == tag))).IsEqualTo(0)
-      .Because("two conditions under one member would replace each other in a shallow merge.");
-    await Assert.That(_containments(r => r.Data.Rows.Any(d => d[key] == tag))).IsEqualTo(0)
-      .Because("an element keyed by a variable has no constant name to merge under.");
-    await Assert.That(_containments(r => r.Data.Rows.Any(d => d["a"] == tag && d["b"] == key))).IsEqualTo(1)
-      .Because("constant keys are distinct names, so the merge is exact.");
+    var shapes = new List<(string Name, Expression<Func<Row, bool>> Filter, bool WithModel, int Expected)> {
+      ("r => r.Data.Tags.Count() > 1", r => r.Data.Tags.Count() > 1, true, 0),
+      ("r => r.Data.GridFilter.ContainsKey(key)", r => r.Data.GridFilter.ContainsKey(key), true, 0),
+      ("r => r.Data.Location!.Zone > 3", r => r.Data.Location!.Zone > 3, true, 0),
+      ("r => r.Data.Location!.Address.City.Contains(tag)", r => r.Data.Location!.Address.City.Contains(tag), true, 0),
+      ("r => r.Data.Tags.Contains(tag, StringComparer.Ordinal)", r => r.Data.Tags.Contains(tag, StringComparer.Ordinal), true, 0),
+      ("r => r.Data.Tags.Any()", r => r.Data.Tags.Any(), true, 0),
+      ("r => r.Data.Tags.Any(isRed)", r => r.Data.Tags.Any(isRed), true, 0),
+      ("r => r.Data.Labels.AsQueryable().Any(l => l.Key == key)", r => r.Data.Labels.AsQueryable().Any(l => l.Key == key), true, 0),
+      ("r => r.Data.Location!.Zone == r.Version", r => r.Data.Location!.Zone == r.Version, true, 0),
+      ("r => r.Data.Tags.Contains(r.Data.Title)", r => r.Data.Tags.Contains(r.Data.Title), true, 0),
+      ("r => r.Data.GridFilter[r.Data.Title].Contains(tag)", r => r.Data.GridFilter[r.Data.Title].Contains(tag), true, 0),
+      ("r => r.Data.Labels.Any(l => l.Key == l.Label)", r => r.Data.Labels.Any(l => l.Key == l.Label), true, 0),
+      ("r => r.Data.Location!.Address.City == null", r => r.Data.Location!.Address.City == null, true, 0),
+      ("r => r.Data.Labels.Any(l => l.Key == null)", r => r.Data.Labels.Any(l => l.Key == null), true, 0),
+      ("r => r.Data.Location == null", r => r.Data.Location == null, true, 0),
+      ("r => r.Data.Location == place", r => r.Data.Location == place, true, 0),
+      ("r => r.Data.Stamps.Contains(when)", r => r.Data.Stamps.Contains(when), true, 0),
+      ("r => r.Data.Labels.Any(l => l.Key == key || l.Label == tag)", r => r.Data.Labels.Any(l => l.Key == key || l.Label == tag), true, 0),
+      ("r => r.Data.Tags.Any(v => v == key && v == tag)", r => r.Data.Tags.Any(v => v == key && v == tag), true, 0),
+      ("r => r.Data.Places.Any(p => p.Address.City == key && p.Address.City == tag)", r => r.Data.Places.Any(p => p.Address.City == key && p.Address.City == tag), true, 0),
+      ("r => r.Data.Rows.Any(d => d[key] == tag)", r => r.Data.Rows.Any(d => d[key] == tag), true, 0),
+      ("r => r.Data.Rows.Any(d => d[\"a\"] == tag && d[\"b\"] == key)", r => r.Data.Rows.Any(d => d["a"] == tag && d["b"] == key), true, 1),
+      ("r => r.Data.Title == tag", r => r.Data.Title == tag, true, 0),
+      ("r => r.Data.Location!.Hidden == tag", r => r.Data.Location!.Hidden == tag, true, 0),
+      ("r => r.Data.GridFilter.Count == 1", r => r.Data.GridFilter.Count == 1, true, 0),
+      ("r => r.Data.ByNumber[1] == tag", r => r.Data.ByNumber[1] == tag, true, 0),
+      ("r => r.Data.Other!.Name == tag", r => r.Data.Other!.Name == tag, true, 0),
+      ("r => _local(r.Data).Tags.Contains(tag)", r => _local(r.Data).Tags.Contains(tag), true, 0),
+      ("r => r.Data.Tags.Contains(tag)", r => r.Data.Tags.Contains(tag), false, 0),
+    };
 
-    // Not a jsonb column, or not a member the serializer knows.
-    await Assert.That(_containments(r => r.Data.Title == tag)).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Location!.Hidden == tag)).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.GridFilter.Count == 1)).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.ByNumber[1] == tag)).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Other!.Name == tag)).IsEqualTo(0)
-      .Because("a member the serializer has no metadata for has no stored name to compile against.");
-    await Assert.That(_containments(r => _local(r.Data).Tags.Contains(tag))).IsEqualTo(0);
-    await Assert.That(_containments(r => r.Data.Tags.Contains(tag), withModel: false)).IsEqualTo(0);
+    var wrong = shapes.Where(s => _containments(s.Filter, s.WithModel) != s.Expected).Select(s => s.Name).ToList();
+
+    await Assert.That(wrong).IsEmpty();
   }
 
   [Test]

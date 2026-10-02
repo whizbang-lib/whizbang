@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -342,7 +343,19 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
     }
 
     foreach (var property in info.Properties) {
+      // Source-generated metadata lists a [JsonIgnore] member too; it is never written, so it has no stored name.
       if (property.AttributeProvider is MemberInfo declared && string.Equals(declared.Name, member, StringComparison.Ordinal)) {
+        return declared.GetCustomAttribute<JsonIgnoreAttribute>() is { Condition: JsonIgnoreCondition.Always }
+          ? null
+          : property.Name;
+      }
+    }
+
+    // Metadata built without an attribute provider (the framework's own generated contexts) cannot say which
+    // member a JSON property came from. Those contexts write a member under its own name, so a JSON property
+    // of exactly that name is the member's; anything else stands down.
+    foreach (var property in info.Properties) {
+      if (property.AttributeProvider is null && string.Equals(property.Name, member, StringComparison.Ordinal)) {
         return property.Name;
       }
     }
