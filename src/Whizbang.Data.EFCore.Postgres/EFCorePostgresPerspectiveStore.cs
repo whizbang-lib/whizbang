@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 
@@ -48,18 +49,48 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     _loadAsync(streamId, cancellationToken);
 
   /// <summary>
-  /// The rows this store reads: the mapped table, or the shadow table a blue-green rebuild redirected this flow to
-  /// (<see cref="PerspectiveTableRedirect"/>), read through the same mapping.
+  /// Reads the row from the shadow table a blue-green rebuild redirected this flow to
+  /// (<see cref="PerspectiveTableRedirect"/>): its document, its metadata and, for a Split model, its promoted
+  /// columns. With SQL, because EF Core cannot map a JSON complex property over a raw query; the document is read
+  /// with the persistence options the atomic upsert wrote it with.
   /// </summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "EF1002:Risk of vulnerability to SQL injection",
-    Justification = "The only text is a quoted table identifier from the EF model and the rebuild's own shadow-table name; there are no values.")]
-  private IQueryable<PerspectiveRow<TModel>> _rows() {
-    var rows = _context.Set<PerspectiveRow<TModel>>();
-    if (!PerspectiveTableRedirect.IsActive || PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is not { } shadow) {
-      return rows;
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
+    Justification = "The only text is a quoted table identifier from the EF model and the rebuild's own shadow-table name, and plain column identifiers the generator registered; the id is a parameter.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("csharpsquid", "S2077:Formatting SQL queries is security-sensitive",
+    Justification = "The only text is a quoted table identifier from the EF model and the rebuild's own shadow-table name, and plain column identifiers the generator registered; the id is a parameter.")]
+  private async Task<(TModel? Model, PerspectiveMetadata? Metadata)> _readRedirectedAsync(
+      string shadow, Guid id, CancellationToken cancellationToken) {
+    SplitPhysicalFieldRegistry.TryGet<TModel>(out var split);
+    var columns = split?.Columns ?? [];
+    var physical = string.Concat(columns.Select(c => ", " + (c.IsVector ? c.Name + "::real[]" : c.Name)));
+    var connection = (Npgsql.NpgsqlConnection)_context.Database.GetDbConnection();
+    var opened = connection.State != System.Data.ConnectionState.Open;
+    if (opened) {
+      await connection.OpenAsync(cancellationToken);
     }
-    var sql = "SELECT * FROM " + shadow;
-    return rows.FromSqlRaw(sql);
+    try {
+      await using var cmd = connection.CreateCommand();
+      // The promoted columns follow the document, where the shared column reader expects them; metadata comes last.
+      cmd.CommandText = "SELECT data::text" + physical + ", metadata::text FROM " + shadow + " WHERE id = @id";
+      cmd.Transaction = (Npgsql.NpgsqlTransaction?)_context.Database.CurrentTransaction?.GetDbTransaction();
+      cmd.Parameters.AddWithValue("id", id);
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+      if (!await reader.ReadAsync(cancellationToken)) {
+        return (null, null);
+      }
+      var options = Perspectives.PerspectiveDocumentSerialization.Options;
+      var model = (TModel?)System.Text.Json.JsonSerializer.Deserialize(reader.GetString(0), options.GetTypeInfo(typeof(TModel)));
+      var metadata = (PerspectiveMetadata?)System.Text.Json.JsonSerializer.Deserialize(
+        reader.GetString(1 + columns.Count), options.GetTypeInfo(typeof(PerspectiveMetadata)));
+      if (model is not null && split is not null) {
+        model = split.Hydrate(model, new Whizbang.Data.Postgres.Perspectives.NpgsqlPhysicalColumnReader(reader, columns));
+      }
+      return (model, metadata);
+    } finally {
+      if (opened) {
+        await connection.CloseAsync();
+      }
+    }
   }
 
   /// <summary>
@@ -99,6 +130,9 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// </para>
   /// </remarks>
   private async Task<TModel?> _loadAsync(Guid id, CancellationToken cancellationToken) {
+    if (PerspectiveTableRedirect.IsActive && PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is { } shadow) {
+      return (await _readRedirectedAsync(shadow, id, cancellationToken)).Model;
+    }
     if (!SplitPhysicalFieldRegistry.TryGet<TModel>(out var split)) {
       var document = await _readRowAsync(id, tracked: false, cancellationToken);
       return PerspectiveDataCoalescer.CoalescedData(document); // WORKAROUND(dotnet/efcore#38625)
@@ -136,7 +170,7 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     PerspectiveRow<TModel>? row = null;
     Exception? failure = null;
     try {
-      var rows = _rows();
+      var rows = _context.Set<PerspectiveRow<TModel>>();
       row = await (tracked ? rows : rows.AsNoTracking())
           .OrderBy(r => r.Id)
           .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
@@ -157,7 +191,10 @@ public class EFCorePostgresPerspectiveStore<TModel>(
 
   /// <inheritdoc/>
   public async Task<PerspectiveMetadata?> GetMetadataByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
-    var row = await _rows()
+    if (PerspectiveTableRedirect.IsActive && PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is { } shadow) {
+      return (await _readRedirectedAsync(shadow, streamId, cancellationToken)).Metadata;
+    }
+    var row = await _context.Set<PerspectiveRow<TModel>>()
         .AsNoTracking()
         .OrderBy(r => r.Id)
         .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);

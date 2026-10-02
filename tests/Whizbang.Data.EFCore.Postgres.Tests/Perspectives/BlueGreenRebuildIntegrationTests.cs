@@ -40,14 +40,12 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
     var streams = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
     var snapshots = new List<Dictionary<Guid, decimal>>();
     await using var sp = _services(async () => snapshots.Add(await _liveBalancesAsync()),
-      onFirstRun: async scope => await _appendAsync(scope, new RebuildCreditedEvent { StreamId = streams[0], Amount = 7m }));
-    await using (var scope = sp.CreateAsyncScope()) {
-      await _appendAsync(scope, new RebuildCreditedEvent { StreamId = streams[0], Amount = 100m });
-      await _appendAsync(scope, new RebuildCreditedEvent { StreamId = streams[0], Amount = 50m });
-      await _appendAsync(scope, new RebuildCreditedEvent { StreamId = streams[1], Amount = 100m });
-      await _appendAsync(scope, new RebuildDebitedEvent { StreamId = streams[1], Amount = 75m });
-      await _appendAsync(scope, new RebuildCreditedEvent { StreamId = streams[2], Amount = 500m });
-    }
+      onFirstRun: async root => await _appendAsync(root, new RebuildCreditedEvent { StreamId = streams[0], Amount = 7m }));
+    await _appendAsync(sp, new RebuildCreditedEvent { StreamId = streams[0], Amount = 100m });
+    await _appendAsync(sp, new RebuildCreditedEvent { StreamId = streams[0], Amount = 50m });
+    await _appendAsync(sp, new RebuildCreditedEvent { StreamId = streams[1], Amount = 100m });
+    await _appendAsync(sp, new RebuildDebitedEvent { StreamId = streams[1], Amount = 75m });
+    await _appendAsync(sp, new RebuildCreditedEvent { StreamId = streams[2], Amount = 500m });
     await _seedStaleLiveRowsAsync(streams);
     await _registerTableAsync();
     var stale = await _liveBalancesAsync();
@@ -140,7 +138,7 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
 
   // ── Fixture ─────────────────────────────────────────────────────────────────────────────────
 
-  private ServiceProvider _services(Func<Task> beforeEachStream, Func<AsyncServiceScope, Task> onFirstRun) {
+  private ServiceProvider _services(Func<Task> beforeEachStream, Func<IServiceProvider, Task> onFirstRun) {
     var services = new ServiceCollection();
     services.AddLogging();
     services.AddScoped(_ => new WorkCoordinationDbContext(DbContextOptions));
@@ -157,7 +155,7 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
     services.AddSingleton(registryType);
     services.AddSingleton<IPerspectiveRunnerRegistry>(s =>
       new ObservingRegistry((IPerspectiveRunnerRegistry)s.GetRequiredService(registryType), beforeEachStream,
-        () => onFirstRun(s.CreateAsyncScope())));
+        () => onFirstRun(s)));
     services.AddScoped<IPerspectiveCheckpointCompleter>(s =>
       new EFCorePostgresPerspectiveCheckpointCompleter(s.GetRequiredService<WorkCoordinationDbContext>()));
     services.AddSingleton<IPerspectiveTableSwapper>(s =>
@@ -200,8 +198,8 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
       inner.BootstrapSnapshotAsync(streamId, perspectiveName, lastProcessedEventId, cancellationToken);
   }
 
-  private static async Task _appendAsync<TEvent>(AsyncServiceScope scope, TEvent payload) where TEvent : IEvent {
-    await using (scope) {
+  private static async Task _appendAsync<TEvent>(IServiceProvider root, TEvent payload) where TEvent : IEvent {
+    await using (var scope = root.CreateAsyncScope()) {
       var envelope = new MessageEnvelope<TEvent> {
         MessageId = MessageId.New(),
         Payload = payload,

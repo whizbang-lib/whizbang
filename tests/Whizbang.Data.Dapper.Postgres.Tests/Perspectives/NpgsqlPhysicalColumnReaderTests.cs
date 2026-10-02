@@ -1,6 +1,7 @@
 using Npgsql;
 using TUnit.Core;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.Postgres.Perspectives;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 
@@ -9,7 +10,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// underlying number, as the store writes it, in whichever numeric type the enum's underlying type maps to; a
 /// column an earlier release created as text still holds the member's name, and reads back from it.
 /// </summary>
-/// <tests>src/Whizbang.Data.Dapper.Postgres/NpgsqlPhysicalColumnReader.cs</tests>
+/// <tests>src/Whizbang.Data.Postgres/Perspectives/NpgsqlPhysicalColumnReader.cs</tests>
 [NotInParallel("PostgreSQL")]
 public class NpgsqlPhysicalColumnReaderTests : PostgresTestBase {
   public enum Tier { None, Gold }

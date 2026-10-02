@@ -426,7 +426,7 @@ public class CollectivePhysicalColumnCompilerTests {
       _split(s => s.SetProperty(m => m.Settings, (Settings?)null)), _jsonOptions);
 
     await Assert.That(compiled.SqlFragment).IsEqualTo("\"settings\" = @set_0_settings::jsonb, \"counters\" = @set_1_counters::jsonb");
-    await Assert.That(compiled.Parameters["set_0_settings"]).IsEqualTo("{\"Theme\":\"dark\",\"Size\":2}");
+    await Assert.That(compiled.Parameters["set_0_settings"]).IsEqualTo("{\"Theme\":\"dark\",\"Size\":2,\"Inner\":null,\"Fixed\":\"fixed\"}");
     await Assert.That(compiled.Parameters["set_1_counters"]).IsEqualTo("{\"a\":1}");
     await Assert.That(cleared.Parameters["set_0_settings"]).IsNull()
       .Because("A null value clears the column, as the per-event write of a null property does.");
