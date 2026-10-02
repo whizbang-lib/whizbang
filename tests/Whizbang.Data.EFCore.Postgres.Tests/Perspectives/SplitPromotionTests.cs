@@ -103,7 +103,7 @@ public class SplitPromotionTests {
   public async Task EachPromotedColumn_IsArmedWithItsWritesSyncedAsync() {
     await Assert.That(await _scalarAsync("""
       SELECT string_agg(column_name || ':' || direction || ':' || sync_writes, ',' ORDER BY column_name)
-      FROM wh_physical_column_fills
+      FROM wh_physical_column_fills WHERE direction <> 'recorded'
       """)).IsEqualTo("due_at:to_column:true,lane:to_column:true,points:to_column:true,tags:to_column:true,title:to_column:true,watchers:to_column:true");
     await Assert.That(await PhysicalMoves.SyncTriggersAsync(_connectionString)).IsEqualTo("12");
   }
@@ -183,7 +183,7 @@ public class SplitPromotionTests {
     }
 
     await Assert.That(await PhysicalMoves.SyncTriggersAsync(_connectionString)).IsEqualTo("0");
-    await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills")).IsEqualTo("0");
+    await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills WHERE direction <> 'recorded'")).IsEqualTo("0");
     await Assert.That(await _scalarAsync("SELECT count(*) FROM pg_proc WHERE proname LIKE 'wh_mv_%'")).IsEqualTo("0");
 
     await _execAsync($"UPDATE {TABLE} SET data = jsonb_set(data, '{{Points}}', '0'), points = 12 WHERE id = '{_row}'");

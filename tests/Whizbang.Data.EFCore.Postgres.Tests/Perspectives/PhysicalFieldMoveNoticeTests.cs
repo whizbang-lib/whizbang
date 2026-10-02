@@ -81,14 +81,16 @@ public class PhysicalFieldMoveNoticeTests {
       .IsEqualTo("empty");
     await Assert.That(await _scalarAsync("SELECT wh_arm_physical_column('\"public\".wh_per_not_yet', 'shape', 'Shape', NULL, false)"))
       .IsEqualTo("absent");
-    await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills")).IsEqualTo("0");
+    await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills WHERE direction <> 'recorded'")).IsEqualTo("0");
   }
 
-  /// <summary>A demoted column of a type the document cannot hold is reported, and its values are left where they are.</summary>
+  /// <summary>A demoted column the framework recorded, of a type the document cannot hold, is reported, and its values are left where they are.</summary>
   [Test]
   public async Task ADemotedColumnTheDocumentCannotHold_IsReportedForARebuildAsync() {
     await PhysicalMoves.ExecAsync(_connectionString, $$"""
       ALTER TABLE {{TABLE}} ADD COLUMN spot point;
+      INSERT INTO wh_physical_column_fills (table_name, column_name, json_key, extraction, direction, armed_at, settled_at)
+      VALUES ('public.{{TABLE}}', 'spot', 'Spot', NULL, 'recorded', now(), now());
       INSERT INTO {{TABLE}} (id, data, metadata, scope, created_at, updated_at, sys_created_at, sys_updated_at, version, spot)
       VALUES (gen_random_uuid(), '{}', '{}', '{}', now(), now(), now(), now(), 1, point(1, 2));
       """);

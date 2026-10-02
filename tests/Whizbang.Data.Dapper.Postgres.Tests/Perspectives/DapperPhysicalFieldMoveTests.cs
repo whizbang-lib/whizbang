@@ -93,6 +93,7 @@ public class DapperPhysicalFieldMoveTests : PostgresTestBase {
 
     await Assert.That(await _scalarAsync("""
       SELECT string_agg(column_name || ':' || direction || ':' || sync_writes, ',' ORDER BY column_name) FROM wh_physical_column_fills
+      WHERE direction <> 'recorded'
       """)).IsEqualTo("lane:to_column:false,name:to_column:false,rank:to_column:false,tags:to_column:false");
     await Assert.That(await _scalarAsync($"""
       SELECT count(*) FROM {PROMOTED}
@@ -114,7 +115,7 @@ public class DapperPhysicalFieldMoveTests : PostgresTestBase {
 
     await Assert.That(await _scalarAsync($"SELECT count(*) FROM {PROMOTED} WHERE rank = 100002 AND name = 'late-2' AND lane = 1 AND tags = '[]'"))
       .IsEqualTo("1");
-    await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills")).IsEqualTo("4")
+    await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills WHERE direction <> 'recorded'")).IsEqualTo("4")
       .Because("a promotion stays armed until the settle window has passed");
   }
 
@@ -162,7 +163,7 @@ public class DapperPhysicalFieldMoveTests : PostgresTestBase {
     await using (var services = _services()) {
       await _step(settle: TimeSpan.Zero).RunAsync(services, CancellationToken.None);
     }
-    await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills")).IsEqualTo("0");
+    await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills WHERE direction <> 'recorded'")).IsEqualTo("0");
   }
 
   // ── #1021: a Split promotion syncs writes on the swapped-in table ────────────────────────────────
@@ -209,22 +210,41 @@ public class DapperPhysicalFieldMoveTests : PostgresTestBase {
 
   // ── #1022: a demoted column is copied into the document, once ────────────────────────────────────
 
-  /// <summary>A demoted column's values reach the document, writes from either release are synced, and a later start copies nothing.</summary>
+  /// <summary>The first start records each promoted column as the framework's, under its field, on a table it creates.</summary>
+  [Test]
+  public async Task TheFirstStart_RecordsEachPromotedColumnUnderItsFieldAsync() {
+    await _startAsync();
+
+    await Assert.That(await _scalarAsync($"""
+      SELECT string_agg(column_name || ':' || json_key, ',' ORDER BY column_name) FROM wh_physical_column_fills
+      WHERE table_name = 'public.{SPLIT}' AND direction = 'recorded'
+      """)).IsEqualTo("points:Points,title:Title,watchers:Watchers");
+  }
+
+  /// <summary>
+  /// A demoted column's values reach the document (one recorded under its default name, one under a name of its own),
+  /// writes from either release are synced, a later start copies nothing, and a column the framework never recorded
+  /// is never copied.
+  /// </summary>
   [Test]
   public async Task ADemotedColumn_IsCopiedIntoTheDocumentAndSyncedAsync() {
     await _startAsync();
     await _execAsync($$"""
-      ALTER TABLE {{SPLIT}} ADD COLUMN score integer, ADD COLUMN labels text[];
-      INSERT INTO {{SPLIT}} (id, data, metadata, scope, created_at, updated_at, version, score, labels)
-      VALUES ('{{_row}}', '{"Score": 0, "Labels": null}', '{}', '{}', now(), now(), 1, 42, ARRAY['a', 'b']);
+      ALTER TABLE {{SPLIT}} ADD COLUMN score integer, ADD COLUMN label_list text[], ADD COLUMN labels text[];
+      INSERT INTO {{SPLIT}} (id, data, metadata, scope, created_at, updated_at, version, score, label_list, labels)
+      VALUES ('{{_row}}', '{"Score": 0, "Labels": null}', '{}', '{}', now(), now(), 1, 42, ARRAY['a', 'b'], ARRAY['operator']);
+      INSERT INTO wh_physical_column_fills (table_name, column_name, json_key, extraction, direction, armed_at, settled_at)
+      VALUES ('public.{{SPLIT}}', 'score', 'Score', NULL, 'recorded', now(), now()),
+             ('public.{{SPLIT}}', 'label_list', 'Labels', NULL, 'recorded', now(), now());
       """);
     await _forgetAsync("DapperSplitMovedPerspective");
     await _startAsync();
 
     await Assert.That(await _scalarAsync($"SELECT concat_ws('|', data ->> 'Score', data -> 'Labels', score) FROM {SPLIT} WHERE id = '{_row}'"))
-      .IsEqualTo("42|[\"a\", \"b\"]|42");
+      .IsEqualTo("42|[\"a\", \"b\"]|42")
+      .Because("labels, an unrecorded column under the field's default name, is not the field's: label_list is");
 
-    await _execAsync($"UPDATE {SPLIT} SET data = jsonb_set(data, '{{Score}}', '0'), score = 50, labels = NULL WHERE id = '{_row}'");
+    await _execAsync($"UPDATE {SPLIT} SET data = jsonb_set(data, '{{Score}}', '0'), score = 50, label_list = NULL WHERE id = '{_row}'");
     await Assert.That(await _scalarAsync($"SELECT concat_ws('|', data ->> 'Score', data -> 'Labels') FROM {SPLIT} WHERE id = '{_row}'"))
       .IsEqualTo("50|null");
     await _execAsync($"UPDATE {SPLIT} SET data = jsonb_set(data, '{{Score}}', '51') WHERE id = '{_row}'");

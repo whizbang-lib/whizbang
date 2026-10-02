@@ -116,7 +116,8 @@ public class PhysicalFieldMoveGenerationTests {
 
     await Assert.That(sql).IsEqualTo(
       "SELECT * FROM \"s\".wh_demote_physical_columns('\"s\".wh_per_item', "
-      + "'{\"last_seen_at\": \"LastSeenAt\", \"score\": \"Score\", \"tags\": \"Tags\"}'::jsonb);");
+      + "'{\"last_seen_at\": \"LastSeenAt\", \"score\": \"Score\", \"tags\": \"Tags\"}'::jsonb, ARRAY['name']::text[]);")
+      .Because("the columns the promoted fields own now are passed, so a recorded column one of them took over is never demoted");
   }
 
   [Test]
@@ -133,6 +134,8 @@ public class PhysicalFieldMoveGenerationTests {
   [Test]
   public async Task Demote_WithNoCandidate_EmitsNothingAsync() {
     await Assert.That(PhysicalColumnSql.Demote("t", ["Id", "Version"], [])).IsNull();
+    await Assert.That(PhysicalColumnSql.Demote("t", ["Score"], null!)).EndsWith("'::jsonb, ARRAY[]::text[]);")
+      .Because("a model with nothing promoted owns no column");
     await Assert.That(PhysicalColumnSql.DemotionCandidates(null!, null!)).IsEmpty();
   }
 
@@ -217,7 +220,7 @@ public class PhysicalFieldMoveGenerationTests {
     var addWatchers = sql.IndexOf("wh_per_ticket ADD COLUMN IF NOT EXISTS watchers uuid[];", Math.Max(armLane, 0), StringComparison.Ordinal);
     var sync = sql.IndexOf("SELECT \"\"testapp\"\".wh_sync_physical_moves('\"\"testapp\"\".wh_per_ticket');", Math.Max(addWatchers, 0), StringComparison.Ordinal);
     var fill = sql.IndexOf("SET watchers = CASE WHEN jsonb_typeof(data -> 'Watchers') <> 'null' THEN ARRAY(SELECT wh_e.v::uuid", Math.Max(sync, 0), StringComparison.Ordinal);
-    var demote = sql.IndexOf("wh_demote_physical_columns('\"\"testapp\"\".wh_per_ticket', '{{\"\"score\"\": \"\"Score\"\"}}'::jsonb);", Math.Max(fill, 0), StringComparison.Ordinal);
+    var demote = sql.IndexOf("wh_demote_physical_columns('\"\"testapp\"\".wh_per_ticket', '{{\"\"score\"\": \"\"Score\"\"}}'::jsonb, ARRAY['lane', 'watchers']::text[]);", Math.Max(fill, 0), StringComparison.Ordinal);
 
     await Assert.That(armLane).IsGreaterThan(-1);
     await Assert.That(addWatchers).IsGreaterThan(armLane);
@@ -239,7 +242,7 @@ public class PhysicalFieldMoveGenerationTests {
     var create = entry.IndexOf("CREATE TABLE IF NOT EXISTS wh_per_ticket_perspective", StringComparison.Ordinal);
     var sync = entry.IndexOf("SELECT wh_sync_physical_moves('wh_per_ticket_perspective');", StringComparison.Ordinal);
     var fill = entry.IndexOf("UPDATE wh_per_ticket_perspective SET lane = (data ->> 'Lane')::integer", StringComparison.Ordinal);
-    var demote = entry.IndexOf("SELECT * FROM wh_demote_physical_columns('wh_per_ticket_perspective', '{\"\"score\"\": \"\"Score\"\"}'::jsonb);", StringComparison.Ordinal);
+    var demote = entry.IndexOf("SELECT * FROM wh_demote_physical_columns('wh_per_ticket_perspective', '{\"\"score\"\": \"\"Score\"\"}'::jsonb, ARRAY['lane', 'watchers']::text[]);", StringComparison.Ordinal);
 
     await Assert.That(arm).IsGreaterThan(-1);
     await Assert.That(add).IsGreaterThan(arm);

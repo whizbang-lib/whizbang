@@ -112,14 +112,11 @@ public static class PhysicalColumnSql {
   /// <remarks>
   /// <para>
   /// The model no longer says which of its fields were promoted, so every field it keeps only in the document
-  /// is a candidate, under the column name its promotion would have used. The function skips a candidate whose
-  /// column is not on the table, and one it has moved before, so this costs one catalog lookup per candidate
-  /// once the moves are done. A column the framework creates for every table, or one a field still promoted
-  /// owns, is never a candidate.
-  /// </para>
-  /// <para>
-  /// A field promoted under a column name of its own choosing is a candidate under its default name only, so
-  /// demoting it leaves that column unread; see the docs.
+  /// is a candidate, under the column name its promotion would have used. The function demotes only a column
+  /// the ledger records the framework created for a promoted field: one recorded with its field is found by
+  /// that field, under whatever name it was given; one recorded from the perspective registry by its default
+  /// name. A column an operator added is never touched, nor one moved before, nor one a field still promoted
+  /// owns (passed as the last argument). A column the framework creates for every table is never a candidate.
   /// </para>
   /// </remarks>
   /// <param name="qualifiedTable">The table, schema-qualified.</param>
@@ -140,7 +137,13 @@ public static class PhysicalColumnSql {
       json.Append('"').Append(column).Append("\": \"").Append(key).Append('"');
     }
     json.Append('}');
-    return $"SELECT * FROM {_schemaPrefix(qualifiedTable)}wh_demote_physical_columns('{qualifiedTable}', '{json}'::jsonb);";
+    var owned = string.Join(", ", (physicalFields ?? [])
+      .Select(f => f.ColumnName.ToLowerInvariant())
+      .Distinct(StringComparer.Ordinal)
+      .OrderBy(c => c, StringComparer.Ordinal)
+      .Select(c => $"'{c}'"));
+    return $"SELECT * FROM {_schemaPrefix(qualifiedTable)}wh_demote_physical_columns('{qualifiedTable}', '{json}'::jsonb, "
+      + $"ARRAY[{owned}]::text[]);";
   }
 
   /// <summary>

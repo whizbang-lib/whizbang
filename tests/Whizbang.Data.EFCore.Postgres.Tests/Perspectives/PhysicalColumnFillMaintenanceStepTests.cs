@@ -92,7 +92,7 @@ public class PhysicalColumnFillMaintenanceStepTests {
   /// </summary>
   [Test]
   public async Task ARowWrittenWithOnlyTheDocumentValue_IsFilledAndFoundByAColumnFilterAsync() {
-    await Assert.That(await _scalarAsync("SELECT string_agg(column_name, ',' ORDER BY column_name) FROM wh_physical_column_fills"))
+    await Assert.That(await _scalarAsync("SELECT string_agg(column_name, ',' ORDER BY column_name) FROM wh_physical_column_fills WHERE direction = 'to_column'"))
       .IsEqualTo("code,name,rank");
     await _writeAsThePreviousReleaseAsync(3, "late");
     await Assert.That(await _scalarAsync($"SELECT count(*) FROM {TABLE} WHERE name = 'late-2'")).IsEqualTo("0")
@@ -133,7 +133,9 @@ public class PhysicalColumnFillMaintenanceStepTests {
     await Assert.That(await _unfilledAsync()).IsEqualTo("0");
 
     await _fillAsync(PhysicalColumnFill.DEFAULT_BATCH_SIZE, 1, TimeSpan.Zero);
-    await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills")).IsEqualTo("0");
+    await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills WHERE settled_at IS NULL")).IsEqualTo("0");
+    await Assert.That(await _scalarAsync("SELECT count(*) FROM wh_physical_column_fills WHERE direction = 'recorded'")).IsEqualTo("3")
+      .Because("a disarmed column is kept as the record that the framework created it for its field (#1022)");
   }
 
   /// <summary>One batch fills no more rows per column than its size; the rest wait for the next round.</summary>
@@ -211,7 +213,7 @@ public class PhysicalColumnFillMaintenanceStepTests {
 
     await Assert.That(filled).IsEqualTo(2).Because("the name and code columns are filled; the rank batch failed");
     await Assert.That(await _scalarAsync($"SELECT count(*) FROM {TABLE} WHERE name = 'odd' AND code = 'ODD' AND rank IS NULL")).IsEqualTo("1");
-    await Assert.That(await _scalarAsync("SELECT string_agg(column_name, ',') FROM wh_physical_column_fills")).IsEqualTo("rank")
+    await Assert.That(await _scalarAsync("SELECT string_agg(column_name, ',') FROM wh_physical_column_fills WHERE settled_at IS NULL")).IsEqualTo("rank")
       .Because("a failed column is not disarmed, so the failure keeps being reported until it is dealt with");
   }
 

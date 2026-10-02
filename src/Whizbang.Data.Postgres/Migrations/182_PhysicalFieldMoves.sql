@@ -7,8 +7,12 @@
 --   ledger, wh_physical_column_fills, to every move a field's storage can make:
 --   - Promotion of any kind of column the document can fill (scalars, enumerations, arrays, jsonb,
 --     a type the author chose) on an Extracted or a Split model: armed as direction 'to_column'.
---   - Demotion (a field that is no longer physical, its column left behind): the column's values are
---     copied into the document, direction 'to_document'. The column is never dropped; the row stays,
+--   - A column the framework created for a promoted field, recorded with its field: direction 'recorded',
+--     written by every schema pass and kept, and seeded from the perspective registry for columns promoted
+--     before this migration. Only a recorded column is ever demoted, so a column an operator added under a
+--     field's name is never copied over the document.
+--   - Demotion (a field that is no longer physical, its recorded column left behind): the column's values
+--     are copied into the document, direction 'to_document'. The column is never dropped; the row stays,
 --     settled, so a later start never copies the column over the document again.
 --   - A column the document cannot fill, or a demoted column whose type the document cannot hold:
 --     direction 'rebuild', taken once by the maintenance step, which logs that the perspective needs a
@@ -24,7 +28,7 @@
 --   could be read and written back by the other before the fill reached it. The maintenance step drops
 --   the triggers when it disarms or settles the move.
 -- Dependencies: 000 (drop_all_overloads), 179 (wh_physical_column_fills, wh_fill_physical_columns)
--- Objects: wh_physical_column_fills, wh_physical_column_forms, _wh_physical_move_sync_name, _wh_drop_physical_move_sync, wh_sync_physical_moves, wh_arm_physical_column, wh_demote_physical_columns, wh_fill_physical_columns, wh_settle_physical_moves, wh_take_physical_rebuild_notices
+-- Objects: wh_physical_column_fills, wh_physical_column_forms, _wh_physical_move_sync_name, _wh_drop_physical_move_sync, wh_sync_physical_moves, wh_arm_physical_column, wh_demote_physical_columns, wh_record_registered_physical_columns, wh_fill_physical_columns, wh_settle_physical_moves, wh_take_physical_rebuild_notices
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 ALTER TABLE __SCHEMA__.wh_physical_column_fills
@@ -33,12 +37,15 @@ ALTER TABLE __SCHEMA__.wh_physical_column_fills
   ADD COLUMN IF NOT EXISTS sync_writes BOOLEAN NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ;
 
--- A rebuild notice has no extraction: it exists because there is none.
+-- A rebuild notice has no extraction: it exists because there is none. A column recorded from the perspective
+-- registry, before the schema pass first recorded it, has no field name yet.
 ALTER TABLE __SCHEMA__.wh_physical_column_fills ALTER COLUMN extraction DROP NOT NULL;
+ALTER TABLE __SCHEMA__.wh_physical_column_fills ALTER COLUMN json_key DROP NOT NULL;
 
 COMMENT ON TABLE __SCHEMA__.wh_physical_column_fills IS
-  'Moves of a perspective field between its document and a column. direction to_column: a column added to '
-  'a table that had rows, filled from the document (wh_fill_physical_columns). to_document: a column whose '
+  'Moves of a perspective field between its document and a column. recorded: a column the framework created '
+  'for a promoted field, kept so only such a column is ever demoted. to_column: a column added to '
+  'a table that had rows, filled from the document (wh_fill_physical_columns); recorded once it settles. to_document: a column whose '
   'field is no longer physical, copied into the document; kept once settled so it is never copied again. '
   'rebuild: a column neither side can fill, taken once by the maintenance step, which logs it. sync_writes: '
   'the table carries triggers keeping the column and the document in agreement until the move settles.';
@@ -265,7 +272,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_sync_physical_moves(TEXT) IS
 SELECT __SCHEMA__.drop_all_overloads('wh_arm_physical_column');
 
 -- Arms a promoted field before the schema pass adds its column, so only the pass that adds it arms it
--- (the 179 rule). A table that is not there yet arms nothing. p_extraction null is a column the document
+-- (the 179 rule). A column already there is recorded as the framework's, under its field. A table that is not there yet arms nothing. p_extraction null is a column the document
 -- cannot fill: on a table with rows, a rebuild notice. p_sync arms the sync triggers, for a Split model,
 -- whose new release reads the column while the old one reads the document. A column already there arms
 -- nothing, unless its field was demoted and is now promoted again: the document has been the field's copy
@@ -294,6 +301,14 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_attribute a
              WHERE a.attrelid = v_table AND a.attname = p_column AND NOT a.attisdropped) THEN
     IF v_direction IS DISTINCT FROM 'to_document' THEN
+      -- A column the framework created for this field: recorded, so a later demotion knows the column is the
+      -- framework's and which field it holds. A move in progress is left as it is.
+      INSERT INTO __SCHEMA__.wh_physical_column_fills AS f
+        (table_name, column_name, json_key, extraction, direction, document_form, sync_writes, armed_at, settled_at)
+      VALUES (v_name, p_column, p_json_key, p_extraction, 'recorded', NULL, false, now(), now())
+      ON CONFLICT (table_name, column_name) DO UPDATE SET json_key = EXCLUDED.json_key, extraction = EXCLUDED.extraction
+        WHERE f.direction = 'recorded'
+          AND (f.json_key IS DISTINCT FROM EXCLUDED.json_key OR f.extraction IS DISTINCT FROM EXCLUDED.extraction);
       RETURN 'present';
     END IF;
     PERFORM __SCHEMA__._wh_drop_physical_move_sync(v_name, p_column);
@@ -333,31 +348,36 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_arm_physical_column(TEXT, TEXT, TEXT, TEXT, BOOLEAN) IS
-  'Arms a promoted column before the schema pass adds it: absent (no table), present (already there), armed, '
+  'Arms a promoted column before the schema pass adds it: absent (no table), present (already there; recorded), armed, '
   'empty (nothing to fill and no rows), rebuild (no document copy to fill from, on a table with rows), or '
   'refreshed (a demoted field promoted again: the column was refreshed from the document).';
 
 SELECT __SCHEMA__.drop_all_overloads('wh_demote_physical_columns');
 
--- Moves the values of each column whose field is no longer physical into the document. p_candidates maps a
--- column name to the document key of a field the model now keeps only in the document, under the name its
--- column would have had. A candidate whose column is not on the table, or is a column the framework never
--- creates for a field (NOT NULL, generated), is skipped; so is one already moved, which is how a later start
--- never copies a stale column over the document. Otherwise the move is armed with sync_writes, its triggers
--- are added BEFORE the copy (a write that lands after the copy is synced, one before it is copied), and every
--- row whose column holds a value the document does not is copied. A column the document cannot hold is a
--- rebuild notice. Returns one row per candidate on the table.
+-- Moves the values of each recorded column whose field is no longer physical into the document. p_candidates
+-- maps a column name to the document key of a field the model now keeps only in the document, under the name
+-- its column would have had by default; p_owned lists the columns the model's promoted fields own now. A
+-- column is demoted only when the ledger records the framework created it for a promoted field: one recorded
+-- with its field is matched by that field, whatever its column is named; one seeded from the perspective
+-- registry, with no field, is matched by the default name. A column an operator added, however it is named, is
+-- never touched. So is a column already moved, which is how a later start never copies a stale column over the
+-- document, and a column that is not there, or one the framework never creates for a field (NOT NULL,
+-- generated). Otherwise the move is armed with sync_writes, its triggers are added BEFORE the copy (a write
+-- that lands after the copy is synced, one before it is copied), and every row whose column holds a value the
+-- document does not is copied. A column the document cannot hold is a rebuild notice. Returns one row per
+-- recorded column of a candidate field.
 -- <docs>fundamentals/perspectives/physical-fields#demoting-a-field</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PhysicalFieldDemotionTests.cs:ADemotedField_IsCopiedIntoTheDocumentForEveryRowAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PhysicalFieldDemotionTests.cs:ASecondPass_CopiesNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PhysicalFieldDemotionTests.cs:AColumnTheFrameworkDidNotRecord_IsNeverCopiedAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PhysicalFieldMoveNoticeTests.cs:ADemotedColumnTheDocumentCannotHold_IsReportedForARebuildAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__.wh_demote_physical_columns(p_table TEXT, p_candidates JSONB)
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_demote_physical_columns(
+    p_table TEXT, p_candidates JSONB, p_owned TEXT[] DEFAULT ARRAY[]::TEXT[])
 RETURNS TABLE (demoted_column TEXT, outcome TEXT, copied BIGINT) AS $$
 DECLARE
   v_table REGCLASS := to_regclass(p_table);
   v_name TEXT;
   v_candidate RECORD;
-  v_direction TEXT;
   v_forms RECORD;
 BEGIN
   IF v_table IS NULL OR p_candidates IS NULL OR jsonb_typeof(p_candidates) <> 'object' THEN
@@ -367,47 +387,45 @@ BEGIN
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = v_table;
 
   FOR v_candidate IN
-    SELECT c.key AS column_name, c.value #>> '{}' AS json_key
-    FROM jsonb_each(p_candidates) c
-    JOIN pg_attribute a ON a.attrelid = v_table AND a.attname = c.key
-    WHERE a.attnum > 0 AND NOT a.attisdropped AND NOT a.attnotnull AND a.attgenerated = ''
-    ORDER BY c.key
+    SELECT f.column_name, COALESCE(f.json_key, d.value) AS json_key, f.direction
+    FROM __SCHEMA__.wh_physical_column_fills f
+    LEFT JOIN jsonb_each_text(p_candidates) d ON d.key = f.column_name
+    JOIN pg_attribute a ON a.attrelid = v_table AND a.attname = f.column_name
+    WHERE f.table_name = v_name
+      AND f.direction IN ('recorded', 'to_column', 'to_document')
+      AND NOT (f.column_name = ANY(COALESCE(p_owned, ARRAY[]::TEXT[])))
+      AND ((f.json_key IS NOT NULL AND f.json_key IN (SELECT e.value FROM jsonb_each_text(p_candidates) e))
+        OR (f.json_key IS NULL AND d.key IS NOT NULL))
+      AND a.attnum > 0 AND NOT a.attisdropped AND NOT a.attnotnull AND a.attgenerated = ''
+    ORDER BY f.column_name
   LOOP
     demoted_column := v_candidate.column_name;
     copied := 0;
-    v_direction := NULL;
-    SELECT f.direction INTO v_direction FROM __SCHEMA__.wh_physical_column_fills f
-    WHERE f.table_name = v_name AND f.column_name = v_candidate.column_name;
-    IF v_direction = 'to_document' THEN
+    IF v_candidate.direction = 'to_document' THEN
       outcome := 'moved earlier';
       RETURN NEXT;
       CONTINUE;
     END IF;
-    IF v_direction = 'to_column' THEN
+    IF v_candidate.direction = 'to_column' THEN
       PERFORM __SCHEMA__._wh_drop_physical_move_sync(v_name, v_candidate.column_name);
     END IF;
 
     SELECT * INTO v_forms
     FROM __SCHEMA__.wh_physical_column_forms(v_table, v_candidate.column_name, v_candidate.json_key);
     IF v_forms.document_form IS NULL OR v_forms.extraction IS NULL THEN
-      INSERT INTO __SCHEMA__.wh_physical_column_fills AS f
-        (table_name, column_name, json_key, extraction, direction, document_form, sync_writes, armed_at, settled_at)
-      VALUES (v_name, v_candidate.column_name, v_candidate.json_key, NULL, 'rebuild', NULL, false, now(), NULL)
-      ON CONFLICT (table_name, column_name) DO UPDATE SET
-        json_key = EXCLUDED.json_key, extraction = NULL, direction = 'rebuild', document_form = NULL,
-        sync_writes = false, armed_at = now(), settled_at = NULL;
+      UPDATE __SCHEMA__.wh_physical_column_fills f
+      SET json_key = v_candidate.json_key, extraction = NULL, direction = 'rebuild', document_form = NULL,
+          sync_writes = false, armed_at = now(), settled_at = NULL
+      WHERE f.table_name = v_name AND f.column_name = v_candidate.column_name;
       outcome := 'rebuild';
       RETURN NEXT;
       CONTINUE;
     END IF;
 
-    INSERT INTO __SCHEMA__.wh_physical_column_fills AS f
-      (table_name, column_name, json_key, extraction, direction, document_form, sync_writes, armed_at, settled_at)
-    VALUES (v_name, v_candidate.column_name, v_candidate.json_key, v_forms.extraction, 'to_document',
-      v_forms.document_form, true, now(), NULL)
-    ON CONFLICT (table_name, column_name) DO UPDATE SET
-      json_key = EXCLUDED.json_key, extraction = EXCLUDED.extraction, direction = 'to_document',
-      document_form = EXCLUDED.document_form, sync_writes = true, armed_at = now(), settled_at = NULL;
+    UPDATE __SCHEMA__.wh_physical_column_fills f
+    SET json_key = v_candidate.json_key, extraction = v_forms.extraction, direction = 'to_document',
+        document_form = v_forms.document_form, sync_writes = true, armed_at = now(), settled_at = NULL
+    WHERE f.table_name = v_name AND f.column_name = v_candidate.column_name;
     PERFORM __SCHEMA__.wh_sync_physical_moves(v_name);
 
     EXECUTE format(
@@ -421,16 +439,60 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__.wh_demote_physical_columns(TEXT, JSONB) IS
-  'Copies into the document the values of each candidate column (column name to document key) whose field is '
-  'no longer physical, once per column, and arms the sync triggers for the rolling deploy. Never drops a column.';
+COMMENT ON FUNCTION __SCHEMA__.wh_demote_physical_columns(TEXT, JSONB, TEXT[]) IS
+  'Copies into the document, once, the values of each column the ledger records the framework created for a '
+  'promoted field that the model now keeps only in the document (p_candidates: default column name to document '
+  'key; p_owned: columns still promoted), and arms the sync triggers for the rolling deploy. Never touches an '
+  'unrecorded column, and never drops a column.';
+
+SELECT __SCHEMA__.drop_all_overloads('wh_record_registered_physical_columns');
+
+-- Records, as the framework's, every promoted column the perspective registry lists for a table: the columns
+-- earlier releases promoted, before the schema pass recorded them itself. They are recorded with no field;
+-- the next schema pass that still promotes one names its field, and a demotion matches one by its default name.
+-- A registry entry whose table is gone, a column the table no longer has, and a column every perspective table
+-- has are skipped. Returns how many columns it recorded.
+-- <docs>fundamentals/perspectives/physical-fields#demoting-a-field</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PhysicalFieldDemotionTests.cs:AColumnTheRegistryLists_IsRecordedAndDemotedByItsNameAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_record_registered_physical_columns()
+RETURNS INTEGER AS $$
+DECLARE
+  v_recorded INTEGER := 0;
+BEGIN
+  IF to_regclass('__SCHEMA__.wh_perspective_registry') IS NULL THEN
+    RETURN 0;
+  END IF;
+  INSERT INTO __SCHEMA__.wh_physical_column_fills AS f
+    (table_name, column_name, json_key, extraction, direction, document_form, sync_writes, armed_at, settled_at)
+  SELECT DISTINCT format('%I.%I', n.nspname, c.relname), col ->> 'name', NULL::text, NULL::text, 'recorded',
+    NULL::text, false, now(), now()
+  FROM __SCHEMA__.wh_perspective_registry r
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(r.schema_json -> 'columns') = 'array' THEN r.schema_json -> 'columns' ELSE '[]'::jsonb END) col
+  JOIN pg_class c ON c.oid = to_regclass('__SCHEMA__.' || quote_ident(r.table_name))
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = col ->> 'name' AND a.attnum > 0 AND NOT a.attisdropped
+  WHERE col ->> 'name' NOT IN ('id', 'data', 'model_data', 'metadata', 'scope', 'created_at', 'updated_at',
+                               'sys_created_at', 'sys_updated_at', 'expires_at', 'version')
+  ON CONFLICT (table_name, column_name) DO NOTHING;
+  GET DIAGNOSTICS v_recorded = ROW_COUNT;
+  RETURN v_recorded;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_record_registered_physical_columns() IS
+  'Records as the framework''s every promoted column the perspective registry lists, for the columns earlier '
+  'releases promoted before the schema pass recorded them. Returns how many it recorded.';
+
+-- The columns earlier releases promoted. Idempotent: a recorded column is left as it is.
+SELECT __SCHEMA__.wh_record_registered_physical_columns();
 
 SELECT __SCHEMA__.drop_all_overloads('wh_fill_physical_columns');
 
 -- One bounded batch per armed promotion: fills up to p_batch rows that have the value in the document and
 -- none in the column, never overwriting a column a writer has filled. A column whose batch came up short
--- has nothing left right now; once it has been armed longer than p_settle it is disarmed, and its sync
--- triggers, if it had them, are dropped. A column whose table or column is gone is disarmed. A batch that
+-- has nothing left right now; once it has been armed longer than p_settle it is disarmed (kept as recorded),
+-- and its sync triggers, if it had them, are dropped. A column whose table or column is gone is disarmed. A batch that
 -- fails is reported and leaves the column armed. Demotions and rebuild notices are not fills: see
 -- wh_settle_physical_moves and wh_take_physical_rebuild_notices.
 -- <docs>fundamentals/perspectives/physical-fields#rows-written-during-a-rolling-deploy</docs>
@@ -496,7 +558,9 @@ BEGIN
       IF v_fill.sync_writes THEN
         PERFORM __SCHEMA__._wh_drop_physical_move_sync(v_fill.table_name, v_fill.column_name);
       END IF;
-      DELETE FROM __SCHEMA__.wh_physical_column_fills f
+      -- Kept, as the record that the framework created this column for the field.
+      UPDATE __SCHEMA__.wh_physical_column_fills f
+      SET direction = 'recorded', sync_writes = false, document_form = NULL, settled_at = now()
       WHERE f.table_name = v_fill.table_name AND f.column_name = v_fill.column_name
         AND f.armed_at = v_fill.armed_at;
     END IF;

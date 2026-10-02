@@ -528,6 +528,11 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // sync triggers go on first, on the table that is now in place, so a write that lands after the fill is
     // synced. Then the fields the model keeps only in the document are offered for demotion (#1022).
     var fields = _withStorageMode(perspective);
+    // Each promoted column recorded as the framework's, on the table now in place: the pre-table arm cannot
+    // see a table that does not exist yet, and a later demotion moves only a recorded column (#1022).
+    foreach (var field in fields) {
+      perspectiveSqlBuilder.AppendLine(PhysicalColumnSql.Arm(perspective.TableName, field));
+    }
     if (fields.Any(f => f.IsSplit)) {
       perspectiveSqlBuilder.AppendLine(PhysicalColumnSql.SyncMoves(perspective.TableName));
     }
