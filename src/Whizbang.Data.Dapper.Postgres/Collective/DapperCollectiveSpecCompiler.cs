@@ -112,7 +112,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
       }
     }
     var removed = removedFields ?? new HashSet<string>(StringComparer.Ordinal);
-    var properties = visitor.Properties.Where(p => !removed.Contains(p.JsonbPath)).ToList();
+    var properties = visitor.Properties.Where(p => !removed.Contains(p.PropertyName)).ToList();
     var columns = visitor.Columns.Where(c => !removed.Contains(c.PropertyName)).Select(c => (c.Column, c.ValueSql)).ToList();
 
     return new CompiledSetClause(
@@ -143,8 +143,12 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
   }
 
   // ValueSql is the SQL for the new jsonb value: "@p::jsonb" for a constant, or a computed expression like
-  // "to_jsonb((data->'X')::jsonb = @p::jsonb)" for a property-vs-constant comparison.
-  private sealed record PropertyAssignment(string JsonbPath, string ValueSql);
+  // "to_jsonb((data->'X')::jsonb = @p::jsonb)" for a property-vs-constant comparison. JsonbPath is the path inside
+  // the document ("X", or "X,Key" for one key of a property's object); PropertyName is the model property, which a
+  // hook removes by.
+  private sealed record PropertyAssignment(string PropertyName, string JsonbPath, string ValueSql) {
+    public PropertyAssignment(string jsonbPath, string valueSql) : this(jsonbPath, jsonbPath, valueSql) { }
+  }
 
   // A physical-column write: the model property (for hook removal), the column, and the SQL for its new value.
   private sealed record ColumnAssignment(string PropertyName, string Column, string ValueSql);
@@ -179,6 +183,13 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
           node.Arguments.Count == 2) {
 
         var selector = _unwrapLambda(node.Arguments[0]);
+        if (CollectivePhysicalColumns.TryJsonbKey(typeof(TModel), selector) is { } nested) {
+          if (node.Object is not null) {
+            Visit(node.Object);
+          }
+          _addJsonbKey(nested, node.Arguments[1]);
+          return node;
+        }
         var property = _extractScalarProperty(selector);
         var target = _physical(property);
 
@@ -265,6 +276,26 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
         "selectors require [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)].");
     }
 
+    // One key inside a jsonb physical column, set to a constant: jsonb_set over the column (from this spec's earlier
+    // write to it, if any), and the same key in the document when the field is kept there too. A computed value is
+    // refused, as the replay refuses it.
+    private void _addJsonbKey(CollectiveJsonbKey nested, Expression valueExpr) {
+      if (_isLambda(valueExpr)) {
+        throw new NotSupportedException(
+          $"A collective sets {typeof(TModel).Name}.{nested.Root.Name}.{nested.Key.Name} only to a value, not a computed expression.");
+      }
+      var value = _evaluateValue(valueExpr);
+      var paramName = _nextParam(nested.Root.Name);
+      Parameters[paramName] = JsonSerializer.Serialize(value, value?.GetType() ?? nested.Key.PropertyType, _jsonOptions);
+      if (nested.Field.InDocument) {
+        Properties.Add(new PropertyAssignment(nested.Root.Name, nested.Root.Name + "," + nested.Key.Name, $"@{paramName}::jsonb"));
+      }
+      var column = nested.Field.ColumnName;
+      var source = Columns.LastOrDefault(c => c.Column == column)?.ValueSql ?? CollectivePhysicalColumns.Quote(column);
+      Columns.Add(new ColumnAssignment(nested.Root.Name, column,
+        CollectivePhysicalColumns.JsonbKeySetSql(source, "'{" + nested.Key.Name + "}'", $"@{paramName}::jsonb")));
+    }
+
     // Append a collective apply-hook constant setter: a pre-evaluated value (not an expression), assigned the same
     // way a spec's constant setter is — the jsonb path, the physical column, or both.
     public void AddConstant(string propertyName, object? value) =>
@@ -284,6 +315,10 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
           // The Dapper per-event write sends a vector as its text form for the column to parse; so does this.
           Parameters[paramName] = CollectivePhysicalColumns.VectorText(value as float[]);
           Columns.Add(new ColumnAssignment(propertyName, physical.ColumnName, "@" + paramName + "::vector"));
+        } else if (physical.IsJsonbColumn) {
+          // The whole value as its JSON, cast to jsonb; null clears the column, as the per-event write of a null does.
+          Parameters[paramName] = value is null ? null : JsonSerializer.Serialize(value, value.GetType(), _jsonOptions);
+          Columns.Add(new ColumnAssignment(propertyName, physical.ColumnName, "@" + paramName + "::jsonb"));
         } else {
           Parameters[paramName] = CollectivePhysicalColumns.ColumnValue(physical, value);
           Columns.Add(new ColumnAssignment(propertyName, physical.ColumnName, "@" + paramName));

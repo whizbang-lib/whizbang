@@ -20,6 +20,23 @@ public class PerspectivePhysicalFieldRegistryTests {
   private sealed class UnregisteredModel;
   private sealed class ReRegisteredModel;
 
+  private sealed class ColumnLookupModel;
+
+  [Test]
+  public async Task TryResolveColumn_FindsTheFieldByItsColumnAsync() {
+    PerspectivePhysicalFieldRegistry.Register(typeof(ColumnLookupModel), "Settings", "settings_col", FieldStorageMode.Split, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(ExtractedModel), "Other", "settings_col", FieldStorageMode.Extracted);
+
+    var found = PerspectivePhysicalFieldRegistry.TryResolveColumn(typeof(ColumnLookupModel), "settings_col", out var field);
+
+    await Assert.That(found).IsTrue();
+    await Assert.That(field.PropertyName).IsEqualTo("Settings");
+    await Assert.That(field.IsJsonbColumn).IsTrue();
+    await Assert.That(PerspectivePhysicalFieldRegistry.TryResolveColumn(typeof(ColumnLookupModel), "missing", out _)).IsFalse();
+    await Assert.That(PerspectivePhysicalFieldRegistry.TryResolveColumn(typeof(UnregisteredModel), "settings_col", out _)).IsFalse()
+      .Because("A column name is only a match within its own model.");
+  }
+
   [Test]
   public async Task Register_Extracted_ResolvesTheColumn_KeptInTheDocumentAsync() {
     PerspectivePhysicalFieldRegistry.Register(typeof(ExtractedModel), "Priority", "priority", FieldStorageMode.Extracted);

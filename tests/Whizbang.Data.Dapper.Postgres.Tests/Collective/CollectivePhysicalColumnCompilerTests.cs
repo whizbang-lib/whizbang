@@ -41,6 +41,10 @@ public class CollectivePhysicalColumnCompilerTests {
     PerspectivePhysicalFieldRegistry.Register(typeof(ExtractedModel), nameof(ExtractedModel.TextKind), "text_kind", FieldStorageMode.Extracted, columnType: "text");
     PerspectivePhysicalFieldRegistry.Register(typeof(ExtractedModel), nameof(ExtractedModel.Priority), "priority", FieldStorageMode.Extracted);
     PerspectivePhysicalFieldRegistry.Register(typeof(SiblingModel), nameof(SiblingModel.Lane), "lane", FieldStorageMode.Split);
+    PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Settings), "settings", FieldStorageMode.Split, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.Counters), "counters", FieldStorageMode.Split, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(SplitModel), nameof(SplitModel.TextSettings), "text_settings", FieldStorageMode.Split);
+    PerspectivePhysicalFieldRegistry.Register(typeof(ExtractedModel), nameof(ExtractedModel.Info), "info", FieldStorageMode.Extracted, columnType: "jsonb");
   }
 
   // ── SET: physical-only fields never assign data ─────────────────────────
@@ -370,6 +374,108 @@ public class CollectivePhysicalColumnCompilerTests {
     await Assert.That(result.Parameters["where_kind_1"]).IsEqualTo(1);
   }
 
+  // ── jsonb columns: one key, or the whole value (#1024) ─────────────────
+
+  [Test]
+  public async Task Compile_KeyInsideAJsonbColumn_SetsThatKeyWithJsonbSetAsync() {
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.Settings!.Theme, "light")), _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment)
+      .IsEqualTo("\"settings\" = jsonb_set(NULLIF(\"settings\", 'null'::jsonb), '{Theme}', @set_0_settings::jsonb)")
+      .Because("One key changes and every other key of the stored object stays; a Split column never touches data.");
+    await Assert.That(compiled.Parameters["set_0_settings"]).IsEqualTo("\"light\"");
+  }
+
+  [Test]
+  public async Task Compile_KeyInsideAJsonbColumnSetToNull_BindsJsonNullAsync() {
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.Settings!.Theme, (string?)null)), _jsonOptions);
+
+    await Assert.That(compiled.Parameters["set_0_settings"]).IsEqualTo("null")
+      .Because("A key set to null keeps the key, with a JSON null, as the per-event write serializes a null member.");
+  }
+
+  [Test]
+  public async Task Compile_TwoKeysOfOneJsonbColumn_ComposeInCallOrderAsync() {
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.Settings!.Theme, "light").SetProperty(m => m.Settings!.Size, 4)), _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).IsEqualTo(
+      "\"settings\" = jsonb_set(NULLIF(jsonb_set(NULLIF(\"settings\", 'null'::jsonb), '{Theme}', @set_0_settings::jsonb), 'null'::jsonb), '{Size}', @set_1_settings::jsonb)")
+      .Because("Postgres takes one assignment per column, so the second key is set on the first's result.");
+  }
+
+  [Test]
+  public async Task Compile_KeyInsideAJsonbColumnKeptInBothPlaces_SetsTheKeyInTheDocumentTooAsync() {
+    var compiled = DapperCollectiveSpecCompiler<ExtractedModel>.Compile(
+      new ExtractedSpec(s => s.SetProperty(m => m.Info!.Owner, "ops")), _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).IsEqualTo(
+      "data = jsonb_set(data, '{Info,Owner}', @set_0_info::jsonb), \"info\" = jsonb_set(NULLIF(\"info\", 'null'::jsonb), '{Owner}', @set_0_info::jsonb)");
+  }
+
+  [Test]
+  public async Task Compile_WholeJsonbValue_BindsItsJsonCastToJsonb_ForAnObjectADictionaryAndNullAsync() {
+    var settings = new Settings { Theme = "dark", Size = 2 };
+    var counters = new Dictionary<string, int> { ["a"] = 1 };
+
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.Settings, settings).SetProperty(m => m.Counters, counters)), _jsonOptions);
+    var cleared = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.Settings, (Settings?)null)), _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).IsEqualTo("\"settings\" = @set_0_settings::jsonb, \"counters\" = @set_1_counters::jsonb");
+    await Assert.That(compiled.Parameters["set_0_settings"]).IsEqualTo("{\"Theme\":\"dark\",\"Size\":2}");
+    await Assert.That(compiled.Parameters["set_1_counters"]).IsEqualTo("{\"a\":1}");
+    await Assert.That(cleared.Parameters["set_0_settings"]).IsNull()
+      .Because("A null value clears the column, as the per-event write of a null property does.");
+  }
+
+  [Test]
+  public async Task Compile_WholeValueThenAKey_SetsTheKeyOnTheNewValueAsync() {
+    var settings = new Settings { Theme = "dark" };
+
+    var compiled = DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.Settings, settings).SetProperty(m => m.Settings!.Size, 9)), _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).IsEqualTo(
+      "\"settings\" = jsonb_set(NULLIF(@set_0_settings::jsonb, 'null'::jsonb), '{Size}', @set_1_settings::jsonb)");
+  }
+
+  [Test]
+  public async Task Compile_HookRemovesTheJsonbColumn_DropsItsKeySettersAsync() {
+    var compiled = DapperCollectiveSpecCompiler<ExtractedModel>.Compile(
+      new ExtractedSpec(s => s.SetProperty(m => m.Info!.Owner, "ops").SetProperty(m => m.Priority, 2)), _jsonOptions,
+      removedFields: new HashSet<string>(StringComparer.Ordinal) { nameof(ExtractedModel.Info) });
+
+    await Assert.That(compiled.SqlFragment).DoesNotContain("info");
+    await Assert.That(compiled.SqlFragment).DoesNotContain("Info");
+  }
+
+  [Test]
+  public async Task Compile_ComputedKeyInsideAJsonbColumn_ThrowsNotSupportedAsync() {
+    await Assert.That(() => DapperCollectiveSpecCompiler<SplitModel>.Compile(
+      _split(s => s.SetProperty(m => m.Settings!.Size, m => m.Priority)), _jsonOptions)).ThrowsExactly<NotSupportedException>();
+  }
+
+  [Test]
+  public async Task TryJsonbKey_RefusesNestedShapesACollectiveCannotSet_AndPassesTopLevelThroughAsync() {
+    await Assert.That(CollectivePhysicalColumns.TryJsonbKey(typeof(SplitModel), (Expression<Func<SplitModel, string?>>)(m => m.Lane))).IsNull();
+    await Assert.That(CollectivePhysicalColumns.TryJsonbKey(typeof(SplitModel), (Expression<Func<SplitModel, object>>)(m => m.Lane!)))
+      .IsNull().Because("A boxing conversion around a top-level property is still top-level.");
+    await Assert.That(() => CollectivePhysicalColumns.TryJsonbKey(typeof(SplitModel), (Expression<Func<SplitModel, string?>>)(m => m.TextSettings!.Theme)))
+      .ThrowsExactly<NotSupportedException>().Because("Only a jsonb column holds keys a collective can set.");
+    await Assert.That(CollectivePhysicalColumns.TryJsonbKey(typeof(SplitModel), (Expression<Func<SplitModel, string?>>)(m => m.Title.Length.ToString(System.Globalization.CultureInfo.InvariantCulture))))
+      .IsNull().Because("A method call is not a member path; the caller refuses it as before.");
+    await Assert.That(() => CollectivePhysicalColumns.TryJsonbKey(typeof(SplitModel), (Expression<Func<SplitModel, int>>)(m => m.Title.Length)))
+      .ThrowsExactly<NotSupportedException>().Because("A document property's member is not a jsonb column key.");
+    await Assert.That(() => CollectivePhysicalColumns.TryJsonbKey(typeof(SplitModel), (Expression<Func<SplitModel, string?>>)(m => m.Settings!.Inner!.Note)))
+      .ThrowsExactly<NotSupportedException>().Because("One level down only.");
+    await Assert.That(() => CollectivePhysicalColumns.TryJsonbKey(typeof(SplitModel), (Expression<Func<SplitModel, string>>)(m => m.Settings!.Fixed)))
+      .ThrowsExactly<NotSupportedException>().Because("A key with no setter cannot be applied by the replay.");
+  }
+
   // ── Shared helpers ──────────────────────────────────────────────────────
 
   [Test]
@@ -392,7 +498,25 @@ public class CollectivePhysicalColumnCompilerTests {
     public string Key { get; set; } = "";
   }
 
+  internal sealed class Settings {
+    public string? Theme { get; set; }
+    public int Size { get; set; }
+    public Inner? Inner { get; set; }
+    public string Fixed { get; } = "fixed";
+  }
+
+  internal sealed class Inner {
+    public string? Note { get; set; }
+  }
+
+  internal sealed class Info {
+    public string? Owner { get; set; }
+  }
+
   private sealed class SplitModel {
+    public Settings? Settings { get; }
+    public Settings? TextSettings { get; }
+    public Dictionary<string, int>? Counters { get; }
     public string? Lane { get; }
     public int Priority { get; }
     public bool Flag { get; }
@@ -406,6 +530,7 @@ public class CollectivePhysicalColumnCompilerTests {
   }
 
   private sealed class ExtractedModel {
+    public Info? Info { get; }
     public int Priority { get; }
     public TicketKind Kind { get; }
     public TicketKind TextKind { get; }

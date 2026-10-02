@@ -51,6 +51,9 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Embedding), "embedding", FieldStorageMode.Split, isVector: true);
     PerspectivePhysicalFieldRegistry.Register(typeof(OrderModel), nameof(OrderModel.Priority), "priority", FieldStorageMode.Extracted);
     PerspectivePhysicalFieldRegistry.Register(typeof(OrderModel), nameof(OrderModel.Flagged), "flagged", FieldStorageMode.Extracted);
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Settings), "settings", FieldStorageMode.Split, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Counters), "counters", FieldStorageMode.Split, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(OrderModel), nameof(OrderModel.Info), "info", FieldStorageMode.Extracted, columnType: "jsonb");
   }
 
   private string? _databaseName;
@@ -353,6 +356,133 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     await Assert.That(same).IsTrue();
   }
 
+  // ── jsonb columns: one key, or the whole value (#1024) ──────────────────────────────────────
+
+  [Test]
+  public async Task Apply_KeyInsideAJsonbColumn_SetsThatKey_KeepsTheRest_AndLeavesTheDocumentAsync() {
+    var id = Guid.NewGuid();
+    await _runnerWriteTicketAsync(id, "t-A", new TicketModel { Settings = new TicketSettings { Theme = "dark", Size = 2 }, Title = "t" });
+    var before = await _documentAsync(SPLIT_TABLE, id);
+
+    await _applyTicketAsync(new TicketSpec(s => s.SetProperty(t => t.Settings!.Theme, "light")), "t-A");
+
+    await Assert.That((await _jsonbColumnsAsync(id)).Settings).IsEqualTo("{\"Size\": 2, \"Theme\": \"light\"}");
+    await Assert.That((await _documentAsync(SPLIT_TABLE, id)).Text).IsEqualTo(before.Text);
+    await Assert.That(_updateStatements()).Count().IsEqualTo(1)
+      .Because("The key is set in the same UPDATE as every other setter.");
+  }
+
+  [Test]
+  public async Task Apply_KeyInsideAJsonbColumnKeptInBothPlaces_SetsTheKeyInTheColumnAndTheDocumentAsync() {
+    var id = Guid.NewGuid();
+    await _runnerWriteOrderAsync(id, "t-A", new OrderModel { Status = "Open", Info = new OrderInfo { Owner = "a", Region = "eu" } });
+
+    await _applyOrderAsync(new OrderSpec(s => s.SetProperty(o => o.Info!.Owner, "b")), "t-A");
+
+    await using var conn = await _openAsync();
+    var (column, document) = await conn.QuerySingleAsync<(string, string)>(
+      $"SELECT info::text, (data->'Info')::text FROM {EXTRACTED_TABLE} WHERE id = @id", new { id });
+    await Assert.That(column).IsEqualTo("{\"Owner\": \"b\", \"Region\": \"eu\"}");
+    await Assert.That(document).IsEqualTo(column);
+  }
+
+  [Test]
+  public async Task Apply_KeyInsideAJsonbColumnSetToNull_KeepsTheKeyWithJsonNullAsync() {
+    var id = Guid.NewGuid();
+    await _runnerWriteTicketAsync(id, "t-A", new TicketModel { Settings = new TicketSettings { Theme = "dark", Size = 2 }, Title = "t" });
+
+    await _applyTicketAsync(new TicketSpec(s => s.SetProperty(t => t.Settings!.Theme, (string?)null)), "t-A");
+
+    await Assert.That((await _jsonbColumnsAsync(id)).Settings).IsEqualTo("{\"Size\": 2, \"Theme\": null}");
+  }
+
+  [Test]
+  public async Task Apply_KeyInsideANullJsonbColumn_ChangesNothingAsync() {
+    var id = Guid.NewGuid();
+    await _runnerWriteTicketAsync(id, "t-A", new TicketModel { Title = "t" });
+
+    var affected = await _applyTicketAsync(new TicketSpec(s => s.SetProperty(t => t.Settings!.Theme, "light")), "t-A");
+
+    await Assert.That(affected).IsEqualTo(1);
+    await Assert.That((await _jsonbColumnsAsync(id)).Settings).IsNull()
+      .Because("A key is set on an object the column holds; with no object there is no key to set, as in the replay.");
+  }
+
+  [Test]
+  public async Task Apply_WholeJsonbValues_BindAsJsonb_ForAnObjectADictionaryAndNullAsync() {
+    var id = Guid.NewGuid();
+    await _runnerWriteTicketAsync(id, "t-A", new TicketModel { Settings = new TicketSettings { Theme = "dark" }, Title = "t" });
+    var settings = new TicketSettings { Theme = "blue", Size = 5 };
+    var counters = new Dictionary<string, int> { ["b"] = 2 };
+
+    await _applyTicketAsync(new TicketSpec(s => s.SetProperty(t => t.Settings, settings).SetProperty(t => t.Counters, counters)), "t-A");
+    var set = await _jsonbColumnsAsync(id);
+    await _applyTicketAsync(new TicketSpec(s => s.SetProperty(t => t.Settings, (TicketSettings?)null)), "t-A");
+
+    await Assert.That(set).IsEqualTo(("{\"Size\": 5, \"Theme\": \"blue\"}", "{\"b\": 2}"));
+    await Assert.That((await _jsonbColumnsAsync(id)).Settings).IsNull()
+      .Because("A null value clears the column, as the per-event write of a null property does.");
+  }
+
+  [Test]
+  public async Task Apply_ComputedKeyInsideAJsonbColumn_ThrowsNotSupportedAsync() {
+    await _runnerWriteTicketAsync(Guid.NewGuid(), "t-A", new TicketModel { Title = "t" });
+
+    await Assert.That(() => _applyTicketAsync(new TicketSpec(s => s.SetProperty(t => t.Settings!.Size, t => t.Priority)), "t-A"))
+      .ThrowsExactly<NotSupportedException>();
+  }
+
+  [Test]
+  public async Task Replay_MatchesLive_ForJsonbKeysAndWholeValuesAsync() {
+    var live = Guid.NewGuid();
+    var replayed = Guid.NewGuid();
+    var counters = new Dictionary<string, int> { ["c"] = 3 };
+    TicketModel PreState() => new() { Settings = new TicketSettings { Theme = "dark", Size = 1 }, Title = "t" };
+    await _runnerWriteTicketAsync(live, "t-A", PreState());
+    await _runnerWriteTicketAsync(replayed, "t-B", PreState());
+    var spec = new TicketSpec(s => s
+      .SetProperty(t => t.Settings!.Theme, "light")
+      .SetProperty(t => t.Settings!.Size, 7)
+      .SetProperty(t => t.Counters, counters));
+
+    await _applyTicketAsync(spec, "t-A");
+    var model = (TicketModel)new CollectiveInMemoryExecutor<TicketModel>().ApplyToRow(spec, PreState(), replayed);
+    await _runnerWriteTicketAsync(replayed, "t-B", model);
+
+    await using var conn = await _openAsync();
+    var same = await conn.QuerySingleAsync<bool>($"""
+      SELECT (SELECT (settings, counters, data) FROM {SPLIT_TABLE} WHERE id = @live)
+           = (SELECT (settings, counters, data) FROM {SPLIT_TABLE} WHERE id = @replayed)
+      """, new { live, replayed });
+    await Assert.That(same).IsTrue();
+  }
+
+  [Test]
+  public async Task Replay_MatchesLive_ForAKeyKeptInBothPlacesAsync() {
+    var live = Guid.NewGuid();
+    var replayed = Guid.NewGuid();
+    OrderModel PreState() => new() { Status = "Open", Info = new OrderInfo { Owner = "a", Region = "eu" } };
+    await _runnerWriteOrderAsync(live, "t-A", PreState());
+    await _runnerWriteOrderAsync(replayed, "t-B", PreState());
+    var spec = new OrderSpec(s => s.SetProperty(o => o.Info!.Region, "us"));
+
+    await _applyOrderAsync(spec, "t-A");
+    var model = (OrderModel)new CollectiveInMemoryExecutor<OrderModel>().ApplyToRow(spec, PreState(), replayed);
+    await _runnerWriteOrderAsync(replayed, "t-B", model);
+
+    await using var conn = await _openAsync();
+    var same = await conn.QuerySingleAsync<bool>(
+      $"SELECT (SELECT (info, data) FROM {EXTRACTED_TABLE} WHERE id = @live) = (SELECT (info, data) FROM {EXTRACTED_TABLE} WHERE id = @replayed)",
+      new { live, replayed });
+    await Assert.That(same).IsTrue();
+  }
+
+  private async Task<(string? Settings, string? Counters)> _jsonbColumnsAsync(Guid id) {
+    await using var conn = await _openAsync();
+    return await conn.QuerySingleAsync<(string?, string?)>(
+      $"SELECT settings::text, counters::text FROM {SPLIT_TABLE} WHERE id = @id", new { id });
+  }
+
   // ── Models, specs, events ─────────────────────────────────────────────────────────────────────
 
   [PerspectiveStorage(FieldStorageMode.Split)]
@@ -364,8 +494,20 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     [PhysicalField] public List<TicketTag>? Notes { get; set; }
     [PhysicalField] public TicketKind Kind { get; set; }
     [VectorField(3)] public float[]? Embedding { get; set; }
+    [PhysicalField(ColumnType = "jsonb")] public TicketSettings? Settings { get; set; }
+    [PhysicalField(ColumnType = "jsonb")] public Dictionary<string, int>? Counters { get; set; }
     public string Title { get; set; } = "";
     public bool IsHot { get; set; }
+  }
+
+  public sealed class TicketSettings {
+    public string? Theme { get; set; }
+    public int Size { get; set; }
+  }
+
+  public sealed class OrderInfo {
+    public string? Owner { get; set; }
+    public string? Region { get; set; }
   }
 
   public enum TicketKind { Task, Bug }
@@ -379,6 +521,7 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
   internal sealed class OrderModel {
     [PhysicalField] public int Priority { get; set; }
     [PhysicalField] public bool Flagged { get; set; }
+    [PhysicalField(ColumnType = "jsonb")] public OrderInfo? Info { get; set; }
     public string Status { get; set; } = "";
   }
 
@@ -421,6 +564,7 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     var physicalFieldValues = new Dictionary<string, object?> {
       { "lane", model.Lane }, { "prio", model.Priority }, { "urgent", model.Urgent }, { "kind", model.Kind },
       { "embedding", model.Embedding != null ? new Pgvector.Vector(model.Embedding) : null }, { "tags", model.Tags },
+      { "settings", model.Settings }, { "counters", model.Counters },
     };
     var document = new TicketModel {
       Lane = default!,
@@ -429,6 +573,8 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
       Kind = default!,
       Embedding = [],
       Tags = default!,
+      Settings = default!,
+      Counters = default!,
       Title = model.Title,
       IsHot = model.IsHot,
     };
@@ -436,7 +582,7 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
   }
 
   private async Task _runnerWriteOrderAsync(Guid id, string tenant, OrderModel model) {
-    var physicalFieldValues = new Dictionary<string, object?> { { "priority", model.Priority }, { "flagged", model.Flagged } };
+    var physicalFieldValues = new Dictionary<string, object?> { { "priority", model.Priority }, { "flagged", model.Flagged }, { "info", model.Info } };
     await _upsertAsync(EXTRACTED_TABLE, id, tenant, model, physicalFieldValues);
   }
 
@@ -502,11 +648,11 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
         id UUID PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL, scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, version INTEGER NOT NULL,
         lane TEXT, prio INTEGER NOT NULL DEFAULT 0, urgent BOOLEAN NOT NULL DEFAULT FALSE, tags JSONB,
-        kind INTEGER NOT NULL DEFAULT 0, embedding vector(3));
+        kind INTEGER NOT NULL DEFAULT 0, embedding vector(3), settings JSONB, counters JSONB);
       CREATE TABLE {EXTRACTED_TABLE} (
         id UUID PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL, scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, version INTEGER NOT NULL,
-        priority INTEGER NOT NULL DEFAULT 0, flagged BOOLEAN NOT NULL DEFAULT FALSE);
+        priority INTEGER NOT NULL DEFAULT 0, flagged BOOLEAN NOT NULL DEFAULT FALSE, info JSONB);
       """);
   }
 
@@ -549,10 +695,13 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
         e.Property<TicketKind>("kind").HasColumnName("kind").HasColumnType("integer").HasConversion<int>();
         e.Property<Pgvector.Vector?>("embedding").HasColumnName("embedding").HasColumnType("vector(3)");
         e.Property<List<TicketTag>?>("tags").HasColumnName("tags").HasColumnType("jsonb");
+        e.Property<TicketSettings?>("settings").HasColumnName("settings").HasColumnType("jsonb");
+        e.Property<Dictionary<string, int>?>("counters").HasColumnName("counters").HasColumnType("jsonb");
       });
       _mapRow<OrderModel>(modelBuilder, EXTRACTED_TABLE, e => {
         e.Property<int>("priority").HasColumnName("priority");
         e.Property<bool>("flagged").HasColumnName("flagged");
+        e.Property<OrderInfo?>("info").HasColumnName("info").HasColumnType("jsonb");
       });
     }
 

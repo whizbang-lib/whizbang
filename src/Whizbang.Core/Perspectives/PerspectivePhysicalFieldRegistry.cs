@@ -49,6 +49,25 @@ public static class PerspectivePhysicalFieldRegistry {
       propertyName, columnName, InDocument: storageMode != FieldStorageMode.Split, isVector, scalarType, columnType);
   }
 
+  /// <summary>
+  /// The physical field registered for a model's column, if there is one: for a writer that has the column name
+  /// rather than the property, such as a store binding a column's value.
+  /// </summary>
+  /// <param name="modelType">The perspective model.</param>
+  /// <param name="columnName">The column, as registered.</param>
+  /// <param name="field">The field, when one is registered.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs:TryResolveColumn_FindsTheFieldByItsColumnAsync</tests>
+  public static bool TryResolveColumn(Type modelType, string columnName, out PerspectivePhysicalField field) {
+    foreach (var ((model, _), registered) in _fields) {
+      if (model == modelType && string.Equals(registered.ColumnName, columnName, StringComparison.Ordinal)) {
+        field = registered;
+        return true;
+      }
+    }
+    field = default;
+    return false;
+  }
+
   /// <summary>The physical field registered for a model property, if there is one.</summary>
   public static bool TryResolve(Type modelType, string propertyName, out PerspectivePhysicalField field) {
     if (modelType is null) {

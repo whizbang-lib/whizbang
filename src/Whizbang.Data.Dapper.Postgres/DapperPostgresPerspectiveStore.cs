@@ -353,7 +353,8 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       if (!_isPlainIdentifier(column)) {
         throw new ArgumentException($"'{column}' is not a plain column name.", nameof(values));
       }
-      columns.Add((column, _physicalParameter($"p_pf{columns.Count}", value, jsonOptions)));
+      var jsonb = PerspectivePhysicalFieldRegistry.TryResolveColumn(typeof(TModel), column, out var field) && field.IsJsonbColumn;
+      columns.Add((column, _physicalParameter($"p_pf{columns.Count}", value, jsonOptions, jsonb)));
     }
     return columns;
   }
@@ -364,12 +365,17 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   /// <summary>
   /// The driver sends the common types natively. An instant is sent in UTC, which is the same instant. An
   /// enumeration is sent as its underlying number, the form its column holds (see
-  /// <see cref="PerspectivePhysicalValues"/>). A collection the JSON options can describe (a keyed list in a jsonb
-  /// column) is sent as its JSON text. Anything else (a vector) is sent as its text form. Both text forms go
-  /// with no declared type, so the column's own type parses them, exactly as it would parse a literal.
+  /// <see cref="PerspectivePhysicalValues"/>). The value of a column registered as jsonb (an object, a dictionary,
+  /// a list) is sent as its JSON text, from the JSON options' contract for its type; an object there used to be
+  /// sent as its type's name, which no jsonb column parses. Elsewhere a collection the JSON options can describe (a
+  /// keyed list) is sent as its JSON text. Anything else (a vector, a value object a column type parses) is sent as
+  /// its text form. Both text forms go with no declared type, so the column's own type parses them, exactly as it
+  /// would parse a literal.
   /// </summary>
-  private static NpgsqlParameter _physicalParameter(string name, object? value, JsonSerializerOptions jsonOptions) => value switch {
+  private static NpgsqlParameter _physicalParameter(string name, object? value, JsonSerializerOptions jsonOptions, bool jsonb) => value switch {
     null => new NpgsqlParameter(name, DBNull.Value),
+    _ when jsonb =>
+      new NpgsqlParameter(name, NpgsqlDbType.Unknown) { Value = JsonSerializer.Serialize(value, jsonOptions.GetTypeInfo(value.GetType())) },
     DateTimeOffset instant => new NpgsqlParameter(name, instant.ToUniversalTime()),
     Enum => new NpgsqlParameter(name, PerspectivePhysicalValues.ToColumnScalar(value)),
     string or Guid or bool or short or int or long or float or double or decimal
