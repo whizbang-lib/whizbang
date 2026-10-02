@@ -67,6 +67,10 @@ public class PhysicalJsonbContainmentRewriterTests {
     await Assert.That(_containments(r => Enumerable.Contains(r.Data.Tags, tag))).IsEqualTo(1);
     await Assert.That(_containments(r => r.Data.Labels.Any(l => l.Key == key && l.Label == tag))).IsEqualTo(1);
     await Assert.That(_containments(r => r.Data.Location!.Address.City == tag)).IsEqualTo(1);
+    await Assert.That(_containments(r => r.Data.Bare!.A == tag)).IsEqualTo(1)
+      .Because("metadata without an attribute provider names a member by its own name.");
+    await Assert.That(_containments(r => r.Data.Bare!.B == tag)).IsEqualTo(0)
+      .Because("a member that metadata does not list has no stored name.");
     await Assert.That(_containments(r => r.Data.Location!.Note == tag)).IsEqualTo(1)
       .Because("a member ignored only when null is stored under its name whenever it has a value.");
     await Assert.That(_containments(r => !r.Data.Tags.Contains(tag))).IsEqualTo(1);

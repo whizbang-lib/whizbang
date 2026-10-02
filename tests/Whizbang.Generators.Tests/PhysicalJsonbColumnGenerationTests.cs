@@ -190,16 +190,20 @@ public class PhysicalJsonbColumnGenerationTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Runner_ExtractedModelWithoutJsonbColumns_RegistersNoReadBackAsync() {
-    var source = MODEL.Replace("[PhysicalField]\n      public Dictionary", "public Dictionary", StringComparison.Ordinal)
-      .Replace("[PhysicalField]\n      public List<GridLabel>", "public List<GridLabel>", StringComparison.Ordinal)
-      .Replace("[PhysicalField]\n      public string[]", "public string[]", StringComparison.Ordinal)
-      .Replace("[PhysicalField]\n      public Location?", "public Location?", StringComparison.Ordinal)
-      .Replace("[PhysicalField]\n      public Grade", "public Grade", StringComparison.Ordinal);
+    // The same model with every jsonb field left in the document only.
+    string[] jsonbFields = ["GridFilter", "Labels", "Tags", "Location", "Grade"];
+    var lines = MODEL.Split('\n').ToList();
+    for (var i = lines.Count - 2; i >= 0; i--) {
+      if (lines[i].Trim() == "[PhysicalField]" && jsonbFields.Any(f => lines[i + 1].Contains($" {f} {{", StringComparison.Ordinal))) {
+        lines.RemoveAt(i);
+      }
+    }
+    var source = string.Join('\n', lines);
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runner = GeneratorTestHelper.GetGeneratedSource(result, "GridPerspectiveRunner.g.cs") ?? "";
 
     await Assert.That(runner).Contains("\"Stamp\", \"stamp\"");
-    await Assert.That(runner).DoesNotContain("_registerSplitPhysicalFields");
+    await Assert.That(runner).DoesNotContain("SplitPhysicalColumn(");
   }
 
   private static string _modelConfiguration() {

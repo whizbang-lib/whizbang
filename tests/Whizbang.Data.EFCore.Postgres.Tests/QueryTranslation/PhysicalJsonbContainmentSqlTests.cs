@@ -197,6 +197,30 @@ public class PhysicalJsonbContainmentSqlTests {
     public string Name { get; set; } = "";
   }
 
+  /// <summary>An object whose serializer metadata is built by hand, with no attribute provider.</summary>
+  public sealed class JsonbBare {
+    public string A { get; set; } = "";
+    public string B { get; set; } = "";
+  }
+
+  /// <summary>
+  /// Metadata for <see cref="JsonbBare"/> built the way the framework's own generated contexts build it: no
+  /// attribute provider, and only <c>A</c> written.
+  /// </summary>
+  internal sealed class BareResolver : System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver {
+    public System.Text.Json.Serialization.Metadata.JsonTypeInfo? GetTypeInfo(Type type, System.Text.Json.JsonSerializerOptions options) {
+      if (type != typeof(JsonbBare)) {
+        return null;
+      }
+
+      var info = System.Text.Json.Serialization.Metadata.JsonTypeInfo.CreateJsonTypeInfo<JsonbBare>(options);
+      var a = info.CreateJsonPropertyInfo(typeof(string), "A");
+      a.Get = o => ((JsonbBare)o).A;
+      info.Properties.Add(a);
+      return info;
+    }
+  }
+
   /// <summary>An object column.</summary>
   public sealed class JsonbLocation {
     public JsonbAddress Address { get; set; } = new();
@@ -230,6 +254,10 @@ public class PhysicalJsonbContainmentSqlTests {
     [JsonIgnore]
     public JsonbUnlisted? Other { get; set; }
 
+    /// <summary>A column described by metadata with no attribute provider.</summary>
+    [JsonIgnore]
+    public JsonbBare? Bare { get; set; }
+
     private static int _registered;
 
     internal static void Register() {
@@ -238,6 +266,7 @@ public class PhysicalJsonbContainmentSqlTests {
       }
 
       JsonContextRegistry.RegisterContext(JsonbColumnsJsonContext.Default);
+      JsonContextRegistry.RegisterContext(new BareResolver());
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(GridFilter), "grid_filter");
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Counts), "counts");
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Tags), "tags");
@@ -249,6 +278,7 @@ public class PhysicalJsonbContainmentSqlTests {
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Rows), "rows");
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(ByNumber), "by_number");
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Other), "other");
+      PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Bare), "bare");
     }
   }
 
@@ -272,6 +302,7 @@ public class PhysicalJsonbContainmentSqlTests {
           d.Ignore(m => m.Rows);
           d.Ignore(m => m.ByNumber);
           d.Ignore(m => m.Other);
+          d.Ignore(m => m.Bare);
         });
         entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
         entity.ComplexProperty(e => e.Scope, s => {
@@ -299,6 +330,7 @@ public class PhysicalJsonbContainmentSqlTests {
         _jsonb<List<Dictionary<string, string>>>(entity, "rows");
         _jsonb<Dictionary<int, string>>(entity, "by_number");
         _jsonb<JsonbUnlisted?>(entity, "other");
+        _jsonb<JsonbBare?>(entity, "bare");
       });
 
       modelBuilder.UseWhizbangJsonbContainment();

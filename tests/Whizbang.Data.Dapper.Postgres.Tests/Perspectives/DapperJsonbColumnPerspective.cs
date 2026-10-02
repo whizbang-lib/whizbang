@@ -56,7 +56,7 @@ public record DapperJsonbExtractedModel {
   public DapperJsonbPlace? Place { get; init; }
 
   [PhysicalField]
-  public Guid[] Owners { get; init; } = [];
+  public List<Guid> Owners { get; init; } = [];
 
   public string? Note { get; init; }
 }
@@ -77,7 +77,7 @@ public record DapperJsonbSplitModel {
   public DapperJsonbPlace? Place { get; init; }
 
   [PhysicalField]
-  public Guid[] Owners { get; init; } = [];
+  public List<Guid> Owners { get; init; } = [];
 
   public string? Note { get; init; }
 }
@@ -89,7 +89,7 @@ public record DapperJsonbFiltersSetEvent : IEvent {
   public required Dictionary<string, string[]> Filters { get; init; }
   public required List<DapperJsonbLabel> Labels { get; init; }
   public required DapperJsonbPlace Place { get; init; }
-  public required Guid[] Owners { get; init; }
+  public required List<Guid> Owners { get; init; }
 }
 
 /// <summary>Changes only the document field.</summary>
@@ -104,6 +104,6 @@ public record DapperJsonbNoteChangedEvent : IEvent {
 [JsonSerializable(typeof(Dictionary<string, string[]>))]
 [JsonSerializable(typeof(List<DapperJsonbLabel>))]
 [JsonSerializable(typeof(DapperJsonbPlace))]
-[JsonSerializable(typeof(Guid[]))]
+[JsonSerializable(typeof(List<Guid>))]
 [JsonSerializable(typeof(PerspectiveScope))]
 internal sealed partial class DapperJsonbColumnJsonContext : JsonSerializerContext;

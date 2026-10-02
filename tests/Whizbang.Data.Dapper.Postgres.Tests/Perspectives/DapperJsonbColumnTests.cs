@@ -24,6 +24,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 public class DapperJsonbColumnTests : PostgresTestBase {
   private const string EXTRACTED_TABLE = "wh_per_dapper_jsonb_extracted";
   private const string SPLIT_TABLE = "wh_per_dapper_jsonb_split";
+  private static readonly string[] _northEast = ["north", "east"];
   private static readonly Guid _owner = Guid.Parse("0190f0a0-0000-7000-8000-000000000001");
 
   private static readonly JsonSerializerOptions _jsonOptions = new() {
@@ -55,7 +56,7 @@ public class DapperJsonbColumnTests : PostgresTestBase {
     Owners = [_owner],
   };
 
-  private ServiceProvider _services<TPerspective>() where TPerspective : class {
+  private static ServiceProvider _services<TPerspective>() where TPerspective : class {
     var services = new ServiceCollection();
     services.AddTransient<TPerspective>();
     services.AddLogging();
@@ -101,7 +102,7 @@ public class DapperJsonbColumnTests : PostgresTestBase {
 
     await Assert.That(await _columnsAsync(EXTRACTED_TABLE, streamId)).IsEqualTo(EXPECTED_COLUMNS);
     var model = await store.GetByStreamIdAsync(streamId);
-    await Assert.That(model!.Filters["region"]).IsEquivalentTo(new[] { "north", "east" });
+    await Assert.That(model!.Filters["region"]).IsEquivalentTo(_northEast);
     await Assert.That(model.Place).IsEqualTo(new DapperJsonbPlace("Springfield", 3));
   }
 
@@ -131,7 +132,7 @@ public class DapperJsonbColumnTests : PostgresTestBase {
     var streamId = Guid.CreateVersion7();
     var store = new DapperPostgresPerspectiveStore<DapperJsonbSplitModel>(ConnectionString, SPLIT_TABLE, _jsonOptions);
     await store.UpsertWithPhysicalFieldsAsync(streamId, new DapperJsonbSplitModel { Id = streamId },
-      new Dictionary<string, object?> { ["filters"] = new Dictionary<string, string[]>(), ["labels"] = null, ["place"] = null, ["owners"] = Array.Empty<Guid>() });
+      new Dictionary<string, object?> { ["filters"] = new Dictionary<string, string[]>(), ["labels"] = null, ["place"] = null, ["owners"] = new List<Guid>() });
 
     var model = await store.GetByStreamIdAsync(streamId);
 

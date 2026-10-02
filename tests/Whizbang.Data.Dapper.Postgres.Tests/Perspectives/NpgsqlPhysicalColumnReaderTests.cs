@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Npgsql;
 using TUnit.Core;
 using Whizbang.Core.Perspectives;
@@ -22,7 +23,7 @@ public class NpgsqlPhysicalColumnReaderTests : PostgresTestBase {
     await using var command = new NpgsqlCommand($"SELECT '{{}}'::jsonb, {columnSql} AS tier", connection);
     await using var reader = await command.ExecuteReaderAsync();
     await reader.ReadAsync();
-    return new NpgsqlPhysicalColumnReader(reader, [new SplitPhysicalColumn("tier", IsVector: false)]).Read<T>("tier");
+    return new NpgsqlPhysicalColumnReader(reader, [new SplitPhysicalColumn("tier", IsVector: false)], new JsonSerializerOptions()).Read<T>("tier");
   }
 
   [Test]
