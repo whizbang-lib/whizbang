@@ -49,6 +49,10 @@ public class RoleAssignmentOptionsTests {
     await Assert.That(options.LeaseFor("slow-duty")).IsEqualTo(TimeSpan.FromMinutes(5));
     await Assert.That(options.LeaseFor(StartupDuties.MIGRATOR)).IsEqualTo(RoleAssignmentOptions.DefaultMigratorLease);
     await Assert.That(options.LeaseFor(StartupDuties.MAINTAINER)).IsEqualTo(options.Lease);
+    var slow = new RoleAssignmentOptions { RenewInterval = TimeSpan.FromSeconds(30) };
+    await Assert.That(slow.LeaseFor(StartupDuties.MIGRATOR)).IsEqualTo(slow.Lease)
+      .Because("the migrator is never granted less than the default lease");
+    await Assert.That(slow.Validate).ThrowsNothing();
   }
 
   [Test]

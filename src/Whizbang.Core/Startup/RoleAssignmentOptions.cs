@@ -81,12 +81,10 @@ public sealed class RoleAssignmentOptions {
 
   /// <summary>
   /// A lease per duty, for a duty whose work can go longer than the default lease between renewals.
-  /// A duty not listed is granted <see cref="Lease"/>. Default: the migrator, at
-  /// <see cref="DefaultMigratorLease"/>.
+  /// A duty not listed is granted <see cref="Lease"/>, except the migrator, which is granted
+  /// <see cref="DefaultMigratorLease"/> or <see cref="Lease"/>, whichever is longer.
   /// </summary>
-  public IDictionary<string, TimeSpan> RoleLeases { get; } = new Dictionary<string, TimeSpan>(StringComparer.Ordinal) {
-    [StartupDuties.MIGRATOR] = DefaultMigratorLease,
-  };
+  public IDictionary<string, TimeSpan> RoleLeases { get; } = new Dictionary<string, TimeSpan>(StringComparer.Ordinal);
 
   /// <summary>
   /// How an instance on the session-lock elector locks a role, by schema, for a role whose legacy
@@ -98,10 +96,18 @@ public sealed class RoleAssignmentOptions {
   /// <summary>The default lease a holder is granted: <see cref="RenewInterval"/> × <see cref="MissedRenewalsBeforeLapse"/>.</summary>
   public TimeSpan Lease => RenewInterval * MissedRenewalsBeforeLapse;
 
-  /// <summary>The lease <paramref name="role"/> is held for: its own from <see cref="RoleLeases"/>, else <see cref="Lease"/>.</summary>
+  /// <summary>
+  /// The lease <paramref name="role"/> is held for: its own from <see cref="RoleLeases"/>; else, for the
+  /// migrator, the longer of <see cref="DefaultMigratorLease"/> and <see cref="Lease"/>; else <see cref="Lease"/>.
+  /// </summary>
   /// <param name="role">The role.</param>
   /// <returns>The lease.</returns>
-  public TimeSpan LeaseFor(string role) => RoleLeases.TryGetValue(role, out var lease) ? lease : Lease;
+  public TimeSpan LeaseFor(string role) {
+    if (RoleLeases.TryGetValue(role, out var lease)) {
+      return lease;
+    }
+    return IsEpisodic(role) && DefaultMigratorLease > Lease ? DefaultMigratorLease : Lease;
+  }
 
   /// <summary>Whether <paramref name="duty"/> is held by assignment rather than delegated.</summary>
   /// <param name="duty">The duty name.</param>

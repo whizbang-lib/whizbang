@@ -193,8 +193,8 @@ public class PendingDutyWorkE2ETests : EFCoreTestBase {
     var store = _storeFor(a);
     var holder = (await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
 
-    await store.OweAsync(StartupDuties.MIGRATOR, "Migrate", cancellationToken);
-    await Assert.That(await store.ListOwedAsync(StartupDuties.MIGRATOR, cancellationToken)).IsEmpty()
+    await store.OweAsync("host-duty", "HostWork", cancellationToken);
+    await Assert.That(await store.ListOwedAsync("host-duty", cancellationToken)).IsEmpty()
       .Because("nothing runs work owed to a duty that is not held by assignment, so none is recorded");
 
     await store.OweAsync(ROLE, "Rewrite", cancellationToken);

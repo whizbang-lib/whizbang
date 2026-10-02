@@ -453,11 +453,11 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
   public async Task UnmanagedDuty_IsDelegatedToTheSessionLockElectorAsync(CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
 
-    var attempt = await _electorFor(a).TryAcquireAsync(StartupDuties.MIGRATOR, cancellationToken);
+    var attempt = await _electorFor(a).TryAcquireAsync("host-duty", cancellationToken);
 
     await Assert.That(attempt.Grant).IsNotNull();
     await Assert.That(attempt.Grant!.Epoch).IsNull()
-      .Because("the migrator stays on the session lock, which has no fencing token");
+      .Because("a duty that is not a role stays on the session lock, which has no fencing token");
     await attempt.Grant.DisposeAsync();
   }
 

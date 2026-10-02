@@ -102,7 +102,8 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   /// <summary>
   /// Fires when this instance stops being the active stamper: its tenure ended (the role was lost,
-  /// handed to a newer instance, or refused by the fence) or the worker is stopping.
+  /// handed to a newer instance, or refused by the fence) or the worker is stopping. Under role
+  /// assignment the role has already been released when it fires.
   /// </summary>
   public event Action? OnStoppedLeading;
 
@@ -370,7 +371,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   /// <summary>One tenure: stamp on its own connection until it ends, then give the role back.</summary>
   private async Task _leadAsRoleHolderAsync(
       IDutyGrant grant, NotificationConnectionStringResolver.Resolution resolution, CancellationToken stoppingToken) {
-    await using (grant) {
+    try {
       var conn = _dataSource is not null
         ? await _dataSource.OpenConnectionAsync(stoppingToken)
         : new NpgsqlConnection(resolution.ConnectionString);
@@ -379,12 +380,13 @@ public sealed partial class PgCommitOrderStamperWorker(
           await conn.OpenAsync(stoppingToken);
         }
         _setLeader(true);
-        try {
-          await _stampWhileLeaderAsync(conn, grant, stoppingToken);
-        } finally {
-          _setLeader(false);
-        }
+        await _stampWhileLeaderAsync(conn, grant, stoppingToken);
       }
+    } finally {
+      // The role is given back before this instance reports that it stopped leading, so whoever
+      // hears that can win the role at once.
+      await grant.DisposeAsync();
+      _setLeader(false);
     }
   }
 

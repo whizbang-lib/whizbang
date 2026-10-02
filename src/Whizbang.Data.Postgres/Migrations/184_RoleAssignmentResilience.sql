@@ -172,7 +172,8 @@ $$;
 --
 -- The holder failed to renew between its last renewal and its lease expiry (the
 -- window). The lapse is fleet-wide when other assignments were held at the
--- window's start and none of them shows the database was reachable during it:
+-- window's start (still held since then, or vacated after it, which includes one
+-- voided and re-granted as the fleet recovers) and none of them shows the database was reachable during it:
 -- none was held through it, and none was granted or vacated inside it. Only an
 -- assignment whose lease is no longer than the window can testify to being held
 -- through it, since a longer lease survives an outage without a renewal. With no
@@ -192,8 +193,8 @@ AS $$
             SELECT 1 FROM __SCHEMA__.wh_role_assignments o
              WHERE o.role <> p_row.role
                AND o.lease <= p_row.lease
-               AND o.assigned_at <= p_row.renewed_at
-               AND (o.holder_instance_id IS NOT NULL OR o.last_vacated_at > p_row.renewed_at))
+               AND ((o.holder_instance_id IS NOT NULL AND o.assigned_at <= p_row.renewed_at)
+                    OR o.last_vacated_at > p_row.renewed_at))
      AND NOT EXISTS (
             SELECT 1 FROM __SCHEMA__.wh_role_assignments o
              WHERE o.role <> p_row.role

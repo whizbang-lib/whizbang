@@ -387,6 +387,9 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     var b = await _joinAsync(cancellationToken);
     var first = await _voteAsync(a, cancellationToken, ROLE);
     var second = await _voteAsync(b, cancellationToken, OTHER_ROLE);
+    // Both holders renewing: each was renewed after the other was assigned, as a healthy fleet's are.
+    _ = await _voteAsync(a, cancellationToken, ROLE);
+    _ = await _voteAsync(b, cancellationToken, OTHER_ROLE);
     await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
     await _ageAsync(OTHER_ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
 
