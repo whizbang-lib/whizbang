@@ -27,9 +27,9 @@ public static class RoleAssignmentServiceCollectionExtensions {
   /// elector the host registered. Safe before or after the driver's registration, and more than once.
   /// </summary>
   /// <remarks>
-  /// The options also bind from <c>Whizbang:Database:RoleAssignment</c>. The legacy-lock bridge is off
-  /// by default: turn it on (<see cref="RoleAssignmentOptions.HoldLegacySessionLock"/>) for a rolling
-  /// deploy from a release that held duties by session lock.
+  /// The options also bind from <c>Whizbang:Database:RoleAssignment</c>. The legacy-lock bridge
+  /// (<see cref="RoleAssignmentOptions.HoldLegacySessionLock"/>) is on by default in this release, so a
+  /// rolling deploy from a release that held duties by session lock never has both acting.
   /// </remarks>
   /// <param name="services">The service collection.</param>
   /// <param name="configure">Optional tuning.</param>

@@ -736,6 +736,51 @@ BEGIN
 END;
 $$;
 
+-- ============================================================================
+-- wh_request_role_drain — what a bridged caller does when it could not take the
+-- role's legacy lock: it records its candidacy, and if a live holder is on an older
+-- version it asks that holder to drain, exactly as the vote's fast path would. It
+-- never assigns anything. Answers 'draining' when a drain is pending, else
+-- 'contended'.
+--
+-- <docs>proposals/duty-role-assignment</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentResilienceE2ETests.cs:ABridgedNewerInstance_StillAsksTheOlderHolderToDrainAsync</tests>
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_request_role_drain(
+  p_role TEXT,
+  p_instance_id UUID,
+  p_lease INTERVAL,
+  p_version_key INTEGER[]
+) RETURNS TEXT
+LANGUAGE plpgsql
+SET timezone = 'UTC'
+AS $$
+DECLARE
+  v_row __SCHEMA__.wh_role_assignments%ROWTYPE;
+  v_key INTEGER[] := COALESCE(p_version_key, '{}');
+BEGIN
+  INSERT INTO __SCHEMA__.wh_role_candidates AS c (role, instance_id, version_key, last_voted_at)
+  VALUES (p_role, p_instance_id, v_key, now())
+  ON CONFLICT (role, instance_id) DO UPDATE
+     SET version_key = EXCLUDED.version_key, last_voted_at = EXCLUDED.last_voted_at
+   WHERE c.last_voted_at < now() - p_lease / 2 OR c.version_key IS DISTINCT FROM EXCLUDED.version_key;
+
+  SELECT * INTO v_row FROM __SCHEMA__.wh_role_assignments r WHERE r.role = p_role;
+  IF NOT FOUND OR v_row.holder_instance_id IS NULL OR v_row.holder_instance_id = p_instance_id
+     OR __SCHEMA__._role_lapse_reason(v_row) IS NOT NULL THEN
+    RETURN 'contended';
+  END IF;
+  IF v_key > COALESCE(v_row.holder_version_key, '{}') AND v_row.drain_requested_at IS NULL THEN
+    UPDATE __SCHEMA__.wh_role_assignments r
+       SET drain_requested_at = now(), drain_requested_by = p_instance_id
+     WHERE r.role = p_role AND r.holder_instance_id = v_row.holder_instance_id
+       AND r.epoch = v_row.epoch AND r.drain_requested_at IS NULL;
+    RETURN 'draining';
+  END IF;
+  RETURN CASE WHEN v_row.drain_requested_at IS NULL THEN 'contended' ELSE 'draining' END;
+END;
+$$;
+
 -- The return type gained the drain, version and backstop columns, so the earlier definition goes first.
 SELECT __SCHEMA__.drop_all_overloads('wh_role_assignment_status');
 

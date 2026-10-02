@@ -369,4 +369,47 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
     }
     return left.Length.CompareTo(right.Length);
   }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task ABridgedNewerInstance_StillAsksTheOlderHolderToDrainAsync(CancellationToken cancellationToken) {
+    // The bridge is on by default; losing the legacy lock must not cost the drain or the candidacy.
+    var time = new FakeTimeProvider();
+    var older = await _joinAsync(cancellationToken);
+    var newer = await _joinAsync(cancellationToken);
+    var grant = (await _electorFor(older, "0.2606.0", bridge: true, time: time).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+
+    var asked = await _electorFor(newer, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken);
+    await Assert.That(asked.Refusal).IsEqualTo(DutyRefusal.Contended);
+    await Assert.That(asked.Detail).Contains("asked to drain");
+    var again = await _electorFor(newer, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken);
+    await Assert.That(again.Detail).Contains("asked to drain").Because("the drain stays pending");
+
+    time.Advance(_defaults.RenewInterval);
+    await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsTrue();
+    await Assert.That(grant.DrainRequested).IsTrue();
+    await grant.DisposeAsync();
+
+    var handedOver = await _electorFor(newer, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken);
+    await Assert.That(handedOver.Grant).IsNotNull();
+    await handedOver.Grant!.DisposeAsync();
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task ABridgedLoser_ToASessionLockHolder_IsPlainlyContended_AndAnEqualVersionAsksNoDrainAsync(CancellationToken cancellationToken) {
+    var old = await _joinAsync(cancellationToken);
+    var a = await _joinAsync(cancellationToken);
+    var b = await _joinAsync(cancellationToken);
+    await using (var legacy = (await _legacyFor(old).TryAcquireAsync(ROLE, cancellationToken)).Grant!) {
+      var attempt = await _electorFor(a, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken);
+      await Assert.That(attempt.Detail).Contains("session lock").Because("there is no assignment to drain");
+    }
+    var held = (await _electorFor(a, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    var equal = await _electorFor(b, "0.2607.0", bridge: true).TryAcquireAsync(ROLE, cancellationToken);
+    await Assert.That(equal.Detail).Contains("session lock");
+    await Assert.That(await _scalarAsync("SELECT drain_requested_at FROM wh_role_assignments WHERE role = @role",
+      cancellationToken, ("role", ROLE))).IsNull();
+    await held.DisposeAsync();
+  }
 }

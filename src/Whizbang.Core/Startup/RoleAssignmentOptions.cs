@@ -54,15 +54,15 @@ public sealed class RoleAssignmentOptions {
   public TimeSpan CooldownAfterLapse { get; set; } = TimeSpan.FromSeconds(15);
 
   /// <summary>
-  /// While true, a holder also holds the duty's legacy session advisory lock, so an instance still
-  /// running the session-lock elector sees the duty as held, and a new instance defers to an old
-  /// holder. Default false. Turn it on for a rolling deploy from a release where duties were held by
-  /// session lock (every release before role assignment became the default): with it off, an old
-  /// instance can take the session lock after a vote. The vote still refuses while an old holder is
-  /// visible, and a holder steps aside within one renewal once it sees one, but for that renewal
-  /// interval both may act.
+  /// While true (the default in this release), a holder also holds the duty's legacy session advisory
+  /// lock, so an instance still running the session-lock elector sees the duty as held, and a new
+  /// instance defers to an old holder: old and new never both act during a rolling deploy. It costs one
+  /// pinned connection per held role, and will default to false in a later release. Turn it off early
+  /// (<c>Whizbang__Database__RoleAssignment__HoldLegacySessionLock=false</c>) once no instance older than
+  /// role assignment remains. With it off, the vote still refuses while an old holder is visible, and a
+  /// holder steps aside within one renewal once it sees one, but for that renewal interval both may act.
   /// </summary>
-  public bool HoldLegacySessionLock { get; set; }
+  public bool HoldLegacySessionLock { get; set; } = true;
 
   /// <summary>
   /// How long owed duty work backs off after a failed attempt, doubled per further failure and

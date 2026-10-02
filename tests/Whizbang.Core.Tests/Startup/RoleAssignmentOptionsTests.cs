@@ -9,14 +9,14 @@ namespace Whizbang.Core.Tests.Startup;
 /// The tuning behind role assignment (#966): the lease is several renew intervals, so one slow
 /// renewal never costs the role; each duty may declare its own lease; the options refuse a
 /// configuration that would make every late beat a lapse. On by default, with the migrator held by
-/// assignment and the bridge off.
+/// assignment and the bridge on.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Startup/RoleAssignmentOptions.cs</code-under-test>
 [Category("Startup")]
 public class RoleAssignmentOptionsTests {
 
   [Test]
-  public async Task Defaults_ManageTheMaintainerAndTheMigrator_WithALeaseOfThreeRenewals_AndTheBridgeOffAsync() {
+  public async Task Defaults_ManageTheMaintainerAndTheMigrator_WithALeaseOfThreeRenewals_AndTheBridgeOnAsync() {
     var options = new RoleAssignmentOptions();
 
     await Assert.That(options.Enabled).IsTrue();
@@ -24,8 +24,8 @@ public class RoleAssignmentOptionsTests {
     await Assert.That(options.MissedRenewalsBeforeLapse).IsEqualTo(3);
     await Assert.That(options.Lease).IsEqualTo(TimeSpan.FromSeconds(15));
     await Assert.That(options.CooldownAfterLapse).IsEqualTo(TimeSpan.FromSeconds(15));
-    await Assert.That(options.HoldLegacySessionLock).IsFalse()
-      .Because("the bridge costs a pinned connection per role; it is turned on for a rolling deploy from a session-lock release");
+    await Assert.That(options.HoldLegacySessionLock).IsTrue()
+      .Because("consumers upgrading from session-lock releases roll through this one, and old and new must never both act");
     await Assert.That(options.Manages(StartupDuties.MAINTAINER)).IsTrue();
     await Assert.That(options.Manages(StartupDuties.MIGRATOR)).IsTrue()
       .Because("the migrator's vote is part of the schema bootstrap, so it can be held by assignment");

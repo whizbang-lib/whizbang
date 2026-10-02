@@ -61,7 +61,7 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
     new() { DirectConnectionString = connectionString ?? ConnectionString, SignalingMode = WorkSignalingMode.ListenNotify };
 
   private PgRoleElector _electorFor(Pod pod, string? version = null, TimeProvider? time = null, string? connectionString = null) {
-    var options = new RoleAssignmentOptions();
+    var options = new RoleAssignmentOptions { HoldLegacySessionLock = false };
     options.Roles.Add(ROLE);
     return new PgRoleElector(Options.Create(_notification(connectionString)), Options.Create(options), _config(), pod,
       new PgDutyElector(Options.Create(_notification(connectionString)), _config(), pod, NullLogger<PgDutyElector>.Instance),

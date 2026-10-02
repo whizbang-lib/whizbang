@@ -185,7 +185,7 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     await Assert.That(provider.GetRequiredService<IDutyElector>()).IsTypeOf<PgRoleElector>();
     var options = provider.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value;
     await Assert.That(options.Roles).Contains(Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE);
-    await Assert.That(options.HoldLegacySessionLock).IsFalse();
+    await Assert.That(options.HoldLegacySessionLock).IsTrue().Because("the bridge is on by default in this release");
     var stamperKey = options.LegacyLockKeys[Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE];
     await Assert.That(stamperKey("svc")).IsEqualTo(Whizbang.Data.Postgres.CommitOrderStamperLockKey.Compute(
       "svc", new Whizbang.Core.Notifications.CommitOrderStamperOptions().AdvisoryLockKey))
@@ -211,7 +211,7 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     await using var dataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
     var settings = new Dictionary<string, string?> {
       ["Whizbang:Database:RoleAssignment:Enabled"] = "false",
-      ["Whizbang:Database:RoleAssignment:HoldLegacySessionLock"] = "true",
+      ["Whizbang:Database:RoleAssignment:HoldLegacySessionLock"] = "false",
       ["Whizbang:Database:RoleAssignment:RenewInterval"] = "00:00:02",
       ["Whizbang:Database:RoleAssignment:MissedRenewalsBeforeLapse"] = "4",
       ["Whizbang:Database:RoleAssignment:CooldownAfterLapse"] = "00:00:20",
@@ -222,7 +222,7 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
 
     var options = provider.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value;
     await Assert.That(options.Enabled).IsFalse();
-    await Assert.That(options.HoldLegacySessionLock).IsTrue();
+    await Assert.That(options.HoldLegacySessionLock).IsFalse().Because("an operator can turn the bridge off early");
     await Assert.That(options.RenewInterval).IsEqualTo(TimeSpan.FromSeconds(2));
     await Assert.That(options.MissedRenewalsBeforeLapse).IsEqualTo(4);
     await Assert.That(options.CooldownAfterLapse).IsEqualTo(TimeSpan.FromSeconds(20));

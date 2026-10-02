@@ -355,8 +355,13 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
         && !await _endLapsedBridgeAndRetryAsync(plan, bridge, role, legacyKey, cancellationToken).ConfigureAwait(false)) {
       slot.Connection = null;
       await bridge.DisposeAsync().ConfigureAwait(false);   // lost the lock, so there is nothing to unlock
-      return DutyAttempt.Lost(DutyRefusal.Contended,
-        $"the session lock for role '{role}' is held by another instance (a session-lock or bridged holder)");
+      // Still a candidate, and still able to ask an older holder to drain: the bridge must not cost
+      // the newest-version preference or the cooperative drain.
+      return await _requestDrainAsync(plan, role, cancellationToken).ConfigureAwait(false) == "draining"
+        ? DutyAttempt.Lost(DutyRefusal.Contended,
+            $"role '{role}' is held on an older library version, which has been asked to drain and release it")
+        : DutyAttempt.Lost(DutyRefusal.Contended,
+            $"the session lock for role '{role}' is held by another instance (a session-lock or bridged holder)");
     }
     var attempt = await _decideAsync(plan, role, null, bridge, legacyKey, cancellationToken).ConfigureAwait(false);
     if (attempt.Grant is not null) {
@@ -387,6 +392,21 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     LogBridgeSessionEnded(_logger, role, pid, _instanceProvider.InstanceId);
     _metrics?.BridgeSessionsEnded.Add(1, RoleAssignmentMetrics.RoleTag(role));
     return await _tryLockAsync(bridge, legacyKey, cancellationToken).ConfigureAwait(false);
+  }
+
+  private async Task<string?> _requestDrainAsync(NotificationConnectionPlan plan, string role, CancellationToken cancellationToken) {
+    string? answer;
+    var connection = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
+    await using (connection.ConfigureAwait(false)) {
+      await using var cmd = connection.CreateCommand();
+      cmd.CommandText = "SELECT wh_request_role_drain(@role, @id, @lease, @version)";
+      cmd.Parameters.AddWithValue(nameof(role), role);
+      cmd.Parameters.AddWithValue("id", _instanceProvider.InstanceId);
+      cmd.Parameters.AddWithValue("lease", _roleOptions.LeaseFor(role));
+      cmd.Parameters.AddWithValue("version", _versionKey);
+      answer = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
+    }
+    return answer;
   }
 
   /// <summary>Runs the vote and turns its outcome into an attempt; a grant takes ownership of the bridge.</summary>

@@ -205,10 +205,12 @@ Tests: `RoleAssignmentResilienceSqlTests` 19, `RoleAssignmentResilienceE2ETests`
   role-assignment release, ten concurrent starts) and `RoleAssignmentDatabaseRestartChaosTests` (a
   real restart of a server started for that test). Each asserts at most one epoch writes (the work
   writes its effect under the fence), the takeover bound in database time, and exactly-once owed work.
-- **The bridge is off by default.** Phases 3 and 4 ship in one release, so there is no release in
-  which role assignment is the default and the bridge is on: a rolling deploy from a session-lock
-  release must turn it on for that deploy. As defense in depth, an unbridged holder's renewal looks
-  for the legacy lock and steps aside (`legacy_holder`) within one renewal.
+- **The bridge stays on by default for this release** (the user's call: consumers upgrading from much
+  older builds roll through it); it defaults to off in a later release, and
+  `Whizbang__Database__RoleAssignment__HoldLegacySessionLock=false` turns it off early. A bridged
+  instance that loses the legacy lock still records its candidacy and asks an older holder to drain
+  (`wh_request_role_drain`). When the bridge is off, an unbridged holder's renewal looks for the
+  legacy lock and steps aside (`legacy_holder`) within one renewal.
 - **The migrator is held by assignment.** Its vote is in the bootstrap closure; the template's waiter
   watches `MigratorWatch` (the row and the legacy session lock); the migrator renews between phases
   and marks its DDL backend; its lease is 30 seconds. The holder loop never holds it and the health
