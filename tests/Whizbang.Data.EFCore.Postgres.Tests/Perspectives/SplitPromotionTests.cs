@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Npgsql;
@@ -200,7 +201,15 @@ public class SplitPromotionTests {
         '{}', '{}', now(), now(), now(), now(), 1);
       """);
 
-    await using var context = PhysicalMoves.Context(_connectionString);
+    // A collection in a jsonb column is read by Npgsql's dynamic JSON, which an application opts into.
+    var builder = new NpgsqlDataSourceBuilder(_connectionString);
+    builder.EnableDynamicJson();
+    await using var dataSource = builder.Build();
+    await using var context = new PhysicalMovesDbContext(
+      new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<PhysicalMovesDbContext>()
+        .UseNpgsql(dataSource)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
+        .Options);
     var store = new EFCorePostgresPerspectiveStore<MovedTicket.Model>(context, TABLE);
     var model = await store.GetByStreamIdAsync(late);
 

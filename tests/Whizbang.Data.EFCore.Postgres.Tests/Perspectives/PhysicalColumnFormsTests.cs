@@ -111,7 +111,7 @@ public class PhysicalColumnFormsTests {
 
     await Assert.That(await _scalarAsync(
       $"SELECT concat_ws('|', ({extraction}) IS NULL, (SELECT ({extraction}) IS NULL FROM (SELECT '{{\"K\": null}}'::jsonb AS data) n)) FROM {TABLE} WHERE id = 1"))
-      .IsEqualTo("true|true");
+      .IsEqualTo("t|t");
   }
 
   /// <summary>A type the document cannot hold exactly has no forms; neither has a column that is not there.</summary>
