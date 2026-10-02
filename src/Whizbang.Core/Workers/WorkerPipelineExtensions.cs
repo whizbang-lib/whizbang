@@ -598,6 +598,8 @@ public static class WorkerPipelineExtensions {
         }
       });
     });
+    // #1029: the receive path warns when integrity is on but received events carry no origin.
+    services.TryAddSingleton<ReceivedOriginStampMonitor>();
 
     // #646: every options class the turnkey pipeline registers is BOUND, concretely, so the
     // binder source generator intercepts each call (a generic helper would fall back to

@@ -1856,8 +1856,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var message in messages) {
       sb.AppendLine($"private JsonTypeInfo<MessageEnvelope<{message.FullyQualifiedName}>> CreateMessageEnvelope_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
 
-      // Generate properties array for MessageEnvelope<T> (MessageId, Payload, Hops, Target, StateOnly, Priority)
-      sb.AppendLine("  var properties = new JsonPropertyInfo[6];");
+      // Generate properties array for MessageEnvelope<T>: MessageId, Payload, Hops, Target, StateOnly, Priority,
+      // then the init-only envelope fields the wire carries (version, dispatch context, origin, causality).
+      sb.AppendLine($"  var properties = new JsonPropertyInfo[{6 + _initOnlyEnvelopeFields.Length}];");
       sb.AppendLine();
 
       // Property 0: MessageId using snippet - JSON name is "id" per [JsonPropertyName] on MessageEnvelope
@@ -1933,8 +1934,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine("  properties[5].ShouldSerialize = static (_, value) => value is int priority && priority != 0;");
       sb.AppendLine();
 
+      _appendInitOnlyEnvelopeProperties(sb, propertyCreationSnippet, message.FullyQualifiedName);
+
       // Constructor parameters using snippet
-      sb.AppendLine("  var ctorParams = new JsonParameterInfoValues[3];");
+      sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{3 + _initOnlyEnvelopeFields.Length}];");
 
       var messageIdParam = parameterInfoSnippet
           .Replace(PLACEHOLDER_INDEX, "0")
@@ -1953,14 +1956,23 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_PARAMETER_NAME, "hops")
           .Replace(PLACEHOLDER_PROPERTY_TYPE, "List<MessageHop>");
       sb.AppendLine(hopsParam);
+      _appendInitOnlyEnvelopeParameters(sb);
       sb.AppendLine();
 
-      // Create JsonObjectInfoValues
+      // Create JsonObjectInfoValues. Version and DispatchContext bind through the constructor (which keeps
+      // the v1 default when dc is absent); the origin and causality fields are init-only member initializers.
       sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<MessageEnvelope<{message.FullyQualifiedName}>> {{");
       sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new MessageEnvelope<{message.FullyQualifiedName}>(");
       sb.AppendLine($"          ({PLACEHOLDER_MESSAGE_ID})args[0],");
       sb.AppendLine($"          ({message.FullyQualifiedName})args[1],");
-      sb.AppendLine("          (List<MessageHop>)args[2]),");
+      sb.AppendLine("          (List<MessageHop>)args[2],");
+      sb.AppendLine("          (int)args[3],");
+      sb.AppendLine($"          ({MESSAGE_DISPATCH_CONTEXT_TYPE}?)args[4]) {{");
+      for (var i = 2; i < _initOnlyEnvelopeFields.Length; i++) {
+        var field = _initOnlyEnvelopeFields[i];
+        sb.AppendLine($"        {field.PropertyName} = ({field.Type})args[{3 + i}],");
+      }
+      sb.AppendLine("      },");
       sb.AppendLine("      PropertyMetadataInitializer = _ => properties,");
       sb.AppendLine("      ConstructorParameterMetadataInitializer = () => ctorParams");
       sb.AppendLine("  };");
@@ -1975,6 +1987,62 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     return sb.ToString();
+  }
+
+  /// <summary>Fully qualified name of the envelope's dispatch context type, as generated code spells it.</summary>
+  private const string MESSAGE_DISPATCH_CONTEXT_TYPE = "global::Whizbang.Core.Observability.MessageDispatchContext";
+
+  /// <summary>
+  /// The init-only <c>MessageEnvelope&lt;T&gt;</c> fields the wire carries beside the six settable ones, in
+  /// constructor-parameter order after <c>messageId</c>, <c>payload</c> and <c>hops</c>. The first two are
+  /// constructor parameters; the rest bind as member initializers. Every wire name matches the
+  /// <c>[JsonPropertyName]</c> the attribute-honoring <c>MessageEnvelope&lt;JsonElement&gt;</c> shape writes:
+  /// a typed receive that does not name <c>sid</c>/<c>sseq</c> stores every received event as locally
+  /// originated, and stream integrity can no longer attribute it (#1029).
+  /// </summary>
+  private static readonly (string PropertyName, string ParameterName, string WireName, string Type)[] _initOnlyEnvelopeFields = [
+    ("Version", "version", "v", "int"),
+    ("DispatchContext", "dispatchContext", "dc", MESSAGE_DISPATCH_CONTEXT_TYPE),
+    ("SourceServiceId", "SourceServiceId", "sid", "global::System.Guid"),
+    ("SourceCommitSequence", "SourceCommitSequence", "sseq", "long"),
+    ("CausedByServiceId", "CausedByServiceId", "cbid", "global::System.Guid?"),
+    ("CausedByCommitSequence", "CausedByCommitSequence", "cbseq", "long?"),
+  ];
+
+  /// <summary>Appends the init-only envelope fields as read-only properties (indices 6 onward).</summary>
+  private static void _appendInitOnlyEnvelopeProperties(StringBuilder sb, string propertyCreationSnippet, string messageType) {
+    for (var i = 0; i < _initOnlyEnvelopeFields.Length; i++) {
+      var field = _initOnlyEnvelopeFields[i];
+      sb.AppendLine(propertyCreationSnippet
+          .Replace(PLACEHOLDER_INDEX, (6 + i).ToString(CultureInfo.InvariantCulture))
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, field.Type)
+          .Replace(PLACEHOLDER_PROPERTY_NAME, field.PropertyName)
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, field.WireName)
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{messageType}>")
+          .Replace(PLACEHOLDER_SETTER, "null,  // init-only: bound through the constructor call"));
+      sb.AppendLine();
+    }
+  }
+
+  /// <summary>
+  /// Appends the constructor parameters for the init-only envelope fields (positions 3 onward). A wire written
+  /// before a field existed binds to the unstamped value instead of failing: a missing <c>v</c> is version 1
+  /// (declared here, since its type default is 0), and every other missing field takes its type default,
+  /// so a missing <c>dc</c> reaches the constructor as null and becomes the v1 dispatch context.
+  /// </summary>
+  private static void _appendInitOnlyEnvelopeParameters(StringBuilder sb) {
+    for (var i = 0; i < _initOnlyEnvelopeFields.Length; i++) {
+      var field = _initOnlyEnvelopeFields[i];
+      var position = (3 + i).ToString(CultureInfo.InvariantCulture);
+      var isVersion = field.WireName == "v";
+      sb.AppendLine($"  ctorParams[{position}] = new JsonParameterInfoValues {{");
+      sb.AppendLine($"    Name = \"{field.ParameterName}\",");
+      sb.AppendLine($"    ParameterType = typeof({field.Type}),");
+      sb.AppendLine($"    Position = {position},");
+      sb.AppendLine($"    HasDefaultValue = {(isVersion ? "true" : "false")},");
+      sb.AppendLine($"    DefaultValue = {(isVersion ? "1" : "null")}");
+      sb.AppendLine("  };");
+    }
   }
 
   private static string _generateAssemblyAwareHelper(Assembly assembly, ImmutableArray<WhizbangIdTypeInfo> converters, ImmutableArray<JsonMessageTypeInfo> messages, Compilation compilation, ImmutableArray<RenameAlias> renameAliases) {

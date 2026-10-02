@@ -83,7 +83,12 @@ public static class MessageEnvelopeExtensions {
       Payload = deserializedPayload,
       Hops = jsonEnvelope.Hops,
       DispatchContext = context,
-      Priority = jsonEnvelope.Priority   // the handler and the inheritance rule read the typed envelope's number
+      Priority = jsonEnvelope.Priority,   // the handler and the inheritance rule read the typed envelope's number
+      Version = jsonEnvelope.Version,
+      SourceServiceId = jsonEnvelope.SourceServiceId,   // the producer's origin survives reconstruction (#1029)
+      SourceCommitSequence = jsonEnvelope.SourceCommitSequence,
+      CausedByServiceId = jsonEnvelope.CausedByServiceId,
+      CausedByCommitSequence = jsonEnvelope.CausedByCommitSequence,
     };
   }
 
@@ -123,7 +128,12 @@ public static class MessageEnvelopeExtensions {
       Payload = deserializedPayload,
       Hops = jsonEnvelope.Hops,
       DispatchContext = jsonEnvelope.DispatchContext,
-      Priority = jsonEnvelope.Priority
+      Priority = jsonEnvelope.Priority,
+      Version = jsonEnvelope.Version,
+      SourceServiceId = jsonEnvelope.SourceServiceId,   // the producer's origin survives reconstruction (#1029)
+      SourceCommitSequence = jsonEnvelope.SourceCommitSequence,
+      CausedByServiceId = jsonEnvelope.CausedByServiceId,
+      CausedByCommitSequence = jsonEnvelope.CausedByCommitSequence,
     };
   }
 
