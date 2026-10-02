@@ -74,21 +74,21 @@ public class PhysicalColumnSqlTests {
   }
 
   [Test]
-  public async Task AColumnTypeTheAuthorChose_IsAddedButNotBackfilledAsync() {
+  public async Task AColumnTypeTheAuthorChose_ForAString_IsBackfilledThroughACastAsync() {
     var sql = await _schemaAsync("");
 
     await Assert.That(sql).Contains("ADD COLUMN IF NOT EXISTS code citext;");
-    await Assert.That(sql).DoesNotContain("SET code =")
-      .Because("the column's encoding of an author-chosen type is not something the backfill can know");
+    await Assert.That(sql).Contains("SET code = ((data ->> 'Code'))::citext WHERE code IS NULL")
+      .Because("the server parses the writer's string into the author's type, and the cast does the same (#1021)");
   }
 
   [Test]
-  public async Task SplitStorage_AddsTheColumn_ButHasNoDocumentCopyToBackfillFromAsync() {
+  public async Task SplitStorage_FillsTheColumnFromTheDocumentThePreviousReleaseWroteAsync() {
     var sql = await _schemaAsync("[PerspectiveStorage(FieldStorageMode.Split)]");
 
     await Assert.That(sql).Contains("ADD COLUMN IF NOT EXISTS placed_at TIMESTAMPTZ;");
-    await Assert.That(sql).DoesNotContain("SET placed_at =")
-      .Because("a Split field lives only in the column; the document has no copy to fill it from");
+    await Assert.That(sql).Contains("SET placed_at = (TIMESTAMPTZ 'epoch'")
+      .Because("a field promoted on a Split model still has its value in the documents the previous release wrote (#1021)");
   }
 
   [Test]

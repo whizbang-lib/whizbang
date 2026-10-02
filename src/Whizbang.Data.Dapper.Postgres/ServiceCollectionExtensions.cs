@@ -106,6 +106,16 @@ public static class ServiceCollectionExtensions {
     // Register database infrastructure
     services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
+
+    // TURNKEY: the maintenance step that completes perspective field moves after the start that made them:
+    // it fills promoted columns for rows an instance still on the previous release wrote with the value only
+    // in the document, settles demotions, and reports columns only a rebuild can restore (#1010). Idle
+    // unless the schema pass armed a move.
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperPhysicalColumnFillMaintenanceStep(
+        connectionString,
+        sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
+        sp.GetService<TimeProvider>()));
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
     services.AddSingleton(options);
@@ -238,6 +248,16 @@ public static class ServiceCollectionExtensions {
     // Register database infrastructure
     services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
+
+    // TURNKEY: the maintenance step that completes perspective field moves after the start that made them:
+    // it fills promoted columns for rows an instance still on the previous release wrote with the value only
+    // in the document, settles demotions, and reports columns only a rebuild can restore (#1010). Idle
+    // unless the schema pass armed a move.
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperPhysicalColumnFillMaintenanceStep(
+        connectionString,
+        sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
+        sp.GetService<TimeProvider>()));
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
     // Register PostgresOptions for components that need retry settings

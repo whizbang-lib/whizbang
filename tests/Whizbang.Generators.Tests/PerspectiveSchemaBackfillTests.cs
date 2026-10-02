@@ -63,10 +63,12 @@ public class PerspectiveSchemaBackfillTests {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Split_NothingIsBackfilledAsync() {
+  public async Task Split_IsBackfilledFromTheDocumentThePreviousReleaseWroteAsync() {
     var sql = _schema("Split");
 
-    await Assert.That(sql).DoesNotContain("UPDATE ")
-      .Because("in split mode the column is the only copy; the document has nothing to fill it from");
+    await Assert.That(sql).Contains("SET sku = (data ->> 'Sku') WHERE sku IS NULL")
+      .Because("a field promoted on a Split model still has its value in the documents the previous release wrote (#1021)");
+    await Assert.That(sql).DoesNotContain("SET embedding")
+      .Because("a vector's column encoding is not something the document can reproduce");
   }
 }

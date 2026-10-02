@@ -6,7 +6,7 @@
 -- Estimated size: ~__ESTIMATED_SIZE__ bytes
 CREATE TABLE IF NOT EXISTS __TABLE_NAME__ (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  model_data JSONB NOT NULL,
+  data JSONB NOT NULL,
   metadata JSONB NOT NULL,
   scope JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

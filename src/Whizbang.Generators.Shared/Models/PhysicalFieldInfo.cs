@@ -21,8 +21,9 @@ namespace Whizbang.Generators.Shared.Models;
 /// the list and defaulted so the construction sites that do not set it are unaffected.
 /// </param>
 /// <param name="IsSplit">
-/// True when the model stores this field in the column only (Split storage), so the document has no copy
-/// of it to backfill a new column from. Last and defaulted for the same reason as <c>ColumnType</c>.
+/// True when the model stores this field in the column only (Split storage): its new release reads the column
+/// while the previous release reads the document, so a promotion syncs writes during the deploy. Last and
+/// defaulted for the same reason as <c>ColumnType</c>.
 /// </param>
 /// <param name="IsSearch">
 /// True when a text field declares <c>IndexKinds.Search</c>: its column gets a trigram index over the

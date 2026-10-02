@@ -522,7 +522,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         CoalesceBody: _buildDataCoalesceStatements(modelType),
         StoredForms: storedForms,
         StoredFormProblems: storedFormProblems,
-        IsModelRecord: modelType.IsRecord
+        IsModelRecord: modelType.IsRecord,
+        DocumentProperties: DocumentPropertyDiscovery.From(modelType as INamedTypeSymbol)
     );
   }
 
@@ -626,7 +627,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         CoalesceBody: candidate.CoalesceBody,
         StoredForms: candidate.StoredForms,
         StoredFormProblems: candidate.StoredFormProblems,
-        IsModelRecord: candidate.IsModelRecord
+        IsModelRecord: candidate.IsModelRecord,
+        DocumentProperties: candidate.DocumentProperties
     );
   }
 
@@ -682,8 +684,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     var physicalFields = new System.Collections.Generic.List<PhysicalFieldInfo>();
-    // A Split model keeps its physical fields in the column only, so the document has no copy of them
-    // to backfill a column from. FieldStorageMode.Split is 2.
+    // A Split model keeps its physical fields in the column only: a promotion syncs its writes during the
+    // deploy, because the new release reads the column and the previous one the document (#1021).
+    // FieldStorageMode.Split is 2.
     var isSplit = modelType.GetAttributes().Any(a =>
         TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PerspectiveStorageAttribute") &&
         a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is 2);
@@ -3201,30 +3204,44 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Brings every physical column into a table that already exists: add it, then fill it from the
-  /// document for the rows written before it existed.
+  /// Brings every physical column into a table that already exists, and every column a field no longer
+  /// promoted left behind back into the document.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// <c>CREATE TABLE IF NOT EXISTS</c> skips an existing table, so a field promoted after the table was
   /// created never reached it: its index then failed the schema pass, and the query translator, which
   /// redirects the property to the column, read the missing or empty column for every older row. Emitted
   /// before the length constraints and indexes, which need the column. A table this creates has the
-  /// column already and no rows, so both statements find nothing to do. The backfill touches only rows
-  /// with the value in the document and not in the column, so it is idempotent; which fields it covers
-  /// is decided by <see cref="PhysicalColumnSql.Backfill"/>.
+  /// column already and no rows, so every statement finds nothing to do.
+  /// </para>
+  /// <para>
+  /// The order is the move's: every column is armed and added first (an arm has to see the column missing),
+  /// then a Split model's sync triggers are added (so a write that lands after the fill is synced), then
+  /// each column is filled from the document, which touches only rows with the value in the document and
+  /// not in the column, so it is idempotent; which fields it covers is decided by
+  /// <see cref="PhysicalColumnSql.Backfill"/>. Last, the fields the model keeps only in the document are
+  /// offered for demotion: a column one of them left behind is copied into the document once (#1021, #1022).
+  /// </para>
   /// </remarks>
   private static void _appendPhysicalColumnMigrationSql(
       StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
     var table = $"{quotedSchema}.{perspective.TableName}";
     foreach (var field in perspective.PhysicalFields) {
       // Armed before the column is added, so only the pass that adds it arms it (#1009).
-      if (PhysicalColumnSql.Arm(table, field) is { } arm) {
-        sb.AppendLine(arm);
-      }
+      sb.AppendLine(PhysicalColumnSql.Arm(table, field));
       sb.AppendLine(PhysicalColumnSql.AddColumn(table, field.ColumnName, _getPostgresColumnType(field)));
+    }
+    if (perspective.PhysicalFields.Any(f => f.IsSplit)) {
+      sb.AppendLine(PhysicalColumnSql.SyncMoves(table));
+    }
+    foreach (var field in perspective.PhysicalFields) {
       if (PhysicalColumnSql.Backfill(table, field) is { } backfill) {
         sb.AppendLine(backfill);
       }
+    }
+    if (PhysicalColumnSql.Demote(table, perspective.DocumentProperties, perspective.PhysicalFields) is { } demote) {
+      sb.AppendLine(demote);
     }
   }
 
@@ -3589,6 +3606,7 @@ internal sealed record DbContextInfo(
 /// <param name="StoredForms">The stored-form migrations the model declares, in the order they run</param>
 /// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
 /// <param name="IsModelRecord">True when the model is a record, which the hydrators copy with a <c>with</c> expression</param>
+/// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3605,7 +3623,8 @@ internal sealed record PerspectiveModelInfo(
     string CoalesceBody,
     ImmutableArray<StoredFormInfo> StoredForms,
     ImmutableArray<StoredFormProblem> StoredFormProblems,
-    bool IsModelRecord);
+    bool IsModelRecord,
+    ImmutableArray<string> DocumentProperties);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -3628,6 +3647,7 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="StoredForms">The stored-form migrations the model declares, in the order they run</param>
 /// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
 /// <param name="IsModelRecord">True when the model is a record, which the hydrators copy with a <c>with</c> expression</param>
+/// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
 internal sealed record PerspectiveModelCandidate(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3644,7 +3664,8 @@ internal sealed record PerspectiveModelCandidate(
     string CoalesceBody,
     ImmutableArray<StoredFormInfo> StoredForms,
     ImmutableArray<StoredFormProblem> StoredFormProblems,
-    bool IsModelRecord);
+    bool IsModelRecord,
+    ImmutableArray<string> DocumentProperties);
 
 /// <summary>
 /// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.

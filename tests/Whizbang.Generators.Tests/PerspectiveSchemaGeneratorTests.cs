@@ -333,7 +333,9 @@ public class PerspectiveSchemaGeneratorTests {
     // Assert - Should generate 3-column JSONB pattern
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("model_data");
+    await Assert.That(generatedSource).Contains("  data JSONB NOT NULL,")
+      .Because("the document column is named data, the column the Dapper perspective store writes and reads");
+    await Assert.That(generatedSource).DoesNotContain("model_data");
     await Assert.That(generatedSource).Contains("metadata");
     await Assert.That(generatedSource).Contains("scope");
     await Assert.That(generatedSource).Contains("JSONB");
