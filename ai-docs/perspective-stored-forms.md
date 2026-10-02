@@ -116,9 +116,22 @@ emits `GetStoredFormMigrations()` as calls to `StoredFormMigrationSql.Generated(
 - Physical fields: a type change retypes the column (`RetypeColumn`), a rename renames it; an enum target
   is left to `EnumColumnRewriteSql`; a Split model has no document step.
 - Status: generated `GetStoredFormMigrationStatusAsync(dbContext)` and `whizbang stored-forms status`.
+- Custom order (#1007): `IStoredFormMigration.Order`, read by the generator as a compile-time constant (a non-constant
+  one is WHIZ831 and the migration is not emitted). Custom migrations run after the table's generated ones by
+  `Order`, class name breaking a tie, and a tie is WHIZ833. `Order` over `DependsOn`: a number is decided and checked
+  at build time; a dependency list needs missing-name and cycle checks and means nothing across tables.
+- Stale-cast indexes (#1007): a type change gets `StoredFormStep.ReplaceIndex` steps, ahead of the conversion, for the
+  field's own ordered `[Indexed]` index and each composite over the key. Each drops the index only when it is the
+  schema's (its derived name AND a definition over `(data ->> 'Key'::text)`) and casts the key to a type other than
+  the new one. `StoredFormIndexRebuild.ApplyAsync` then builds it `CONCURRENTLY` after the phase commits (outside any
+  transaction), dropping an invalid leftover first and after a failure; the schema pass is the fallback.
+- Parked streams (#1007): every generated migration ends with `StoredFormStep.RetryParkedStreams(perspectives)` and
+  every custom one passes the table's perspectives, so a pass that changed something sets `scheduled_for = NOW()` on
+  that table's unleased failed rows with reason SerializationError. The failure count stays.
 
 Tests: `StoredFormMigrationTests`, `StoredFormMigrationSqlTests`, `StoredFormMigrationGenerationTests`,
-`StoredFormAttributeTests`, and the end-to-end recovery in `StoredFormScalarMismatchWorkerTests`.
+`StoredFormAttributeTests`, and the end-to-end recovery (at once, no clock moved) in
+`StoredFormScalarMismatchWorkerTests`.
 
 ## Objects a consumer owns over a temporal key
 

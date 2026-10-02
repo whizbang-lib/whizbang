@@ -28,6 +28,34 @@ public class InitOnlyExtractedClassPerspective : IPerspectiveFor<InitOnlyExtract
 }
 
 /// <summary>
+/// A class stored Split with an <c>init</c>-only promoted field, which the runner can strip and the hydrators can fill
+/// only through a copy (issue #1002).
+/// </summary>
+public class InitOnlySplitClassPerspective : IPerspectiveFor<InitOnlySplitClassModel, InitOnlyFieldsSetEvent> {
+  public InitOnlySplitClassModel Apply(InitOnlySplitClassModel currentData, InitOnlyFieldsSetEvent @event) =>
+    new() { Id = @event.StreamId, Status = @event.Status, Priority = @event.Priority, Note = @event.Note };
+}
+
+/// <summary>
+/// A class stored Split: <see cref="Status"/> is <c>init</c>-only and <see cref="Priority"/> settable, both only in
+/// their columns; <see cref="Note"/> only in the document.
+/// </summary>
+[PerspectiveStorage(FieldStorageMode.Split)]
+[SuppressIndexAdvisory("test fixture; the promoted fields are read back, never filtered on")]
+public class InitOnlySplitClassModel {
+  [StreamId]
+  public Guid Id { get; set; }
+
+  [PhysicalField]
+  public string? Status { get; init; }
+
+  [PhysicalField]
+  public int Priority { get; set; }
+
+  public string? Note { get; set; }
+}
+
+/// <summary>
 /// Read model stored Split, every promoted field <c>init</c>-only: <see cref="Status"/> and <see cref="Priority"/>
 /// live only in their columns, <see cref="Note"/> only in the document.
 /// </summary>

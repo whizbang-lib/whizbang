@@ -522,7 +522,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         CoalesceBody: _buildDataCoalesceStatements(modelType),
         StoredForms: storedForms,
         StoredFormProblems: storedFormProblems,
-        IsModelRecord: modelType.IsRecord
+        IsModelRecord: modelType.IsRecord,
+        PerspectiveClrTypeName: TypeNameUtilities.BuildClrTypeName(symbol),
+        // Issue #1002: a Split class with an init-only promoted field is hydrated through a copy.
+        ModelCopy: !modelType.IsRecord && physicalFields.Any(f => f.IsSplit && f.IsInitOnly)
+          ? ModelCopy.For((INamedTypeSymbol)modelType, context.SemanticModel.Compilation.Assembly)
+          : null
     );
   }
 
@@ -626,7 +631,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         CoalesceBody: candidate.CoalesceBody,
         StoredForms: candidate.StoredForms,
         StoredFormProblems: candidate.StoredFormProblems,
-        IsModelRecord: candidate.IsModelRecord
+        IsModelRecord: candidate.IsModelRecord,
+        PerspectiveClrTypeName: candidate.PerspectiveClrTypeName,
+        ModelCopy: candidate.ModelCopy
     );
   }
 
@@ -1122,11 +1129,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <para>
   /// A record is copied with one <c>with</c> expression, which sets an <c>init</c>-only property as well as a
   /// settable one; assigning an <c>init</c>-only property is CS8852, which is how a record model documented
-  /// with <c>init</c> properties failed to compile in every storage mode (issue #982). A class is assigned in
-  /// place, and a property it cannot assign once the instance exists (<c>init</c>-only) is left as the
-  /// document has it: a Split class model cannot declare one, because the runner strips it in place before the
-  /// write, so only a mode whose document also holds the value reaches here. A property with no setter is
-  /// computed rather than stored, and is never copied into.
+  /// with <c>init</c> properties failed to compile in every storage mode (issue #982). A Split class with an
+  /// <c>init</c>-only promoted field is copied into a new instance with an object initializer, the columns in it
+  /// (issue #1002). Any other class is assigned in place, and a property it cannot assign once the instance exists
+  /// (<c>init</c>-only) is left as the document has it, which in a mode other than Split holds the value. A property
+  /// with no setter is computed rather than stored, and is never copied into.
   /// </para>
   /// <para>
   /// A null vector column, and a null column of a nullable type, keep the value the document holds.
@@ -1136,8 +1143,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       StringBuilder sb,
       PerspectiveModelInfo model,
       Func<PhysicalFieldInfo, string> read) {
+    var copy = model.ModelCopy is { Problem: null } copyable ? copyable : null;
     var copied = model.PhysicalFields
-        .Where(f => !f.IsReadOnly && (model.IsModelRecord || !f.IsInitOnly))
+        .Where(f => !f.IsReadOnly && (model.IsModelRecord || copy is not null || !f.IsInitOnly))
         .ToList();
 
     foreach (var field in copied) {
@@ -1147,6 +1155,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     if (model.IsModelRecord) {
       var members = string.Join(", ", copied.Select(f => $"{f.PropertyName} = {_copiedValue(f)}"));
       sb.AppendLine($"          row.Data = row.Data with {{ {members} }};");
+      return;
+    }
+
+    if (copy is not null) {
+      // A Split class with an init-only promoted field: a class sets one only while an instance is created, so the
+      // row gets a copy of its model with the columns in it (issue #1002).
+      var values = copied.ToDictionary(f => f.PropertyName, _copiedValue, StringComparer.Ordinal);
+      sb.AppendLine($"          row.Data = {ModelCopy.Render(model.ModelTypeName, copy, "row.Data", values)};");
       return;
     }
 
@@ -3231,37 +3247,50 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// The app's stored-form migrations for one DbContext, as <c>StoredFormMigration</c> entries: per table (in table
-  /// order) the generated ones in the order the model declares them to run, then the custom ones in class-name order.
+  /// order) the generated ones in the order the model declares them to run, then the custom ones in their stated
+  /// <c>Order</c>, class name breaking a tie.
   /// A declaration on a physical field also retypes or renames the field's column, and on a Split model, which keeps
   /// no copy of the field in the document, only the column.
   /// </summary>
   private static string _generateStoredFormMigrationsCode(
       IReadOnlyList<PerspectiveModelInfo> perspectives, string schema, ImmutableArray<StoredFormMigrationClassInfo> customMigrations) {
     var sb = new StringBuilder();
-    foreach (var perspective in perspectives.GroupBy(p => p.TableName).Select(g => g.First()).OrderBy(p => p.TableName, StringComparer.Ordinal)) {
+    foreach (var group in perspectives.GroupBy(p => p.TableName).OrderBy(g => g.Key, StringComparer.Ordinal)) {
+      var perspective = group.First();
+      // Every perspective that stores into the table, whose streams parked on an unreadable document a migration
+      // of the table brings forward (issue #1007).
+      var parked = string.Join(", ", group.Select(p => p.PerspectiveClrTypeName).Distinct().OrderBy(n => n, StringComparer.Ordinal)
+        .Select(n => SymbolDisplay.FormatLiteral(n, quote: true)));
       foreach (var form in perspective.StoredForms) {
+        var steps = _storedFormSteps(perspective, form, schema);
+        steps.Add($"global::Whizbang.Data.Postgres.StoredFormStep.RetryParkedStreams({parked})");
         sb.AppendLine($"      global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"{schema}\", \"{perspective.TableName}\", "
-          + $"\"{perspective.TableName}.{form.NameSuffix}\", {string.Join(", ", _storedFormSteps(perspective, form))}),");
+          + $"\"{perspective.TableName}.{form.NameSuffix}\", {string.Join(", ", steps)}),");
       }
       foreach (var custom in customMigrations
           .Where(m => m.Problem is null && m.ModelTypeName == perspective.ModelTypeName)
-          .OrderBy(m => m.ClassName, StringComparer.Ordinal)) {
-        sb.AppendLine($"      global::Whizbang.Data.Postgres.StoredFormMigrationSql.Custom(\"{schema}\", \"{perspective.TableName}\", new {custom.ClassName}()),");
+          .OrderBy(m => m.Order)
+          .ThenBy(m => m.ClassName, StringComparer.Ordinal)) {
+        sb.AppendLine($"      global::Whizbang.Data.Postgres.StoredFormMigrationSql.Custom(\"{schema}\", \"{perspective.TableName}\", new {custom.ClassName}(), {parked}),");
       }
     }
     return sb.ToString();
   }
 
   /// <summary>
-  /// The steps of one generated stored-form migration: the document step, unless the field lives only in its column
-  /// (a Split model), then the column's retype or rename when the declaration is on a physical field.
+  /// The steps of one generated stored-form migration: for a type change, the replacement of each index the schema
+  /// built over the key that would still cast to the old type; the document step, unless the field lives only in its
+  /// column (a Split model); then the column's retype or rename when the declaration is on a physical field.
   /// </summary>
-  private static List<string> _storedFormSteps(PerspectiveModelInfo perspective, StoredFormInfo form) {
+  private static List<string> _storedFormSteps(PerspectiveModelInfo perspective, StoredFormInfo form, string schema) {
     const string STEP = "global::Whizbang.Data.Postgres.StoredFormStep.";
     var field = form.ColumnProperty is null
       ? null
       : perspective.PhysicalFields.FirstOrDefault(f => !f.IsVector && f.PropertyName == form.ColumnProperty);
     var steps = new List<string>();
+    if (form.IsTypeChange) {
+      steps.AddRange(_staleIndexSteps(perspective, form, schema));
+    }
     if (field?.IsSplit != true) {
       steps.Add(form.DocumentStep);
     }
@@ -3274,6 +3303,28 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       steps.Add($"{STEP}RenameColumn(\"{form.PreviousColumn}\", \"{field.ColumnName}\")");
     }
     return steps;
+  }
+
+  /// <summary>
+  /// One <c>ReplaceIndex</c> step per index the schema builds over the extraction of a type-changed key at the
+  /// document root: the field's own ordered index, which casts the extraction to the field's type, and each composite
+  /// that covers the key. Each is handed the index's name and the schema's statement for it, so the migration drops
+  /// it when it still casts to the old type and the rebuild after the pass creates exactly what the schema would.
+  /// </summary>
+  private static IEnumerable<string> _staleIndexSteps(PerspectiveModelInfo perspective, StoredFormInfo form, string schema) {
+    var table = $"{_quotePostgresIdentifier(schema)}.{perspective.TableName}";
+    var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
+    var indexes = perspective.JsonIndexes
+      .Where(i => i.JsonKey == form.Path && !i.CaseInsensitive)
+      .Select(i => JsonIndexSql.OrderedIndex(i, table, shortName))
+      .OfType<(string Name, string Statement)>()
+      .Concat(perspective.CompositeIndexes
+        .Where(c => c.Elements.Any(e => e.PropertyName == form.Path && e.Element.Contains("->>")))
+        .Select(c => (Name: CompositeIndexSql.Name(c, shortName), Statement: CompositeIndexSql.CreateStatement(c, table, shortName))));
+    var storeType = form.IndexStoreType is null ? "null" : SymbolDisplay.FormatLiteral(form.IndexStoreType, quote: true);
+    return indexes.Select(i => "global::Whizbang.Data.Postgres.StoredFormStep.ReplaceIndex("
+      + $"{SymbolDisplay.FormatLiteral(form.Path, quote: true)}, {storeType}, "
+      + $"{SymbolDisplay.FormatLiteral(i.Name, quote: true)}, {SymbolDisplay.FormatLiteral(i.Statement, quote: true)})");
   }
 
   /// <summary>
@@ -3303,16 +3354,61 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
 
+    var order = _constantOrder(symbol, migration, context.SemanticModel, ct);
+    problem ??= order is null
+      ? "its Order is not a compile-time constant (return a literal or a const), so the build cannot place it"
+      : null;
+
     return new StoredFormMigrationClassInfo(
         ClassName: TypeNameUtilities.FullyQualified(symbol),
         DisplayName: TypeNameUtilities.Display(symbol),
         ModelTypeName: TypeNameUtilities.FullyQualified(migration.TypeArguments[0]),
-        Problem: problem);
+        Problem: problem,
+        Order: order ?? 0);
+  }
+
+  /// <summary>
+  /// The <c>Order</c> a custom stored-form migration states, read at build time: the constant its implementation
+  /// returns from an expression body, from a getter that only returns it, or from an initializer. Null when the
+  /// implementation is anything else, because the build then cannot know where the migration runs.
+  /// </summary>
+  private static int? _constantOrder(
+      INamedTypeSymbol symbol, INamedTypeSymbol migration, SemanticModel semanticModel, CancellationToken ct) {
+    var member = migration.AllInterfaces.SelectMany(i => i.GetMembers("Order")).OfType<IPropertySymbol>().First();
+    var expression = (symbol.FindImplementationForInterfaceMember(member) as IPropertySymbol)?.DeclaringSyntaxReferences
+      .Select(r => r.GetSyntax(ct))
+      .OfType<PropertyDeclarationSyntax>()
+      .Select(_orderExpression)
+      .FirstOrDefault(e => e is not null);
+    if (expression is null) {
+      return null;
+    }
+    var constant = semanticModel.Compilation.GetSemanticModel(expression.SyntaxTree).GetConstantValue(expression, ct);
+    // The property is an int, so any constant it returns converts to one (a byte or a char const, say).
+    return constant is { HasValue: true, Value: IConvertible value }
+      ? Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture)
+      : null;
+  }
+
+  /// <summary>The expression an <c>Order</c> property returns, when its declaration is one the build can read.</summary>
+  private static ExpressionSyntax? _orderExpression(PropertyDeclarationSyntax declaration) {
+    if ((declaration.ExpressionBody?.Expression ?? declaration.Initializer?.Value) is { } direct) {
+      return direct;
+    }
+    // A property with no expression body has an accessor list; a lone accessor is the getter the interface needs.
+    if (declaration.AccessorList!.Accessors is not [var getter]) {
+      return null;
+    }
+    if (getter.ExpressionBody is { } arrow) {
+      return arrow.Expression;
+    }
+    return getter.Body?.Statements is [ReturnStatementSyntax { Expression: { } returned }] ? returned : null;
   }
 
   /// <summary>
   /// Reports the stored-form declarations that are not generated (WHIZ830, WHIZ832), once each however many
-  /// contexts include the model, and the custom migrations that never run (WHIZ831).
+  /// contexts include the model, the custom migrations that never run (WHIZ831), and the custom migrations of one
+  /// table that state the same order (WHIZ833).
   /// </summary>
   private static void _reportStoredFormDiagnostics(
       SourceProductionContext context,
@@ -3335,6 +3431,19 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       if (reason is not null) {
         context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.StoredFormMigrationNeverRuns, Location.None, custom.DisplayName, reason));
       }
+    }
+
+    // Two migrations of one table that state the same order still run in a stable order, but one nobody chose.
+    var shared = customMigrations.Distinct()
+      .Where(m => m.Problem is null && models.Contains(m.ModelTypeName))
+      .GroupBy(m => (m.ModelTypeName, m.Order))
+      .Where(g => g.Count() > 1)
+      .OrderBy(g => g.Key.ModelTypeName, StringComparer.Ordinal)
+      .ThenBy(g => g.Key.Order);
+    foreach (var group in shared) {
+      var names = string.Join(", ", group.OrderBy(m => m.ClassName, StringComparer.Ordinal).Select(m => m.DisplayName));
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.StoredFormMigrationOrderShared, Location.None,
+        names, group.Key.ModelTypeName.Replace(PLACEHOLDER_GLOBAL, ""), group.Key.Order));
     }
   }
 
@@ -3589,6 +3698,8 @@ internal sealed record DbContextInfo(
 /// <param name="StoredForms">The stored-form migrations the model declares, in the order they run</param>
 /// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
 /// <param name="IsModelRecord">True when the model is a record, which the hydrators copy with a <c>with</c> expression</param>
+/// <param name="PerspectiveClrTypeName">The perspective's CLR type name (<c>Outer+Perspective</c>): the name its work rows carry</param>
+/// <param name="ModelCopy">For a Split class model with an <c>init</c>-only promoted field, how the hydrators copy it; null otherwise</param>
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3605,7 +3716,9 @@ internal sealed record PerspectiveModelInfo(
     string CoalesceBody,
     ImmutableArray<StoredFormInfo> StoredForms,
     ImmutableArray<StoredFormProblem> StoredFormProblems,
-    bool IsModelRecord);
+    bool IsModelRecord,
+    string PerspectiveClrTypeName = "",
+    ModelCopyInfo? ModelCopy = null);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -3628,6 +3741,8 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="StoredForms">The stored-form migrations the model declares, in the order they run</param>
 /// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
 /// <param name="IsModelRecord">True when the model is a record, which the hydrators copy with a <c>with</c> expression</param>
+/// <param name="PerspectiveClrTypeName">The perspective's CLR type name (<c>Outer+Perspective</c>): the name its work rows carry</param>
+/// <param name="ModelCopy">For a Split class model with an <c>init</c>-only promoted field, how the hydrators copy it; null otherwise</param>
 internal sealed record PerspectiveModelCandidate(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3644,7 +3759,9 @@ internal sealed record PerspectiveModelCandidate(
     string CoalesceBody,
     ImmutableArray<StoredFormInfo> StoredForms,
     ImmutableArray<StoredFormProblem> StoredFormProblems,
-    bool IsModelRecord);
+    bool IsModelRecord,
+    string PerspectiveClrTypeName = "",
+    ModelCopyInfo? ModelCopy = null);
 
 /// <summary>
 /// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.
@@ -3653,11 +3770,13 @@ internal sealed record PerspectiveModelCandidate(
 /// <param name="DisplayName">The class as a diagnostic names it.</param>
 /// <param name="ModelTypeName">The model, fully qualified, matched against the perspectives' models.</param>
 /// <param name="Problem">Why it cannot be created, or <see langword="null"/> when it can.</param>
+/// <param name="Order">The <c>Order</c> it states, read at build time; 0 when it has a problem.</param>
 internal sealed record StoredFormMigrationClassInfo(
     string ClassName,
     string DisplayName,
     string ModelTypeName,
-    string? Problem);
+    string? Problem,
+    int Order = 0);
 
 /// <summary>
 /// Information about a discovered multi-model ILensQuery constructor parameter.

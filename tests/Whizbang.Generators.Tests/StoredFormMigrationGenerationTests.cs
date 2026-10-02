@@ -94,16 +94,19 @@ public class StoredFormMigrationGenerationTests {
 
     public sealed class SplitFullName : IStoredFormMigration<OrderModel> {
       public string Name => "2026-10-split";
+      public int Order => 1;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
     public sealed class AnotherOne : IStoredFormMigration<OrderModel> {
       public string Name => "2026-09-another";
+      public int Order => 2;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
     public abstract class NotConstructible : IStoredFormMigration<OrderModel> {
       public string Name => "never";
+      public int Order => 0;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
@@ -111,6 +114,7 @@ public class StoredFormMigrationGenerationTests {
 
     public sealed class Orphan : IStoredFormMigration<UnusedModel> {
       public string Name => "orphan";
+      public int Order => 0;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
@@ -127,7 +131,10 @@ public class StoredFormMigrationGenerationTests {
   }
 
   private static string _migration(string name, params string[] steps) =>
-    $"global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"testapp\", \"wh_per_order\", \"wh_per_order.{name}\", {string.Join(", ", steps)}),";
+    $"global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"testapp\", \"wh_per_order\", \"wh_per_order.{name}\", {string.Join(", ", steps)}, {_retry("TestApp.OrderPerspective")}),";
+
+  private static string _retry(params string[] perspectives) =>
+    $"{STEP}RetryParkedStreams({string.Join(", ", perspectives.Select(p => $"\"{p}\""))})";
 
   [Test]
   [RequiresAssemblyFiles()]
@@ -175,7 +182,7 @@ public class StoredFormMigrationGenerationTests {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Migrations_RunRenamesThenConversionsThenDefaultsThenRemovals_ThenCustomByNameAsync() {
+  public async Task Migrations_RunRenamesThenConversionsThenDefaultsThenRemovals_ThenCustomByOrderAsync() {
     var (code, _) = await _runAsync(MODEL);
 
     int at(string text) => code.IndexOf(text, StringComparison.Ordinal);
@@ -185,9 +192,10 @@ public class StoredFormMigrationGenerationTests {
     await Assert.That(at("Rate:default")).IsLessThan(at("Legacy:removed"));
     await Assert.That(at("Shipping.Note:removed")).IsLessThan(at("StoredFormMigrationSql.Custom("));
     await Assert.That(code).Contains(
-      "global::Whizbang.Data.Postgres.StoredFormMigrationSql.Custom(\"testapp\", \"wh_per_order\", new global::TestApp.AnotherOne()),");
-    await Assert.That(at("new global::TestApp.AnotherOne()")).IsLessThan(at("new global::TestApp.SplitFullName()"))
-      .Because("Custom migrations of a table run in type-name order, a stable order the build decides.");
+      "global::Whizbang.Data.Postgres.StoredFormMigrationSql.Custom(\"testapp\", \"wh_per_order\", new global::TestApp.AnotherOne(), \"TestApp.OrderPerspective\"),")
+      .Because("A custom migration brings forward the retries of the table's parked streams too.");
+    await Assert.That(at("new global::TestApp.SplitFullName()")).IsLessThan(at("new global::TestApp.AnotherOne()"))
+      .Because("Custom migrations of a table run in the Order their authors state, not in type-name order.");
     await Assert.That(code).DoesNotContain("NotConstructible").Because("An abstract class cannot be instantiated.");
     await Assert.That(code).DoesNotContain("TestApp.Orphan");
   }
@@ -295,7 +303,7 @@ public class StoredFormMigrationGenerationTests {
     var (code, _) = await _runAsync(PHYSICAL);
 
     string item(string name, params string[] steps) =>
-      $"global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"testapp\", \"wh_per_item\", \"wh_per_item.{name}\", {string.Join(", ", steps)}),";
+      $"global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"testapp\", \"wh_per_item\", \"wh_per_item.{name}\", {string.Join(", ", steps)}, {_retry("TestApp.ItemPerspective")}),";
     await Assert.That(code).Contains(item("Code:Int32->String",
       $"{STEP}ToText(\"Code\")", $"{STEP}RetypeColumn(\"code\", \"TEXT\", null, null)"));
     await Assert.That(code).Contains(item("Count:String->Int64",
@@ -315,7 +323,7 @@ public class StoredFormMigrationGenerationTests {
 
     await Assert.That(code).Contains(
       "global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"testapp\", \"wh_per_split\", \"wh_per_split.Code:Int32->String\", "
-      + $"{STEP}RetypeColumn(\"code\", \"TEXT\", null, null)),")
+      + $"{STEP}RetypeColumn(\"code\", \"TEXT\", null, null), {_retry("TestApp.SplitPerspective")}),")
       .Because("A Split model keeps the field only in its column, so there is no document path to convert.");
   }
 
@@ -487,17 +495,20 @@ public class StoredFormMigrationGenerationTests {
 
     public sealed class Generic<T> : IStoredFormMigration<EdgeModel> {
       public string Name => "generic";
+      public int Order => 0;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
     public sealed class NeedsArgs(int x) : IStoredFormMigration<EdgeModel> {
       public string Name => "args" + x;
+      public int Order => 0;
       public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
     }
 
     public static class Holder {
       private sealed class Hidden : IStoredFormMigration<EdgeModel> {
         public string Name => "hidden";
+        public int Order => 0;
         public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
       }
     }
@@ -516,7 +527,7 @@ public class StoredFormMigrationGenerationTests {
       .IsEqualTo("");
     var (code, diagnostics) = await _runAsync(EDGES);
     string edge(string name, string step) =>
-      $"global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"testapp\", \"wh_per_edge\", \"wh_per_edge.{name}\", {step}),";
+      $"global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"testapp\", \"wh_per_edge\", \"wh_per_edge.{name}\", {step}, {_retry("TestApp.EdgePerspective")}),";
     string messages(string id) => string.Join("\n", diagnostics.Where(d => d.Id == id).Select(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)));
 
     await Assert.That(code).Contains(edge("C:default", $"{STEP}DefaultWhenMissing(\"C\", \"\\\"x\\\"\")"))
@@ -651,5 +662,246 @@ public class StoredFormMigrationGenerationTests {
     await Assert.That(diagnostics.Where(d => d.Id is "WHIZ830" or "WHIZ831" or "WHIZ832")).IsEmpty();
     await Assert.That(code).DoesNotContain("StoredFormMigrationSql.Generated(")
       .Because("An unset former type is no type change: there is nothing to convert.");
+  }
+
+  private const string ORDERED = """
+    using System;
+    using Whizbang.Core;
+    using Whizbang.Core.Perspectives;
+
+    namespace TestApp;
+
+    public record OEvent : IEvent;
+    public record OModel {
+      [StreamId] public Guid Id { get; init; }
+    }
+    public record PModel {
+      [StreamId] public Guid Id { get; init; }
+    }
+    public class OPerspective : IPerspectiveFor<OModel, OEvent> {
+      public OModel Apply(OModel currentData, OEvent @event) => currentData;
+    }
+    public class PPerspective : IPerspectiveFor<PModel, OEvent> {
+      public PModel Apply(PModel currentData, OEvent @event) => currentData;
+    }
+
+    public static class Orders {
+      public const int LATE = 30;
+      public const byte SMALL = 5;
+    }
+
+    // Declared in the order the class names sort, which is not the order they run in.
+    public sealed class A_Last : IStoredFormMigration<OModel> {
+      public string Name => "a";
+      public int Order => Orders.LATE;
+      public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+    }
+    public sealed class B_First : IStoredFormMigration<OModel> {
+      public string Name => "b";
+      public int Order { get; } = -10;
+      public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+    }
+    public sealed class C_Tied : IStoredFormMigration<OModel> {
+      public string Name => "c";
+      int IStoredFormMigration.Order => 20;
+      public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+    }
+    public sealed class D_Tied : IStoredFormMigration<OModel> {
+      public string Name => "d";
+      public int Order { get { return 20; } }
+      public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+    }
+    public abstract class Early : IStoredFormMigration<OModel> {
+      public abstract string Name { get; }
+      public int Order => Orders.SMALL;
+      public abstract string BuildSql(StoredFormMigrationTarget target);
+    }
+    public sealed class E_Inherits : Early {
+      public override string Name => "e";
+      public override string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+    }
+
+    public sealed class F_Arrow : IStoredFormMigration<OModel> {
+      public string Name => "f";
+      public int Order { get => 25; }
+      public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+    }
+
+    // Another table: the same Order there is no clash.
+    public sealed class P_Same : IStoredFormMigration<PModel> {
+      public string Name => "p";
+      public int Order => 20;
+      public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+    }
+
+    [Whizbang.Data.EFCore.Custom.WhizbangDbContext]
+    public class TestDbContext : Microsoft.EntityFrameworkCore.DbContext {
+      public TestDbContext(Microsoft.EntityFrameworkCore.DbContextOptions<TestDbContext> options) : base(options) { }
+    }
+    """;
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task CustomMigrations_RunByTheirOrder_ThenByClassNameAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(ORDERED);
+    await Assert.That(string.Join("\n", result.Compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error)))
+      .IsEqualTo("");
+    var (code, _) = await _runAsync(ORDERED);
+
+    int at(string type) => code.IndexOf($"new global::TestApp.{type}()", StringComparison.Ordinal);
+    await Assert.That(at("B_First")).IsGreaterThan(-1);
+    await Assert.That(at("B_First")).IsLessThan(at("E_Inherits"))
+      .Because("An initializer, a const of another integral type and an inherited Order are all read at build time.");
+    await Assert.That(at("E_Inherits")).IsLessThan(at("C_Tied"));
+    await Assert.That(at("C_Tied")).IsLessThan(at("D_Tied"))
+      .Because("Two migrations with one Order run in class-name order.");
+    await Assert.That(at("D_Tied")).IsLessThan(at("F_Arrow"));
+    await Assert.That(at("F_Arrow")).IsLessThan(at("A_Last"));
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task TwoMigrationsOfOneTableSharingAnOrder_AreWHIZ833_OncePerSharedOrderAsync() {
+    var (_, diagnostics) = await _runAsync(ORDERED);
+
+    var shared = diagnostics.Where(d => d.Id == "WHIZ833").ToList();
+    await Assert.That(shared).Count().IsEqualTo(1)
+      .Because("Only C_Tied and D_Tied share an Order on one table; P_Same's table is another.");
+    await Assert.That(shared[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
+    var message = shared[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+    await Assert.That(message).Contains("TestApp.C_Tied, TestApp.D_Tied");
+    await Assert.That(message).Contains("TestApp.OModel");
+    await Assert.That(message).Contains("20");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task AnOrderThatIsNotAConstant_IsWHIZ831_AndTheMigrationIsNotEmittedAsync() {
+    const string SOURCE = """
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record VEvent : IEvent;
+      public record VModel {
+        [StreamId] public Guid Id { get; init; }
+      }
+      public class VPerspective : IPerspectiveFor<VModel, VEvent> {
+        public VModel Apply(VModel currentData, VEvent @event) => currentData;
+      }
+      public sealed class Computed : IStoredFormMigration<VModel> {
+        private static int _next;
+        public string Name => "computed";
+        public int Order => _next++;
+        public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+      }
+      public sealed class Statements : IStoredFormMigration<VModel> {
+        public string Name => "statements";
+        public int Order { get { var x = 1; return x; } }
+        public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+      }
+      public sealed class Settable : IStoredFormMigration<VModel> {
+        public string Name => "settable";
+        public int Order { get; set; }
+        public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+      }
+      public sealed class Unstated : IStoredFormMigration<VModel> {
+        public string Name => "unstated";
+        public int Order { get; }
+        public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+      }
+      public sealed class Text : IStoredFormMigration<VModel> {
+        public string Name => "text";
+        public int Order => "x".Length;
+        public string BuildSql(StoredFormMigrationTarget target) => "SELECT 1";
+      }
+
+      [Whizbang.Data.EFCore.Custom.WhizbangDbContext]
+      public class TestDbContext : Microsoft.EntityFrameworkCore.DbContext {
+        public TestDbContext(Microsoft.EntityFrameworkCore.DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var (code, diagnostics) = await _runAsync(SOURCE);
+
+    var never = diagnostics.Where(d => d.Id == "WHIZ831").Select(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).ToList();
+    await Assert.That(never).Count().IsEqualTo(5);
+    await Assert.That(never.All(m => m.Contains("Order is not a compile-time constant", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(code).DoesNotContain("StoredFormMigrationSql.Custom(")
+      .Because("The build decides the order, so an order it cannot read is a migration it cannot place.");
+  }
+
+  private const string INDEXED = """
+    using System;
+    using Whizbang.Core;
+    using Whizbang.Core.Perspectives;
+
+    namespace TestApp;
+
+    public enum Level { Low, High }
+
+    public record IxEvent : IEvent;
+
+    [PerspectiveIndex(nameof(Rank), nameof(Label))]
+    [PerspectiveIndex(nameof(Label), nameof(Id))]
+    public record IxModel {
+      [StreamId]
+      public Guid Id { get; init; }
+
+      [Indexed]
+      [Indexed(IndexKinds.Ordered, caseInsensitive: true)]
+      [StoredForm(Previously = typeof(int))]
+      public string Rank { get; init; } = "";
+
+      [Indexed]
+      [StoredForm(Previously = typeof(string))]
+      public Level Level { get; init; }
+
+      [StoredForm(Previously = typeof(int))]
+      public string Plain { get; init; } = "";
+
+      [Indexed]
+      [StoredForm(PreviousName = "Caption")]
+      public string Label { get; init; } = "";
+    }
+
+    public class IxPerspective : IPerspectiveFor<IxModel, IxEvent> {
+      public IxModel Apply(IxModel currentData, IxEvent @event) => currentData;
+    }
+
+    public class IxAuditPerspective : IPerspectiveFor<IxModel, IxEvent> {
+      public IxModel Apply(IxModel currentData, IxEvent @event) => currentData;
+    }
+
+    [Whizbang.Data.EFCore.Custom.WhizbangDbContext]
+    public class TestDbContext : Microsoft.EntityFrameworkCore.DbContext {
+      public TestDbContext(Microsoft.EntityFrameworkCore.DbContextOptions<TestDbContext> options) : base(options) { }
+    }
+    """;
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task ATypeChangeOnAnIndexedKey_ReplacesTheIndexesThatCastIt_BeforeConvertingAsync() {
+    var (code, diagnostics) = await _runAsync(INDEXED);
+    await Assert.That(diagnostics.Where(d => d.Id is "WHIZ830" or "WHIZ831" or "WHIZ832" or "WHIZ833")).IsEmpty();
+    var retry = _retry("TestApp.IxAuditPerspective", "TestApp.IxPerspective");
+    string ix(string name, params string[] steps) =>
+      $"global::Whizbang.Data.Postgres.StoredFormMigrationSql.Generated(\"testapp\", \"wh_per_ix\", \"wh_per_ix.{name}\", {string.Join(", ", steps)}, {retry}),";
+
+    await Assert.That(code).Contains(ix("Rank:Int32->String",
+      $"{STEP}ReplaceIndex(\"Rank\", null, \"idx_ix_rank_json\", \"CREATE INDEX IF NOT EXISTS idx_ix_rank_json ON \\\"testapp\\\".wh_per_ix ((data ->> 'Rank'));\")",
+      $"{STEP}ReplaceIndex(\"Rank\", null, \"idx_ix_rank_label\", \"CREATE INDEX IF NOT EXISTS idx_ix_rank_label ON \\\"testapp\\\".wh_per_ix ((data ->> 'Rank'), (data ->> 'Label'));\")",
+      $"{STEP}ToText(\"Rank\")"))
+      .Because("The field's ordered index and the composite over it are handed over, ahead of the conversion; the folded index casts nothing.");
+    await Assert.That(code).Contains(ix("Level:String->Level",
+      $"{STEP}ReplaceIndex(\"Level\", \"integer\", \"idx_ix_level_json\", \"CREATE INDEX IF NOT EXISTS idx_ix_level_json ON \\\"testapp\\\".wh_per_ix (((data ->> 'Level')::integer));\")",
+      $"{STEP}ToEnumNumber(\"Level\", \"Level\", {NUMBER}Int32, new (string Name, string Value)[] {{ (\"Low\", \"0\"), (\"High\", \"1\") }}, false)"))
+      .Because("An enum's index casts its number to the underlying integer.");
+    await Assert.That(code).Contains(ix("Plain:Int32->String", $"{STEP}ToText(\"Plain\")"))
+      .Because("A key with no index has nothing to replace.");
+    await Assert.That(code).Contains(ix("Label:renamed-from:Caption", $"{STEP}Rename(\"Label\", \"Caption\")"))
+      .Because("A rename keeps the type, so no index over the key casts to anything old.");
   }
 }

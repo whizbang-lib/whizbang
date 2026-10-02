@@ -153,7 +153,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
   /// </summary>
   [Test]
   [Timeout(180_000)]
-  public async Task NumberForAStringProperty_RecoversOnItsNextRetry_AfterTheStoredFormMigrationConvertsItAsync(
+  public async Task NumberForAStringProperty_RecoversAtOnce_AfterTheStoredFormMigrationConvertsItAsync(
       CancellationToken cancellationToken) {
     await using var pipeline = _composePipeline(maxFailures: 10, claimBatchSize: 100, drainConsumers: 1);
     await using var conn = await _openAsync(cancellationToken);
@@ -175,12 +175,19 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     // The stored-form migration, exactly as the generator emits it for the declaration, through the real phase.
     var schema = (string)(await _scalarAsync(conn, "SELECT table_schema FROM information_schema.tables WHERE table_name = 'wh_per_order'", cancellationToken))!;
     var healthyBefore = await _scalarAsync(conn, $"SELECT data::text FROM wh_per_order WHERE id = '{healthy}'", cancellationToken);
-    var migration = StoredFormMigrationSql.Generated(schema, "wh_per_order", "wh_per_order.Status:Int32->String", StoredFormStep.ToText("Status"));
+    var migration = StoredFormMigrationSql.Generated(schema, "wh_per_order", "wh_per_order.Status:Int32->String", StoredFormStep.ToText("Status"),
+      StoredFormStep.RetryParkedStreams(TypeNameFormatter.GetPerspectiveName(typeof(OrderPerspective))));
+    // Waited on from before the migration: the retry falls due the moment the conversion commits.
+    var recovered = pipeline.Applied.WaitAsync(items => items.Contains(poisoned), cancellationToken, fromNow: true);
+    var completed = pipeline.Completed.WaitAsync(items => items.Contains(failingWork), cancellationToken);
     await StoredFormMigrationSql.DeclareAsync(() => new NpgsqlConnection(ConnectionString), schema, [migration], cancellationToken);
+    var notices = new NoticeLogger();
     var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
       () => new NpgsqlConnection(ConnectionString), 986_986_986, StoredFormMigrationSql.ForPhase(schema, [migration]), 30,
-      cancellationToken: cancellationToken);
+      notices, cancellationToken);
     await Assert.That(ran).IsTrue();
+    await Assert.That(notices.Text).Contains("brought forward the retries of 1 parked row(s)")
+      .Because("the parked row's retry was a minute out; the migration that fixed its document makes it due now");
     await Assert.That(await _scalarAsync(conn, $"SELECT (data -> 'Status')::text FROM wh_per_order WHERE id = '{poisoned}'", cancellationToken))
       .IsEqualTo("\"123\"").Because("the number the earlier release stored is now the string the model reads");
     await Assert.That(await _scalarAsync(conn, $"SELECT data::text FROM wh_per_order WHERE id = '{healthy}'", cancellationToken))
@@ -188,13 +195,9 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     var status = await StoredFormMigrationJournal.ReadAsync(conn, schema, [migration], cancellationToken);
     await Assert.That(status.Single().State).IsEqualTo(StoredFormMigrationState.Applied);
     await Assert.That(status.Single().RowsConverted).IsEqualTo(1L);
-    await Assert.That((await _readWorkRowAsync(conn, failingWork, cancellationToken)).Failures).IsEqualTo(1)
-      .Because("the migration changes the document, not the retry schedule");
 
-    // The retry falls due: the stream reads the converted document, applies the waiting event and recovers.
-    var recovered = pipeline.Applied.WaitAsync(items => items.Contains(poisoned), cancellationToken, fromNow: true);
-    var completed = pipeline.Completed.WaitAsync(items => items.Contains(failingWork), cancellationToken);
-    await _makeRetryDueAsync(conn, [failingWork], cancellationToken);
+    // No clock is moved: the migration brought the parked stream's retry forward, so the claim loop picks it up,
+    // reads the converted document, applies the waiting event and recovers, well inside its 60-second backoff.
     await recovered;
     await completed;
 
@@ -700,6 +703,20 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
   // ============================================================================
 
   private sealed record WorkRow(int Failures, int FailureReason, double RetryDueInSeconds, bool Leased);
+
+  // The rewrite phase's notices, which name what each migration did.
+  private sealed class NoticeLogger : ILogger {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _messages = new();
+
+    public string Text => string.Join("\n", _messages);
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+      _messages.Enqueue(formatter(state, exception));
+  }
 
   private async Task<NpgsqlConnection> _openAsync(CancellationToken ct) {
     var conn = new NpgsqlConnection(ConnectionString);

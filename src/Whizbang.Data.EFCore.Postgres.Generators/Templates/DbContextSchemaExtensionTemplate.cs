@@ -210,6 +210,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         await Whizbang.Data.Postgres.CanonicalTemporalRewritePhase.ApplyAsync(
           rewriteConnectionFactory, lockId, rewrites, SCHEMA_COMMAND_TIMEOUT_SECONDS, logger,
           cancellationToken);
+        // An index a migration dropped because it cast a converted key to the old type is built again for the new
+        // type, concurrently, now that the conversion has committed. One that cannot be is left to the schema pass.
+        await global::Whizbang.Data.Postgres.StoredFormIndexRebuild.ApplyAsync(
+          rewriteConnectionFactory, storedFormMigrations, SCHEMA_COMMAND_TIMEOUT_SECONDS, logger, cancellationToken);
       } catch (Exception ex) when (ex is not OperationCanceledException
           and not Whizbang.Data.Postgres.StoredFormConversionBlockedException) {
         // A conversion blocked by values it cannot read is the one failure that stops startup: it names the
