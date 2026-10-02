@@ -10,7 +10,6 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -22,7 +21,7 @@ public sealed record OriginStampProbeEvent([property: StreamId] Guid ProbeId, st
 /// origin, with A's commit sequence (#1029). Every step runs as production runs it: A's storage form and
 /// outbox-drain origin stamp, the attribute-honoring wire serialization, B's typed bind through the
 /// generated envelope contract by the wire's envelope-type name, B's storage-form conversion and shared
-/// row builder, and the real <c>store_inbox_messages</c> emit chain into <c>wh_event_store</c>. The typed
+/// row builder, and the real <c>store_inbox_messages</c> plus inbox emit chain into <c>wh_event_store</c>. The typed
 /// contract used to drop <c>sid</c>/<c>sseq</c>, so B stored A's events as its own and integrity never saw them.
 /// </summary>
 /// <docs>resilience/stream-integrity#origin-stamp</docs>
@@ -55,16 +54,28 @@ public class ReceivedEventOriginStampTests : EFCoreTestBase {
     return (json, serialized.EnvelopeType, eventId);
   }
 
-  /// <summary>Service B: binds the wire through the generated contract and builds its inbox row.</summary>
+  /// <summary>
+  /// Service B: binds the wire through the generated contract, converts it to the storage form, and builds the
+  /// row as the consumer workers' shared builder does: the source columns come from the received envelope.
+  /// </summary>
   private static InboxMessage _serviceBReceives(JsonSerializerOptions options, string wire, string envelopeType) {
     var typeInfo = JsonContextRegistry.GetTypeInfoByName(envelopeType, options)
       ?? throw new InvalidOperationException($"No typed contract for {envelopeType}");
     var envelope = (IMessageEnvelope<OriginStampProbeEvent>)JsonSerializer.Deserialize(wire, typeInfo)!;
     var jsonEnvelope = new EnvelopeSerializer(options).SerializeEnvelope(envelope).JsonEnvelope;
-    return ReceivedInboxMessageBuilder.Build(
-      new ReceivedInboxMessageBuilder.ReceivedEnvelope(envelope, jsonEnvelope, envelopeType,
-        TypeNameFormatter.AssemblyQualifiedNameOrNull(typeof(OriginStampProbeEvent))!, IsEvent: true),
-      priority: 150, guardSite: "test", eventMarkerResolver: null, ephemeralModeResolver: null);
+    var messageType = TypeNameFormatter.AssemblyQualifiedNameOrNull(typeof(OriginStampProbeEvent))!;
+    return new InboxMessage {
+      MessageId = envelope.MessageId.Value,
+      HandlerName = "OriginStampProbeEventHandler",
+      Envelope = jsonEnvelope,
+      EnvelopeType = envelopeType,
+      MessageType = messageType,
+      StreamId = envelope.Payload.ProbeId,
+      IsEvent = true,
+      Metadata = new EnvelopeMetadata { MessageId = envelope.MessageId, Hops = envelope.Hops.ToList() },
+      SourceServiceId = jsonEnvelope.SourceServiceId,
+      SourceCommitSequence = jsonEnvelope.SourceCommitSequence,
+    };
   }
 
   private async Task<(Guid? Origin, long? Sequence)> _storeAndReadOriginAsync(InboxMessage row, JsonSerializerOptions options) {
@@ -76,6 +87,20 @@ public class ReceivedEventOriginStampTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
+    // The inbox emit chain writes the stored event for rows this instance holds, as the work batch runs it.
+    var instanceId = (Guid)TrackedGuid.New();
+    await using (var lease = conn.CreateCommand()) {
+      lease.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
+      lease.Parameters.AddWithValue("inst", instanceId);
+      lease.Parameters.AddWithValue("id", row.MessageId);
+      await lease.ExecuteNonQueryAsync();
+    }
+    await using (var emit = conn.CreateCommand()) {
+      emit.CommandText = "SELECT _emit_event_store_chain_for_inbox(@inst, NOW() + INTERVAL '5 minutes', NOW(), 4)";
+      emit.Parameters.AddWithValue("inst", instanceId);
+      _ = await emit.ExecuteScalarAsync();
+    }
+
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT origin_service_id, origin_commit_sequence FROM wh_event_store WHERE event_id = @id";
     cmd.Parameters.AddWithValue("id", row.MessageId);
@@ -83,7 +108,9 @@ public class ReceivedEventOriginStampTests : EFCoreTestBase {
     if (!await reader.ReadAsync()) {
       throw new InvalidOperationException($"No wh_event_store row for {row.MessageId}");
     }
-    return (reader.IsDBNull(0) ? null : reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetInt64(1));
+    Guid? origin = await reader.IsDBNullAsync(0) ? null : reader.GetGuid(0);
+    long? sequence = await reader.IsDBNullAsync(1) ? null : reader.GetInt64(1);
+    return (origin, sequence);
   }
 
   [Test]
