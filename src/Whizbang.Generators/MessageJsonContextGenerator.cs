@@ -3172,16 +3172,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static ImmutableArray<JsonMessageTypeInfo> _extractConsumedMessageTypes(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-    if (context.SemanticModel.GetDeclaredSymbol(context.Node, ct) is not INamedTypeSymbol typeSymbol) {
-      return [];
-    }
-
     var results = ImmutableArray.CreateBuilder<JsonMessageTypeInfo>();
-    if (typeSymbol.DeclaredAccessibility == Accessibility.Public) {
-      _addPerspectiveEventTypes(typeSymbol, results);
+    // The predicate admits only class declarations, and Roslyn declares a named type for every one of
+    // them, even one written where no type may appear (inside a method body, an enum, an attribute
+    // list). The guard stays for any other node, which would yield nothing; it wraps the work rather
+    // than returning early so the empty answer below is the one both cases give.
+    if (context.SemanticModel.GetDeclaredSymbol(context.Node, ct) is INamedTypeSymbol typeSymbol) {
+      if (typeSymbol.DeclaredAccessibility == Accessibility.Public) {
+        _addPerspectiveEventTypes(typeSymbol, results);
+      }
+      // A receptor may be internal; the message type it names is what must be reachable.
+      _addReferencedReceptorMessageTypes(typeSymbol, results);
     }
-    // A receptor may be internal; the message type it names is what must be reachable.
-    _addReferencedReceptorMessageTypes(typeSymbol, results);
 
     return results.Count > 0 ? results.ToImmutable() : [];
   }

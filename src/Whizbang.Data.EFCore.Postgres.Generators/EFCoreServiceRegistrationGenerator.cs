@@ -3046,18 +3046,21 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static void _collectPromotedIndex(
       StringBuilder sb, PerspectiveModelInfo perspective, JsonIndexInfo index, string table, string shortName,
       List<string> trigram, List<string> plain) {
-    if (perspective.PhysicalFields.FirstOrDefault(f => !f.IsVector && f.PropertyName == index.PropertyName) is not { } field) {
-      return;
-    }
-    foreach (var drop in JsonIndexSql.DropDocumentIndexStatements(index, table, shortName)) {
-      sb.AppendLine(drop);
-    }
-    var fieldBtreeEmittedElsewhere = field.IsIndexed && !index.CaseInsensitive;
-    foreach (var statement in JsonIndexSql.ColumnCreateStatements(index, field.ColumnName, table, shortName)) {
-      if (statement.IndexOf("gin_trgm_ops", StringComparison.Ordinal) >= 0) {
-        _addOnce(trigram, statement);
-      } else if (!fieldBtreeEmittedElsewhere) {
-        _addOnce(plain, statement);
+    // Both lists are read from the same model: a promoted index comes from a [PhysicalField] property
+    // that is not a vector, and so does a non-vector physical field, so every index finds its field.
+    // The guard stays for a model info built some other way; it wraps the work rather than returning
+    // early, so an index without a field still contributes nothing.
+    if (perspective.PhysicalFields.FirstOrDefault(f => !f.IsVector && f.PropertyName == index.PropertyName) is { } field) {
+      foreach (var drop in JsonIndexSql.DropDocumentIndexStatements(index, table, shortName)) {
+        sb.AppendLine(drop);
+      }
+      var fieldBtreeEmittedElsewhere = field.IsIndexed && !index.CaseInsensitive;
+      foreach (var statement in JsonIndexSql.ColumnCreateStatements(index, field.ColumnName, table, shortName)) {
+        if (statement.IndexOf("gin_trgm_ops", StringComparison.Ordinal) >= 0) {
+          _addOnce(trigram, statement);
+        } else if (!fieldBtreeEmittedElsewhere) {
+          _addOnce(plain, statement);
+        }
       }
     }
   }
