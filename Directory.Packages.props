@@ -54,7 +54,7 @@
     <PackageVersion Include="Roslynator.CodeAnalysis.Analyzers" Version="4.15.0" />
     <PackageVersion Include="Roslynator.Formatting.Analyzers" Version="4.15.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.0.0" />
-    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.0" />
+    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
     <!-- Security pin: SSH.NET arrives transitively (Testcontainers). 2025.1.0 carries
          GHSA-q939-rpr3-3284 (high); pin the patched release. Remove once the transitive
          chain flows a patched SSH.NET on its own. -->
