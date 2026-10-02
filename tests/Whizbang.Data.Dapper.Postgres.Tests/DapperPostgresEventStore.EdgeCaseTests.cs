@@ -222,10 +222,10 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     var laterCommit = Guid.Parse("00000000-0000-7000-8000-000000000002");
     var unstamped = Guid.Parse("00000000-0000-7000-8000-000000000003");
     var earlierCommit = Guid.Parse("00000000-0000-7000-8000-000000000004");
-    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "before"), _metadataJson(before), eventId: before, commitSequence: 1);
-    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "later"), _metadataJson(laterCommit), eventId: laterCommit, commitSequence: 30);
-    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "unstamped"), _metadataJson(unstamped), eventId: unstamped);
-    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "earlier"), _metadataJson(earlierCommit), eventId: earlierCommit, commitSequence: 20);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "before"), _metadataJson(before), eventId: before, version: 0, commitSequence: 1);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "later"), _metadataJson(laterCommit), eventId: laterCommit, version: 1, commitSequence: 30);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "unstamped"), _metadataJson(unstamped), eventId: unstamped, version: 2);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "earlier"), _metadataJson(earlierCommit), eventId: earlierCommit, version: 3, commitSequence: 20);
 
     var events = await _readPolymorphicAsync(store, streamId, [typeof(TestEvent)], fromAnEvent ? before : null);
 

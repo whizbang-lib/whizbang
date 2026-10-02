@@ -179,10 +179,19 @@ public class SagaWatchdogTickDeliveryCountTests {
     var sagaId = Guid.CreateVersion7();
     var entityId = Guid.CreateVersion7();
     var completedHere = new BaseSagaModel {
-      Id = sagaId, SagaName = ProbeSaga.SagaName, EntityId = entityId, TotalItems = 2, CompletedItems = 2, CompletionEventDispatched = true,
+      Id = sagaId,
+      SagaName = ProbeSaga.SagaName,
+      EntityId = entityId,
+      TotalItems = 2,
+      CompletedItems = 2,
+      CompletionEventDispatched = true,
     };
     var runningThere = new BaseSagaModel {
-      Id = sagaId, SagaName = ProbeSaga.SagaName, EntityId = entityId, TotalItems = 2, CompletedItems = 1,
+      Id = sagaId,
+      SagaName = ProbeSaga.SagaName,
+      EntityId = entityId,
+      TotalItems = 2,
+      CompletedItems = 1,
     };
     await using var publisher = CapturedOutboxHost.Create(services => services.AddSingleton(_probeSagaState(completedHere)));
     await using var otherService = CapturedOutboxHost.Create(services => {

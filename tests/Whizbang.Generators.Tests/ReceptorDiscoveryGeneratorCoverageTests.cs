@@ -453,13 +453,17 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
   /// <summary>The distinct IsOnceAcrossServices values on every registry entry for one receptor class.</summary>
   private static string[] _onceAcrossServicesFlagsFor(string registry, string receptorClass) {
+    const string FLAG = "IsOnceAcrossServices: ";
+    // The id is the fully qualified class name, with or without the global:: alias.
+    var marker = $"MyApp.Receptors.{receptorClass}\"";
     var flags = new HashSet<string>(StringComparer.Ordinal);
-    var at = 0;
-    var marker = $"ReceptorId: \"MyApp.Receptors.{receptorClass}\"";
-    while ((at = registry.IndexOf(marker, at, StringComparison.Ordinal)) >= 0) {
-      var valueAt = registry.IndexOf("IsOnceAcrossServices: ", at, StringComparison.Ordinal) + "IsOnceAcrossServices: ".Length;
-      flags.Add(registry[valueAt..registry.IndexOfAny(['\r', '\n', ')', ','], valueAt)].Trim());
-      at = valueAt;
+    foreach (var entry in registry.Split("ReceptorInfo(")) {
+      var flagAt = entry.IndexOf(FLAG, StringComparison.Ordinal);
+      if (flagAt < 0 || !entry.Contains(marker, StringComparison.Ordinal)) {
+        continue;
+      }
+      var valueAt = flagAt + FLAG.Length;
+      flags.Add(entry[valueAt..entry.IndexOfAny(['\r', '\n', ')', ','], valueAt)].Trim());
     }
     return [.. flags];
   }
