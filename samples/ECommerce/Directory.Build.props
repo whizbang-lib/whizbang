@@ -41,6 +41,14 @@
     <DefineConstants Condition="'$(TransportProvider)' == 'AzureServiceBus'">AZURESERVICEBUS</DefineConstants>
   </PropertyGroup>
 
+  <!-- Analyzers. This file does not import the parent Directory.Build.props, so the root's analyzer
+       ItemGroup does not reach these projects and each one has to be named here. A sample is code
+       people copy, so it is held to the same rules as the library it demonstrates. -->
+  <ItemGroup>
+    <PackageReference Include="SonarAnalyzer.CSharp" PrivateAssets="all" />
+    <PackageReference Include="Roslynator.Analyzers" PrivateAssets="all" />
+  </ItemGroup>
+
   <!-- BannedApiAnalyzers - Ban reflection attributes (except in test projects) -->
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
