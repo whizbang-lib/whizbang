@@ -57,7 +57,8 @@ public static class MessageSecurityServiceCollectionExtensions {
     // Register options as singleton (TryAdd so first registration wins)
     // This allows user-configured options (e.g., ExemptMessageTypes) to take precedence
     // over the default options registered by AddWhizbang()/AddWhizbangDispatcher()
-    services.TryAddSingleton(options);
+    // #1014: Whizbang:MessageSecurity binds over the lambda's values when the options first resolve.
+    services.TryAddSingleton(sp => Configuration.ProcessWideOptionsBinding.BindMessageSecurity(sp, options));
 
     // Register scoped IScopeContextAccessor
     services.TryAddScoped<IScopeContextAccessor, ScopeContextAccessor>();

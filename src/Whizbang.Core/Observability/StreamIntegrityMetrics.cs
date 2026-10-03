@@ -107,7 +107,7 @@ public sealed class StreamIntegrityMetrics {
   /// lanes are wider than the page budget covers per audit — raise the cap or accept the pace.</summary>
   public PassiveCounter<long> ManifestPagesCapped { get; }
 
-  private static readonly string[] _repairSources = ["checkpoint", "audit", "bulk", "drain"];
+  private static readonly string[] _repairSources = ["checkpoint", "audit", "bulk", "drain", "operator"];
   private static readonly string[] _driftKinds = ["updated", "removed", "added", "epoch-refolded"];
   private static readonly string[] _discardRoles = ["origin_request", "consumer_bundle", "maintenance_sweep"];
 

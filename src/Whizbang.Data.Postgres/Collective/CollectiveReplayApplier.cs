@@ -185,6 +185,17 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     return model;
   }
 
+  /// <inheritdoc/>
+  public IReadOnlyList<string> CollectiveEventTypeNamesFor(string modelTypeName) {
+    ArgumentNullException.ThrowIfNull(modelTypeName);
+    var name = modelTypeName.StartsWith("global::", StringComparison.Ordinal) ? modelTypeName["global::".Length..] : modelTypeName;
+    return [.. _entries
+      .Where(e => TypeNameFormatter.TryFormatClrTypeName(e.ModelType, out var clr)
+        && string.Equals(clr.Replace('+', '.'), name, StringComparison.Ordinal))
+      .Select(e => TypeNameFormatter.Format(e.EventType))
+      .Distinct(StringComparer.Ordinal)];
+  }
+
   private ICollectiveInMemoryExecutor _resolveExecutor(Type modelType) {
     foreach (var e in _executors) {
       if (e.ModelType == modelType) {

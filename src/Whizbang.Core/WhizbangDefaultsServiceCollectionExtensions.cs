@@ -104,6 +104,9 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton(Messaging.MessagePayloadLimits.Create);
     services.AddMetrics();
     services.TryAddEmptyConfiguration();
+    // Named circuit breakers read Whizbang:CircuitBreakers:<name> over their code values (#1012).
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      IPostConfigureOptions<Resilience.CircuitBreakerOptions>, Resilience.CircuitBreakerOptionsPostConfigure>());
     return services;
   }
 }

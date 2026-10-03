@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Health;
 using Whizbang.Core.Messaging;
@@ -249,7 +250,10 @@ public static class WorkerPipelineExtensions {
     // a newer instance's request, posts StandingBy for the migrator to observe, and carries the
     // runtime verdict (an instance becomes obsolete the moment a newer peer migrates underneath
     // it). StandbyHandshake is the migrator side, consumed when a breaking migration runs.
-    services.TryAddSingleton<Whizbang.Core.Startup.StandbyWatcherOptions>();
+    // #1014: the process-wide options classes bind from configuration (Whizbang:StandbyWatcher,
+    // Whizbang:Redelivery, Whizbang:Perspectives:* and the rest). This also registers the bound
+    // StandbyWatcherOptions instance the watcher below resolves.
+    Whizbang.Core.Configuration.ProcessWideOptionsBinding.AddProcessWideOptionsBinding(services);
     services.AddHostedService(sp => new Whizbang.Core.Startup.StandbyWatcher(
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetRequiredService<IWhizbangLifecycleState>(),
@@ -598,6 +602,11 @@ public static class WorkerPipelineExtensions {
         }
       });
     });
+    // #1029: the receive path warns when integrity is on but received events carry no origin.
+    services.TryAddSingleton(sp => new ReceivedOriginStampMonitor(
+        sp.GetRequiredService<IOptions<StreamIntegrityOptions>>(),
+        sp.GetService<ILogger<ReceivedOriginStampMonitor>>() ?? NullLogger<ReceivedOriginStampMonitor>.Instance,
+        sp.GetService<TimeProvider>()));
 
     // #646: every options class the turnkey pipeline registers is BOUND, concretely, so the
     // binder source generator intercepts each call (a generic helper would fall back to

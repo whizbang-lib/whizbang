@@ -27,6 +27,8 @@ try {
     "schema" => await _handleSchemaCommandAsync(args),
     "migrate" => await _handleMigrateCommandAsync(args),
     "stored-forms" => await _handleStoredFormsCommandAsync(args),
+    "streams" => await _handleStreamsCommandAsync(args),
+    "redeliver" => await _handleRedeliverCommandAsync(args),
     _ => throw new InvalidOperationException($"Unknown command: {args[0]}")
   };
 } catch (Exception ex) {
@@ -77,6 +79,190 @@ async Task<int> _handleStoredFormsCommandAsync(string[] commandArgs) {
   Console.WriteLine();
   Console.WriteLine(Whizbang.Data.Postgres.StoredFormMigrationJournal.Format(statuses));
   return 0;
+}
+
+async Task<int> _handleStreamsCommandAsync(string[] commandArgs) {
+  // Usage: whizbang streams purge --connection <cs> [--schema <schema>] --reason <text> [--requested-by <name>]
+  //        (--stream <id> ... | --streams-file <path>) [--dry-run] [--batch-size <n>] [--purge-id <guid>]
+  if (commandArgs.Length < 2 || commandArgs[1] is "--help" or "-h") {
+    _showStreamsHelp();
+    return commandArgs.Length < 2 ? 1 : 0;
+  }
+  if (!string.Equals(commandArgs[1], "purge", StringComparison.OrdinalIgnoreCase)) {
+    throw new InvalidOperationException($"Unknown streams subcommand: {commandArgs[1]}");
+  }
+
+  var connectionString = _option(commandArgs, "--connection", "-c");
+  var reason = _option(commandArgs, "--reason", "-r");
+  var streamIds = new List<Guid>();
+  foreach (var value in _options(commandArgs, "--stream")) {
+    streamIds.Add(Guid.Parse(value, CultureInfo.InvariantCulture));
+  }
+  var streamsFile = _option(commandArgs, "--streams-file", "-f");
+  if (streamsFile is not null) {
+    foreach (var line in await File.ReadAllLinesAsync(streamsFile)) {
+      var trimmed = line.Trim();
+      if (trimmed.Length > 0 && !trimmed.StartsWith('#')) {
+        streamIds.Add(Guid.Parse(trimmed, CultureInfo.InvariantCulture));
+      }
+    }
+  }
+  if (string.IsNullOrWhiteSpace(connectionString) || string.IsNullOrWhiteSpace(reason) || streamIds.Count == 0) {
+    Console.WriteLine("❌ Error: --connection, --reason and at least one stream (--stream or --streams-file) are required");
+    Console.WriteLine();
+    _showStreamsHelp();
+    return 1;
+  }
+
+  var request = new Whizbang.Core.Messaging.StreamPurgeRequest {
+    StreamIds = streamIds,
+    Reason = reason,
+    RequestedBy = _option(commandArgs, "--requested-by", "-u") ?? Environment.UserName,
+    DryRun = commandArgs.Contains("--dry-run"),
+    BatchSize = _option(commandArgs, "--batch-size", "-b") is { } size
+      ? int.Parse(size, CultureInfo.InvariantCulture)
+      : Whizbang.Core.Messaging.StreamPurgeRequest.DEFAULT_BATCH_SIZE,
+  };
+  if (_option(commandArgs, "--purge-id", "-p") is { } purgeId) {
+    request = request with { PurgeId = Guid.Parse(purgeId, CultureInfo.InvariantCulture) };
+  }
+
+  await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+  await connection.OpenAsync();
+  var report = await Whizbang.Data.Postgres.PostgresStreamPurger.RunAsync(
+    connection, _option(commandArgs, "--schema", "-s") ?? "public", request);
+  Console.WriteLine(report.Format());
+  return 0;
+}
+
+IEnumerable<string> _options(string[] commandArgs, string name) {
+  for (var i = 2; i < commandArgs.Length - 1; i++) {
+    if (commandArgs[i] == name) {
+      yield return commandArgs[i + 1];
+    }
+  }
+}
+
+void _showStreamsHelp() {
+  Console.WriteLine("Stream Commands");
+  Console.WriteLine();
+  Console.WriteLine("Usage: whizbang streams purge [options]");
+  Console.WriteLine();
+  Console.WriteLine("Removes durable streams that should never have existed from one service's store: events, every");
+  Console.WriteLine("perspective's rows, perspective work, cursors and snapshots, outbox, inbox and deduplication entries.");
+  Console.WriteLine("One transaction per batch; each batch is audited, and the streams stay purged: a later event on one");
+  Console.WriteLine("is skipped by every perspective. Stop whatever produces events for the streams first.");
+  Console.WriteLine();
+  Console.WriteLine("Options:");
+  Console.WriteLine("  --connection, -c <string>   PostgreSQL connection string of the service's database");
+  Console.WriteLine("  --schema, -s <name>         The schema the service uses (default: public)");
+  Console.WriteLine("  --reason, -r <text>         Why, recorded in the audit (required)");
+  Console.WriteLine("  --requested-by, -u <name>   Who, recorded in the audit (default: the OS user)");
+  Console.WriteLine("  --stream <id>               A stream to purge (repeatable)");
+  Console.WriteLine("  --streams-file, -f <path>   A file of stream ids, one per line ('#' comments)");
+  Console.WriteLine("  --dry-run                   Report the rows per table that would go, and change nothing");
+  Console.WriteLine($"  --batch-size, -b <n>        Streams per transaction (default: {Whizbang.Core.Messaging.StreamPurgeRequest.DEFAULT_BATCH_SIZE})");
+  Console.WriteLine("  --purge-id, -p <guid>       Resume an earlier purge: batches it committed are skipped");
+  Console.WriteLine();
+  Console.WriteLine("Example:");
+  Console.WriteLine("  whizbang streams purge -c \"Host=...;Database=...;Username=...\" -r \"orphaned by a replay\" -f ids.txt --dry-run");
+}
+
+async Task<int> _handleRedeliverCommandAsync(string[] commandArgs) {
+  // Usage: whizbang redeliver --service <url> --origin <name> (--streams <id,id,...> | --streams-file <path>) [options]
+  // Posts to the receiving service's operator endpoint (MapWhizbangStreamRedeliveryEndpoints), which asks the origin
+  // to republish the streams' stored events; the receiving service dedupes them by event id and re-applies them.
+  if (commandArgs.Length < 2 || commandArgs[1] is "--help" or "-h") {
+    _showRedeliverHelp();
+    return commandArgs.Length < 2 ? 1 : 0;
+  }
+  var service = _flag(commandArgs, "--service");
+  var origin = _flag(commandArgs, "--origin");
+  var streams = new List<string>();
+  if (_flag(commandArgs, "--streams") is { } inline) {
+    streams.AddRange(inline.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+  }
+  if (_flag(commandArgs, "--streams-file") is { } file) {
+    streams.AddRange((await File.ReadAllLinesAsync(file))
+      .SelectMany(line => line.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)));
+  }
+  if (string.IsNullOrWhiteSpace(service) || string.IsNullOrWhiteSpace(origin) || streams.Count == 0) {
+    Console.WriteLine("❌ Error: --service, --origin and at least one stream (--streams or --streams-file) are required");
+    Console.WriteLine();
+    _showRedeliverHelp();
+    return 1;
+  }
+  var ids = new System.Text.Json.Nodes.JsonArray();
+  foreach (var stream in streams) {
+    if (!Guid.TryParse(stream, out var id)) {
+      Console.WriteLine($"❌ Error: '{stream}' is not a stream id");
+      return 1;
+    }
+    ids.Add((System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(id.ToString()));
+  }
+  var body = new System.Text.Json.Nodes.JsonObject {
+    ["originService"] = origin,
+    ["streamIds"] = ids,
+    ["originRequestTopic"] = _flag(commandArgs, "--origin-topic"),
+    ["replyTopic"] = _flag(commandArgs, "--reply-topic"),
+    ["tenantScope"] = _flag(commandArgs, "--tenant"),
+    ["stateOnly"] = commandArgs.Contains("--state-only"),
+  };
+  if (_flag(commandArgs, "--event-types") is { } types) {
+    var array = new System.Text.Json.Nodes.JsonArray();
+    foreach (var type in types.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) {
+      array.Add((System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(type));
+    }
+    body["eventTypes"] = array;
+  }
+  var path = _flag(commandArgs, "--path") ?? "/whizbang/redelivery";
+  using var http = new HttpClient { BaseAddress = new Uri(service) };
+  if (_flag(commandArgs, "--bearer") is { } token) {
+    http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+  }
+  using var content = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+  using var response = await http.PostAsync(path.TrimEnd('/') + "/streams", content);
+  var text = await response.Content.ReadAsStringAsync();
+  if (!response.IsSuccessStatusCode) {
+    Console.WriteLine($"❌ Error: {(int)response.StatusCode} {response.ReasonPhrase}: {text}");
+    return 1;
+  }
+  Console.WriteLine($"✅ Redelivery requested: {text}");
+  return 0;
+}
+
+string? _flag(string[] commandArgs, string name) {
+  for (var i = 1; i < commandArgs.Length - 1; i++) {
+    if (commandArgs[i] == name) {
+      return commandArgs[i + 1];
+    }
+  }
+  return null;
+}
+
+void _showRedeliverHelp() {
+  Console.WriteLine("Redeliver Command");
+  Console.WriteLine();
+  Console.WriteLine("Asks an origin service to republish the stored events of a list of streams to the service that lost them.");
+  Console.WriteLine("The receiving service skips the events it already has, by id, and applies the rest.");
+  Console.WriteLine();
+  Console.WriteLine("Usage: whizbang redeliver --service <url> --origin <name> (--streams <ids> | --streams-file <path>) [options]");
+  Console.WriteLine();
+  Console.WriteLine("Options:");
+  Console.WriteLine("  --service <url>          Base URL of the RECEIVING service, which mounts MapWhizbangStreamRedeliveryEndpoints");
+  Console.WriteLine("  --origin <name>          The origin service's logical name");
+  Console.WriteLine("  --streams <ids>          Stream ids, separated by commas or spaces");
+  Console.WriteLine("  --streams-file <path>    A file of stream ids, one or more per line");
+  Console.WriteLine("  --origin-topic <topic>   The topic the origin takes requests on, when not learned from its checkpoints");
+  Console.WriteLine("  --reply-topic <topic>    The topic to republish on (default: the receiving service's repair or inbox topic)");
+  Console.WriteLine("  --tenant <id>            Only events of this tenant");
+  Console.WriteLine("  --event-types <a,b>      Only these stored event types");
+  Console.WriteLine("  --state-only             Store and project only; do not run trigger receptors again");
+  Console.WriteLine("  --path <path>            The endpoint's prefix (default: /whizbang/redelivery)");
+  Console.WriteLine("  --bearer <token>         A bearer token for an endpoint that requires authorization");
+  Console.WriteLine();
+  Console.WriteLine("Example:");
+  Console.WriteLine("  whizbang redeliver --service https://receiver.internal --origin order-service --streams-file lost-streams.txt");
 }
 
 string? _option(string[] commandArgs, string name, string alias) {
@@ -520,6 +706,8 @@ void _showHelp() {
   Console.WriteLine("  schema          Manage database schemas");
   Console.WriteLine("  migrate         Migrate from Marten/Wolverine to Whizbang");
   Console.WriteLine("  stored-forms    List pending and applied stored-form migrations of perspective data");
+  Console.WriteLine("  streams         Purge durable streams from a service's store (dry run, audited)");
+  Console.WriteLine("  redeliver       Ask an origin service to republish the stored events of a list of streams");
   Console.WriteLine();
   Console.WriteLine("Options:");
   Console.WriteLine("  --help, -h      Show this help message");

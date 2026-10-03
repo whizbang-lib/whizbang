@@ -17,14 +17,30 @@ namespace Whizbang.Core.Startup;
 /// release carries no cool-down.
 /// </para>
 /// <para>
-/// The migrator duty is never managed here. It is elected before migrations run, so the
-/// assignment table does not exist yet on a fresh database, and its waiters watch the duty's
-/// session lock. It stays on the session-lock elector.
+/// Role assignment is on by default. The migrator is held by assignment too: its vote is part of the
+/// schema bootstrap, so it exists before the first migration, and migrator waiters watch the
+/// assignment row as well as the duty's session lock. Turn the whole mechanism off with
+/// <see cref="Enabled"/>, and every duty goes back to the session-lock elector.
+/// </para>
+/// <para>
+/// Each duty may declare its own lease in <see cref="RoleLeases"/>. Whatever the lease, a holder that
+/// marked the backend running its duty's statement is treated as live while that statement runs, so
+/// one long statement does not lose the role.
 /// </para>
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/RoleAssignmentOptionsTests.cs</tests>
 public sealed class RoleAssignmentOptions {
+  /// <summary>The migrator's default lease: a migration can spend longer between statements than a maintenance pass.</summary>
+  public static readonly TimeSpan DefaultMigratorLease = TimeSpan.FromSeconds(30);
+
+  /// <summary>
+  /// Whether duties are held by assignment at all. Default true. When false, the role elector
+  /// delegates every duty to the session-lock elector, the holder loop holds nothing, and the
+  /// <c>roles</c> health component has nothing to report.
+  /// </summary>
+  public bool Enabled { get; set; } = true;
+
   /// <summary>How often a holder renews its lease. Default 5 seconds.</summary>
   public TimeSpan RenewInterval { get; set; } = TimeSpan.FromSeconds(5);
 
@@ -38,11 +54,13 @@ public sealed class RoleAssignmentOptions {
   public TimeSpan CooldownAfterLapse { get; set; } = TimeSpan.FromSeconds(15);
 
   /// <summary>
-  /// While true (the default), a holder also holds the duty's legacy session advisory lock, so an
-  /// instance still running the session-lock elector sees the duty as held, and a new instance
-  /// defers to an old holder. Turn it off only once no instance older than the role-assignment
-  /// release remains in the fleet: with it off, an old instance can take the session lock after a
-  /// vote and both would act.
+  /// While true (the default in this release), a holder also holds the duty's legacy session advisory
+  /// lock, so an instance still running the session-lock elector sees the duty as held, and a new
+  /// instance defers to an old holder: old and new never both act during a rolling deploy. It costs one
+  /// pinned connection per held role, and will default to false in a later release. Turn it off early
+  /// (<c>Whizbang__Database__RoleAssignment__HoldLegacySessionLock=false</c>) once no instance older than
+  /// role assignment remains. With it off, the vote still refuses while an old holder is visible, and a
+  /// holder steps aside within one renewal once it sees one, but for that renewal interval both may act.
   /// </summary>
   public bool HoldLegacySessionLock { get; set; } = true;
 
@@ -52,22 +70,64 @@ public sealed class RoleAssignmentOptions {
   /// </summary>
   public TimeSpan OwedWorkRetryBase { get; set; } = TimeSpan.FromSeconds(30);
 
-  /// <summary>The duties held by assignment. Default: <see cref="StartupDuties.MAINTAINER"/>.</summary>
-  public ISet<string> Roles { get; } = new HashSet<string>(StringComparer.Ordinal) { StartupDuties.MAINTAINER };
+  /// <summary>
+  /// The duties held by assignment. Default: <see cref="StartupDuties.MAINTAINER"/> and
+  /// <see cref="StartupDuties.MIGRATOR"/>; the Postgres driver adds the commit-order stamper's role
+  /// while the stamper is enabled.
+  /// </summary>
+  public ISet<string> Roles { get; } = new HashSet<string>(StringComparer.Ordinal) {
+    StartupDuties.MAINTAINER, StartupDuties.MIGRATOR,
+  };
 
-  /// <summary>The lease a holder is granted: <see cref="RenewInterval"/> × <see cref="MissedRenewalsBeforeLapse"/>.</summary>
+  /// <summary>
+  /// A lease per duty, for a duty whose work can go longer than the default lease between renewals.
+  /// A duty not listed is granted <see cref="Lease"/>, except the migrator, which is granted
+  /// <see cref="DefaultMigratorLease"/> or <see cref="Lease"/>, whichever is longer.
+  /// </summary>
+  public IDictionary<string, TimeSpan> RoleLeases { get; } = new Dictionary<string, TimeSpan>(StringComparer.Ordinal);
+
+  /// <summary>
+  /// How an instance on the session-lock elector locks a role, by schema, for a role whose legacy
+  /// lock is not the duty lock (the commit-order stamper's leader lock, for one). A role not listed
+  /// uses the duty lock. Read only while bridged, or to see an old holder.
+  /// </summary>
+  public IDictionary<string, Func<string?, long>> LegacyLockKeys { get; } = new Dictionary<string, Func<string?, long>>(StringComparer.Ordinal);
+
+  /// <summary>The default lease a holder is granted: <see cref="RenewInterval"/> × <see cref="MissedRenewalsBeforeLapse"/>.</summary>
   public TimeSpan Lease => RenewInterval * MissedRenewalsBeforeLapse;
+
+  /// <summary>
+  /// The lease <paramref name="role"/> is held for: its own from <see cref="RoleLeases"/>; else, for the
+  /// migrator, the longer of <see cref="DefaultMigratorLease"/> and <see cref="Lease"/>; else <see cref="Lease"/>.
+  /// </summary>
+  /// <param name="role">The role.</param>
+  /// <returns>The lease.</returns>
+  public TimeSpan LeaseFor(string role) {
+    if (RoleLeases.TryGetValue(role, out var lease)) {
+      return lease;
+    }
+    return IsEpisodic(role) && DefaultMigratorLease > Lease ? DefaultMigratorLease : Lease;
+  }
 
   /// <summary>Whether <paramref name="duty"/> is held by assignment rather than delegated.</summary>
   /// <param name="duty">The duty name.</param>
-  /// <returns>True when the duty is in <see cref="Roles"/> and is not the migrator.</returns>
-  public bool Manages(string duty) =>
-    !string.Equals(duty, StartupDuties.MIGRATOR, StringComparison.Ordinal) && Roles.Contains(duty);
+  /// <returns>True when role assignment is <see cref="Enabled"/> and the duty is in <see cref="Roles"/>.</returns>
+  public bool Manages(string duty) => Enabled && Roles.Contains(duty);
+
+  /// <summary>
+  /// Whether <paramref name="role"/> is held only while a task runs rather than continuously: the
+  /// migrator holds its role for one migration and then releases it, so a vacancy is its normal
+  /// state, and the holder loop never holds it (a standing holder would keep every later migration
+  /// waiting on it).
+  /// </summary>
+  /// <param name="role">The role.</param>
+  /// <returns>True for the migrator.</returns>
+  public static bool IsEpisodic(string role) => string.Equals(role, StartupDuties.MIGRATOR, StringComparison.Ordinal);
 
   /// <summary>Throws when the options describe a configuration that cannot work.</summary>
   /// <exception cref="ArgumentOutOfRangeException">A non-positive renew interval, fewer than two
-  /// renewals per lease, a negative cool-down, or a non-positive retry base.</exception>
-  /// <exception cref="InvalidOperationException"><see cref="Roles"/> names the migrator duty.</exception>
+  /// renewals per lease, a per-duty lease shorter than two renewals, a negative cool-down, or a
+  /// non-positive retry base.</exception>
   public void Validate() {
     if (RenewInterval <= TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(RenewInterval), RenewInterval, "The renew interval must be positive.");
@@ -82,10 +142,11 @@ public sealed class RoleAssignmentOptions {
     if (OwedWorkRetryBase <= TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(OwedWorkRetryBase), OwedWorkRetryBase, "The retry base must be positive.");
     }
-    if (Roles.Contains(StartupDuties.MIGRATOR)) {
-      throw new InvalidOperationException(
-        $"The '{StartupDuties.MIGRATOR}' duty cannot be held by assignment: it is elected before migrations run, "
-        + "and its waiters watch the duty's session lock. Remove it from RoleAssignmentOptions.Roles.");
+    foreach (var (role, lease) in RoleLeases) {
+      if (lease < RenewInterval * 2) {
+        throw new ArgumentOutOfRangeException(nameof(RoleLeases), lease,
+          $"The lease for role '{role}' must span at least two renewals ({RenewInterval * 2}).");
+      }
     }
   }
 }

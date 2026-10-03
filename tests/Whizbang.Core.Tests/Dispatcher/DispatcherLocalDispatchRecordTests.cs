@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -48,6 +49,99 @@ public class DispatcherLocalDispatchRecordTests {
   }
 
   private const string RECEPTOR_ID_SUFFIX = nameof(LocalDispatchRecordProbeReceptor);
+
+  /// <summary>An event two services both handle with the same receptor class.</summary>
+  public record SharedHandlerProbeEvent([property: StreamId] Guid StreamId) : IEvent;
+
+  /// <summary>An event two services both handle with a receptor that must run once overall.</summary>
+  public record OnceOverallProbeEvent([property: StreamId] Guid StreamId) : IEvent;
+
+  /// <summary>How many times each probe stream was handled, across every service in the test.</summary>
+  private static readonly ConcurrentDictionary<Guid, int> _handlings = new();
+
+  /// <summary>Shared handler code that writes to the store of whichever service runs it.</summary>
+  public class SharedHandlerProbeReceptor : IReceptor<SharedHandlerProbeEvent> {
+    public ValueTask HandleAsync(SharedHandlerProbeEvent message, CancellationToken cancellationToken = default) {
+      _handlings.AddOrUpdate(message.StreamId, 1, (_, n) => n + 1);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>A handler with an external effect, such as sending an email, that has to happen once.</summary>
+  [ReceptorOnceAcrossServices]
+  public class OnceOverallProbeReceptor : IReceptor<OnceOverallProbeEvent> {
+    public ValueTask HandleAsync(OnceOverallProbeEvent message, CancellationToken cancellationToken = default) {
+      _handlings.AddOrUpdate(message.StreamId, 1, (_, n) => n + 1);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  private static readonly LifecycleStage[] _stagesOfTheInbox = [
+    LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+    LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+  ];
+
+  /// <summary>
+  /// A receptor class registered in two services runs in both: once on the publishing service's local
+  /// path, and once when the other service receives the message, though the envelope it receives
+  /// records the first firing.
+  /// </summary>
+  [Test]
+  public async Task SharedReceptor_InTwoServices_RunsInBothAsync() {
+    var evt = new SharedHandlerProbeEvent(Guid.CreateVersion7());
+
+    var handled = await _publishInServiceAThenReceiveInServiceBAsync(evt, evt.StreamId);
+
+    await Assert.That(handled).IsEqualTo(2)
+      .Because("each service writes to its own store, so a record from the other service must not stop it");
+  }
+
+  /// <summary>
+  /// A receptor marked <c>[ReceptorOnceAcrossServices]</c> runs once: the other service sees the
+  /// publishing service's record and skips it.
+  /// </summary>
+  [Test]
+  public async Task OnceAcrossServicesReceptor_InTwoServices_RunsOnceAsync() {
+    var evt = new OnceOverallProbeEvent(Guid.CreateVersion7());
+
+    var handled = await _publishInServiceAThenReceiveInServiceBAsync(evt, evt.StreamId);
+
+    await Assert.That(handled).IsEqualTo(1)
+      .Because("an external effect must happen once for the message, not once per service");
+  }
+
+  /// <summary>
+  /// Publishes in one service, then runs the inbox stages over the stored envelope in a second service
+  /// built from the same receptors, and returns how many times the event's stream was handled.
+  /// </summary>
+  private static async Task<int> _publishInServiceAThenReceiveInServiceBAsync<TEvent>(TEvent evt, Guid streamId) where TEvent : IEvent {
+    var (serviceA, stored) = _dispatcher(services =>
+      services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(Guid.CreateVersion7(), "service-a", "host-a", 1)));
+    await serviceA.PublishAsync(evt);
+    var handledAtPublish = _handlings.GetValueOrDefault(streamId);
+
+    var serviceB = new ServiceCollection();
+    serviceB.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(Guid.CreateVersion7(), "service-b", "host-b", 2));
+    serviceB.AddReceptors();
+    serviceB.AddWhizbangDispatcher();
+    await using var providerB = serviceB.BuildServiceProvider();
+    await using var scope = providerB.CreateAsyncScope();
+    var invoker = new ReceptorInvoker(providerB.GetRequiredService<IReceptorRegistry>(), scope.ServiceProvider);
+    var received = new MessageEnvelope<TEvent> {
+      MessageId = Whizbang.Core.ValueObjects.MessageId.New(),
+      Payload = evt,
+      Hops = [],
+      ReceptorInvocations = [.. stored.Single()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+    };
+    foreach (var stage in _stagesOfTheInbox) {
+      await invoker.InvokeAsync(received, stage);
+    }
+
+    await Assert.That(handledAtPublish).IsEqualTo(1)
+      .Because("the publishing service runs the receptor on its local path");
+    return _handlings.GetValueOrDefault(streamId);
+  }
 
   [Test]
   [Arguments(false)]

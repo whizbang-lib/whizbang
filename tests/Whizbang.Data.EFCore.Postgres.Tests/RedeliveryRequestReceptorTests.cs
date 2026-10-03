@@ -303,6 +303,28 @@ public class RedeliveryRequestReceptorTests {
       .Because("declining costs nothing: no selection is attempted, and returning completes the row so it is never retried");
   }
 
+  /// <summary>
+  /// Report-only opts out of AUTOMATIC repair. A request an operator made for named streams (#1028) is served, and
+  /// the bundles say so, so the report-only receiver applies them too.
+  /// </summary>
+  [Test]
+  public async Task Receptor_UnderReportOnly_ServesAnOperatorRequest_AndMarksItsBundlesAsync() {
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var streamId = TrackedGuid.New().Value;
+    coordinator.Selection = [_evt(streamId, TrackedGuid.New().Value, 1)];
+    await using var sp = _buildProvider(coordinator, transport, serializer, repairMode: IntegrityRepairMode.ReportOnly);
+    var receptor = new RedeliveryRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(_request(streamId) with { OperatorRequested = true });
+
+    await Assert.That(transport.Published).Count().IsEqualTo(1);
+    await Assert.That(coordinator.Requests[0].StreamIds).IsEquivalentTo([streamId]);
+    await Assert.That(serializer.Captured.Select(c => c.Payload.OperatorRequested)).IsEquivalentTo([true]);
+  }
+
   [Test]
   public async Task Receptor_WithNoIntegrityOptionsRegistered_DeclinesAsTheReportOnlyDefaultAsync() {
     var coordinator = new SelectingCoordinator();

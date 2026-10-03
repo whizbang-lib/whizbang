@@ -473,7 +473,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // process_inbox_completions DELETEs it). The composite is never event-stored, only its children.
       // Returning early skips the composite's own lifecycle stages — those fire per-child instead.
       if (typedEnvelope?.Payload is ICompositeEvent composite) {
-        if (composite is RedeliveryComposite && !RepairTraffic.IsRepairEnabled(_integrityOptions)) {
+        // Report-only opts out of AUTOMATIC repair; a redelivery an operator asked for is applied (#1028).
+        if (composite is RedeliveryComposite { OperatorRequested: false } && !RepairTraffic.IsRepairEnabled(_integrityOptions)) {
           await _discardRepairBundleAsync(work, composite, scope.ServiceProvider, ct);
           return;
         }

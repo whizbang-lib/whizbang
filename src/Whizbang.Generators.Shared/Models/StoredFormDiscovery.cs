@@ -35,6 +35,12 @@ public enum StoredFormColumnAction {
 /// <param name="ColumnNumber">For a retype, the C# <c>StoredNumber</c> the column now holds, or <c>null</c> for text.</param>
 /// <param name="ColumnEnumNames">For a retype of a former enum to text, the C# member array, or <c>null</c>.</param>
 /// <param name="PreviousColumn">For a rename, the former column.</param>
+/// <param name="Path">The property's path in the document: <c>Status</c>, <c>Shipping.Line1</c>.</param>
+/// <param name="IsTypeChange">Whether the migration changes the property's type, which can leave an index stale.</param>
+/// <param name="IndexStoreType">
+/// For a type change, the type an index over the property casts its extraction to now (<c>integer</c>), or
+/// <see langword="null"/> for text: what an index the schema built over the key is compared with.
+/// </param>
 /// <docs>fundamentals/perspectives/stored-form-migrations</docs>
 /// <tests>tests/Whizbang.Generators.Tests/StoredFormMigrationGenerationTests.cs</tests>
 public sealed record StoredFormInfo(
@@ -45,7 +51,10 @@ public sealed record StoredFormInfo(
     StoredFormColumnAction ColumnAction = StoredFormColumnAction.None,
     string ColumnNumber = "null",
     string ColumnEnumNames = "null",
-    string? PreviousColumn = null);
+    string? PreviousColumn = null,
+    string Path = "",
+    bool IsTypeChange = false,
+    string? IndexStoreType = null);
 
 /// <summary>A stored-form declaration the generator reports instead of generating.</summary>
 /// <param name="Id">WHIZ830 (cannot be generated) or WHIZ832 (inside a collection element).</param>
@@ -251,7 +260,8 @@ public static class StoredFormDiscovery {
       return;
     }
     walk.Migrations.Add(new StoredFormInfo(1, $"{path}:{from.Name}->{current.Name}", step,
-      column, column is null ? StoredFormColumnAction.None : action, number, enumNames));
+      column, column is null ? StoredFormColumnAction.None : action, number, enumNames,
+      Path: path, IsTypeChange: true, IndexStoreType: JsonIndexSql.StoreType(JsonIndexDiscovery.CastFor(current) ?? JsonIndexCast.None)));
   }
 
   private static void _default(Walk walk, string path, TypedConstant value, ITypeSymbol current, bool splitPhysical) {

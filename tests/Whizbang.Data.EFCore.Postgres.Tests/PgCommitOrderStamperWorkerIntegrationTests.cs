@@ -70,6 +70,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       config,
       shared,
       NullLogger<PgCommitOrderStamperWorker>.Instance,
+      dutyElector: null,
       notifySignalingGate: gate);
   }
 

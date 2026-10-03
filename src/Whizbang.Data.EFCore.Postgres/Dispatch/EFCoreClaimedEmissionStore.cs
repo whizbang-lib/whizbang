@@ -126,6 +126,32 @@ public sealed class EFCoreClaimedEmissionStore(DbContext dbContext) : IClaimedEm
     return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
+  /// <inheritdoc />
+  /// <remarks>
+  /// Oldest expiry first, through the <c>expires_at</c> index, and <c>starts_with</c> for the retained
+  /// prefixes so a <c>_</c> or <c>%</c> in one is literal.
+  /// </remarks>
+  public async Task<int> PruneExpiredAsync(
+      DateTimeOffset expiredBefore, IReadOnlyCollection<string> retainedKeyPrefixes, int maxClaims, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(retainedKeyPrefixes);
+    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxClaims);
+
+    var table = _table();
+    await using var cmd = await _commandAsync(cancellationToken).ConfigureAwait(false);
+    cmd.CommandText = $"""
+      DELETE FROM {table} WHERE claim_key IN (
+        SELECT c.claim_key FROM {table} c
+        WHERE c.expires_at < @before
+          AND NOT EXISTS (SELECT 1 FROM unnest(@retained) AS r(prefix) WHERE starts_with(c.claim_key, r.prefix))
+        ORDER BY c.expires_at
+        LIMIT @max)
+      """;
+    cmd.Parameters.AddWithValue("before", expiredBefore);
+    cmd.Parameters.AddWithValue("retained", retainedKeyPrefixes.ToArray());
+    cmd.Parameters.AddWithValue("max", maxClaims);
+    return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
   /// <summary>A command on the ambient context's connection, opened if it is not yet.</summary>
   private async Task<NpgsqlCommand> _commandAsync(CancellationToken cancellationToken) {
     var conn = (NpgsqlConnection)_dbContext.Database.GetDbConnection();

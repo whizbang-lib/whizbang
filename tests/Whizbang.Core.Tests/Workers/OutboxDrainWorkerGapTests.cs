@@ -339,13 +339,15 @@ public class OutboxDrainWorkerGapTests {
   private static OutboxBatchRow _row(
       Guid messageId, Guid streamId, int attempts = 0,
       Guid? originServiceId = null, long? originCommitSequence = null, long? commitSequence = null,
-      int priority = 0, int storedEnvelopePriority = 0) {
+      int priority = 0, int storedEnvelopePriority = 0, string? target = null, bool stateOnly = false) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
       Priority = storedEnvelopePriority,
+      Target = target,
+      StateOnly = stateOnly,
     };
     var typeInfo = _jsonOpts.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
       ?? throw new InvalidOperationException("Test setup: no JsonTypeInfo for MessageEnvelope<JsonElement>");
@@ -408,6 +410,23 @@ public class OutboxDrainWorkerGapTests {
 
     await Assert.That(envelope.Priority).IsEqualTo(50)
       .Because("a fetch that predates the column leaves the row at 0; the number serialized into the stored envelope still counts");
+  }
+
+  /// <summary>
+  /// The drain rebuilds the stored envelope to stamp the origin onto the wire (#1029 traced every rebuild).
+  /// The rebuild named the origin, causality and priority but not the directed target or the state-only
+  /// marker, so a directed envelope left the producer as a broadcast and a state-only one re-fired triggers.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_KeepsTargetAndStateOnly_AndStampsTheOriginAsync() {
+    var origin = (Guid)TrackedGuid.New();
+    var envelope = await _publishOneAsync(_row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New(),
+      originServiceId: origin, originCommitSequence: 12, target: "deficient-consumer", stateOnly: true));
+
+    await Assert.That(envelope.Target).IsEqualTo("deficient-consumer");
+    await Assert.That(envelope.StateOnly).IsTrue();
+    await Assert.That(envelope.SourceServiceId).IsEqualTo(origin);
+    await Assert.That(envelope.SourceCommitSequence).IsEqualTo(12L);
   }
 
   private static OutboxBatchRow _badRow(Guid messageId, Guid streamId, string eventData) =>

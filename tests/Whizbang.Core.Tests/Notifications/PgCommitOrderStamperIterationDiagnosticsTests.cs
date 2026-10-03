@@ -56,6 +56,7 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       cfg,
       sharedConn,
       logger,
+      dutyElector: null,
       connectionStringFallback: null);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -100,6 +101,7 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       cfg,
       sharedConn,
       logger,
+      dutyElector: null,
       connectionStringFallback: null);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -140,6 +142,7 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       cfg,
       sharedConn,
       logger,
+      dutyElector: null,
       connectionStringFallback: null);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));

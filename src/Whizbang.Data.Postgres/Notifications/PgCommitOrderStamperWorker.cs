@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Startup;
 
 namespace Whizbang.Data.Postgres.Notifications;
 
@@ -39,6 +40,16 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// Restart safety: the advisory lock is session-scoped, so a crash auto-releases.
 /// The next instance's retry tick picks it up within <see cref="CommitOrderStamperOptions.LeaderElectionRetry"/>.
 /// </para>
+/// <para>
+/// <b>Leadership by role assignment (#966).</b> When the duty elector holds
+/// <see cref="CommitOrderStamperOptions.ROLE"/> by assignment (the default), leadership is that role
+/// instead of the session lock: one holder per schema, won by a vote, kept by the stamping loop
+/// itself (each iteration verifies the grant, which renews the lease, and the loop never sleeps
+/// longer than one renew interval), and every stamp is fenced by the holder's epoch in the same
+/// transaction, so a stamper that lost the role cannot stamp. A non-holder waits for the retry
+/// interval or for the role's release to be announced. A newer-version instance asking for the role
+/// gets it after the stamp in progress.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
 /// <tests>tests/Whizbang.Core.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
@@ -49,6 +60,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   IConfiguration configuration,
   ISharedNotifyConnection sharedConnection,
   ILogger<PgCommitOrderStamperWorker> logger,
+  IDutyElector? dutyElector = null,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null,
   INotifySignalingGate? notifySignalingGate = null,
@@ -71,7 +83,11 @@ public sealed partial class PgCommitOrderStamperWorker(
   private readonly NpgsqlDataSource? _dataSource = notificationDataSource?.DataSource;
 
   private const string CHANNEL_NAME = "wh_committed";
+  private const string FENCE_SQLSTATE = "WHF01";
+  private readonly PgRoleElector? _roleElector =
+    dutyElector is PgRoleElector role && role.Manages(CommitOrderStamperOptions.ROLE) ? role : null;
   private readonly SemaphoreSlim _wake = new(initialCount: 1, maxCount: 1);
+  private readonly SemaphoreSlim _vacancy = new(initialCount: 0, maxCount: 1);
   private bool _isLeader;
   private int _totalStamped;
 
@@ -83,6 +99,13 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   /// <summary>Fires when this instance acquires the advisory lock and becomes the active stamper.</summary>
   public event Action? OnBecameLeader;
+
+  /// <summary>
+  /// Fires when this instance stops being the active stamper: its tenure ended (the role was lost,
+  /// handed to a newer instance, or refused by the fence) or the worker is stopping. Under role
+  /// assignment the role has already been released when it fires.
+  /// </summary>
+  public event Action? OnStoppedLeading;
 
   /// <summary>Fires after each <c>stamp_pending_commit_sequences</c> call with the count stamped this call.</summary>
   public event Action<int>? OnStampCompleted;
@@ -176,6 +199,11 @@ public sealed partial class PgCommitOrderStamperWorker(
     }
 
     try {
+      if (_roleElector is not null) {
+        await _runAsRoleHolderAsync(_roleElector, resolution, stoppingToken);
+        LogStopped(_logger);
+        return;
+      }
       while (!stoppingToken.IsCancellationRequested) {
         NpgsqlConnection? lockConn = null;
         try {
@@ -205,52 +233,7 @@ public sealed partial class PgCommitOrderStamperWorker(
           // released the advisory lock and cleared the leader flag. Answering it here too sent
           // the same shutdown out through a different line depending on which await happened to
           // observe the token first, so which line ran was a matter of timing.
-          var skipWakeWait = false;
-          var fencedDrain = false;
-          while (!stoppingToken.IsCancellationRequested) {
-            // Wait for NOTIFY-fired wake OR polling-interval timeout. Either path fires
-            // the same stamp. Skipped when the previous iteration left known work behind
-            // (mid-drain or fenced) — pending work never waits on an external wake.
-            if (!skipWakeWait) {
-              // Returning to wake-waiting ends any fenced-drain episode: subsequent stamps
-              // are steady-state again and must not ring the make-up doorbell.
-              fencedDrain = false;
-              var effectiveInterval = ComputeEffectivePollingInterval(
-                _stamperOptions,
-                _notifySignalingGate?.IsAvailable);
-              _ = await _wake.WaitAsync(effectiveInterval, stoppingToken);
-            }
-            skipWakeWait = false;
-
-            // Nothing unstamped, nothing to sort: the probe hits the partial index and costs
-            // nothing, the stamp's eligibility CTE orders every unstamped row and does not.
-            if (!await _hasPendingUnstampedAsync(lockConn, stoppingToken)) {
-              OnStampSkipped?.Invoke();
-              continue;
-            }
-
-            var stamped = await _stampOnceAsync(lockConn, notifyOwners: fencedDrain, stoppingToken);
-            _ = Interlocked.Add(ref _totalStamped, stamped);
-            OnStampCompleted?.Invoke(stamped);
-
-            if (stamped > 0) {
-              // A full batch may have left more behind — drain immediately instead of
-              // waiting for another wake.
-              skipWakeWait = true;
-            } else if (await _hasPendingUnstampedAsync(lockConn, stoppingToken)) {
-              // Fenced: unstamped rows exist but an in-flight same-database transaction
-              // holds the ordering fence, so this wake stamped nothing. The rows' own
-              // committing wake has already fired and will not repeat — without this
-              // retry they would sit invisible to perspective fetches until the next
-              // external backstop tick. Keep re-stamping on the tight interval until
-              // the fence clears and the pending set drains — and have those stamps ring
-              // the owners' make-up doorbell (the commit-time doorbell was consumed by a
-              // pre-visibility claim; nothing else re-wakes the appliers).
-              fencedDrain = true;
-              await Task.Delay(_stamperOptions.FencedRetryInterval, stoppingToken);
-              skipWakeWait = true;
-            }
-          }
+          await _stampWhileLeaderAsync(lockConn, grant: null, stoppingToken);
         } catch (OperationCanceledException) {
           // The one shutdown exit: every canceled await in the iteration above lands here.
           break;
@@ -275,6 +258,149 @@ public sealed partial class PgCommitOrderStamperWorker(
     }
 
     LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// The stamping loop while this instance leads. Under the session lock (<paramref name="grant"/>
+  /// null) it runs until shutdown or an error. Under role assignment it also returns when the grant
+  /// is lost, when a newer-version instance asked for the role (after the stamp in progress), or when
+  /// a stamp is refused by the epoch fence; and it wakes at least once per renew interval, because
+  /// its own verification is what renews the lease.
+  /// </summary>
+  private async Task _stampWhileLeaderAsync(NpgsqlConnection conn, IDutyGrant? grant, CancellationToken stoppingToken) {
+    var skipWakeWait = false;
+    var fencedDrain = false;
+    while (!stoppingToken.IsCancellationRequested) {
+      if (grant is not null && !await _stillLeadsAsync(grant, stoppingToken)) {
+        return;
+      }
+      // Wait for NOTIFY-fired wake OR polling-interval timeout. Either path fires
+      // the same stamp. Skipped when the previous iteration left known work behind
+      // (mid-drain or fenced) — pending work never waits on an external wake.
+      if (!skipWakeWait) {
+        // Returning to wake-waiting ends any fenced-drain episode: subsequent stamps
+        // are steady-state again and must not ring the make-up doorbell.
+        fencedDrain = false;
+        var effectiveInterval = ComputeEffectivePollingInterval(
+          _stamperOptions,
+          _notifySignalingGate?.IsAvailable);
+        if (_roleElector is not null && effectiveInterval > _roleElector.RenewInterval) {
+          effectiveInterval = _roleElector.RenewInterval;
+        }
+        _ = await _wake.WaitAsync(effectiveInterval, stoppingToken);
+      }
+      skipWakeWait = false;
+
+      // Nothing unstamped, nothing to sort: the probe hits the partial index and costs
+      // nothing, the stamp's eligibility CTE orders every unstamped row and does not.
+      if (!await _hasPendingUnstampedAsync(conn, stoppingToken)) {
+        OnStampSkipped?.Invoke();
+        continue;
+      }
+
+      int stamped;
+      try {
+        stamped = await _stampOnceAsync(conn, notifyOwners: fencedDrain, grant, stoppingToken);
+      } catch (PostgresException ex) when (ex.SqlState == FENCE_SQLSTATE) {
+        // The database refused this holder's epoch: another instance holds the role now.
+        LogFenced(_logger);
+        return;
+      }
+      _ = Interlocked.Add(ref _totalStamped, stamped);
+      OnStampCompleted?.Invoke(stamped);
+
+      if (stamped > 0) {
+        // A full batch may have left more behind — drain immediately instead of
+        // waiting for another wake.
+        skipWakeWait = true;
+      } else if (await _hasPendingUnstampedAsync(conn, stoppingToken)) {
+        // Fenced: unstamped rows exist but an in-flight same-database transaction
+        // holds the ordering fence, so this wake stamped nothing. The rows' own
+        // committing wake has already fired and will not repeat — without this
+        // retry they would sit invisible to perspective fetches until the next
+        // external backstop tick. Keep re-stamping on the tight interval until
+        // the fence clears and the pending set drains — and have those stamps ring
+        // the owners' make-up doorbell (the commit-time doorbell was consumed by a
+        // pre-visibility claim; nothing else re-wakes the appliers).
+        fencedDrain = true;
+        await Task.Delay(_stamperOptions.FencedRetryInterval, stoppingToken);
+        skipWakeWait = true;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Verifies the role before each iteration, which renews its lease from this loop; a lost grant
+  /// or a drain request ends the tenure.
+  /// </summary>
+  private async Task<bool> _stillLeadsAsync(IDutyGrant grant, CancellationToken stoppingToken) {
+    if (!await grant.VerifyStillHeldAsync(stoppingToken)) {
+      LogRoleLost(_logger);
+      return false;
+    }
+    if (grant.DrainRequested) {
+      LogRoleDrained(_logger);
+      return false;
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// Leadership as a role: vote, stamp while held, release, and vote again. A non-holder waits for
+  /// the retry interval or for the role's release to be announced, whichever comes first.
+  /// </summary>
+  private async Task _runAsRoleHolderAsync(
+      PgRoleElector elector, NotificationConnectionStringResolver.Resolution resolution, CancellationToken stoppingToken) {
+    using var releases = _sharedConnection.Subscribe(new RoleReleaseSubscription(this));
+    while (!stoppingToken.IsCancellationRequested) {
+      try {
+        var attempt = await elector.TryAcquireAsync(CommitOrderStamperOptions.ROLE, stoppingToken);
+        if (attempt.Grant is { } grant) {
+          await _leadAsRoleHolderAsync(grant, resolution, stoppingToken);
+        }
+        _ = await _vacancy.WaitAsync(_stamperOptions.LeaderElectionRetry, stoppingToken);
+      } catch (OperationCanceledException) {
+        break;
+      } catch (Exception ex) {
+        LogIterationError(_logger, ex.Message, resolution.Source, _notificationOptions.ConnectionStringKey ?? "(unset)");
+        try { await _vacancy.WaitAsync(_stamperOptions.LeaderElectionRetry, stoppingToken); } catch (OperationCanceledException) { break; }
+      }
+    }
+  }
+
+  /// <summary>One tenure: stamp on its own connection until it ends, then give the role back.</summary>
+  private async Task _leadAsRoleHolderAsync(
+      IDutyGrant grant, NotificationConnectionStringResolver.Resolution resolution, CancellationToken stoppingToken) {
+    try {
+      var conn = _dataSource is not null
+        ? await _dataSource.OpenConnectionAsync(stoppingToken)
+        : new NpgsqlConnection(resolution.ConnectionString);
+      await using (conn) {
+        if (_dataSource is null) {
+          await conn.OpenAsync(stoppingToken);
+        }
+        _setLeader(true);
+        await _stampWhileLeaderAsync(conn, grant, stoppingToken);
+      }
+    } finally {
+      // The role is given back before this instance reports that it stopped leading, so whoever
+      // hears that can win the role at once.
+      await grant.DisposeAsync();
+      _setLeader(false);
+    }
+  }
+
+  /// <summary>A release of the stamper's role wakes a waiting non-holder at once.</summary>
+  private sealed class RoleReleaseSubscription(PgCommitOrderStamperWorker owner) : INotifySubscription {
+    public string ChannelName => DutyHolderWorker.RELEASE_CHANNEL;
+
+    // Notifications are dispatched one at a time and the waiter only ever lowers the count, so a
+    // count of zero here means a release cannot overflow the semaphore.
+    public void OnNotification(string payload) {
+      if (string.Equals(payload, CommitOrderStamperOptions.ROLE, StringComparison.Ordinal) && owner._vacancy.CurrentCount == 0) {
+        _ = owner._vacancy.Release();
+      }
+    }
   }
 
   /// <summary>
@@ -339,17 +465,28 @@ public sealed partial class PgCommitOrderStamperWorker(
     _ = await cmd.ExecuteScalarAsync();
   }
 
-  private async Task<int> _stampOnceAsync(NpgsqlConnection conn, bool notifyOwners, CancellationToken ct) {
+  private async Task<int> _stampOnceAsync(NpgsqlConnection conn, bool notifyOwners, IDutyGrant? grant, CancellationToken ct) {
     // notifyOwners: TRUE only on the fenced-retry drain — the one case where the rows'
     // commit-time doorbell was provably consumed before they became visible, so the stamp
     // must ring the make-up doorbell (migration 118). Steady-state stamps pass FALSE and
     // keep the pre-117 doorbell rate: per-batch rings herd every owner's wake loops during
     // bulk stamping (startup backlogs, imports) and starve tightly-pooled hosts.
-    await using var cmd = new NpgsqlCommand("SELECT stamp_pending_commit_sequences(@bs, @notify)", conn);
-    cmd.Parameters.AddWithValue("bs", _stamperOptions.BatchSize);
-    cmd.Parameters.AddWithValue("notify", notifyOwners);
-    var result = await cmd.ExecuteScalarAsync(ct);
-    var stamped = Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+    int stamped;
+    // A role holder's stamp is fenced: the epoch check and the stamp commit together, so a
+    // holder that lost the role cannot stamp (#966, requirement 1).
+    await using (var tx = grant is null ? null : await conn.BeginTransactionAsync(ct)) {
+      if (grant is not null) {
+        await PgRoleElector.AssertEpochAsync(conn, grant, ct);
+      }
+      await using var cmd = new NpgsqlCommand("SELECT stamp_pending_commit_sequences(@bs, @notify)", conn);
+      cmd.Parameters.AddWithValue("bs", _stamperOptions.BatchSize);
+      cmd.Parameters.AddWithValue("notify", notifyOwners);
+      var result = await cmd.ExecuteScalarAsync(ct);
+      stamped = Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+      if (tx is not null) {
+        await tx.CommitAsync(ct);
+      }
+    }
     if (notifyOwners && stamped > 0) {
       // #720: the make-up doorbells were queued inside the stamp's transaction; ring them after it commits.
       await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, _logger, ct);
@@ -376,6 +513,7 @@ public sealed partial class PgCommitOrderStamperWorker(
       OnBecameLeader?.Invoke();
     } else {
       LogReleasedLeader(_logger);
+      OnStoppedLeading?.Invoke();
     }
   }
 
@@ -420,4 +558,13 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   [LoggerMessage(EventId = 14, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker stopped")]
   static partial void LogStopped(ILogger logger);
+
+  [LoggerMessage(EventId = 15, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker lost the stamper role; voting again")]
+  static partial void LogRoleLost(ILogger logger);
+
+  [LoggerMessage(EventId = 16, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker released the stamper role to a newer-version instance that asked for it")]
+  static partial void LogRoleDrained(ILogger logger);
+
+  [LoggerMessage(EventId = 17, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker: the epoch fence refused a stamp; another instance holds the stamper role")]
+  static partial void LogFenced(ILogger logger);
 }

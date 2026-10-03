@@ -12,6 +12,9 @@
     <ProjectReference Include="..\..\src\Whizbang.Generators.Shared\Whizbang.Generators.Shared.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Offloads.InMemory\Whizbang.Offloads.InMemory.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Hosting.AspNet\Whizbang.Hosting.AspNet.csproj" />
+    <!-- GraphQL filters reach the lens as an expression tree; the jsonb containment tests run them against a real
+         database through the HotChocolate integration, which is the path a consumer's filters take. -->
+    <ProjectReference Include="..\..\src\Whizbang.Transports.HotChocolate\Whizbang.Transports.HotChocolate.csproj" />
   </ItemGroup>
 
   <ItemGroup>

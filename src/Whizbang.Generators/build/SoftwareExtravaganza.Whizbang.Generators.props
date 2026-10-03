@@ -11,6 +11,13 @@
     <WhizbangEmitFolderReadmes Condition="'$(WhizbangEmitFolderReadmes)' == ''">true</WhizbangEmitFolderReadmes>
   </PropertyGroup>
 
+  <!-- WHIZ309 (a collective predicate on an unindexed field) is on by default. Consumers can set
+       WhizbangCollectiveIndexWarning=false to turn it off for a project; a reasoned
+       [SuppressIndexAdvisory] turns it off for one perspective, model or field instead. -->
+  <ItemGroup>
+    <CompilerVisibleProperty Include="WhizbangCollectiveIndexWarning" />
+  </ItemGroup>
+
   <!-- Rename platform (P0/P1): surface the committed pinned-type ledger to the analyzer + generators as an
        AdditionalFile so former-name aliases resolve and un-acknowledged renames are gated (WHIZ120/WHIZ121).
        The ledger is the COMMITTED source-of-truth lockfile and lives in .whizbang/ (tracked in git). The

@@ -76,6 +76,20 @@ public enum IndexKinds {
   /// </remarks>
   /// <docs>fundamentals/perspectives/physical-fields#search</docs>
   Search = 4,
+
+  /// <summary>
+  /// Containment: a GIN index with the <c>jsonb_path_ops</c> operator class over a promoted jsonb column,
+  /// which answers a filter on the column that is compiled into <c>@&gt;</c>: a dictionary key's values
+  /// containing a value, a list containing an element, an object member equal to a value.
+  /// </summary>
+  /// <remarks>
+  /// Only a <c>[PhysicalField]</c> stored as jsonb can carry it; elsewhere it builds nothing. A perspective's
+  /// <c>data</c> document needs no declaration: its own GIN index answers containment already. The same
+  /// index can be written out as <c>[PerspectiveIndex(nameof(Field), Method = PerspectiveIndexMethod.Gin,
+  /// OperatorClass = "jsonb_path_ops")]</c>; this is the portable spelling, built by both drivers.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/physical-fields#jsonb-columns</docs>
+  Containment = 8,
 }
 
 /// <summary>

@@ -112,6 +112,27 @@ public class DictionaryTypeInfoTests {
   }
 
   /// <summary>
+  /// An array value type, <c>Dictionary&lt;string, string[]&gt;</c>, still yields an identifier: brackets are not
+  /// valid in a method name, and the generated context failed to compile on a model holding one.
+  /// </summary>
+  [Test]
+  public async Task DictionaryTypeInfo_UniqueIdentifier_HandlesArrayValueTypeAsync() {
+    var info = new DictionaryTypeInfo(
+      "global::System.Collections.Generic.Dictionary<global::System.String, string[]>",
+      "global::System.String",
+      "string[]",
+      "String");
+    var jagged = new ArrayTypeInfo("int[][]", "int[]", "Int32");
+    var list = new ListTypeInfo("global::System.Collections.Generic.List<int[,]>", "int[,]", "Int32");
+    var readOnly = new ReadOnlyListTypeInfo("global::System.Collections.Generic.IReadOnlyList<string[]>", "string[]", "String");
+
+    await Assert.That(info.UniqueIdentifier).IsEqualTo("System_String_string_Array");
+    await Assert.That(jagged.ElementUniqueIdentifier).IsEqualTo("int_Array");
+    await Assert.That(list.ElementUniqueIdentifier).IsEqualTo("int___");
+    await Assert.That(readOnly.ElementUniqueIdentifier).IsEqualTo("string_Array");
+  }
+
+  /// <summary>
   /// Tests that different values produce different UniqueIdentifiers (no collisions).
   /// </summary>
   [Test]

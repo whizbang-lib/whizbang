@@ -671,7 +671,8 @@ public partial class ServiceBusConsumerWorker(
     var inboxMessage = ReceivedInboxMessageBuilder.Build(
       new ReceivedInboxMessageBuilder.ReceivedEnvelope(envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent),
       ReceivedInboxMessageBuilder.Classify(scopeServiceProvider, envelope, messageTypeName),
-      "ServiceBusConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver);
+      "ServiceBusConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver,
+      scopeServiceProvider.GetService<ReceivedOriginStampMonitor>());
 
     LogCreatedInboxMessage(_logger, inboxMessage.MessageId, inboxMessage.IsEvent, inboxMessage.StreamId,
       inboxMessage.MessageType, inboxMessage.EnvelopeType, jsonEnvelope.Payload.ValueKind);

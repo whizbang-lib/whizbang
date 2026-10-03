@@ -24,6 +24,7 @@ namespace Whizbang.Core.Perspectives;
 ///   <item><description>Scalar <c>SetProperty(selector, value)</c> to a constant or event-supplied value.</description></item>
 ///   <item><description>Scalar <c>SetProperty(selector, computed)</c> to an expression of the row's own current properties — increment, decrement, arithmetic, string concat, date arithmetic, boolean-from-other-property logic.</description></item>
 ///   <item><description>Multiple <c>SetProperty</c> calls in one spec — composed into a single SQL UPDATE.</description></item>
+///   <item><description>One key of the object in a <c>[PhysicalField(ColumnType = "jsonb")]</c> column, <c>SetProperty(m =&gt; m.Settings.Theme, value)</c>, set with <c>jsonb_set</c> in the same UPDATE, keeping every other key; or the column's whole value, bound as jsonb.</description></item>
 /// </list>
 /// <para>
 /// What it CANNOT express (use <c>SpecKind = RawSql</c> via the
@@ -33,7 +34,7 @@ namespace Whizbang.Core.Perspectives;
 ///   <item><description>Cross-row aggregates (needs CTE / window function).</description></item>
 ///   <item><description>Subqueries against other tables.</description></item>
 ///   <item><description>Conditional updates whose target depends on another column's NEW value (multi-step assignment ordering).</description></item>
-///   <item><description>Nested jsonb path manipulation more complex than top-level property assignment.</description></item>
+///   <item><description>Nested paths other than one key of a jsonb physical column: a document property's members, or a deeper path.</description></item>
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
@@ -50,8 +51,10 @@ public interface ICollectiveSetters<TModel> where TModel : class {
   /// <code>
   /// s.SetProperty(j =&gt; j.Status, JobStatus.Archived);
   /// s.SetProperty(j =&gt; j.ArchivedAt, e.OccurredAt);
+  /// s.SetProperty(j =&gt; j.Settings.Theme, e.Theme);   // one key of a jsonb physical column
   /// </code>
   /// </example>
+  /// <docs>fundamentals/messaging/collective-events#jsonb-columns</docs>
   ICollectiveSetters<TModel> SetProperty<TProp>(
     Expression<Func<TModel, TProp>> selector, TProp value);
 

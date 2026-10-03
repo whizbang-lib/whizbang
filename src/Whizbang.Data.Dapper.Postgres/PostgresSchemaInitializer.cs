@@ -775,7 +775,14 @@ public sealed class PostgresSchemaInitializer {
 
     var tempName = $"{tableName}_new";
     var backupName = $"{tableName}_bak_{DateTime.UtcNow:yyyyMMddHHmmss}";
-    var (createTableSql, postTableSql) = _splitDdl(ddlSql);
+    var (preTableSql, createTableSql, postTableSql) = _splitDdl(ddlSql);
+
+    // 0. The statements written to run before the table's CREATE TABLE, against the table as the previous
+    //    release left it: a promoted field is armed while its column is still missing, then the column is
+    //    added, and the copy below carries it across (#1010).
+    if (!string.IsNullOrWhiteSpace(preTableSql)) {
+      await _executeSqlAsync(connection, transaction, preTableSql, ct);
+    }
 
     // 1. Create new table with temp name
     var tempCreateSql = createTableSql.Replace(tableName, tempName);
@@ -888,9 +895,10 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
-  /// Splits DDL into CREATE TABLE statement and post-table DDL (indexes, comments).
+  /// Splits DDL into the statements before the CREATE TABLE (moves into the existing table), the CREATE TABLE
+  /// statement, and post-table DDL (indexes, comments, fills).
   /// </summary>
-  private static (string CreateTableSql, string PostTableSql) _splitDdl(string ddlSql) {
+  private static (string PreTableSql, string CreateTableSql, string PostTableSql) _splitDdl(string ddlSql) {
     // Find the end of the CREATE TABLE statement (first ); after CREATE TABLE)
     var createTableMatch = Regex.Match(ddlSql,
         @"(CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+\s*\(.*?\)\s*;)",
@@ -901,8 +909,9 @@ public sealed class PostgresSchemaInitializer {
     // _parseColumnsFromDdl selects that strategy with the same "CREATE TABLE … );" match, so a DDL
     // reaching here has already matched.
     return createTableMatch.Success
-      ? (createTableMatch.Groups[1].Value, ddlSql[(createTableMatch.Index + createTableMatch.Length)..].Trim())
-      : (ddlSql, string.Empty);
+      ? (ddlSql[..createTableMatch.Index].Trim(), createTableMatch.Groups[1].Value,
+        ddlSql[(createTableMatch.Index + createTableMatch.Length)..].Trim())
+      : (string.Empty, ddlSql, string.Empty);
   }
 
   private static async Task _executeSqlAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string sql, CancellationToken ct) {

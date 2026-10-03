@@ -99,7 +99,11 @@ public static class TestConstants {
   ///     (LocalDispatchRecordProbeReceptor — a default-stage receptor whose local firing the stored
   ///     envelope must record)</para>
   ///
-  /// <para>Total: 126 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>- 2 receptors from Dispatcher/DispatcherLocalDispatchRecordTests.cs
+  ///     (SharedHandlerProbeReceptor and OnceOverallProbeReceptor — a receptor shared by two services,
+  ///     and one marked to run once across services)</para>
+  ///
+  /// <para>Total: 128 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 126;
+  public const int EXPECTED_RECEPTOR_COUNT = 128;
 }

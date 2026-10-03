@@ -148,7 +148,8 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       Options.Create(new CommitOrderStamperOptions()),
       config,
       sharedConnection,
-      NullLogger<PgCommitOrderStamperWorker>.Instance);
+      NullLogger<PgCommitOrderStamperWorker>.Instance,
+      dutyElector: null);
     var leaderTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     stamper.OnBecameLeader += () => leaderTcs.TrySetResult();
 

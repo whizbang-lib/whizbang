@@ -29,7 +29,14 @@ public enum StoredFormMigrationKind {
 /// <param name="Kind">Generated or custom.</param>
 /// <param name="Sql">The statement: the journal gate, the conversion and the journal write, as one <c>DO</c> block.</param>
 /// <docs>fundamentals/perspectives/stored-form-migrations</docs>
-public sealed record StoredFormMigration(string Name, string Table, StoredFormMigrationKind Kind, string Sql);
+public sealed record StoredFormMigration(string Name, string Table, StoredFormMigrationKind Kind, string Sql) {
+  /// <summary>
+  /// The indexes the migration drops when they cast a converted key to its old type, each with the statement that
+  /// builds it for the new type once the pass has committed (<see cref="StoredFormIndexRebuild"/>).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/stored-form-migrations#indexes</docs>
+  public IReadOnlyList<StoredFormIndexRebuild> IndexRebuilds { get; init; } = [];
+}
 
 /// <summary>
 /// Assembles app-declared stored-form migrations into the statements the stored-format rewrite phase
@@ -71,13 +78,17 @@ public static class StoredFormMigrationSql {
       throw new ArgumentException("A stored-form migration needs at least one step.", nameof(steps));
     }
 
-    var context = new StepContext(name, new StoredFormMigrationTarget(schema, table).QualifiedTable, $"{schema}.{table}");
+    var context = new StepContext(name, schema, table);
     var body = new StringBuilder();
+    var rebuilds = new List<StoredFormIndexRebuild>();
     foreach (var step in steps) {
       if (step is null) {
         throw new ArgumentException("A stored-form migration's steps cannot be null.", nameof(steps));
       }
       body.Append(step.Render(context));
+      if (step.Rebuild is { } rebuild) {
+        rebuilds.Add(new StoredFormIndexRebuild(schema, table, rebuild.Name, rebuild.CreateStatement));
+      }
     }
     body.Append(_journalWrite(schema, table, name, GENERATED, settledWhen: "NOT v_changed"));
     body.Append(CultureInfo.InvariantCulture, $"""
@@ -88,15 +99,22 @@ public static class StoredFormMigrationSql {
         END IF;
 
       """);
-    return new StoredFormMigration(name, table, StoredFormMigrationKind.Generated, _block(schema, table, name, body.ToString(), "wh_sfm"));
+    return new StoredFormMigration(name, table, StoredFormMigrationKind.Generated, _block(schema, table, name, body.ToString(), "wh_sfm")) {
+      IndexRebuilds = rebuilds,
+    };
   }
 
   /// <summary>Builds a custom migration of one table from an app's <see cref="IStoredFormMigration"/>.</summary>
   /// <param name="schema">The schema, unquoted.</param>
   /// <param name="table">The perspective table, unquoted.</param>
   /// <param name="migration">The migration.</param>
-  public static StoredFormMigration Custom(string schema, string table, IStoredFormMigration migration) {
+  /// <param name="parkedPerspectives">
+  /// The perspectives that store into the table, whose streams parked on an unreadable document have their retries
+  /// brought forward once the migration has run (<see cref="StoredFormStep.RetryParkedStreams"/>). None for none.
+  /// </param>
+  public static StoredFormMigration Custom(string schema, string table, IStoredFormMigration migration, params string[] parkedPerspectives) {
     ArgumentNullException.ThrowIfNull(migration);
+    ArgumentNullException.ThrowIfNull(parkedPerspectives);
     var name = migration.Name;
     _validate(schema, table, name);
     var sql = migration.BuildSql(new StoredFormMigrationTarget(schema, table));
@@ -110,6 +128,10 @@ public static class StoredFormMigrationSql {
     body.Append(CultureInfo.InvariantCulture, $"  EXECUTE ${tag}$\n{sql}\n${tag}$;\n");
     body.Append("  GET DIAGNOSTICS v_count = ROW_COUNT;\n");
     body.Append("  v_touched := v_count;\n");
+    body.Append("  v_changed := true;\n");
+    if (parkedPerspectives.Length > 0) {
+      body.Append(StoredFormStep.RetryParkedStreams(parkedPerspectives).Render(new StepContext(name, schema, table)));
+    }
     body.Append(_journalWrite(schema, table, name, CUSTOM, settledWhen: "true"));
     body.Append(CultureInfo.InvariantCulture,
       $"  RAISE NOTICE USING MESSAGE = format('%s: stored-form migration %s: applied, %s row update(s)', {SqlText.Literal(table)}, {SqlText.Literal(name)}, v_touched);\n");
@@ -200,6 +222,8 @@ public static class StoredFormMigrationSql {
         v_touched bigint := 0;
         v_changed boolean := false;
         v_bad text;
+        v_index text;
+        v_definition text;
       BEGIN
         IF to_regclass({SqlText.Literal(qualified)}) IS NULL OR to_regclass({SqlText.Literal(journal)}) IS NULL THEN
           RAISE NOTICE USING MESSAGE = format('%s: stored-form migration %s: table absent, waits for the table', {t}, {n});

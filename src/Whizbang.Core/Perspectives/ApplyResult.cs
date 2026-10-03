@@ -28,7 +28,8 @@ namespace Whizbang.Core.Perspectives;
 /// <item><c>Model != null, Action = None</c> → Update the model</item>
 /// <item><c>Model = null, Action = None</c> → No change (skip update)</item>
 /// <item><c>Action = Delete</c> → Soft delete (set DeletedAt)</item>
-/// <item><c>Action = Purge</c> → Hard delete (remove row)</item>
+/// <item><c>Action = Purge</c> → Hard delete (remove row); later events on the stream are skipped</item>
+/// <item><c>Action = Resurrect</c> → Recreate a purged row with <c>Model</c> (an ordinary update otherwise)</item>
 /// </list>
 /// </remarks>
 /// <typeparam name="TModel">The perspective model type.</typeparam>
@@ -97,6 +98,18 @@ public readonly struct ApplyResult<TModel>(TModel? model, ModelAction action = M
   /// </summary>
   /// <returns>An <see cref="ApplyResult{TModel}"/> with null model and <see cref="ModelAction.Purge"/>.</returns>
   public static ApplyResult<TModel> Purge() => new(null, ModelAction.Purge);
+
+  /// <summary>
+  /// Creates a result that recreates the row of a purged stream. A purged stream stays purged: every
+  /// later event on it is skipped unless its Apply returns this. On a stream that is not purged it is an
+  /// ordinary update.
+  /// </summary>
+  /// <param name="model">The model the row is recreated with.</param>
+  /// <returns>An <see cref="ApplyResult{TModel}"/> with the specified model and <see cref="ModelAction.Resurrect"/>.</returns>
+  /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyResultTests.cs:ApplyResult_Resurrect_ReturnsModelWithResurrectActionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PurgeStaysPurgedTests.cs:Resurrect_OnPurgedStream_RecreatesRow_AndClearsMarkerAsync</tests>
+  public static ApplyResult<TModel> Resurrect(TModel model) => new(model, ModelAction.Resurrect);
 
   /// <summary>
   /// Creates a result indicating the model should be updated.

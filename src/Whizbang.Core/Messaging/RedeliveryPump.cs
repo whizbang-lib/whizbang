@@ -102,6 +102,13 @@ public sealed class RedeliveryPump(
   private readonly ICompositeFactory _compositeFactory = compositeFactory;
 
   /// <summary>
+  /// Whether the bundles this pump publishes answer an operator's request
+  /// (<see cref="RequestRedeliveryCommand.OperatorRequested"/>), which the receiving service applies whatever its
+  /// repair mode.
+  /// </summary>
+  public bool OperatorRequested { get; init; }
+
+  /// <summary>
   /// Publishes the given (stream, version)-ordered selection as per-stream re-delivery composites.
   /// Returns the number of composites published.
   /// </summary>
@@ -141,7 +148,7 @@ public sealed class RedeliveryPump(
       MaxConstituentsPerComposite = _options.MaxInnerEventsPerComposite,
       MaxBytesPerComposite = _options.MaxBytesPerComposite,
       ConstituentSizeBytes = e => e.EventData.Length + (e.Metadata?.Length ?? 0),
-      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId),
+      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId, OperatorRequested),
     });
 
     var published = 0;
@@ -154,7 +161,7 @@ public sealed class RedeliveryPump(
     return published;
   }
 
-  private static RedeliveryComposite _buildComposite(IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId) {
+  private static RedeliveryComposite _buildComposite(IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, bool operatorRequested) {
     // RAW carry: each child is the stored wire JSON verbatim + its stored wire type name. No typed
     // rehydration, no polymorphic serialization, no type knowledge required at the origin — the
     // payload bytes that were emitted are the payload bytes that repair.
@@ -172,6 +179,7 @@ public sealed class RedeliveryPump(
       // inside their original commit-sequence window at the consumer.
       OriginServiceId = originServiceId,
       InnerCommitSequences = [.. chunk.Select(c => c.CommitSequence)],
+      OperatorRequested = operatorRequested,
     };
   }
 

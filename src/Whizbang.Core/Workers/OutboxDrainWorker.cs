@@ -1358,6 +1358,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         CausedByServiceId = concrete.CausedByServiceId,
         CausedByCommitSequence = concrete.CausedByCommitSequence,
         Priority = priority,
+        // A directed or state-only envelope stays so through the publish rebuild; dropping Target here
+        // would broadcast a point-to-point message, and dropping StateOnly would re-fire triggers.
+        Target = concrete.Target,
+        StateOnly = concrete.StateOnly,
       };
     }
 

@@ -74,21 +74,21 @@ public class PhysicalColumnSqlTests {
   }
 
   [Test]
-  public async Task AColumnTypeTheAuthorChose_IsAddedButNotBackfilledAsync() {
+  public async Task AColumnTypeTheAuthorChose_ForAString_IsBackfilledThroughACastAsync() {
     var sql = await _schemaAsync("");
 
     await Assert.That(sql).Contains("ADD COLUMN IF NOT EXISTS code citext;");
-    await Assert.That(sql).DoesNotContain("SET code =")
-      .Because("the column's encoding of an author-chosen type is not something the backfill can know");
+    await Assert.That(sql).Contains("SET code = ((data ->> 'Code'))::citext WHERE code IS NULL")
+      .Because("the server parses the writer's string into the author's type, and the cast does the same (#1021)");
   }
 
   [Test]
-  public async Task SplitStorage_AddsTheColumn_ButHasNoDocumentCopyToBackfillFromAsync() {
+  public async Task SplitStorage_FillsTheColumnFromTheDocumentThePreviousReleaseWroteAsync() {
     var sql = await _schemaAsync("[PerspectiveStorage(FieldStorageMode.Split)]");
 
     await Assert.That(sql).Contains("ADD COLUMN IF NOT EXISTS placed_at TIMESTAMPTZ;");
-    await Assert.That(sql).DoesNotContain("SET placed_at =")
-      .Because("a Split field lives only in the column; the document has no copy to fill it from");
+    await Assert.That(sql).Contains("SET placed_at = (TIMESTAMPTZ 'epoch'")
+      .Because("a field promoted on a Split model still has its value in the documents the previous release wrote (#1021)");
   }
 
   [Test]
@@ -106,6 +106,44 @@ public class PhysicalColumnSqlTests {
     await Assert.That(PhysicalColumnSql.Extraction(_field("global::TestApp.Status"))).IsNull();
     await Assert.That(PhysicalColumnSql.Extraction(_field("global::System.Single[]") with { IsVector = true })).IsNull();
     await Assert.That(PhysicalColumnSql.Backfill("t", _field("global::TestApp.Status"))).IsNull();
+  }
+
+  [Test]
+  [Arguments("jsonb")]
+  [Arguments(" JSONB ")]
+  public async Task Extraction_AJsonbColumn_IsCopiedFromTheMemberAsItIsAsync(string columnType) {
+    var field = _field("global::System.Collections.Generic.List<string>") with { ColumnType = columnType };
+
+    await Assert.That(PhysicalColumnSql.Extraction(field)).IsEqualTo("NULLIF(data -> 'P', 'null'::jsonb)")
+      .Because("the column holds exactly the JSON the document holds for the member, and a JSON null is the null the writer stores");
+    await Assert.That(PhysicalColumnSql.Extraction(field with { IsSplit = true })).IsEqualTo("NULLIF(data -> 'P', 'null'::jsonb)")
+      .Because("a Split promotion fills the column from the document the previous release wrote (#1021)");
+  }
+
+  [Test]
+  public async Task RetireTextColumn_OnlyForAJsonbColumn_AndSaysWhetherTheDocumentCanFillItAsync() {
+    var jsonb = _field("global::System.Collections.Generic.List<string>") with { ColumnType = "jsonb" };
+
+    await Assert.That(PhysicalColumnSql.RetireTextColumn("t", _field("string"))).IsNull();
+    await Assert.That(PhysicalColumnSql.RetireTextColumn("t", jsonb)).Contains("RENAME COLUMN p TO p_text_legacy;");
+    await Assert.That(PhysicalColumnSql.RetireTextColumn("t", jsonb)).Contains("atttypid = 'text'::regtype");
+    await Assert.That(PhysicalColumnSql.RetireTextColumn("t", jsonb)).Contains("filled from the copy in the document");
+    await Assert.That(PhysicalColumnSql.RetireTextColumn("t", jsonb with { IsSplit = true })).Contains("until the perspective is rebuilt");
+  }
+
+  [Test]
+  public async Task ATextColumnForAJsonbField_IsRetiredBeforeTheColumnIsArmedAndAddedAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(_source("").Replace(
+      "[PhysicalField(ColumnType = \"citext\")]", "[PhysicalField]\n      public System.Collections.Generic.List<string> Tags { get; init; } = [];\n\n      [PhysicalField(ColumnType = \"citext\")]", StringComparison.Ordinal));
+    var sql = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
+
+    var retire = sql.IndexOf("RENAME COLUMN tags TO tags_text_legacy", StringComparison.Ordinal);
+    var add = sql.IndexOf("ADD COLUMN IF NOT EXISTS tags jsonb;", StringComparison.Ordinal);
+    var backfill = sql.IndexOf("SET tags = NULLIF(data -> 'Tags', 'null'::jsonb)", StringComparison.Ordinal);
+
+    await Assert.That(retire).IsGreaterThan(-1);
+    await Assert.That(add).IsGreaterThan(retire);
+    await Assert.That(backfill).IsGreaterThan(add);
   }
 
   private static PhysicalFieldInfo _field(string typeName) =>

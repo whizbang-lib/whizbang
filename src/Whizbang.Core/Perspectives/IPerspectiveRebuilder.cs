@@ -10,8 +10,11 @@ namespace Whizbang.Core.Perspectives;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rebuild_FoldsCollectiveEvent_OnlyIntoTheTargetRowAsync</tests>
 public interface IPerspectiveRebuilder {
   /// <summary>
-  /// Blue-green rebuild: create new table, replay all events, swap when complete.
-  /// Old table kept as backup. App continues serving reads from old table during rebuild.
+  /// Blue-green rebuild: replays every stream into a shadow table while reads keep being served from the live
+  /// table, catches the shadow up with streams written meanwhile, and swaps it in atomically. The previous table
+  /// is kept or dropped as <see cref="BlueGreenRebuildOptions.KeepPreviousTable"/> says. Progress, phase included,
+  /// is reported through <see cref="GetRebuildStatusAsync"/>. A driver with no <see cref="IPerspectiveTableSwapper"/>
+  /// rebuilds in place.
   /// </summary>
   Task<RebuildResult> RebuildBlueGreenAsync(
       string perspectiveName, CancellationToken ct = default);
@@ -56,13 +59,29 @@ public record RebuildStatus(
     RebuildMode Mode,
     int TotalStreams,
     int ProcessedStreams,
-    DateTimeOffset StartedAt);
+    DateTimeOffset StartedAt) {
+  /// <summary>
+  /// What the rebuild is doing; <see cref="TotalStreams"/> and <see cref="ProcessedStreams"/> count the streams
+  /// of this phase.
+  /// </summary>
+  public RebuildPhase Phase { get; init; } = RebuildPhase.Replaying;
+}
+
+/// <summary>A phase of a perspective rebuild.</summary>
+public enum RebuildPhase {
+  /// <summary>Replaying every stream.</summary>
+  Replaying,
+  /// <summary>Blue-green: replaying the streams written while the rebuild ran, into the shadow table.</summary>
+  CatchingUp,
+  /// <summary>Blue-green: catching up the last streams with the live table closed to writers, then swapping.</summary>
+  Swapping
+}
 
 /// <summary>
 /// Mode of a perspective rebuild operation.
 /// </summary>
 public enum RebuildMode {
-  /// <summary>Create new table, replay events, atomic swap.</summary>
+  /// <summary>Replay into a shadow table while reads use the live one, then swap atomically.</summary>
   BlueGreen,
   /// <summary>Truncate active table, replay events in place.</summary>
   InPlace,

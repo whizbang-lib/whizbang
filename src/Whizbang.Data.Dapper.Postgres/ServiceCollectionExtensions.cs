@@ -106,6 +106,16 @@ public static class ServiceCollectionExtensions {
     // Register database infrastructure
     services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
+
+    // TURNKEY: the maintenance step that completes perspective field moves after the start that made them:
+    // it fills promoted columns for rows an instance still on the previous release wrote with the value only
+    // in the document, settles demotions, and reports columns only a rebuild can restore (#1010). Idle
+    // unless the schema pass armed a move.
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperPhysicalColumnFillMaintenanceStep(
+        connectionString,
+        sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
+        sp.GetService<TimeProvider>()));
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
     services.AddSingleton(options);
@@ -165,6 +175,9 @@ public static class ServiceCollectionExtensions {
     // Resolved explicitly (admin command / migration), not run automatically.
     services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
 
+    // Purged streams stay purged, and the operator stream purge (shared Postgres implementations).
+    AddStreamPurge(services, connectionString);
+
     // Cursor-checkpoint persistence for PerspectiveRebuilder. Without this, rebuild would
     // still update projection tables but wh_perspective_cursors would stay at whatever live
     // processing last wrote. See IPerspectiveCheckpointCompleter.
@@ -177,6 +190,7 @@ public static class ServiceCollectionExtensions {
     // rows into wh_dead_letters. The store is singleton-safe (only stashes the
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
+    _addPerspectiveTableSwapper(services, connectionString);
 
     // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
     // Runs only when the schema was just initialized here (we know the table exists) and
@@ -238,6 +252,16 @@ public static class ServiceCollectionExtensions {
     // Register database infrastructure
     services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
+
+    // TURNKEY: the maintenance step that completes perspective field moves after the start that made them:
+    // it fills promoted columns for rows an instance still on the previous release wrote with the value only
+    // in the document, settles demotions, and reports columns only a rebuild can restore (#1010). Idle
+    // unless the schema pass armed a move.
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperPhysicalColumnFillMaintenanceStep(
+        connectionString,
+        sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
+        sp.GetService<TimeProvider>()));
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
     // Register PostgresOptions for components that need retry settings
@@ -307,6 +331,9 @@ public static class ServiceCollectionExtensions {
     // Resolved explicitly (admin command / migration), not run automatically.
     services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
 
+    // Purged streams stay purged, and the operator stream purge (shared Postgres implementations).
+    AddStreamPurge(services, connectionString);
+
     // Cursor-checkpoint persistence for PerspectiveRebuilder. Without this, rebuild would
     // still update projection tables but wh_perspective_cursors would stay at whatever live
     // processing last wrote. See IPerspectiveCheckpointCompleter.
@@ -319,6 +346,7 @@ public static class ServiceCollectionExtensions {
     // rows into wh_dead_letters. The store is singleton-safe (only stashes the
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
+    _addPerspectiveTableSwapper(services, connectionString);
 
     // See the first overload for the rationale: the prior `services.BuildServiceProvider()`
     // + `using` pattern silently disposed the host's shared ConfigurationManager. Defer
@@ -328,6 +356,31 @@ public static class ServiceCollectionExtensions {
     }
 
     return services;
+  }
+
+  /// <summary>
+  /// Registers the purge markers that keep a purged perspective row purged (<see cref="IPerspectivePurgeMarkerStore"/>)
+  /// and the operator stream purge (<see cref="IStreamPurger"/>), both the shared Postgres implementations over a
+  /// connection of their own per call. A host's own registration wins.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <param name="connectionString">The service's database.</param>
+  /// <docs>operations/infrastructure/purging-streams</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPurgeTests.cs:AddWhizbangPostgres_RegistersPurgeMarkersAndStreamPurger_BothOverloadsAsync</tests>
+  internal static void AddStreamPurge(IServiceCollection services, string connectionString) {
+    services.TryAddSingleton<IPerspectivePurgeMarkerStore>(_ =>
+      new PostgresPerspectivePurgeMarkerStore(ct => OpenConnectionAsync(connectionString, ct)));
+    services.TryAddSingleton<IStreamPurger>(sp =>
+      new PostgresStreamPurger(
+        ct => OpenConnectionAsync(connectionString, ct),
+        logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+  }
+
+  /// <summary>Opens a connection the caller disposes.</summary>
+  internal static async ValueTask<Npgsql.NpgsqlConnection> OpenConnectionAsync(string connectionString, CancellationToken cancellationToken) {
+    var connection = new Npgsql.NpgsqlConnection(connectionString);
+    await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    return connection;
   }
 
   /// <summary>
@@ -343,6 +396,18 @@ public static class ServiceCollectionExtensions {
 
     return services;
   }
+
+  /// <summary>
+  /// Blue-green perspective rebuilds build a shadow table and swap it in (#1025), on connections of the swapper's
+  /// own from the connection string, in the connection's search path, where the Dapper stores' tables are.
+  /// </summary>
+  private static void _addPerspectiveTableSwapper(IServiceCollection services, string connectionString) =>
+    services.TryAddSingleton<IPerspectiveTableSwapper>(_ =>
+      new Whizbang.Data.Postgres.Perspectives.PostgresPerspectiveTableSwapper(async ct => {
+        var connection = new Npgsql.NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        return connection;
+      }, schema: null));
 
   /// <summary>
   /// Registers <see cref="IDeadLetterStore"/> with the Dapper implementation. Called

@@ -366,7 +366,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableBaseName: tableBaseName,
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
-        IsSplitMode: isSplitMode
+        IsSplitMode: isSplitMode,
+        BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex
     );
   }
 
@@ -385,7 +386,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableName: tableName,
         PhysicalFields: candidate.PhysicalFields,
         HasPolymorphicProperties: candidate.HasPolymorphicProperties,
-        IsSplitMode: candidate.IsSplitMode
+        IsSplitMode: candidate.IsSplitMode,
+        BuildsDataIndex: candidate.BuildsDataIndex
     );
   }
 
@@ -497,7 +499,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         VectorDistanceMetric: null,
         VectorIndexType: null,
         VectorIndexLists: null,
-        ColumnType: columnType,
+        // An object, a collection or a dictionary is a jsonb column unless the author declared otherwise.
+        ColumnType: columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type),
         EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
         EnumMembers: PhysicalFieldScalar.EnumMembers(property.Type),
         EnumIsFlags: PhysicalFieldScalar.IsFlagsEnum(property.Type)
@@ -664,7 +667,13 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       sb.AppendLine($"      // Physical field: {field.PropertyName}");
       sb.AppendLine($"      entity.Property<{_getCSharpType(field)}>(\"{field.ColumnName}\")");
       sb.AppendLine($"        .HasColumnName(\"{field.ColumnName}\")");
-      if (field.EnumScalarType is { } scalar && string.IsNullOrWhiteSpace(field.ColumnType)) {
+      if (_isJsonbColumn(field)) {
+        // Read and written as one value under the persistence profile, the options the atomic upsert
+        // writes the column with. Left to the data source, a date inside it would be read under the
+        // default profile, which expects a rendering rather than the canonical number.
+        sb.AppendLine($"        .HasColumnType(\"{columnType}\")");
+        sb.AppendLine($"        .HasConversion({COLUMN_CONVERTER}<{_getCSharpType(field)}>());");
+      } else if (field.EnumScalarType is { } scalar && string.IsNullOrWhiteSpace(field.ColumnType)) {
         // An enumeration is stored as its underlying number. The conversion is explicit: left to convention,
         // EF Core picks its enum conversion from the column type, and a text column made it store the name.
         sb.AppendLine($"        .HasColumnType(\"{columnType}\")");
@@ -712,6 +721,31 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
   }
 
+  private const string COLUMN_CONVERTER =
+    "global::Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.ColumnConverterFor";
+
+  /// <summary>Whether a promoted field is a jsonb column, declared or defaulted for an object, list or dictionary.</summary>
+  private static bool _isJsonbColumn(PhysicalFieldInfo field) => PhysicalFieldScalar.IsJsonb(field.ColumnType);
+
+  /// <summary>
+  /// The statements that keep promoted jsonb fields out of the mapped document, one per field.
+  /// </summary>
+  /// <remarks>
+  /// The column is where such a field is read from: the hydrators copy it into the model. Mapped as
+  /// part of the document as well, a dictionary is refused by the mapping outright (WHIZ810), and any
+  /// other shape would be a second, competing reader of the same value.
+  /// </remarks>
+  private static string _generateDocumentExclusions(ImmutableArray<PhysicalFieldInfo> physicalFields) {
+    var sb = new StringBuilder();
+    foreach (var field in physicalFields) {
+      if (_isJsonbColumn(field)) {
+        sb.Append($"d.Ignore(\"{field.PropertyName}\"); ");
+      }
+    }
+
+    return sb.ToString();
+  }
+
   /// <summary>
   /// Gets the EF Core column type for a physical field.
   /// </summary>
@@ -746,7 +780,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       "System.Single" or "float" => "real",
       "System.Boolean" or "bool" => "boolean",
       "System.Guid" => "uuid",
-      "System.DateTime" => "timestamp",
+      // The table creates a DateTime column as timestamptz, and the model has to describe the same column:
+      // claimed as timestamp, Npgsql refuses a UTC value on the change-tracker write.
+      "System.DateTime" => "timestamptz",
       "System.DateTimeOffset" => "timestamptz",
       "System.DateOnly" => "date",
       "System.TimeOnly" => "time",
@@ -918,11 +954,20 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // No temporal conversion is emitted. The canonical temporal form is applied by a convention
     // every generated context carries, which walks the model Entity Framework built and so reaches
     // inherited, nested and collection-element temporals a discovery here never saw.
+    // The polymorphic model's whole-document index answers the lookups the schema's own does, so it
+    // follows the same [PerspectiveQueries] declaration. Only the polymorphic snippet carries the
+    // placeholder; the standard one declares its document indexes in the schema script instead.
+    var dataIndex = perspective.BuildsDataIndex
+        ? "entity.HasIndex(e => e.Data).HasMethod(\"gin\");"
+        : "// No whole-document index: the model does not declare [PerspectiveQueries(MatchOnAnyField = true)].";
+
     return snippet
         .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
         .Replace("__TABLE_NAME__", perspective.TableName)
         .Replace("__SCHEMA__", effectiveSchema)
-        .Replace("__PHYSICAL_FIELD_CONFIGS__", physicalFieldConfigs);
+        .Replace("__DATA_GIN_INDEX__", dataIndex)
+        .Replace("__PHYSICAL_FIELD_CONFIGS__", physicalFieldConfigs)
+        .Replace("/*__DATA_EXCLUSIONS__*/", _generateDocumentExclusions(perspective.PhysicalFields));
   }
 
   /// <summary>

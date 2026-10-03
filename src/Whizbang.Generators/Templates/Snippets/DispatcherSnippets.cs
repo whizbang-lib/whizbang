@@ -396,7 +396,8 @@ public class DispatcherSnippets {
           },
           SyncAttributes: __SYNC_ATTRIBUTES__,
           FireDuringReplay: __FIRE_DURING_REPLAY__,
-          IsIdempotent: __IS_IDEMPOTENT__
+          IsIdempotent: __IS_IDEMPOTENT__,
+          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__
         )
       };
     }
@@ -429,7 +430,8 @@ public class DispatcherSnippets {
           },
           SyncAttributes: __SYNC_ATTRIBUTES__,
           FireDuringReplay: __FIRE_DURING_REPLAY__,
-          IsIdempotent: __IS_IDEMPOTENT__
+          IsIdempotent: __IS_IDEMPOTENT__,
+          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__
         )
       };
     }
@@ -504,7 +506,8 @@ public class DispatcherSnippets {
           },
           SyncAttributes: __SYNC_ATTRIBUTES__,
           FireDuringReplay: __FIRE_DURING_REPLAY__,
-          IsIdempotent: __IS_IDEMPOTENT__
+          IsIdempotent: __IS_IDEMPOTENT__,
+          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__
         )
       };
     }
@@ -574,7 +577,8 @@ public class DispatcherSnippets {
           },
           SyncAttributes: __SYNC_ATTRIBUTES__,
           FireDuringReplay: __FIRE_DURING_REPLAY__,
-          IsIdempotent: __IS_IDEMPOTENT__
+          IsIdempotent: __IS_IDEMPOTENT__,
+          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__
         )
       };
     }

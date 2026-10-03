@@ -52,9 +52,10 @@ public sealed partial class RedeliveryRequestReceptor(
 
     // Report-only is bilateral: serving a re-delivery request is the repair act on the origin side (and
     // the memory-heavy one), so an origin that opted down declines. Returning completes the inbox row; a
-    // declined request is discarded, never retried.
+    // declined request is discarded, never retried. Report-only opts out of AUTOMATIC repair, so a request
+    // an operator made for named streams is served (#1028).
     var integrity = services.GetService<Microsoft.Extensions.Options.IOptions<StreamIntegrityOptions>>()?.Value;
-    if (!RepairTraffic.IsRepairEnabled(integrity)) {
+    if (!message.OperatorRequested && !RepairTraffic.IsRepairEnabled(integrity)) {
       metrics?.RepairTrafficDiscarded.Add(1, new KeyValuePair<string, object?>("role", "origin_request"));
       LogRepairRequestDeclined(logger, message.RequesterService, message.Topic);
       return;
@@ -81,7 +82,9 @@ public sealed partial class RedeliveryRequestReceptor(
         // which is what the pump's own fallback used to supply.
         compositeFactory: services.GetService<Whizbang.Core.Minting.ICompositeFactory>()
           ?? new Whizbang.Core.Minting.CompositeFactory(),
-        options: options);
+        options: options) {
+        OperatorRequested = message.OperatorRequested,
+      };
 
       // Select-and-publish in keyset pages so memory is bounded by ONE page of bodies no matter
       // how wide the request is — materializing the whole cap at once has OOM-killed origins.

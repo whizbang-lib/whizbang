@@ -4266,7 +4266,8 @@ public abstract partial class Dispatcher(
             | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(eventData, ephemeralModeResolver),
       Scope = _extractScope(jsonEnvelope),
       MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType),
-      Priority = jsonEnvelope.Priority
+      Priority = jsonEnvelope.Priority,
+      CollectiveLinkType = CollectivePredecessorLink.TypeFor(eventData)
     };
   }
 
@@ -5424,7 +5425,8 @@ public abstract partial class Dispatcher(
       Scope = _extractScope(envelope),
       MessageType = serialized.MessageType,
       ScheduledFor = scheduledFor,
-      Priority = declaredPriority
+      Priority = declaredPriority,
+      CollectiveLinkType = CollectivePredecessorLink.TypeFor(payload)
     };
 
     // FINAL CHECK: Throw if ANY type string contains JsonElement

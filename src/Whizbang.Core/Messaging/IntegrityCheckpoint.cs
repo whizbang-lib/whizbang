@@ -134,12 +134,12 @@ public sealed record IntegrityGapDetected : IEvent, IControlPlaneMessage {
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 public enum IntegrityRepairMode {
-  /// <summary>Report confirmed gaps only — the explicit opt-DOWN for operators who want
-  /// report-and-decide (every report still states exactly what auto-repair would have done).</summary>
+  /// <summary>Report confirmed gaps only (default): detect and report, let an operator decide. Every
+  /// report still states exactly what auto-repair would have done, so this is also the dry run.</summary>
   ReportOnly = 0,
 
   /// <summary>
-  /// Report AND repair (default): a scoped re-delivery request / local rebuild per confirmed gap.
+  /// Report AND repair (opt-in): a scoped re-delivery request / local rebuild per confirmed gap.
   /// </summary>
   /// <remarks>
   /// Bounded in two dimensions, and both are required. Per occurrence,
@@ -260,12 +260,12 @@ public enum ConsumedTypeBackfillStatus {
 }
 
 /// <summary>
-/// Stream-integrity tuning. The out-of-the-box posture is SELF-HEALING: checkpoints, gap
+/// Stream-integrity tuning. The out-of-the-box posture is REPORT-AND-DECIDE: checkpoints, gap
 /// detection, backfill, and the deep audit are ON, and repair runs at
-/// <see cref="IntegrityRepairMode.AutoRepairCapped"/> — every rung hard-capped so a mass
-/// divergence reports loudly instead of storming. Operators who want report-and-decide opt DOWN
-/// to <see cref="IntegrityRepairMode.ReportOnly"/> (reports still state exactly what auto-repair
-/// would have done).
+/// <see cref="IntegrityRepairMode.ReportOnly"/> — confirmed gaps are reported (each report states
+/// exactly what auto-repair would have done) and nothing is mutated unasked. Self-healing is the
+/// opt-in <see cref="IntegrityRepairMode.AutoRepairCapped"/>, where every rung is hard-capped so a
+/// mass divergence reports loudly instead of storming.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 public sealed class StreamIntegrityOptions {

@@ -69,12 +69,14 @@ internal static class ReceivedInboxMessageBuilder {
   /// <param name="guardSite">Names the caller in the empty-stream guard's message.</param>
   /// <param name="eventMarkerResolver">Catalog-backed flag stamp, when registered.</param>
   /// <param name="ephemeralModeResolver">Catalog-backed ephemeral stamp, when registered.</param>
+  /// <param name="originMonitor">Counts received events with and without the producer's origin (#1029), when registered.</param>
   internal static InboxMessage Build(
       ReceivedEnvelope received,
       int priority,
       string guardSite,
       IEventMarkerResolver? eventMarkerResolver,
-      IEphemeralModeResolver? ephemeralModeResolver) {
+      IEphemeralModeResolver? ephemeralModeResolver,
+      ReceivedOriginStampMonitor? originMonitor = null) {
     var (envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent) = received;
     var streamId = ExtractStreamId(envelope);
     if (isEvent) {
@@ -82,7 +84,7 @@ internal static class ReceivedInboxMessageBuilder {
     }
 
     var payload = envelope.Payload;
-    return new InboxMessage {
+    var row = new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = TypeNameFormatter.GetSimpleName(messageTypeName) + "Handler",
       Envelope = jsonEnvelope,
@@ -102,5 +104,7 @@ internal static class ReceivedInboxMessageBuilder {
       SourceCommitSequence = envelope.SourceCommitSequence,
       Priority = priority,
     };
+    originMonitor?.Record(row);
+    return row;
   }
 }

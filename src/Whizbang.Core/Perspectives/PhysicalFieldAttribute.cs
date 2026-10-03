@@ -103,5 +103,53 @@ public sealed class PhysicalFieldAttribute : Attribute {
   /// [PhysicalField(ColumnType = "uuid[]")]
   /// public Guid[] AncestorIds { get; init; } = [];
   /// </example>
+  /// <remarks>
+  /// A property holding an object, a record, a collection or a dictionary with no declared type is a
+  /// <c>jsonb</c> column. It used to fall through to text, holding the type's name.
+  /// </remarks>
   public string? ColumnType { get; init; }
+
+  /// <summary>
+  /// How PostgreSQL stores this column's values when a row grows, applied by the schema pass with
+  /// <c>ALTER COLUMN … SET STORAGE</c>. <see cref="ColumnStorage.Default"/> leaves the type's own.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// For a small jsonb filter column, <see cref="ColumnStorage.Main"/> keeps the value in the row,
+  /// compressed if it has to be, and moves it out of line only as a last resort. A value moved out of
+  /// line costs a second lookup in the TOAST table for every row a filter reads, and a GIN index still
+  /// answers which rows match, but rechecking each match reads the value.
+  /// </para>
+  /// <para>
+  /// Applied only when the column's storage differs, so a restart changes nothing. It affects rows
+  /// written from then on; rows already stored keep their layout until they are rewritten.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/physical-fields#jsonb-storage</docs>
+  public ColumnStorage Storage { get; init; }
+
+  /// <summary>
+  /// The compression method for this column's values, applied by the schema pass with
+  /// <c>ALTER COLUMN … SET COMPRESSION</c>. <see cref="ColumnCompression.Default"/> leaves the server's.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/physical-fields#jsonb-storage</docs>
+  public ColumnCompression Compression { get; init; }
+
+  /// <summary>
+  /// The largest value, in bytes, this column accepts, as <c>pg_column_size</c> measures it. -1 or 0
+  /// means no limit.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Enforced by a check constraint the schema pass adds (<c>NOT VALID</c>, so rows already stored are not
+  /// scanned): a write whose value is larger fails with a check violation naming the constraint,
+  /// <c>ck_&lt;table&gt;_&lt;column&gt;_size</c>, rather than silently pushing the row out of line.
+  /// </para>
+  /// <para>
+  /// Meant for a jsonb filter column that has to stay inline to stay cheap: a budget declared here is a
+  /// budget that is noticed when a value outgrows it.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/physical-fields#jsonb-storage</docs>
+  public int MaxBytes { get; init; } = -1;
 }

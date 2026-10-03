@@ -61,6 +61,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     pod,
     _legacyFor(pod),
     NullLogger<PgRoleElector>.Instance,
+    libraryVersion: null,
     timeProvider: time);
 
   private async Task<Pod> _joinAsync(CancellationToken ct) {
@@ -303,9 +304,9 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var grant = (await _electorFor(a, time: time).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
     time.Advance(_defaults.RenewInterval);
 
-    await _executeAsync("ALTER FUNCTION wh_renew_role(text, uuid, bigint) RENAME TO wh_renew_role_moved", cancellationToken);
+    await _executeAsync("ALTER FUNCTION wh_renew_role_lease(text, uuid, bigint, bigint) RENAME TO wh_renew_role_lease_moved", cancellationToken);
     await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsFalse();
-    await _executeAsync("ALTER FUNCTION wh_renew_role_moved(text, uuid, bigint) RENAME TO wh_renew_role", cancellationToken);
+    await _executeAsync("ALTER FUNCTION wh_renew_role_lease_moved(text, uuid, bigint, bigint) RENAME TO wh_renew_role_lease", cancellationToken);
 
     await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsTrue();
     await grant.DisposeAsync();
@@ -411,7 +412,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
   public async Task Vote_OnADatabaseWithoutTheRoleFunctions_Throws_AndLeavesNoSessionLockBehindAsync(
       bool bridge, CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
-    await _executeAsync("ALTER FUNCTION wh_elect_role(text, uuid, interval, interval, bigint) RENAME TO wh_elect_role_moved", cancellationToken);
+    await _executeAsync("ALTER FUNCTION wh_vote_role(text, uuid, interval, interval, bigint, integer[], integer) RENAME TO wh_vote_role_moved", cancellationToken);
 
     await Assert.That(async () => await _electorFor(a, bridge).TryAcquireAsync(ROLE, cancellationToken))
       .Throws<PostgresException>();
@@ -452,11 +453,11 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
   public async Task UnmanagedDuty_IsDelegatedToTheSessionLockElectorAsync(CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
 
-    var attempt = await _electorFor(a).TryAcquireAsync(StartupDuties.MIGRATOR, cancellationToken);
+    var attempt = await _electorFor(a).TryAcquireAsync("host-duty", cancellationToken);
 
     await Assert.That(attempt.Grant).IsNotNull();
     await Assert.That(attempt.Grant!.Epoch).IsNull()
-      .Because("the migrator stays on the session lock, which has no fencing token");
+      .Because("a duty that is not a role stays on the session lock, which has no fencing token");
     await attempt.Grant.DisposeAsync();
   }
 
@@ -470,7 +471,8 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
       new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
       pod,
       NullDutyElector.Instance,
-      NullLogger<PgRoleElector>.Instance);
+      NullLogger<PgRoleElector>.Instance,
+      libraryVersion: null);
 
     var attempt = await elector.TryAcquireAsync(ROLE, cancellationToken);
 
@@ -559,7 +561,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     PgRoleElector withMetrics(Pod pod) => new(
       Options.Create(_notificationOptions()), Options.Create(new RoleAssignmentOptions()),
       new ConfigurationBuilder().AddInMemoryCollection([]).Build(), pod, _legacyFor(pod),
-      NullLogger<PgRoleElector>.Instance, timeProvider: time, metrics: metrics);
+      NullLogger<PgRoleElector>.Instance, libraryVersion: null, timeProvider: time, metrics: metrics);
 
     var first = (await withMetrics(a).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
     await Assert.That(reader.Total("whizbang.roles.held")).IsEqualTo(1);
@@ -620,15 +622,15 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var logger = NullLogger<PgRoleElector>.Instance;
     var bad = new RoleAssignmentOptions { MissedRenewalsBeforeLapse = 1 };
 
-    await Assert.That(() => new PgRoleElector(notification, Options.Create(bad), config, pod, NullDutyElector.Instance, logger))
+    await Assert.That(() => new PgRoleElector(notification, Options.Create(bad), config, pod, NullDutyElector.Instance, logger, null))
       .Throws<ArgumentOutOfRangeException>();
-    await Assert.That(() => new PgRoleElector(null!, roles, config, pod, NullDutyElector.Instance, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PgRoleElector(notification, null!, config, pod, NullDutyElector.Instance, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PgRoleElector(notification, roles, null!, pod, NullDutyElector.Instance, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PgRoleElector(notification, roles, config, null!, NullDutyElector.Instance, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PgRoleElector(notification, roles, config, pod, null!, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PgRoleElector(notification, roles, config, pod, NullDutyElector.Instance, null!)).Throws<ArgumentNullException>();
-    await Assert.That(async () => await new PgRoleElector(notification, roles, config, pod, NullDutyElector.Instance, logger)
+    await Assert.That(() => new PgRoleElector(null!, roles, config, pod, NullDutyElector.Instance, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PgRoleElector(notification, null!, config, pod, NullDutyElector.Instance, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PgRoleElector(notification, roles, null!, pod, NullDutyElector.Instance, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PgRoleElector(notification, roles, config, null!, NullDutyElector.Instance, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PgRoleElector(notification, roles, config, pod, null!, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PgRoleElector(notification, roles, config, pod, NullDutyElector.Instance, null!, null)).Throws<ArgumentNullException>();
+    await Assert.That(async () => await new PgRoleElector(notification, roles, config, pod, NullDutyElector.Instance, logger, null)
       .TryAcquireAsync("", cancellationToken)).Throws<ArgumentException>();
   }
 }

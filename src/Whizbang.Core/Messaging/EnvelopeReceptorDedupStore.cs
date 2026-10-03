@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
@@ -31,18 +32,35 @@ public sealed class EnvelopeReceptorDedupStore : IReceptorDedupStore {
   public ValueTask<ReceptorInvocationRecord?> TryGetPriorInvocationAsync(
     IMessageEnvelope envelope,
     string receptorId,
+    CancellationToken cancellationToken) =>
+    TryGetPriorInvocationAsync(envelope, receptorId, serviceName: null, cancellationToken);
+
+  /// <inheritdoc />
+  public ValueTask<ReceptorInvocationRecord?> TryGetPriorInvocationAsync(
+    IMessageEnvelope envelope,
+    string receptorId,
+    string? serviceName,
     CancellationToken cancellationToken) {
     var list = envelope.ReceptorInvocations;
-    if (list is null || list.Count == 0) {
+    if (list is null) {
       return ValueTask.FromResult<ReceptorInvocationRecord?>(null);
     }
     for (int i = 0; i < list.Count; i++) {
-      if (string.Equals(list[i].ReceptorId, receptorId, System.StringComparison.Ordinal)) {
+      if (string.Equals(list[i].ReceptorId, receptorId, StringComparison.Ordinal) && _countsFor(list[i], serviceName)) {
         return ValueTask.FromResult<ReceptorInvocationRecord?>(list[i]);
       }
     }
     return ValueTask.FromResult<ReceptorInvocationRecord?>(null);
   }
+
+  /// <summary>
+  /// Whether a record stops the receptor in <paramref name="serviceName"/>: any record does when no
+  /// service is named, and a record naming no service does everywhere, since it cannot be placed.
+  /// </summary>
+  private static bool _countsFor(ReceptorInvocationRecord record, string? serviceName) =>
+    serviceName is null
+    || string.IsNullOrEmpty(record.ServiceName)
+    || string.Equals(record.ServiceName, serviceName, StringComparison.OrdinalIgnoreCase);
 
   /// <inheritdoc />
   public ValueTask RecordInvocationAsync(
