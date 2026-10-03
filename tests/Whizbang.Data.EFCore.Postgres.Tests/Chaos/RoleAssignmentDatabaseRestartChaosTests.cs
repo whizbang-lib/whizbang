@@ -45,7 +45,7 @@ public class RoleAssignmentDatabaseRestartChaosTests {
     await ChaosPod.ExecuteAsync(server.ConnectionString, ChaosPod.EFFECTS_DDL, cancellationToken);
     // A lease long enough to outlast the restart itself: what is under test is that the row survives,
     // not how long the server takes to come back.
-    RoleAssignmentOptions tuned() => new RoleAssignmentOptions { RenewInterval = TimeSpan.FromSeconds(30) };
+    RoleAssignmentOptions tuned() => new() { RenewInterval = TimeSpan.FromSeconds(30) };
     var holder = await ChaosPod.JoinAsync(server.ConnectionString, () => new WorkCoordinationDbContext(options), cancellationToken);
     var other = await ChaosPod.JoinAsync(server.ConnectionString, () => new WorkCoordinationDbContext(options), cancellationToken);
     holder.Build(server.ConnectionString, server.ConnectionString, null, false, null, new FakeTimeProvider(), [], tuned());

@@ -125,6 +125,8 @@ public class PhysicalJsonbContainmentRewriterTests {
   }
 
   /// <summary>Stands in for an asynchronous filtering operator in a hand-built tree; never called.</summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1047:Non-asynchronous method name should not end with 'Async'",
+    Justification = "Named after the async query operator it stands in for: the rewriter is tested against that name.")]
   public static Row? FirstAsync(IQueryable<Row> source, Expression<Func<Row, bool>> predicate) =>
     throw new NotSupportedException();
 
@@ -142,7 +144,9 @@ public class PhysicalJsonbContainmentRewriterTests {
     var place = new PhysicalJsonbContainmentSqlTests.JsonbLocation();
 
     var shapes = new List<(string Name, Expression<Func<Row, bool>> Filter, bool WithModel, int Expected)> {
+#pragma warning disable RCS1077 // The unoptimized shape is the input under test: the rewriter must stand down on it.
       ("r => r.Data.Tags.Count() > 1", r => r.Data.Tags.Count() > 1, true, 0),
+#pragma warning restore RCS1077
       ("r => r.Data.GridFilter.ContainsKey(key)", r => r.Data.GridFilter.ContainsKey(key), true, 0),
       ("r => r.Data.Location!.Zone > 3", r => r.Data.Location!.Zone > 3, true, 0),
       ("r => r.Data.Location!.Address.City.Contains(tag)", r => r.Data.Location!.Address.City.Contains(tag), true, 0),

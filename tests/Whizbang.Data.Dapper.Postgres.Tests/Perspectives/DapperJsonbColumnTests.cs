@@ -123,8 +123,8 @@ public class DapperJsonbColumnTests : PostgresTestBase {
 
     await Assert.That(await _columnsAsync(SPLIT_TABLE, streamId)).IsEqualTo(EXPECTED_COLUMNS);
     var model = await store.GetByStreamIdAsync(streamId);
-    await Assert.That(model!.Labels).IsEquivalentTo(new[] { new DapperJsonbLabel("team", "a") });
-    await Assert.That(model.Owners).IsEquivalentTo(new[] { _owner });
+    await Assert.That(model!.Labels).IsEquivalentTo([new DapperJsonbLabel("team", "a")]);
+    await Assert.That(model.Owners).IsEquivalentTo([_owner]);
   }
 
   [Test]

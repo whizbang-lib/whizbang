@@ -455,7 +455,7 @@ public class DutyHolderWorkerTests {
     await worker.RunOnceAsync(CancellationToken.None);
 
     await Assert.That(elector.Batches.Count).IsEqualTo(1).Because("held roles are verified, not voted for again");
-    await Assert.That(elector.Batches[0]).IsEquivalentTo(new[] { "commit-stamper", ROLE });
+    await Assert.That(elector.Batches[0]).IsEquivalentTo(["commit-stamper", ROLE]);
     await Assert.That(worker.Holds("commit-stamper")).IsTrue();
     await Assert.That(worker.Holds(ROLE)).IsTrue();
   }

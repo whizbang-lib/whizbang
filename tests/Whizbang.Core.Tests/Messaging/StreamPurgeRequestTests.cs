@@ -24,8 +24,8 @@ public class StreamPurgeRequestTests {
     var batches = (_request(a, b, c, a) with { BatchSize = 2 }).Batches();
 
     await Assert.That(batches).Count().IsEqualTo(2);
-    await Assert.That(batches[0].ToArray()).IsEquivalentTo(new[] { b, c });
-    await Assert.That(batches[1].ToArray()).IsEquivalentTo(new[] { a });
+    await Assert.That(batches[0].ToArray()).IsEquivalentTo([b, c]);
+    await Assert.That(batches[1].ToArray()).IsEquivalentTo([a]);
   }
 
   [Test]
