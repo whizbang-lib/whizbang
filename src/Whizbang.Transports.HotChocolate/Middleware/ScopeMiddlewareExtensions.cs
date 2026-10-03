@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Whizbang.Core.Security;
 
 namespace Whizbang.Transports.HotChocolate.Middleware;
@@ -29,8 +31,13 @@ public static class ScopeMiddlewareExtensions {
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection for chaining.</returns>
+  /// <remarks>
+  /// Registers <see cref="WhizbangScopeOptions"/> bound from <c>Whizbang:Scope</c>, so the claim and
+  /// header mappings can change at deploy time. A host that registered its own instance keeps it.
+  /// </remarks>
   public static IServiceCollection AddWhizbangScope(this IServiceCollection services) {
     services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+    services.TryAddSingleton(sp => _bindFromConfiguration(sp.GetService<IConfiguration>(), new WhizbangScopeOptions()));
     return services;
   }
 
@@ -45,11 +52,26 @@ public static class ScopeMiddlewareExtensions {
       Action<WhizbangScopeOptions> configure) {
     services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
 
+    // Code first, then Whizbang:Scope over it when the options first resolve: a key that is present
+    // wins, an absent key leaves the code value alone.
     var options = new WhizbangScopeOptions();
     configure(options);
-    services.AddSingleton(options);
+    services.AddSingleton(sp => _bindFromConfiguration(sp.GetService<IConfiguration>(), options));
 
     return services;
+  }
+
+  /// <summary>
+  /// Applies <c>Whizbang:Scope</c> to <paramref name="options"/>. Indexed keys on the plural claim-type
+  /// lists add to the list (the binder appends); the singular key replaces it.
+  /// </summary>
+  private static WhizbangScopeOptions _bindFromConfiguration(IConfiguration? configuration, WhizbangScopeOptions options) {
+    if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+      ConfigurationBinder.Bind(configuration.GetSection("Whizbang:Scope"), options);
+#pragma warning restore IL2026
+    }
+    return options;
   }
 
   /// <summary>

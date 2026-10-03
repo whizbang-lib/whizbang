@@ -122,8 +122,9 @@ public static class ServiceCollectionExtensions {
     configure?.Invoke(coreOptions);
 
     // Register WhizbangCoreOptions as singleton (only if not already registered)
-    // This allows AddWhizbang() to be called multiple times - first call wins for options
-    services.TryAddSingleton(coreOptions);
+    // This allows AddWhizbang() to be called multiple times - first call wins for options.
+    // #1014: Whizbang:Core (and Whizbang:ShowBanner) bind over the lambda's values when it first resolves.
+    services.TryAddSingleton(sp => ProcessWideOptionsBinding.BindCore(sp, coreOptions));
 
     // Merge tag hooks into existing TagOptions if already registered
     // This allows hooks registered in separate AddWhizbang() calls to be combined
@@ -437,7 +438,9 @@ public static class ServiceCollectionExtensions {
   /// Registers perspective synchronization services.
   /// </summary>
   private static void _registerPerspectiveSyncServices(IServiceCollection services) {
-    services.TryAddSingleton<IDebuggerAwareClock, DebuggerAwareClock>();
+    // Built from the bound options (Whizbang:DebuggerAwareClock, #1014); defaults when nothing binds them.
+    services.TryAddSingleton<IDebuggerAwareClock>(sp =>
+      new DebuggerAwareClock(sp.GetRequiredService<IOptions<DebuggerAwareClockOptions>>().Value));
     services.TryAddSingleton<ITracer, Tracer>();
     services.TryAddSingleton<IPerspectiveSyncSignaler, LocalSyncSignaler>();
 

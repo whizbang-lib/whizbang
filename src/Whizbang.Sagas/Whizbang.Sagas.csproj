@@ -10,6 +10,9 @@
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+    <!-- SagaOptions binds from Whizbang:Sagas. With the generator on, that ConfigurationBinder.Bind call
+         compiles to typed property assignments, so it stays reflection-free and AOT-clean. -->
+    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
   </PropertyGroup>
 
   <ItemGroup>

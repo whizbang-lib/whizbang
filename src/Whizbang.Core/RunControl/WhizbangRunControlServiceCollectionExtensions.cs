@@ -21,7 +21,8 @@ public static class WhizbangRunControlServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(services);
     var options = new WhizbangLifecycleOptions();
     configure?.Invoke(options);
-    services.TryAddSingleton(options);
+    // #1014: Whizbang:Lifecycle binds over the lambda's values when the options first resolve.
+    services.TryAddSingleton(sp => Configuration.ProcessWideOptionsBinding.BindLifecycle(sp, options));
     services.TryAddSingleton(static sp => new WhizbangLifecycleCoordinator(
       sp.GetServices<IWhizbangRunControl>(),
       sp.GetRequiredService<WhizbangLifecycleOptions>(),

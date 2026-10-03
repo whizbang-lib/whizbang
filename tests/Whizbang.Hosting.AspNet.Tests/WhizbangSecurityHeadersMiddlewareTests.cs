@@ -140,6 +140,29 @@ public class WhizbangSecurityHeadersMiddlewareTests {
   }
 
   [Test]
+  public async Task Invoke_OptionSetToEmpty_SuppressesThatHeaderAsync() {
+    // Configuration cannot express null, so an empty value is how Whizbang:AspNet:SecurityHeaders turns
+    // one header off (#1014). An empty header is never a useful thing to send.
+    var (middleware, context, response, _) = _create(o => o.PermissionsPolicy = "");
+
+    await middleware.InvokeAsync(context);
+    await response.FireOnStartingAsync();
+
+    await Assert.That(context.Response.Headers.ContainsKey("Permissions-Policy")).IsFalse();
+  }
+
+  [Test]
+  public async Task Invoke_HstsSetToEmpty_IsNotEmittedOverTlsAsync() {
+    var (middleware, context, response, _) = _create(o => o.StrictTransportSecurity = "");
+    context.Request.IsHttps = true;
+
+    await middleware.InvokeAsync(context);
+    await response.FireOnStartingAsync();
+
+    await Assert.That(context.Response.Headers.ContainsKey("Strict-Transport-Security")).IsFalse();
+  }
+
+  [Test]
   public async Task Invoke_CustomHeaderValue_IsEmittedAsync() {
     var (middleware, context, response, _) = _create(o => o.ContentSecurityPolicy = "frame-ancestors 'self'");
 

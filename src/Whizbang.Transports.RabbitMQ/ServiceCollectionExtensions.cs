@@ -345,7 +345,8 @@ public static class ServiceCollectionExtensions {
         commandInboxResolver.DefaultCommandInboxAddress,
         loggerFactory,
         namespaceRouting: commandInboxResolver,
-        throttleRetryOptions: null, metrics: null,
+        // Bound from Whizbang:ThrottleRetry by the worker pipeline (#1014); absent, the strategy's defaults.
+        throttleRetryOptions: sp.GetService<Microsoft.Extensions.Options.IOptions<ThrottleRetryOptions>>()?.Value, metrics: null,
         postSerializeHookChain: hookChain, jsonOptions: jsonOptions,
         transportNamespaces: transportNamespaces);
     });

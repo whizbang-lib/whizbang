@@ -249,7 +249,10 @@ public static class WorkerPipelineExtensions {
     // a newer instance's request, posts StandingBy for the migrator to observe, and carries the
     // runtime verdict (an instance becomes obsolete the moment a newer peer migrates underneath
     // it). StandbyHandshake is the migrator side, consumed when a breaking migration runs.
-    services.TryAddSingleton<Whizbang.Core.Startup.StandbyWatcherOptions>();
+    // #1014: the process-wide options classes bind from configuration (Whizbang:StandbyWatcher,
+    // Whizbang:Redelivery, Whizbang:Perspectives:* and the rest). This also registers the bound
+    // StandbyWatcherOptions instance the watcher below resolves.
+    Whizbang.Core.Configuration.ProcessWideOptionsBinding.AddProcessWideOptionsBinding(services);
     services.AddHostedService(sp => new Whizbang.Core.Startup.StandbyWatcher(
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetRequiredService<IWhizbangLifecycleState>(),

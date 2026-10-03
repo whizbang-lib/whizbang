@@ -5,6 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
+    <!-- WhizbangScopeOptions binds from Whizbang:Scope. With the generator on, that ConfigurationBinder.Bind
+         call compiles to typed property assignments, so it stays reflection-free and AOT-clean. -->
+    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
     <Description>HotChocolate GraphQL integration for Whizbang Lenses with filtering, sorting, paging, and projection support.</Description>
     <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
     <WhizbangPackageTier>Application</WhizbangPackageTier>

@@ -54,7 +54,13 @@ public static class SystemEventServiceCollectionExtensions {
     // Configure options
     var options = new SystemEventOptions();
     configure?.Invoke(options);
-    services.TryAddSingleton(Options.Create(options));
+    // #1014: Whizbang:SystemEvents binds over the lambda's values when the options first resolve. The
+    // audit toggles read above are fluent calls, not settable keys, so registration-time decisions stay
+    // with code.
+    services.TryAddSingleton<IOptions<SystemEventOptions>>(sp => {
+      Configuration.ProcessWideOptionsBinding.BindSystemEvents(sp, options);
+      return Options.Create(options);
+    });
 
     // Wire up custom humanizers if provided
     if (options.EventNameHumanizer != null) {

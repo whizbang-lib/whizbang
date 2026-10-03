@@ -93,6 +93,9 @@ public partial class TransportPublishStrategy(
   private readonly ILogger _logger = loggerFactory.CreateLogger(LOG_CATEGORY);
 #pragma warning restore S4487
   private readonly ThrottleRetryOptions _throttleRetry = throttleRetryOptions ?? new ThrottleRetryOptions();
+
+  /// <summary>The throttle retry budget in force, so a registration can be checked against it.</summary>
+  internal ThrottleRetryOptions ThrottleRetry => _throttleRetry;
   private readonly TransportMetrics? _metrics = metrics;
 
   // Derived once: short transport tag for OTEL dimensions. Maps "AzureServiceBusTransport"
