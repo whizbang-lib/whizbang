@@ -84,4 +84,37 @@ public class CollectivePredicateDefaultSemanticsTests {
         + "null is a value the author can already test for. Coalescing here would change a predicate that is "
         + "correct today, so the fix stays scoped to members that declare one.");
   }
+
+  // ── Testing for null: an absent key and an explicit JSON null are the same thing ──────────
+
+  [Test]
+  public async Task Compile_EqualityAgainstNullOnANullableMember_AsksWhetherTheKeyReadsAsNullAsync() {
+    var result = _compile(r => r.Data.Note == null);
+
+    await Assert.That(result.SqlFragment)
+      .IsEqualTo("data->>'Note' IS NULL")
+      .Because("Binding null as a parameter gives `x = NULL`, which is NULL and never true, so no collective filter "
+        + "could test for null at all. ->> reads an absent key and an explicit JSON null alike, which is the same "
+        + "collapse deserialization makes, so IS NULL is both the fix and the intended semantics.");
+  }
+
+  [Test]
+  public async Task Compile_InequalityAgainstNullOnANullableMember_AsksWhetherTheKeyHasAValueAsync() {
+    var result = _compile(r => r.Data.Note != null);
+
+    await Assert.That(result.SqlFragment)
+      .IsEqualTo("data->>'Note' IS NOT NULL")
+      .Because("The mirror of the above: `x <> NULL` is NULL for every row, so the predicate selected nothing.");
+  }
+
+  [Test]
+  public async Task Compile_EqualityAgainstNullOnAMemberWithADeclaredDefault_CannotHoldAsync() {
+    var result = _compile(r => r.Data.Status == null);
+
+    await Assert.That(result.SqlFragment)
+      .IsEqualTo("COALESCE(data->>'Status', @where_status_else) IS NULL")
+      .Because("A member that declares a default has no null to find: the absent key reads as the default, so the "
+        + "test is false for every row — which is exactly what the replay reports, since the member cannot be null. "
+        + "The two rules compose without either one special-casing the other.");
+  }
 }

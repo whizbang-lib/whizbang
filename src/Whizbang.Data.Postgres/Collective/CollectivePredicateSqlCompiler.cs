@@ -205,9 +205,19 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       in ResolvedColumn column, string op, Expression valueExpr, string prefix,
       StringBuilder sql, Dictionary<string, object?> parameters) {
     var value = _evaluateValue(valueExpr);
+    var columnSql = _withDeclaredDefault(column, prefix, parameters);
+
+    // A null comparand is a null test, not a bound value. Binding it gives `x = NULL`, which is NULL for every row,
+    // so no collective filter could test for null at all. Through ->> an absent key and an explicit JSON null both
+    // read as SQL NULL — the same collapse deserialization makes — so IS NULL asks what the replay asks.
+    if (value is null && (op == "=" || op == "<>")) {
+      sql.Append(columnSql).Append(op == "=" ? " IS NULL" : " IS NOT NULL");
+      return;
+    }
+
     var paramName = _uniqueName(parameters, $"{prefix}_{column.PropName.ToLowerInvariant()}");
     parameters[paramName] = _bind(value, column);
-    sql.Append(_withDeclaredDefault(column, prefix, parameters)).Append(' ').Append(op).Append(" @").Append(paramName);
+    sql.Append(columnSql).Append(' ').Append(op).Append(" @").Append(paramName);
   }
 
   // An ordering comparison: each side is an ordered column (optionally coalesced) or a value; at least one is a
