@@ -144,4 +144,17 @@ public class CollectivePredicateDefaultSemanticsTests {
     await Assert.That(result.SqlFragment).DoesNotContain("COALESCE")
       .Because("The row id is a real uuid column that every row has; there is no absent key to read as anything.");
   }
+
+  [Test]
+  public async Task Compile_AMembershipTestOverTheRowIdIncludingNull_BindsTheNullAsync() {
+    var id = Guid.Parse("0199ffff-0000-7000-8000-00000000cafe");
+    Guid?[] candidates = [null, id];
+    var result = _compile(r => candidates.Contains(r.Id));
+
+    await Assert.That(result.SqlFragment).Contains("IN (")
+      .Because("A null inside an IN list over the row id is the one route that still binds null against a uuid "
+        + "column — the equality path now answers null with IS NULL and never binds it.");
+    await Assert.That(result.Parameters.Values.Any(v => v is null)).IsTrue()
+      .Because("The null element has to reach the parameter list as a real null, not as the text \"null\".");
+  }
 }
