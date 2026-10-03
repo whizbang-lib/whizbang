@@ -110,5 +110,26 @@ public static class PerspectiveDocumentSerialization {
   public static T DeserializeColumn<T>(string stored) =>
     JsonSerializer.Deserialize(stored, _typeInfo<T>())!;
 
+  /// <summary>
+  /// The name a member of <paramref name="type"/> is stored under in a document written with <see cref="Options"/>:
+  /// its JSON name when the serializer's metadata says which property it is, otherwise its own name.
+  /// </summary>
+  /// <param name="type">The document type.</param>
+  /// <param name="member">The member's CLR name.</param>
+  /// <returns>The stored name.</returns>
+  public static string StoredName(Type type, string member) {
+    ArgumentNullException.ThrowIfNull(type);
+    if (Options.TryGetTypeInfo(type, out var info)) {
+      foreach (var property in info.Properties) {
+        if (property.AttributeProvider is System.Reflection.MemberInfo declared
+            && string.Equals(declared.Name, member, StringComparison.Ordinal)) {
+          return property.Name;
+        }
+      }
+    }
+
+    return member;
+  }
+
   private static JsonTypeInfo<T> _typeInfo<T>() => (JsonTypeInfo<T>)Options.GetTypeInfo(typeof(T));
 }

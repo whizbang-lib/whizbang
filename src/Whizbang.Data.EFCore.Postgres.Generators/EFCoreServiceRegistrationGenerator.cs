@@ -3265,6 +3265,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
     var table = $"{quotedSchema}.{perspective.TableName}";
     foreach (var field in perspective.PhysicalFields) {
+      // A TEXT column an earlier release created for a field that is now jsonb is moved aside first, so the
+      // jsonb column is armed, added and filled below like any new column.
+      if (PhysicalColumnSql.RetireTextColumn(table, field) is { } retire) {
+        sb.AppendLine(retire);
+      }
       // Armed before the column is added, so only the pass that adds it arms it (#1009).
       if (PhysicalColumnSql.Arm(table, field) is { } arm) {
         sb.AppendLine(arm);

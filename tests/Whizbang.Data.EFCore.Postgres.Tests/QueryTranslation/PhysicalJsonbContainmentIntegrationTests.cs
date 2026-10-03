@@ -97,11 +97,41 @@ public class PhysicalJsonbContainmentIntegrationTests {
     await Assert.That(read.Place!.City).IsEqualTo("Springfield");
     await Assert.That(read.Stamp).IsEqualTo(model.Stamp);
 
-    // The atomic upsert serializes the whole model, so its document carries the field as well, in the same
-    // bytes. The change-tracker path writes the document through the mapping, which leaves the field out:
-    // the column is the copy every reader uses.
-    var copy = await _scalarAsync($"SELECT coalesce((grid_filter = data -> 'GridFilter')::text, 'absent') FROM {EXTRACTED_TABLE} WHERE id = '{id}'");
-    await Assert.That(copy).IsEqualTo(atomic ? "true" : "absent");
+    var copy = await _scalarAsync($"SELECT (grid_filter = data -> 'GridFilter')::text FROM {EXTRACTED_TABLE} WHERE id = '{id}'");
+    await Assert.That(copy).IsEqualTo("true")
+      .Because("both write paths leave the document's copy of a jsonb column, identical to the column.");
+  }
+
+  /// <summary>
+  /// The atomic upsert and the change-tracker write leave the same row: the same document, its copies of the
+  /// jsonb columns included, and the same columns. A null object column is absent from both documents.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task BothWritePaths_LeaveIdenticalRowsAsync(bool withPlace) {
+    var atomicId = Guid.NewGuid();
+    var trackedId = Guid.NewGuid();
+    var model = _extracted(atomicId, "north", "red");
+    if (!withPlace) {
+      model.Place = null;
+    }
+
+    await _writeAsync(atomicId, model, atomic: true);
+    model.Id = trackedId;
+    await _writeAsync(trackedId, model, atomic: false);
+    // A second write through each path updates the row rather than inserting it.
+    model.Tags = ["changed"];
+    await _writeAsync(trackedId, model, atomic: false);
+    model.Id = atomicId;
+    await _writeAsync(atomicId, model, atomic: true);
+
+    const string ROW = "(data - 'Id', grid_filter, labels, tags, place, stamp)";
+    var same = await _scalarAsync(
+      $"SELECT ((SELECT {ROW} FROM {EXTRACTED_TABLE} WHERE id = '{atomicId}') = (SELECT {ROW} FROM {EXTRACTED_TABLE} WHERE id = '{trackedId}'))::text");
+    await Assert.That(same).IsEqualTo("true");
+    await Assert.That(await _scalarAsync($"SELECT (data ? 'Place')::text FROM {EXTRACTED_TABLE} WHERE id = '{trackedId}'"))
+      .IsEqualTo(withPlace ? "true" : "false");
   }
 
   /// <summary>
@@ -272,7 +302,12 @@ public class PhysicalJsonbContainmentIntegrationTests {
       await context.Set<PerspectiveRow<JsonbExtractedItem.Model>>().Where(filter).Select(r => r.Id).ToListAsync();
     }
 
-    await using var db = new NpgsqlConnection(_connectionString);
+    return await PlanAsync(_connectionString, capture);
+  }
+
+  /// <summary>The plan of the captured command with sequential scans disabled.</summary>
+  internal static async Task<string> PlanAsync(string connectionString, CommandCapture capture) {
+    await using var db = new NpgsqlConnection(connectionString);
     await db.OpenAsync();
     await using (var off = new NpgsqlCommand("SET enable_seqscan = off", db)) {
       await off.ExecuteNonQueryAsync();
@@ -307,7 +342,7 @@ public class PhysicalJsonbContainmentIntegrationTests {
   }
 
   /// <summary>Records the last query command, so its plan can be asked for with the same text and values.</summary>
-  private sealed class CommandCapture : DbCommandInterceptor {
+  internal sealed class CommandCapture : DbCommandInterceptor {
     public string Text { get; private set; } = "";
 
     public List<(string Name, object? Value)> Parameters { get; } = [];

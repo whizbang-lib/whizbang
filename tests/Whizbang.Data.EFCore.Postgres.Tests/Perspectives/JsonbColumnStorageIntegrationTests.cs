@@ -118,6 +118,63 @@ public class JsonbColumnStorageIntegrationTests {
     await Assert.That(refused.ConstraintName).IsEqualTo($"ck_{TABLE}_grid_filter_size");
   }
 
+  /// <summary>
+  /// A table an earlier release created with a TEXT column for a field that is now jsonb: the text column is
+  /// kept under a legacy name, the jsonb column is added and filled from the document's copy, and a second
+  /// start changes nothing.
+  /// </summary>
+  [Test]
+  public async Task AnEarlierTextColumn_IsKeptAsLegacy_AndTheJsonbColumnFilledFromTheDocumentAsync() {
+    var id = Guid.NewGuid();
+    const string DOCUMENT = """{"GridFilter": {"region": ["north"]}}""";
+    const string EMPTY = "{}";
+    await _execAsync($"""
+      ALTER TABLE {TABLE} DROP COLUMN grid_filter;
+      ALTER TABLE {TABLE} ADD COLUMN grid_filter TEXT;
+      INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, sys_created_at, sys_updated_at, version, grid_filter, labels, tags, stamp)
+      VALUES ('{id}', '{DOCUMENT}', '{EMPTY}', '{EMPTY}', now(), now(), now(), now(), 1,
+              'System.Collections.Generic.Dictionary`2[System.String,System.String[]]', '[]', '[]', now());
+      DELETE FROM wh_schema_migrations WHERE file_name = 'perspective:{TABLE}';
+      """);
+
+    await _initializeAsync();
+
+    await Assert.That(await _scalarAsync($"SELECT grid_filter_text_legacy FROM {TABLE} WHERE id = '{id}'"))
+      .IsEqualTo("System.Collections.Generic.Dictionary`2[System.String,System.String[]]")
+      .Because("the old column is renamed, never dropped.");
+    await Assert.That(await _scalarAsync($"SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = '{TABLE}'::regclass AND attname = 'grid_filter'"))
+      .IsEqualTo("jsonb");
+    await Assert.That(await _scalarAsync($"SELECT grid_filter::text FROM {TABLE} WHERE id = '{id}'"))
+      .IsEqualTo("{\"region\": [\"north\"]}");
+
+    await _execAsync($"DELETE FROM wh_schema_migrations WHERE file_name = 'perspective:{TABLE}'");
+    await _initializeAsync();
+
+    await Assert.That(await _scalarAsync($"SELECT count(*) FROM pg_attribute WHERE attrelid = '{TABLE}'::regclass AND attname LIKE 'grid_filter%' AND NOT attisdropped"))
+      .IsEqualTo("2").Because("a second start finds a jsonb column and renames nothing.");
+  }
+
+  /// <summary>A Split model's document has no copy: the text column is kept as legacy and the jsonb column starts empty.</summary>
+  [Test]
+  public async Task AnEarlierTextColumnOnASplitModel_IsKeptAsLegacy_AndLeftForARebuildAsync() {
+    const string SPLIT = "wh_per_jsonb_split_item";
+    const string EMPTY = "{}";
+    var id = Guid.NewGuid();
+    await _execAsync($"""
+      ALTER TABLE {SPLIT} DROP COLUMN labels;
+      ALTER TABLE {SPLIT} ADD COLUMN labels TEXT;
+      INSERT INTO {SPLIT} (id, data, metadata, scope, created_at, updated_at, sys_created_at, sys_updated_at, version, labels)
+      VALUES ('{id}', '{EMPTY}', '{EMPTY}', '{EMPTY}', now(), now(), now(), now(), 1, 'System.Collections.Generic.List`1[Label]');
+      DELETE FROM wh_schema_migrations WHERE file_name = 'perspective:{SPLIT}';
+      """);
+
+    await _initializeAsync();
+
+    await Assert.That(await _scalarAsync($"SELECT labels_text_legacy FROM {SPLIT} WHERE id = '{id}'"))
+      .IsEqualTo("System.Collections.Generic.List`1[Label]");
+    await Assert.That(await _scalarAsync($"SELECT labels IS NULL FROM {SPLIT} WHERE id = '{id}'")).IsEqualTo("True");
+  }
+
   private async Task _initializeAsync() {
     await using var context = PhysicalJsonbContainmentIntegrationTests.Context(_connectionString);
     await context.EnsureWhizbangDatabaseInitializedAsync();

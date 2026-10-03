@@ -50,6 +50,19 @@ public static class PerspectivePhysicalFieldRegistry {
   }
 
   /// <summary>
+  /// The model's jsonb columns whose value the document holds as well (every storage mode but Split), in a
+  /// stable order: the writes that cannot produce the document's copy themselves restore it from these.
+  /// </summary>
+  /// <param name="modelType">The model type.</param>
+  /// <returns>The fields, ordered by property name; empty for a model with none.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs</tests>
+  public static IReadOnlyList<PerspectivePhysicalField> JsonbDocumentFields(Type modelType) =>
+    [.. _fields
+      .Where(entry => entry.Key.ModelType == modelType && entry.Value.IsJsonbColumn && entry.Value.InDocument)
+      .Select(entry => entry.Value)
+      .OrderBy(field => field.PropertyName, StringComparer.Ordinal)];
+
+  /// <summary>
   /// Whether the model's promoted column with this name is a jsonb column, which a writer binds as JSON
   /// text under the persistence profile rather than as the value's own driver type.
   /// </summary>

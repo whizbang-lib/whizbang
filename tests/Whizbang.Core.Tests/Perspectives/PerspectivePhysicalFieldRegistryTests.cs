@@ -98,6 +98,25 @@ public class PerspectivePhysicalFieldRegistryTests {
     await Assert.That(PerspectivePhysicalFieldRegistry.IsJsonbColumn(typeof(UnregisteredModel), "filters")).IsFalse();
   }
 
+  private sealed class JsonbDocumentModel;
+
+  /// <summary>
+  /// The jsonb columns whose value the document holds too: not a Split one, not a scalar column, ordered by
+  /// property name, and none for a model without any.
+  /// </summary>
+  [Test]
+  public async Task JsonbDocumentFields_AreTheJsonbColumnsTheDocumentCopies_InPropertyOrderAsync() {
+    PerspectivePhysicalFieldRegistry.Register(typeof(JsonbDocumentModel), "Tags", "tags", FieldStorageMode.Extracted, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(JsonbDocumentModel), "Filters", "filters", FieldStorageMode.JsonOnly, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(JsonbDocumentModel), "Labels", "labels", FieldStorageMode.Split, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(JsonbDocumentModel), "Lane", "lane", FieldStorageMode.Extracted);
+
+    var fields = PerspectivePhysicalFieldRegistry.JsonbDocumentFields(typeof(JsonbDocumentModel));
+
+    await Assert.That(string.Join(",", fields.Select(f => f.PropertyName))).IsEqualTo("Filters,Tags");
+    await Assert.That(PerspectivePhysicalFieldRegistry.JsonbDocumentFields(typeof(UnregisteredModel))).IsEmpty();
+  }
+
   [Test]
   public async Task TryResolve_Unregistered_ReturnsFalseAsync() {
     PerspectivePhysicalFieldRegistry.Register(typeof(ExtractedModel), "Priority", "priority", FieldStorageMode.Extracted);

@@ -67,6 +67,25 @@ public static class JsonbSplitItem {
   }
 }
 
+/// <summary>A model exposed through GraphQL: list filters only, which GraphQL has filter types for.</summary>
+public static class JsonbGraphItem {
+  [PerspectiveStorage(FieldStorageMode.Extracted)]
+  public class Model {
+    [StreamId]
+    public Guid Id { get; set; }
+
+    public string Title { get; set; } = "";
+
+    [PhysicalField]
+    [Indexed(IndexKinds.Containment)]
+    public List<JsonbLabel> Labels { get; set; } = [];
+
+    [PhysicalField]
+    [Indexed(IndexKinds.Containment)]
+    public List<string> Tags { get; set; } = [];
+  }
+}
+
 public record JsonbItemNoted([property: StreamId] Guid Id) : IEvent;
 
 [WhizbangPerspective("jsonb-columns")]
@@ -77,6 +96,11 @@ public class JsonbExtractedItemProjection : IPerspectiveFor<JsonbExtractedItem.M
 [WhizbangPerspective("jsonb-columns")]
 public class JsonbSplitItemProjection : IPerspectiveFor<JsonbSplitItem.Model, JsonbItemNoted> {
   public JsonbSplitItem.Model Apply(JsonbSplitItem.Model currentData, JsonbItemNoted eventData) => currentData;
+}
+
+[WhizbangPerspective("jsonb-columns")]
+public class JsonbGraphItemProjection : IPerspectiveFor<JsonbGraphItem.Model, JsonbItemNoted> {
+  public JsonbGraphItem.Model Apply(JsonbGraphItem.Model currentData, JsonbItemNoted eventData) => currentData;
 }
 
 [WhizbangDbContext("jsonb-columns", Schema = "public")]

@@ -5,6 +5,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Model = Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation.PhysicalJsonbContainmentSqlTests.JsonbColumnsModel;
@@ -67,6 +68,46 @@ public class PhysicalJsonbColumnBindingTests {
     var parameter = BaseUpsertStrategy.PhysicalColumnParameter("pf_0", property, 7);
 
     await Assert.That(parameter.Value).IsEqualTo(7);
+  }
+
+  /// <summary>
+  /// The change-tracker write restores the document's copy of each jsonb column it set, and of nothing else: a
+  /// column the write did not set, a column whose document holds no copy (Split), and a write with no values
+  /// get no statement.
+  /// </summary>
+  [Test]
+  public async Task DocumentCopySql_CoversOnlyTheJsonbColumnsTheWriteSetAsync() {
+    using var context = _context();
+    PerspectivePhysicalFieldRegistry.Register(typeof(Model), nameof(Model.Tags), "tags", FieldStorageMode.Extracted, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(Model), nameof(Model.Counts), "counts", FieldStorageMode.Extracted, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(Model), nameof(Model.Labels), "labels", FieldStorageMode.Split, columnType: "jsonb");
+
+    var both = BaseUpsertStrategy.DocumentCopySql<Model>(context, new Dictionary<string, object?> {
+      ["tags"] = new List<string>(),
+      ["counts"] = null,
+      ["labels"] = null,
+      ["title"] = "x",
+    });
+    var one = BaseUpsertStrategy.DocumentCopySql<Model>(context, new Dictionary<string, object?> { ["tags"] = null });
+
+    await Assert.That(both).IsEqualTo(
+      "UPDATE \"wh_per_jsonb_columns\" SET data = CASE WHEN \"tags\" IS NULL THEN (CASE WHEN \"counts\" IS NULL THEN (data) - 'Counts' "
+      + "ELSE jsonb_set(data, ARRAY['Counts'], \"counts\") END) - 'Tags' ELSE jsonb_set(CASE WHEN \"counts\" IS NULL THEN (data) - 'Counts' "
+      + "ELSE jsonb_set(data, ARRAY['Counts'], \"counts\") END, ARRAY['Tags'], \"tags\") END WHERE id = @wb_id");
+    await Assert.That(one).Contains("ARRAY['Tags']");
+    await Assert.That(one).DoesNotContain("Counts");
+    await Assert.That(BaseUpsertStrategy.DocumentCopySql<Model>(context, new Dictionary<string, object?> { ["labels"] = null })).IsNull();
+    await Assert.That(BaseUpsertStrategy.DocumentCopySql<Model>(context, new Dictionary<string, object?>())).IsNull();
+    await Assert.That(BaseUpsertStrategy.DocumentCopySql<Model>(context, null)).IsNull();
+  }
+
+  [Test]
+  public async Task StoredName_IsTheJsonName_OrTheMembersOwnAsync() {
+    Model.Register();
+
+    await Assert.That(PerspectiveDocumentSerialization.StoredName(typeof(PhysicalJsonbContainmentSqlTests.JsonbLabel), "Key")).IsEqualTo("k");
+    await Assert.That(PerspectiveDocumentSerialization.StoredName(typeof(PhysicalJsonbContainmentSqlTests.JsonbLabel), "Missing")).IsEqualTo("Missing");
+    await Assert.That(PerspectiveDocumentSerialization.StoredName(typeof(PhysicalJsonbContainmentSqlTests.JsonbUnlisted), "Name")).IsEqualTo("Name");
   }
 
   [Test]
