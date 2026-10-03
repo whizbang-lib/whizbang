@@ -83,7 +83,7 @@ public class EFCorePostgresPerspectiveStore<TModel>(
       var metadata = (PerspectiveMetadata?)System.Text.Json.JsonSerializer.Deserialize(
         reader.GetString(1 + columns.Count), options.GetTypeInfo(typeof(PerspectiveMetadata)));
       if (model is not null && split is not null) {
-        model = split.Hydrate(model, new Whizbang.Data.Postgres.Perspectives.NpgsqlPhysicalColumnReader(reader, columns));
+        model = split.Hydrate(model, new Whizbang.Data.Postgres.Perspectives.NpgsqlPhysicalColumnReader(reader, columns, options));
       }
       return (model, metadata);
     } finally {

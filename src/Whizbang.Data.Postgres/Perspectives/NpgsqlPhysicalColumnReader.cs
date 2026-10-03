@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Npgsql;
 using Whizbang.Core.Perspectives;
 
@@ -16,7 +18,8 @@ namespace Whizbang.Data.Postgres.Perspectives;
 /// </remarks>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperSplitPhysicalFieldReloadTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/BlueGreenRebuildIntegrationTests.cs</tests>
-public sealed class NpgsqlPhysicalColumnReader(NpgsqlDataReader reader, IReadOnlyList<SplitPhysicalColumn> columns)
+public sealed class NpgsqlPhysicalColumnReader(
+    NpgsqlDataReader reader, IReadOnlyList<SplitPhysicalColumn> columns, JsonSerializerOptions jsonOptions)
     : IPhysicalColumnReader {
 
   /// <inheritdoc/>
@@ -24,6 +27,12 @@ public sealed class NpgsqlPhysicalColumnReader(NpgsqlDataReader reader, IReadOnl
     var ordinal = _ordinal(column);
     if (reader.IsDBNull(ordinal)) {
       return default!;
+    }
+    // A jsonb column is read with the options it was written with, the store's, rather than the
+    // driver's: the driver can only map an object or a list by dynamic JSON, which this connection
+    // does not enable and which would not apply the persistence profile if it did.
+    if (string.Equals(reader.GetDataTypeName(ordinal), "jsonb", StringComparison.Ordinal)) {
+      return JsonSerializer.Deserialize(reader.GetString(ordinal), (JsonTypeInfo<T>)jsonOptions.GetTypeInfo(typeof(T)))!;
     }
     var type = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
     return type.IsEnum

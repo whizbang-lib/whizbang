@@ -32,6 +32,64 @@ public static class PhysicalColumnSql {
   public static string AddColumn(string qualifiedTable, string columnName, string columnType) =>
     $"ALTER TABLE {qualifiedTable} ADD COLUMN IF NOT EXISTS {columnName} {columnType};";
 
+  /// <summary>The suffix a retired text column is renamed with when its field became a jsonb column.</summary>
+  public const string TEXT_LEGACY_SUFFIX = "_text_legacy";
+
+  /// <summary>
+  /// Moves aside a TEXT column that an earlier release created for a field that is now a jsonb column, so the
+  /// column can be added as jsonb and filled; null for any other column.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Such a column held the field's type name rather than its value (an object, a list or a dictionary with no
+  /// declared type fell through to TEXT), so nothing in it can be cast. It is renamed to
+  /// <c>&lt;column&gt;_text_legacy</c>, never dropped: removing data is an operator's decision. Emitted before
+  /// <see cref="Arm"/>, so the column is absent when the arm looks, the jsonb column is armed for the fill and
+  /// added, and <see cref="Backfill"/> fills it from the document's copy.
+  /// </para>
+  /// <para>
+  /// Idempotent: it acts only while the column is TEXT and no legacy column exists, so a later start, and a
+  /// table created with the jsonb column, find nothing to do. A Split model's document has no copy, so the
+  /// warning says the perspective has to be rebuilt to fill the column.
+  /// </para>
+  /// </remarks>
+  /// <param name="qualifiedTable">The table, schema-qualified.</param>
+  /// <param name="field">The promoted field.</param>
+  /// <returns>One statement, or null.</returns>
+  /// <docs>fundamentals/perspectives/physical-fields#jsonb-text-columns</docs>
+  public static string? RetireTextColumn(string qualifiedTable, PhysicalFieldInfo field) {
+    if (field is null || !PhysicalFieldScalar.IsJsonb(field.ColumnType)) {
+      return null;
+    }
+
+    var column = field.ColumnName.ToLowerInvariant();
+    var legacy = Utilities.PostgresIdentifiers.WithinLimit(column + TEXT_LEGACY_SUFFIX);
+    var attribute = $"SELECT 1 FROM pg_attribute WHERE attrelid = '{qualifiedTable}'::regclass AND NOT attisdropped AND attname = ";
+    var then = field.IsSplit
+      ? "the document holds no copy, so it is empty until the perspective is rebuilt"
+      : "it is filled from the copy in the document";
+    return "DO $$ BEGIN\n"
+      + $"  IF EXISTS ({attribute}'{column}' AND atttypid = 'text'::regtype)\n"
+      + $"    AND NOT EXISTS ({attribute}'{legacy}') THEN\n"
+      + $"    ALTER TABLE {qualifiedTable} RENAME COLUMN {column} TO {legacy};\n"
+      + $"    RAISE WARNING 'Whizbang: {qualifiedTable.Replace("'", "''")}.{column} was text and is now jsonb. The text column is kept as {legacy} (drop it when no longer needed); {then}.';\n"
+      + "  END IF;\n"
+      + "END $$;";
+  }
+
+  /// <summary>
+  /// The containment index a jsonb column declares with <c>[Indexed(IndexKinds.Containment)]</c>: GIN with
+  /// <c>jsonb_path_ops</c>, the operator class that answers <c>@&gt;</c> and is smaller and faster than the
+  /// default one, which also answers key existence that no compiled filter asks.
+  /// </summary>
+  /// <param name="indexName">The index name.</param>
+  /// <param name="qualifiedTable">The table.</param>
+  /// <param name="columnName">The jsonb column.</param>
+  /// <returns>The statement.</returns>
+  /// <docs>fundamentals/perspectives/physical-fields#jsonb-columns</docs>
+  public static string ContainmentIndex(string indexName, string qualifiedTable, string columnName) =>
+    $"CREATE INDEX IF NOT EXISTS {indexName} ON {qualifiedTable} USING gin ({columnName} jsonb_path_ops);";
+
   /// <summary>
   /// Fills the column from the document for rows that have the value there but not in the column, or
   /// null when the value cannot be reproduced exactly from the document.

@@ -27,6 +27,7 @@ public static class JsonIndexDiscovery {
   private const int KIND_ORDERED = 1;
   private const int KIND_SUBSTRING = 2;
   private const int KIND_SEARCH = 4;
+  private const int KIND_CONTAINMENT = 8;
 
   /// <summary>
   /// The store type a field's extraction is cast to, or null when its extraction cannot carry an
@@ -233,6 +234,8 @@ public static class JsonIndexDiscovery {
       // hears about it instead of getting an index that answers nothing.
       var text = cast == JsonIndexCast.None;
       var (plain, folded) = _kindsFor(property, blanketKind, text);
+      // Containment is answered by a promoted jsonb column's own GIN index, never by an extraction.
+      plain = WithoutContainment(plain);
 
       if (plain != 0) {
         found.Add(_infoFor(property, cast.Value, plain, caseInsensitive: false, text));
@@ -482,6 +485,16 @@ public static class JsonIndexDiscovery {
   /// <param name="kind">The declared kinds.</param>
   /// <returns>True when <c>IndexKinds.Search</c> is among them.</returns>
   public static bool IncludesSearch(int kind) => (kind & KIND_SEARCH) != 0;
+
+  /// <summary>Whether a declared kind asks for a containment (GIN <c>jsonb_path_ops</c>) index.</summary>
+  /// <param name="kind">The declared kinds, combined.</param>
+  /// <returns>True when <c>IndexKinds.Containment</c> is among them.</returns>
+  public static bool IncludesContainment(int kind) => (kind & KIND_CONTAINMENT) != 0;
+
+  /// <summary>The declared kinds without containment, which only a promoted jsonb column answers.</summary>
+  /// <param name="kind">The declared kinds, combined.</param>
+  /// <returns>The kinds an extraction or a column btree serves.</returns>
+  public static int WithoutContainment(int kind) => kind & ~KIND_CONTAINMENT;
 
   /// <summary>
   /// Whether a combined kind includes the ordered capability.

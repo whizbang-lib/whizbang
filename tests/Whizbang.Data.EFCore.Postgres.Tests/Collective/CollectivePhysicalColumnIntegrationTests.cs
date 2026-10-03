@@ -46,7 +46,7 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Priority), "prio", FieldStorageMode.Split);
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Urgent), "urgent", FieldStorageMode.Split);
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Tags), "tags", FieldStorageMode.Split, columnType: "jsonb");
-    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Notes), "notes", FieldStorageMode.Split);
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Notes), "notes", FieldStorageMode.Split, columnType: "text");
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Kind), "kind", FieldStorageMode.Split, scalarType: typeof(int));
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Embedding), "embedding", FieldStorageMode.Split, isVector: true);
     PerspectivePhysicalFieldRegistry.Register(typeof(OrderModel), nameof(OrderModel.Priority), "priority", FieldStorageMode.Extracted);
@@ -491,7 +491,7 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     [PhysicalField(ColumnName = "prio")] public int Priority { get; set; }
     [PhysicalField] public bool Urgent { get; set; }
     [PhysicalField(ColumnType = "jsonb")] public List<TicketTag>? Tags { get; set; }
-    [PhysicalField] public List<TicketTag>? Notes { get; set; }
+    [PhysicalField(ColumnType = "text")] public List<TicketTag>? Notes { get; set; }
     [PhysicalField] public TicketKind Kind { get; set; }
     [VectorField(3)] public float[]? Embedding { get; set; }
     [PhysicalField(ColumnType = "jsonb")] public TicketSettings? Settings { get; set; }

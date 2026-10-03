@@ -56,6 +56,8 @@ public class EFCoreSnippets {
       // CanonicalTemporalConvention.
       entity.ComplexProperty(e => e.Data, d => {
         d.ToJson("data");
+        // Promoted jsonb fields are columns, read back by the hydrators, and are not mapped in the document.
+        /*__DATA_EXCLUSIONS__*/
       });
       entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
       entity.ComplexProperty(e => e.Scope, s => {

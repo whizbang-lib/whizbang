@@ -68,6 +68,37 @@ public static class PerspectivePhysicalFieldRegistry {
     return false;
   }
 
+  /// <summary>
+  /// The model's jsonb columns whose value the document holds as well (every storage mode but Split), in a
+  /// stable order: the writes that cannot produce the document's copy themselves restore it from these.
+  /// </summary>
+  /// <param name="modelType">The model type.</param>
+  /// <returns>The fields, ordered by property name; empty for a model with none.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs</tests>
+  public static IReadOnlyList<PerspectivePhysicalField> JsonbDocumentFields(Type modelType) =>
+    [.. _fields
+      .Where(entry => entry.Key.ModelType == modelType && entry.Value.IsJsonbColumn && entry.Value.InDocument)
+      .Select(entry => entry.Value)
+      .OrderBy(field => field.PropertyName, StringComparer.Ordinal)];
+
+  /// <summary>
+  /// Whether the model's promoted column with this name is a jsonb column, which a writer binds as JSON
+  /// text under the persistence profile rather than as the value's own driver type.
+  /// </summary>
+  /// <param name="modelType">The model type.</param>
+  /// <param name="columnName">The column name, as the runner's physical values are keyed.</param>
+  /// <returns>True when a field of the model is registered with that column and a jsonb column type.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectivePhysicalFieldRegistryTests.cs</tests>
+  public static bool IsJsonbColumn(Type modelType, string columnName) {
+    foreach (var ((type, _), field) in _fields) {
+      if (type == modelType && field.IsJsonbColumn && string.Equals(field.ColumnName, columnName, StringComparison.Ordinal)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   /// <summary>The physical field registered for a model property, if there is one.</summary>
   public static bool TryResolve(Type modelType, string propertyName, out PerspectivePhysicalField field) {
     if (modelType is null) {

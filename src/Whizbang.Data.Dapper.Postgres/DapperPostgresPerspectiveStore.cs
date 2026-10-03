@@ -61,7 +61,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     var model = (TModel?)JsonSerializer.Deserialize(json, typeInfo);
     return model is null || split is null
       ? model
-      : split.Hydrate(model, new NpgsqlPhysicalColumnReader(reader, split.Columns));
+      : split.Hydrate(model, new NpgsqlPhysicalColumnReader(reader, split.Columns, jsonOptions));
   }
 
   /// <summary>
@@ -359,8 +359,10 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       if (!_isPlainIdentifier(column)) {
         throw new ArgumentException($"'{column}' is not a plain column name.", nameof(values));
       }
-      var jsonb = PerspectivePhysicalFieldRegistry.TryResolveColumn(typeof(TModel), column, out var field) && field.IsJsonbColumn;
-      columns.Add((column, _physicalParameter($"p_pf{columns.Count}", value, jsonOptions, jsonb)));
+      var name = $"p_pf{columns.Count}";
+      columns.Add((column, PerspectivePhysicalFieldRegistry.IsJsonbColumn(typeof(TModel), column)
+        ? _jsonbParameter(name, value, jsonOptions)
+        : _physicalParameter(name, value, jsonOptions)));
     }
     return columns;
   }
@@ -371,17 +373,13 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   /// <summary>
   /// The driver sends the common types natively. An instant is sent in UTC, which is the same instant. An
   /// enumeration is sent as its underlying number, the form its column holds (see
-  /// <see cref="PerspectivePhysicalValues"/>). The value of a column registered as jsonb (an object, a dictionary,
-  /// a list) is sent as its JSON text, from the JSON options' contract for its type; an object there used to be
-  /// sent as its type's name, which no jsonb column parses. Elsewhere a collection the JSON options can describe (a
-  /// keyed list) is sent as its JSON text. Anything else (a vector, a value object a column type parses) is sent as
+  /// <see cref="PerspectivePhysicalValues"/>). A column registered as jsonb is bound by <see cref="_jsonbParameter"/>
+  /// instead. A collection the JSON options can describe (a keyed list) is sent as its JSON text. Anything else (a vector, a value object a column type parses) is sent as
   /// its text form. Both text forms go with no declared type, so the column's own type parses them, exactly as it
   /// would parse a literal.
   /// </summary>
-  private static NpgsqlParameter _physicalParameter(string name, object? value, JsonSerializerOptions jsonOptions, bool jsonb) => value switch {
+  private static NpgsqlParameter _physicalParameter(string name, object? value, JsonSerializerOptions jsonOptions) => value switch {
     null => new NpgsqlParameter(name, DBNull.Value),
-    _ when jsonb =>
-      new NpgsqlParameter(name, NpgsqlDbType.Unknown) { Value = JsonSerializer.Serialize(value, jsonOptions.GetTypeInfo(value.GetType())) },
     DateTimeOffset instant => new NpgsqlParameter(name, instant.ToUniversalTime()),
     Enum => new NpgsqlParameter(name, PerspectivePhysicalValues.ToColumnScalar(value)),
     string or Guid or bool or short or int or long or float or double or decimal
@@ -390,6 +388,18 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       new NpgsqlParameter(name, NpgsqlDbType.Unknown) { Value = JsonSerializer.Serialize(value, typeInfo) },
     _ => new NpgsqlParameter(name, NpgsqlDbType.Unknown) { Value = value.ToString() },
   };
+
+  /// <summary>
+  /// A jsonb column's value as JSON text under the store's options, the same options the document is written
+  /// with. Sent by its runtime type's metadata, so an object, a record, an array or a dictionary is written as
+  /// the JSON it is rather than as a native array or its type's name.
+  /// </summary>
+  private static NpgsqlParameter _jsonbParameter(string name, object? value, JsonSerializerOptions jsonOptions) =>
+    value is null
+      ? new NpgsqlParameter(name, NpgsqlDbType.Jsonb) { Value = DBNull.Value }
+      : new NpgsqlParameter(name, NpgsqlDbType.Jsonb) {
+        Value = JsonSerializer.Serialize(value, jsonOptions.GetTypeInfo(value.GetType())),
+      };
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 used for deterministic GUID generation, not for cryptographic security")]
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S4790:Using weak hashing algorithms is security-sensitive",

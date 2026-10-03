@@ -18,9 +18,9 @@ namespace Whizbang.Generators.Tests;
 ///
 /// <para>
 /// Two properties matter beyond the individual rows. Precision must not be silently lost — a long
-/// in an INTEGER column truncates, and a DateTimeOffset in a TIMESTAMP drops the offset. And the
-/// fallback must stay TEXT: an unrecognized type has to land somewhere that can hold its
-/// serialized form rather than failing the migration.
+/// in an INTEGER column truncates, and a DateTimeOffset in a TIMESTAMP drops the offset. And an
+/// object, a collection or a dictionary is a jsonb column, while a framework scalar the table does
+/// not know still lands in TEXT rather than failing the migration.
 /// </para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Generators/PerspectiveSchemaGenerator.cs</code-under-test>
@@ -73,6 +73,7 @@ public class PhysicalFieldTypeMappingTests {
   [Arguments("bool", "BOOLEAN")]
   [Arguments("Guid", "UUID")]
   [Arguments("DateTime", "TIMESTAMP")]
+  [Arguments("TimeSpan", "TEXT")]
   [Arguments("DateOnly", "DATE")]
   [Arguments("TimeOnly", "TIME")]
   public async Task PhysicalField_MapsTheClrTypeToItsColumnTypeAsync(string clrType, string expected) {
@@ -170,11 +171,36 @@ public class PhysicalFieldTypeMappingTests {
     await Assert.That(schema).Contains("CHECK (length(value) <= 64) NOT VALID");
   }
 
+  /// <summary>
+  /// Which types default to a jsonb column: objects, collections and dictionaries, and nothing the mapping
+  /// tables already type.
+  /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PhysicalField_UnknownType_FallsBackToTextAsync() {
-    // The fallback has to hold: an unmapped type must land in a column that can hold its
-    // serialized form rather than failing the whole migration over one property.
+  [Arguments("System.Collections.Generic.IReadOnlyList<string>", true)]
+  [Arguments("System.Collections.Generic.Dictionary<string, int>", true)]
+  [Arguments("string[]", true)]
+  [Arguments("Guid[]", true)]
+  [Arguments("int[][]", true)]
+  [Arguments("Uri", false)]
+  [Arguments("byte[]", false)]
+  [Arguments("float[]", false)]
+  [Arguments("double[]", false)]
+  [Arguments("object", false)]
+  [Arguments("DayOfWeek", false)]
+  [Arguments("DayOfWeek?", false)]
+  [Arguments("TimeSpan?", false)]
+  public async Task PhysicalField_DefaultsToJsonb_OnlyForObjectsCollectionsAndDictionariesAsync(string clrType, bool jsonb) {
+    var schema = _schemaFor(clrType);
+
+    await Assert.That(schema.Contains("value jsonb", StringComparison.Ordinal)).IsEqualTo(jsonb);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PhysicalField_UserStruct_IsAJsonbColumnAsync() {
+    // A type of the model's own is an object, and an object's column is jsonb. It used to fall
+    // through to TEXT, which held the type's name rather than its value.
     const string source = """
             using System;
             using Whizbang.Core;
@@ -204,7 +230,7 @@ public class PhysicalFieldTypeMappingTests {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
     var schema = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs") ?? string.Empty;
 
-    await Assert.That(schema).Contains("TEXT");
+    await Assert.That(schema).Contains("value jsonb");
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
   }
 

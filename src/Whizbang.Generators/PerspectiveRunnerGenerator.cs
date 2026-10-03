@@ -679,7 +679,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// nullable takes an empty array for a null column, as the strip does.
   /// </remarks>
   private static string _buildSplitPhysicalFieldRegistration(PerspectiveInfo perspective, string modelTypeName) {
-    if (perspective.StorageMode != 2 || perspective.PhysicalFields is not { Length: > 0 } fields) {
+    // A Split model reads every promoted field back from its column. Any other model reads back its jsonb
+    // columns: the EF Core model keeps them out of the mapped document, so the column is where they are.
+    PhysicalFieldInfoCompact[] promoted = perspective.PhysicalFields ?? [];
+    var fields = perspective.StorageMode == 2
+      ? promoted
+      : [.. promoted.Where(f => PhysicalFieldScalar.IsJsonb(f.ColumnType))];
+    if (fields.Length == 0) {
       return "";
     }
 
@@ -1329,7 +1335,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           ColumnName: columnName,
           IsVectorField: isVectorField,
           EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
-          ColumnType: columnType,
+          // An object, a collection or a dictionary is a jsonb column unless the author declared otherwise.
+          ColumnType: columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type),
           TypeName: TypeNameUtilities.FullyQualifiedWithNullability(property.Type)
       );
     }

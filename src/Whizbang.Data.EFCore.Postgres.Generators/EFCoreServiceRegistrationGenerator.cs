@@ -523,7 +523,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         StoredForms: storedForms,
         StoredFormProblems: storedFormProblems,
         IsModelRecord: modelType.IsRecord,
-        DocumentProperties: DocumentPropertyDiscovery.From(modelType as INamedTypeSymbol)
+        DocumentProperties: DocumentPropertyDiscovery.From(modelType as INamedTypeSymbol),
+        TableStorage: TableStorageInfo.From(modelType)
     );
   }
 
@@ -628,7 +629,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         StoredForms: candidate.StoredForms,
         StoredFormProblems: candidate.StoredFormProblems,
         IsModelRecord: candidate.IsModelRecord,
-        DocumentProperties: candidate.DocumentProperties
+        DocumentProperties: candidate.DocumentProperties,
+        TableStorage: candidate.TableStorage
     );
   }
 
@@ -703,7 +705,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       if (physicalFieldAttr is not null) {
         var info = _extractPhysicalFieldInfo(property, physicalFieldAttr);
         if (info is not null) {
-          physicalFields.Add(info with { IsSplit = isSplit });
+          physicalFields.Add(ColumnStorageSql.WithStorage(info, physicalFieldAttr) with { IsSplit = isSplit });
         }
       } else if (vectorFieldAttr is not null) {
         var info = _extractVectorFieldInfo(property, vectorFieldAttr);
@@ -908,7 +910,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var declaredKind = JsonIndexDiscovery.DeclaredKind(property) ?? 0;
     bool isSearch = JsonIndexDiscovery.IncludesSearch(declaredKind)
       && JsonIndexDiscovery.CastFor(property.Type) == JsonIndexCast.None;
-    bool isIndexed = (declaredKind & ~4) > 0;
+    // Containment is a GIN index of its own over a jsonb column, never a btree.
+    bool isIndexed = (JsonIndexDiscovery.WithoutContainment(declaredKind) & ~4) > 0;
 
     bool isUnique = false;
     string? columnName = null;
@@ -953,7 +956,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         VectorDistanceMetric: null,
         VectorIndexType: null,
         VectorIndexLists: null,
-        ColumnType: columnType,
+        // An object, a collection or a dictionary is a jsonb column unless the author declared otherwise.
+        ColumnType: columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type),
+        IsContainmentIndexed: PhysicalFieldScalar.IsContainmentIndexed(
+          declaredKind, columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type)),
         IsSearch: isSearch,
         EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
         EnumMembers: PhysicalFieldScalar.EnumMembers(property.Type),
@@ -2767,6 +2773,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"ALTER TABLE {quotedSchema}.{perspective.TableName} ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;");
     _appendSystemTimeMigrationSql(sb, perspective, quotedSchema);
     _appendLengthConstraintSql(sb, perspective, quotedSchema);
+    _appendStorageSql(sb, perspective, quotedSchema);
     sb.AppendLine();
   }
 
@@ -2815,6 +2822,28 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine($"      CHECK (length({field.ColumnName}) <= {maxLength}) NOT VALID;");
       sb.AppendLine("  END IF;");
       sb.AppendLine("END $$;");
+    }
+  }
+
+  /// <summary>
+  /// The declared storage options of the table and of its promoted columns: <c>SET STORAGE</c>,
+  /// <c>SET COMPRESSION</c>, <c>toast_tuple_target</c> and a size budget. Each compares the catalog and
+  /// alters only what differs, so a restart changes nothing.
+  /// </summary>
+  /// <param name="sb">The script being built.</param>
+  /// <param name="perspective">The perspective whose table is being written.</param>
+  /// <param name="quotedSchema">The schema, already quoted.</param>
+  private static void _appendStorageSql(StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
+    var table = $"{quotedSchema}.{perspective.TableName}";
+
+    foreach (var statement in ColumnStorageSql.ForTable(table, perspective.TableStorage)) {
+      sb.AppendLine(statement);
+    }
+
+    foreach (var field in perspective.PhysicalFields) {
+      foreach (var statement in ColumnStorageSql.ForColumn(table, perspective.TableName, field)) {
+        sb.AppendLine(statement);
+      }
     }
   }
 
@@ -2973,6 +3002,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     _appendPromotedFieldIndexes(sb, perspective, quotedSchema, shortName);
 
     foreach (var field in perspective.PhysicalFields) {
+      _appendContainmentIndex(sb, field, shortName, perspective.TableName, quotedSchema);
+
       if (!field.IsIndexed) {
         continue;
       }
@@ -2987,6 +3018,22 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine();
       }
     }
+  }
+
+  /// <summary>
+  /// The containment index of a jsonb column declaring <c>[Indexed(IndexKinds.Containment)]</c>, if it does.
+  /// </summary>
+  private static void _appendContainmentIndex(
+      StringBuilder sb, PhysicalFieldInfo field, string shortName, string tableName, string quotedSchema) {
+    if (!field.IsContainmentIndexed) {
+      return;
+    }
+
+    sb.AppendLine(PerspectiveIndexSql.Ensure(
+      PhysicalColumnSql.ContainmentIndex(
+        _indexName($"idx_{shortName}_{field.ColumnName}_gin"), $"{quotedSchema}.{tableName}", field.ColumnName),
+      quotedSchema));
+    sb.AppendLine();
   }
 
   /// <summary>
@@ -3201,6 +3248,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     perspSql.AppendLine($"ALTER TABLE {quotedSchema}.{perspective.TableName} ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;");
     _appendSystemTimeMigrationSql(perspSql, perspective, quotedSchema);
     _appendLengthConstraintSql(perspSql, perspective, quotedSchema);
+    _appendStorageSql(perspSql, perspective, quotedSchema);
   }
 
   /// <summary>
@@ -3228,6 +3276,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
     var table = $"{quotedSchema}.{perspective.TableName}";
     foreach (var field in perspective.PhysicalFields) {
+      // A TEXT column an earlier release created for a field that is now jsonb is moved aside first, so the
+      // jsonb column is armed, added and filled below like any new column.
+      if (PhysicalColumnSql.RetireTextColumn(table, field) is { } retire) {
+        sb.AppendLine(retire);
+      }
       // Armed before the column is added, so only the pass that adds it arms it (#1009).
       sb.AppendLine(PhysicalColumnSql.Arm(table, field));
       sb.AppendLine(PhysicalColumnSql.AddColumn(table, field.ColumnName, _getPostgresColumnType(field)));
@@ -3423,6 +3476,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     _appendDeclaredIndexes(perspSql, perspective, quotedSchema, shortName);
 
     foreach (var field in perspective.PhysicalFields) {
+      _appendContainmentIndex(perspSql, field, shortName, perspective.TableName, quotedSchema);
+
       if (field.IsIndexed) {
         if (field.IsVector && field.VectorDimensions.HasValue && field.VectorDimensions.Value <= 2000) {
           perspSql.AppendLine(PerspectiveIndexSql.Ensure(
@@ -3535,6 +3590,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     schemaIndexes.Add(new(_indexName($"idx_{shortName}_scope_gin"), ["scope"], "gin", false));
 
     foreach (var field in perspective.PhysicalFields) {
+      if (field.IsContainmentIndexed) {
+        schemaIndexes.Add(new(_indexName($"idx_{shortName}_{field.ColumnName}_gin"), [field.ColumnName], "gin", false));
+      }
+
       if (!field.IsIndexed) {
         continue;
       }
@@ -3607,6 +3666,7 @@ internal sealed record DbContextInfo(
 /// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
 /// <param name="IsModelRecord">True when the model is a record, which the hydrators copy with a <c>with</c> expression</param>
 /// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
+/// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3624,7 +3684,8 @@ internal sealed record PerspectiveModelInfo(
     ImmutableArray<StoredFormInfo> StoredForms,
     ImmutableArray<StoredFormProblem> StoredFormProblems,
     bool IsModelRecord,
-    ImmutableArray<string> DocumentProperties);
+    ImmutableArray<string> DocumentProperties,
+    TableStorageInfo? TableStorage = null);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -3648,6 +3709,7 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="StoredFormProblems">The stored-form declarations reported instead of generated</param>
 /// <param name="IsModelRecord">True when the model is a record, which the hydrators copy with a <c>with</c> expression</param>
 /// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
+/// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 internal sealed record PerspectiveModelCandidate(
     string PerspectiveClassName,
     string ModelTypeName,
@@ -3665,7 +3727,8 @@ internal sealed record PerspectiveModelCandidate(
     ImmutableArray<StoredFormInfo> StoredForms,
     ImmutableArray<StoredFormProblem> StoredFormProblems,
     bool IsModelRecord,
-    ImmutableArray<string> DocumentProperties);
+    ImmutableArray<string> DocumentProperties,
+    TableStorageInfo? TableStorage = null);
 
 /// <summary>
 /// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.

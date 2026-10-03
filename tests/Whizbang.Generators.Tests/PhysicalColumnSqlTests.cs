@@ -108,6 +108,44 @@ public class PhysicalColumnSqlTests {
     await Assert.That(PhysicalColumnSql.Backfill("t", _field("global::TestApp.Status"))).IsNull();
   }
 
+  [Test]
+  [Arguments("jsonb")]
+  [Arguments(" JSONB ")]
+  public async Task Extraction_AJsonbColumn_IsCopiedFromTheMemberAsItIsAsync(string columnType) {
+    var field = _field("global::System.Collections.Generic.List<string>") with { ColumnType = columnType };
+
+    await Assert.That(PhysicalColumnSql.Extraction(field)).IsEqualTo("(data -> 'P')")
+      .Because("the column holds exactly the JSON the document holds for the member, written by the same serializer");
+    await Assert.That(PhysicalColumnSql.Extraction(field with { IsSplit = true })).IsNull()
+      .Because("a Split document has no copy to fill the column from");
+  }
+
+  [Test]
+  public async Task RetireTextColumn_OnlyForAJsonbColumn_AndSaysWhetherTheDocumentCanFillItAsync() {
+    var jsonb = _field("global::System.Collections.Generic.List<string>") with { ColumnType = "jsonb" };
+
+    await Assert.That(PhysicalColumnSql.RetireTextColumn("t", _field("string"))).IsNull();
+    await Assert.That(PhysicalColumnSql.RetireTextColumn("t", jsonb)).Contains("RENAME COLUMN p TO p_text_legacy;");
+    await Assert.That(PhysicalColumnSql.RetireTextColumn("t", jsonb)).Contains("atttypid = 'text'::regtype");
+    await Assert.That(PhysicalColumnSql.RetireTextColumn("t", jsonb)).Contains("filled from the copy in the document");
+    await Assert.That(PhysicalColumnSql.RetireTextColumn("t", jsonb with { IsSplit = true })).Contains("until the perspective is rebuilt");
+  }
+
+  [Test]
+  public async Task ATextColumnForAJsonbField_IsRetiredBeforeTheColumnIsArmedAndAddedAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(_source("").Replace(
+      "[PhysicalField(ColumnType = \"citext\")]", "[PhysicalField]\n      public System.Collections.Generic.List<string> Tags { get; init; } = [];\n\n      [PhysicalField(ColumnType = \"citext\")]", StringComparison.Ordinal));
+    var sql = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
+
+    var retire = sql.IndexOf("RENAME COLUMN tags TO tags_text_legacy", StringComparison.Ordinal);
+    var add = sql.IndexOf("ADD COLUMN IF NOT EXISTS tags jsonb;", StringComparison.Ordinal);
+    var backfill = sql.IndexOf("SET tags = (data -> 'Tags')", StringComparison.Ordinal);
+
+    await Assert.That(retire).IsGreaterThan(-1);
+    await Assert.That(add).IsGreaterThan(retire);
+    await Assert.That(backfill).IsGreaterThan(add);
+  }
+
   private static PhysicalFieldInfo _field(string typeName) =>
     new("P", "p", typeName, IsIndexed: false, IsUnique: false, MaxLength: null, IsVector: false,
       VectorDimensions: null, VectorDistanceMetric: null, VectorIndexType: null, VectorIndexLists: null);

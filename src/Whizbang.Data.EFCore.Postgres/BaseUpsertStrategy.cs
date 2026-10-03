@@ -4,12 +4,14 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Serialization;
+using Whizbang.Data.EFCore.Postgres.Perspectives;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -475,11 +477,11 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       cmd.Parameters.Add(new NpgsqlParameter("wb_versionbump", hookPlan.BumpVersion ? 1 : 0));
       if (pfCount > 0) {
         var i = 0;
-        foreach (var value in args.PhysicalFieldValues!.Values) {
+        foreach (var (columnName, value) in args.PhysicalFieldValues!) {
           // value is what the consumer's source generator already coerced to the
           // EF-mapped CLR type (Vector for embedding columns, string/decimal/etc.
           // for scalars). Null values bind as DBNull so nullable columns work.
-          cmd.Parameters.Add(new NpgsqlParameter("pf_" + i, value ?? (object)DBNull.Value));
+          cmd.Parameters.Add(PhysicalColumnParameter("pf_" + i, entityType?.FindProperty(columnName), value));
           i++;
         }
       }
@@ -501,6 +503,35 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         await connection.CloseAsync();
       }
     }
+  }
+
+  /// <summary>
+  /// The parameter for one physical column's value in the atomic upsert.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A jsonb column is bound as jsonb text produced by the column's own converter, the one the model
+  /// reads it back with, so the atomic write and the change-tracker write store the same bytes under the
+  /// persistence profile. Left to Npgsql's inference, a list of strings becomes a <c>text[]</c> the column
+  /// refuses, a <c>Dictionary&lt;string, string&gt;</c> becomes an <c>hstore</c>, and any other object is
+  /// written with the data source's options rather than the document's.
+  /// </para>
+  /// <para>
+  /// Every other column binds the value as it is, which is what the generated runner already coerced it to.
+  /// </para>
+  /// </remarks>
+  /// <param name="name">The parameter name.</param>
+  /// <param name="property">The column's property in the model, if the model has one.</param>
+  /// <param name="value">The value.</param>
+  /// <returns>The parameter.</returns>
+  internal static NpgsqlParameter PhysicalColumnParameter(string name, IReadOnlyProperty? property, object? value) {
+    if (value is not null
+        && property?.GetValueConverter() is { } converter
+        && string.Equals(property.GetColumnType(), "jsonb", StringComparison.OrdinalIgnoreCase)) {
+      return new NpgsqlParameter(name, NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = converter.ConvertToProvider(value)! };
+    }
+
+    return new NpgsqlParameter(name, value ?? DBNull.Value);
   }
 
   /// <summary>
@@ -751,11 +782,78 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       }
     }
 
-    await context.SaveChangesAsync(cancellationToken);
+    var copyStatement = DocumentCopySql<TModel>(context, physicalFieldValues);
+    if (copyStatement is null) {
+      await context.SaveChangesAsync(cancellationToken);
+    } else {
+      await _saveWithDocumentCopyAsync(context, copyStatement, id, cancellationToken);
+    }
 
     if (ClearChangeTrackerAfterSave) {
       context.ChangeTracker.Clear();
     }
+  }
+
+  /// <summary>
+  /// Saves the row and then restores the document's copy of its jsonb columns, in one transaction.
+  /// </summary>
+  /// <remarks>
+  /// Joins the caller's transaction when there is one; otherwise opens its own under the context's execution
+  /// strategy, so a row is never left saved with a document missing a copy the next statement would add.
+  /// </remarks>
+  private static async Task _saveWithDocumentCopyAsync(
+      DbContext context, string copyStatement, Guid id, CancellationToken cancellationToken) {
+    if (context.Database.CurrentTransaction is not null) {
+      await context.SaveChangesAsync(cancellationToken);
+      await context.Database.ExecuteSqlRawAsync(copyStatement, [new NpgsqlParameter("wb_id", id)], cancellationToken);
+      return;
+    }
+
+    await context.Database.CreateExecutionStrategy().ExecuteAsync(async ct => {
+      await using var transaction = await context.Database.BeginTransactionAsync(ct);
+      await context.SaveChangesAsync(ct);
+      await context.Database.ExecuteSqlRawAsync(copyStatement, [new NpgsqlParameter("wb_id", id)], ct);
+      await transaction.CommitAsync(ct);
+    }, cancellationToken);
+  }
+
+  /// <summary>
+  /// The statement that writes the document's copy of each jsonb column this write set, or null when there is
+  /// none to write.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The change-tracker write stores the document through its mapping, which leaves a jsonb field out (the
+  /// column is its mapped home), while the atomic upsert serializes the whole model and so keeps the field in
+  /// the document too. Demotion, the backfill of a new column and any reader of the document assume the copy is
+  /// there, so this path puts it back: from the column itself, so the two hold the same bytes, and removed for
+  /// a null, as the persistence profile omits a null member.
+  /// </para>
+  /// <para>
+  /// A Split model's document holds no copy, so it has no fields here. The key is the member's stored name.
+  /// </para>
+  /// </remarks>
+  internal static string? DocumentCopySql<TModel>(DbContext context, IDictionary<string, object?>? physicalFieldValues)
+      where TModel : class {
+    if (physicalFieldValues is null || physicalFieldValues.Count == 0) {
+      return null;
+    }
+
+    var document = "data";
+    foreach (var field in PerspectivePhysicalFieldRegistry.JsonbDocumentFields(typeof(TModel))) {
+      if (!physicalFieldValues.ContainsKey(field.ColumnName)) {
+        continue;
+      }
+
+      var key = PerspectiveDocumentSerialization.StoredName(typeof(TModel), field.PropertyName).Replace("'", "''");
+      var column = "\"" + field.ColumnName.Replace("\"", "\"\"") + "\"";
+      document = $"CASE WHEN {column} IS NULL THEN ({document}) - '{key}' "
+        + $"ELSE jsonb_set({document}, ARRAY['{key}'], {column}) END";
+    }
+
+    return document == "data"
+      ? null
+      : $"UPDATE {PerspectiveRowVersionSql.QualifiedTable<TModel>(context)} SET data = {document} WHERE id = @wb_id";
   }
 
   private static PerspectiveRow<TModel> _createNewRow<TModel>(

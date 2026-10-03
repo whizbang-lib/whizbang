@@ -711,7 +711,8 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     await Assert.That(generated).Contains("entity.Property<System.Guid?>(\"optional_ref\")");
 
     await Assert.That(generated).Contains("entity.Property<System.DateTime>(\"local_stamp\")");
-    await Assert.That(generated).Contains(".HasColumnType(\"timestamp\")");
+    await Assert.That(generated).DoesNotContain(".HasColumnType(\"timestamp\")")
+      .Because("a DateTime column is timestamptz in the table, and the model describes the same column.");
     await Assert.That(generated).Contains("entity.Property<System.DateTimeOffset>(\"recorded_at\")");
     await Assert.That(generated).Contains(".HasColumnType(\"timestamptz\")");
     await Assert.That(generated).Contains("entity.Property<System.DateOnly>(\"day\")");

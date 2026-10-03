@@ -48,6 +48,12 @@ namespace Whizbang.Generators.Shared.Models;
 /// <param name="IsReadOnly">
 /// True when the property has no setter at all (a computed value), so there is nothing to copy a column into.
 /// </param>
+/// <param name="Storage">The column's declared <c>SET STORAGE</c> strategy (<c>MAIN</c>, …), or null to leave it.</param>
+/// <param name="Compression">The column's declared compression method (<c>lz4</c>, <c>pglz</c>), or null to leave it.</param>
+/// <param name="MaxBytes">The column's declared size budget in bytes, enforced by a check constraint, or null.</param>
+/// <param name="IsContainmentIndexed">
+/// True when a jsonb column declares <c>[Indexed(IndexKinds.Containment)]</c>: it gets a GIN <c>jsonb_path_ops</c> index.
+/// </param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Models/PhysicalFieldInfoTests.cs</tests>
 public sealed record PhysicalFieldInfo(
@@ -69,7 +75,11 @@ public sealed record PhysicalFieldInfo(
     string? EnumMembers = null,
     bool EnumIsFlags = false,
     bool IsInitOnly = false,
-    bool IsReadOnly = false
+    bool IsReadOnly = false,
+    string? Storage = null,
+    string? Compression = null,
+    int? MaxBytes = null,
+    bool IsContainmentIndexed = false
 );
 
 /// <summary>
