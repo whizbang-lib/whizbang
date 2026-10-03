@@ -57,6 +57,33 @@ public class PerspectivePurgeMarkerStoreTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task AStoreForAnotherSchema_ReadsAndWritesThatSchemasTable_AndLeavesPublicAloneAsync() {
+    // A service whose tables live outside public, reached over the shared data source whose search path is
+    // public: the store must qualify the table, or every apply fails on a missing relation.
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    await using (var setup = await dataSource.OpenConnectionAsync()) {
+      await using var create = new NpgsqlCommand(
+        """
+        CREATE SCHEMA IF NOT EXISTS purge_marker_svc;
+        CREATE TABLE IF NOT EXISTS purge_marker_svc.wh_stream_purge_markers
+          (LIKE public.wh_stream_purge_markers INCLUDING ALL);
+        """, setup);
+      await create.ExecuteNonQueryAsync();
+    }
+    var inSchema = new PostgresPerspectivePurgeMarkerStore(dataSource.OpenConnectionAsync, "purge_marker_svc");
+    var inPublic = new PostgresPerspectivePurgeMarkerStore(dataSource.OpenConnectionAsync);
+    var stream = Guid.CreateVersion7();
+
+    await inSchema.MarkPurgedAsync(stream, PERSPECTIVE_NAME, null);
+
+    await Assert.That(await inSchema.IsPurgedAsync(stream, PERSPECTIVE_NAME)).IsTrue();
+    await Assert.That(await inPublic.IsPurgedAsync(stream, PERSPECTIVE_NAME)).IsFalse()
+      .Because("the marker belongs to the service's own schema");
+    await inSchema.ClearAsync(stream, PERSPECTIVE_NAME);
+    await Assert.That(await inSchema.IsPurgedAsync(stream, PERSPECTIVE_NAME)).IsFalse();
+  }
+
+  [Test]
   public async Task Purge_ThenALaterBatch_LeavesNoRow_AndRebuildAgreesAsync() {
     var stream = Guid.CreateVersion7();
     var events = new InMemoryEventStore();

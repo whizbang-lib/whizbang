@@ -242,11 +242,20 @@ public static class PostgresDriverExtensions {
         // TURNKEY: purged perspective rows stay purged (the markers the runner consults on a missing row), and the
         // operator stream purge. Both are the shared Postgres implementations over the same NpgsqlDataSource.
         // <docs>operations/infrastructure/purging-streams</docs>
+        // Schema-qualified for the same reason as the statistics provider below: the connection comes
+        // from the shared data source, whose search path is not the service's schema.
+        string defaultSchema(IServiceProvider services) {
+          using var scope = services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
+          return dbContext.Model.GetDefaultSchema() ?? "public";
+        }
         selector.Services.TryAddSingleton<IPerspectivePurgeMarkerStore>(sp =>
-          new PostgresPerspectivePurgeMarkerStore(sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync));
+          new PostgresPerspectivePurgeMarkerStore(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync, defaultSchema(sp)));
         selector.Services.TryAddSingleton<IStreamPurger>(sp =>
           new PostgresStreamPurger(
             sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            defaultSchema(sp),
             logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
 
         // TURNKEY: managed-resource health for the event-store DB. AlwaysRequired — a DB fault is a

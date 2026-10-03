@@ -106,8 +106,10 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     await Assert.That(provider.GetServices<IReleasesDutiesOnShutdown>().Single()).IsSameReferenceAs(elector);
     await Assert.That(provider.GetRequiredService<IRoleAssignmentReader>()).IsSameReferenceAs(elector);
     await Assert.That(provider.GetRequiredService<IPendingDutyWorkStore>()).IsTypeOf<PgPendingDutyWorkStore>();
+    // Registered through a factory (it reads through a deferred reader), so the descriptor names the type by
+    // the factory's return type rather than ImplementationType.
     await Assert.That(services.Count(d => d.ServiceType == typeof(Whizbang.Core.Health.IWhizbangHealthSource)
-        && d.ImplementationType == typeof(Whizbang.Core.Health.RoleAssignmentHealthSource))).IsEqualTo(1);
+        && d.ImplementationFactory?.Method.ReturnType == typeof(Whizbang.Core.Health.RoleAssignmentHealthSource))).IsEqualTo(1);
     var health = ActivatorUtilities.CreateInstance<Whizbang.Core.Health.RoleAssignmentHealthSource>(provider);
     await Assert.That((await health.ReportAsync(cancellationToken)).State).IsEqualTo(Whizbang.Core.Health.ComponentState.Operational)
       .Because("this instance holds the maintainer and stamper roles right now, and the migrator is idle between migrations");

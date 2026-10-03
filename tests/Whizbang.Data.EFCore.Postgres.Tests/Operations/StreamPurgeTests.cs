@@ -218,15 +218,21 @@ public class StreamPurgeTests : EFCoreTestBase {
   public async Task Driver_RegistersThePurgeMarkersAndTheStreamPurgerAsync() {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
-    services.AddDbContext<PostgresTestDbContext>(options => options.UseInMemoryDatabase("StreamPurgeRegistrationDb"));
+    // The driver reads the model's default schema to qualify the purge tables, so the context's model must
+    // build: an empty model with a schema does, and nothing connects.
+    services.AddDbContext<PurgeRegistrationDbContext>(options => options.UseNpgsql("Host=localhost;Database=unused"));
     services.AddSingleton(NpgsqlDataSource.Create("Host=localhost;Database=unused"));
-    var selector = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>();
+    var selector = new WhizbangPerspectiveBuilder(services).WithEFCore<PurgeRegistrationDbContext>();
     _ = selector.WithDriver.Postgres;
 
     await using var sp = services.BuildServiceProvider();
 
     await Assert.That(sp.GetRequiredService<IPerspectivePurgeMarkerStore>()).IsTypeOf<PostgresPerspectivePurgeMarkerStore>();
     await Assert.That(sp.GetRequiredService<IStreamPurger>()).IsTypeOf<PostgresStreamPurger>();
+  }
+
+  private sealed class PurgeRegistrationDbContext(DbContextOptions<PurgeRegistrationDbContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) => modelBuilder.HasDefaultSchema("purge_registration");
   }
 
   // -------------------------------------------------------------------------------------------

@@ -9,16 +9,20 @@ namespace Whizbang.Data.Postgres;
 /// marker commits before the runner removes the row.
 /// </summary>
 /// <param name="openConnection">Opens a connection to the service's database.</param>
+/// <param name="schema">The schema, unquoted; null resolves the table through the connection's search path. A
+/// service whose tables live outside <c>public</c> must pass it: the connection comes from a shared data source.</param>
 /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePurgeMarkerStoreTests.cs</tests>
 public sealed class PostgresPerspectivePurgeMarkerStore(
-  Func<CancellationToken, ValueTask<NpgsqlConnection>> openConnection) : IPerspectivePurgeMarkerStore {
+  Func<CancellationToken, ValueTask<NpgsqlConnection>> openConnection,
+  string? schema = null) : IPerspectivePurgeMarkerStore {
+  private readonly string _table = (schema is null ? string.Empty : SqlText.Identifier(schema) + ".") + "wh_stream_purge_markers";
 
   /// <inheritdoc />
   public async Task<bool> IsPurgedAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
     await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
     await using var command = new NpgsqlCommand(
-      "SELECT EXISTS (SELECT 1 FROM wh_stream_purge_markers WHERE stream_id = $1 AND perspective_name IN ($2, $3))",
+      $"SELECT EXISTS (SELECT 1 FROM {_table} WHERE stream_id = $1 AND perspective_name IN ($2, $3))",
       connection);
     command.Parameters.AddWithValue(streamId);
     command.Parameters.AddWithValue(perspectiveName);
@@ -30,8 +34,8 @@ public sealed class PostgresPerspectivePurgeMarkerStore(
   public async Task MarkPurgedAsync(Guid streamId, string perspectiveName, Guid? purgeEventId, CancellationToken cancellationToken = default) {
     await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
     await using var command = new NpgsqlCommand(
-      """
-      INSERT INTO wh_stream_purge_markers (stream_id, perspective_name, purged_at, purge_event_id)
+      $"""
+      INSERT INTO {_table} (stream_id, perspective_name, purged_at, purge_event_id)
       VALUES ($1, $2, NOW(), $3)
       ON CONFLICT (stream_id, perspective_name) DO UPDATE
         SET purged_at = EXCLUDED.purged_at, purge_event_id = EXCLUDED.purge_event_id
@@ -47,7 +51,7 @@ public sealed class PostgresPerspectivePurgeMarkerStore(
   public async Task ClearAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
     await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
     await using var command = new NpgsqlCommand(
-      "DELETE FROM wh_stream_purge_markers WHERE stream_id = $1 AND perspective_name = $2",
+      $"DELETE FROM {_table} WHERE stream_id = $1 AND perspective_name = $2",
       connection);
     command.Parameters.AddWithValue(streamId);
     command.Parameters.AddWithValue(perspectiveName);
