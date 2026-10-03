@@ -40,6 +40,7 @@ public class MigrationBootstrapRegionsTests {
     "108_InstanceCapabilities.sql",       // record_capability itself
     "153_PerspectiveForms.sql",           // the stored-form ledger and function the elected migrator's rewrite needs
     "176_StoredFormMigrations.sql",       // the stored-form migration journal the same rewrite phase reads and writes
+    "184_RoleAssignmentResilience.sql",   // the role vote, renewal, release and fence the migrator is elected by (#966)
   ];
 
   /// <summary>The objects an election cannot happen without.</summary>
@@ -167,7 +168,7 @@ public class MigrationBootstrapRegionsTests {
   }
 
   /// <summary>
-  /// The bootstrap subset is the four migrations the election cycle needs plus the one the elected
+  /// The bootstrap subset is the migrations the election cycle needs plus the ones the elected
   /// migrator's first act needs, and no others.
   /// </summary>
   /// <remarks>
@@ -175,10 +176,11 @@ public class MigrationBootstrapRegionsTests {
   /// instance applies the subset on every start, before anything is elected — so it should take a
   /// deliberate change to this list rather than happening by accident. The fifth entry is the
   /// stored-form ledger and function: the rewrite runs on the migrator right after the election and
-  /// ahead of the migration pass, so what it reads and calls has to exist by then.
+  /// ahead of the migration pass, so what it reads and calls has to exist by then. Since #966 the
+  /// migrator is held by a role assignment, so the vote that elects it is bootstrap too.
   /// </remarks>
   [Test]
-  public async Task TheBootstrapSubsetIsTheFiveMigrationsStartupNeedsAsync() {
+  public async Task TheBootstrapSubsetIsTheMigrationsStartupNeedsAsync() {
     var marked = _migrations()
       .Where(m => MigrationBootstrapRegions.Extract(m.Sql) is not null)
       .Select(m => m.Name)

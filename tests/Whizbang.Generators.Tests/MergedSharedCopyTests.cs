@@ -296,19 +296,28 @@ public class MergedSharedCopyTests {
     const string physicalField = "Whizbang.Generators.Shared.Models.PhysicalFieldInfo";
     var fieldType = _type(host.Assembly, physicalField);
 
-    // Every constructor parameter, positionally: Activator.CreateInstance matches arity exactly and
-    // does not apply a defaulted parameter, so a member added to the record has to be added here.
-    // The trailing null is ColumnType, then IsSplit, IsSearch, EnumScalarType, EnumMembers, EnumIsFlags,
-    // IsInitOnly and IsReadOnly.
-    object?[] arguments = [
-      "Embedding", "embedding", "float[]", true, false, null, true, null, null, null, null, null, false, false, null, null, false, false, false,
-    ];
-    var one = Activator.CreateInstance(fieldType, arguments)!;
-    var same = Activator.CreateInstance(fieldType, arguments)!;
+    // Every constructor parameter, by name: Activator.CreateInstance matches arity exactly and does not
+    // apply a defaulted parameter, so each one is supplied, with its declared default unless named here.
+    var parameters = fieldType.GetConstructors().OrderByDescending(static c => c.GetParameters().Length).First().GetParameters();
+    var baseline = new Dictionary<string, object?>(StringComparer.Ordinal) {
+      ["PropertyName"] = "Embedding",
+      ["ColumnName"] = "embedding",
+      ["TypeName"] = "float[]",
+      ["IsIndexed"] = true,
+      ["IsUnique"] = false,
+      ["IsVector"] = true,
+    };
+    object?[] arguments(params (string Name, object? Value)[] overrides) {
+      var values = new Dictionary<string, object?>(baseline, StringComparer.Ordinal);
+      foreach (var (name, value) in overrides) {
+        values[name] = value;
+      }
+      return [.. parameters.Select(p => _argument(p, values))];
+    }
 
-    object?[] differing = [.. arguments];
-    differing[1] = "a_different_column";
-    var other = Activator.CreateInstance(fieldType, differing)!;
+    var one = Activator.CreateInstance(fieldType, arguments())!;
+    var same = Activator.CreateInstance(fieldType, arguments())!;
+    var other = Activator.CreateInstance(fieldType, arguments(("ColumnName", "a_different_column")))!;
 
     await Assert.That(ReferenceEquals(one, same)).IsFalse()
       .Because("these are two separate instances; comparing them is the point of the test");
@@ -317,51 +326,32 @@ public class MergedSharedCopyTests {
              + "incremental cache depends on that being true across the merge boundary");
     await Assert.That(one.GetHashCode()).IsEqualTo(same.GetHashCode())
       .Because("equal values must hash alike or the cache lookup misses even when equality holds");
-    // The newest member has to take part in equality too, or two fields differing only in the
-    // column type the author declared would share a cache entry and one of them would be generated
-    // with the other's type.
-    object?[] differingType = [.. arguments];
-    differingType[^8] = "uuid[]";
-    var declaredType = Activator.CreateInstance(fieldType, differingType)!;
-    await Assert.That(one.Equals(declaredType)).IsFalse()
-      .Because("a declared column type is part of what makes the field the value it is");
-    // And the split flag: a field that became Split must not share a cache entry with its Extracted self,
-    // or the schema would keep backfilling a column the document no longer has a copy for.
-    object?[] differingSplit = [.. arguments];
-    differingSplit[^7] = true;
-    var split = Activator.CreateInstance(fieldType, differingSplit)!;
-    await Assert.That(one.Equals(split)).IsFalse()
-      .Because("whether the field is Split is part of what makes it the value it is");
-    object?[] differingSearch = [.. arguments];
-    differingSearch[^6] = true;
-    var search = Activator.CreateInstance(fieldType, differingSearch)!;
-    await Assert.That(one.Equals(search)).IsFalse()
-      .Because("whether the field is searched is part of what makes it the value it is");
-    object?[] differingScalar = [.. arguments];
-    differingScalar[^5] = "System.Int32";
-    var scalar = Activator.CreateInstance(fieldType, differingScalar)!;
-    await Assert.That(one.Equals(scalar)).IsFalse()
-      .Because("an enumeration's column scalar decides the column type, so it is part of the value");
-    object?[] differingMembers = [.. arguments];
-    differingMembers[^4] = "A=0";
-    var members = Activator.CreateInstance(fieldType, differingMembers)!;
-    await Assert.That(one.Equals(members)).IsFalse()
-      .Because("an enumeration's members decide the rewrite generated for its column, so they are part of the value");
-    object?[] differingFlags = [.. arguments];
-    differingFlags[^3] = true;
-    var flags = Activator.CreateInstance(fieldType, differingFlags)!;
-    await Assert.That(one.Equals(flags)).IsFalse()
-      .Because("whether an enumeration is [Flags] decides whether its rewrite decodes combined names, so it is part of the value");
-    object?[] differingInitOnly = [.. arguments];
-    differingInitOnly[^2] = true;
-    var initOnly = Activator.CreateInstance(fieldType, differingInitOnly)!;
-    await Assert.That(one.Equals(initOnly)).IsFalse()
-      .Because("whether the property is init-only decides how a hydrator copies its column, so it is part of the value");
-    object?[] differingReadOnly = [.. arguments];
-    differingReadOnly[^1] = true;
-    var readOnly = Activator.CreateInstance(fieldType, differingReadOnly)!;
-    await Assert.That(one.Equals(readOnly)).IsFalse()
-      .Because("whether the property has a setter decides whether a hydrator copies its column at all, so it is part of the value");
+
+    // Every member past the original vector settings has to take part in equality too, or two fields
+    // differing only in it would share a cache entry and one of them would be generated with the other's
+    // settings: the declared column type, Split, search, an enumeration's scalar, members and [Flags],
+    // init-only and read-only, and the column's storage, compression, size budget and containment index.
+    (string Name, object Value)[] members = [
+      ("ColumnType", "uuid[]"),
+      ("IsSplit", true),
+      ("IsSearch", true),
+      ("EnumScalarType", "System.Int32"),
+      ("EnumMembers", "A=0"),
+      ("EnumIsFlags", true),
+      ("IsInitOnly", true),
+      ("IsReadOnly", true),
+      ("Storage", "MAIN"),
+      ("Compression", "lz4"),
+      ("MaxBytes", 2048),
+      ("IsContainmentIndexed", true),
+    ];
+    foreach (var member in members) {
+      await Assert.That(parameters.Select(p => p.Name)).Contains(member.Name)
+        .Because($"{member.Name} is a member of the record");
+      var differing = Activator.CreateInstance(fieldType, arguments(member))!;
+      await Assert.That(one.Equals(differing)).IsFalse()
+        .Because($"{member.Name} is part of what makes the field the value it is");
+    }
 
     await Assert.That(one.Equals(other)).IsFalse()
       .Because("a copy that found every field equal would cache a stale result and emit code for "
@@ -369,6 +359,14 @@ public class MergedSharedCopyTests {
     await Assert.That(one.ToString()).Contains("Embedding")
       .Because("the record's generated ToString is what a generator diagnostic prints when it "
              + "reports which field it choked on");
+  }
+
+  /// <summary>The value for one constructor parameter: the named value, else its declared default.</summary>
+  private static object? _argument(System.Reflection.ParameterInfo parameter, Dictionary<string, object?> values) {
+    if (values.TryGetValue(parameter.Name!, out var value)) {
+      return value;
+    }
+    return parameter.HasDefaultValue ? parameter.DefaultValue : null;
   }
 
   // ── The symbol-dependent surface, per host ────────────────────────────────

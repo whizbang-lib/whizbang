@@ -215,8 +215,10 @@ public class CanonicalTemporalRewriteWiringTests {
       .Because("the probe decides whether there is anything to wait for");
     await Assert.That(wait).IsLessThan(rewrite)
       .Because("the rewrite follows the wait rather than sitting inside its own for the whole budget");
-    await Assert.That(output).Contains("var watchedKey = isWaiter", StringComparison.Ordinal)
-      .Because("a waiter watches the duty lock and everyone else watches the schema lock, through one wait");
+    await Assert.That(output).Contains("isMigrating = isWaiter", StringComparison.Ordinal)
+      .Because("a waiter watches the migrator and everyone else watches the schema lock, through one wait");
+    await Assert.That(output).Contains("Whizbang.Data.Postgres.MigratorWatch.IsMigratingElsewhereAsync(waitConnection,", StringComparison.Ordinal)
+      .Because("the migrator holds its duty by assignment, so a waiter watches its assignment row (#966)");
   }
 
   /// <summary>

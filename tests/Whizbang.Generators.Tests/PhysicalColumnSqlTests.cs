@@ -139,7 +139,7 @@ public class PhysicalColumnSqlTests {
 
     var retire = sql.IndexOf("RENAME COLUMN tags TO tags_text_legacy", StringComparison.Ordinal);
     var add = sql.IndexOf("ADD COLUMN IF NOT EXISTS tags jsonb;", StringComparison.Ordinal);
-    var backfill = sql.IndexOf("SET tags = (data -> 'Tags')", StringComparison.Ordinal);
+    var backfill = sql.IndexOf("SET tags = NULLIF(data -> 'Tags', 'null'::jsonb)", StringComparison.Ordinal);
 
     await Assert.That(retire).IsGreaterThan(-1);
     await Assert.That(add).IsGreaterThan(retire);
