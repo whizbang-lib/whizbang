@@ -135,9 +135,9 @@ public static class SagaServiceCollectionExtensions {
   private static SagaOptions _bindFromConfiguration(IConfiguration? configuration, SagaOptions options) {
     if (configuration is not null) {
       var section = new SagaConfigurationSection();
-#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+#pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
       ConfigurationBinder.Bind(configuration.GetSection("Whizbang:Sagas"), section);
-#pragma warning restore IL2026
+#pragma warning restore IL2026, IL3050
       section.ApplyTo(options);
     }
     return options;

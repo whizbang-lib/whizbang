@@ -22,25 +22,25 @@ internal sealed class AspNetOptionsConfigurationBinder(IConfiguration? configura
 
   public void Configure(WhizbangAvailabilityOptions options) {
     if (configuration is not null) {
-#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+#pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
       ConfigurationBinder.Bind(configuration.GetSection("Whizbang:AspNet:Availability"), options);
-#pragma warning restore IL2026
+#pragma warning restore IL2026, IL3050
     }
   }
 
   public void Configure(WhizbangCorrelationOptions options) {
     if (configuration is not null) {
-#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+#pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
       ConfigurationBinder.Bind(configuration.GetSection("Whizbang:AspNet:Correlation"), options);
-#pragma warning restore IL2026
+#pragma warning restore IL2026, IL3050
     }
   }
 
   public void Configure(WhizbangSecurityHeadersOptions options) {
     if (configuration is not null) {
-#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+#pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
       ConfigurationBinder.Bind(configuration.GetSection("Whizbang:AspNet:SecurityHeaders"), options);
-#pragma warning restore IL2026
+#pragma warning restore IL2026, IL3050
     }
   }
 }

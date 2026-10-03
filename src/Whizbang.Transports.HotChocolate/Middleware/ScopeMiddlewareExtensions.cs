@@ -67,9 +67,9 @@ public static class ScopeMiddlewareExtensions {
   /// </summary>
   private static WhizbangScopeOptions _bindFromConfiguration(IConfiguration? configuration, WhizbangScopeOptions options) {
     if (configuration is not null) {
-#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+#pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
       ConfigurationBinder.Bind(configuration.GetSection("Whizbang:Scope"), options);
-#pragma warning restore IL2026
+#pragma warning restore IL2026, IL3050
     }
     return options;
   }
