@@ -17,6 +17,13 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class PerspectiveRunnerGenerator : IIncrementalGenerator {
+  /// <summary>
+  /// Separates a member's name from its default expression inside one <c>MemberDefaults</c> entry. A control
+  /// character, because the expression can be a string literal containing any printable separator; C# escaping
+  /// renders a real control character as <c>\uXXXX</c>, so it can never appear in the literal text itself.
+  /// </summary>
+  private const char MEMBER_DEFAULT_SEPARATOR = '\u0001';
+
   private const string PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
   private const string PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
@@ -187,6 +194,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Discover physical fields (including vector fields) on model properties
     var physicalFields = _discoverPhysicalFields(modelType);
 
+    // Discover what each member reads as when the document has no key for it (#1044)
+    var memberDefaults = _discoverMemberDefaults(modelType);
+
     // Extract storage mode from [PerspectiveStorage] attribute on model type
     var storageMode = _extractStorageMode(modelType);
 
@@ -215,6 +225,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
             EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
             PhysicalFields: physicalFields.Length > 0 ? physicalFields : null,
+            MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null,
             StorageMode: storageMode,
             IsModelRecord: isModelRecord,
             HasScopeInterface: hasScopeInterface,
@@ -535,6 +546,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // to send a setter or a condition on a physical property to its column (no reflection at run time).
     result = TemplateUtilities.ReplaceRegion(result, "PHYSICAL_FIELD_REGISTRATION",
         _buildPhysicalFieldRegistration(perspective, modelTypeName));
+    // Member defaults register the same turnkey way: the collective predicate compiler reads them so a document
+    // with no key for a member is filtered as the value a rebuild sees, rather than as SQL NULL (#1044).
+    result = TemplateUtilities.ReplaceRegion(result, "MEMBER_DEFAULT_REGISTRATION",
+        _buildMemberDefaultRegistration(perspective, modelTypeName));
     // Issue #977: a Split model's promoted fields live only in their columns, so the store has to read them
     // back into the model the next event is applied to. The copy is generated here, where the fields are known.
     result = TemplateUtilities.ReplaceRegion(result, "SPLIT_PHYSICAL_FIELD_REGISTRATION",
@@ -1281,6 +1296,83 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// <remarks>A model that is not a named type — an array satisfies the interface's <c>class</c>
   /// constraint — declares no properties, so the loop never runs and the result is the same empty
   /// set.</remarks>
+  /// <summary>
+  /// Emits the <c>[ModuleInitializer]</c> that registers what each member reads as when the document has no key
+  /// for it, in <c>PerspectiveMemberDefaultRegistry</c>. Empty when the model declares none.
+  /// </summary>
+  private static string _buildMemberDefaultRegistration(PerspectiveInfo perspective, string modelTypeName) {
+    if (perspective.MemberDefaults is not { Length: > 0 } defaults) {
+      return "";
+    }
+    var sb = new StringBuilder();
+    sb.Append("[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerMemberDefaults() {");
+    foreach (var entry in defaults) {
+      var parts = entry.Split(MEMBER_DEFAULT_SEPARATOR);
+      if (parts.Length != 2) {
+        continue;
+      }
+      sb.Append("\n    global::Whizbang.Core.Perspectives.PerspectiveMemberDefaultRegistry.Register(typeof(")
+        .Append(modelTypeName).Append("), \"").Append(parts[0]).Append("\", ").Append(parts[1]).Append(");");
+    }
+    sb.Append("\n  }");
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// What each of the model's members reads as when the stored document has no key for it, as
+  /// <c>Name\u0001&lt;C# expression&gt;</c> entries. A document lacks a key whenever the member was added after
+  /// those rows were written; a rebuild deserializes them and the member holds this value, so a collective
+  /// predicate has to filter on it rather than on SQL NULL (#1044).
+  /// </summary>
+  private static string[] _discoverMemberDefaults(ITypeSymbol modelType) {
+    var defaults = new List<string>();
+
+    foreach (var property in (modelType as INamedTypeSymbol)?.GetAllProperties() ?? []) {
+      var declared = _tryDeclaredDefault(property);
+      if (declared is not null) {
+        defaults.Add(property.Name + MEMBER_DEFAULT_SEPARATOR + declared);
+      }
+    }
+
+    return [.. defaults];
+  }
+
+  /// <summary>
+  /// The C# expression for what one member reads as, or null when the declaration does not say.
+  /// </summary>
+  /// <remarks>
+  /// Nullable members are skipped: an absent key already reads as null on both paths, so they agree, and
+  /// coalescing would change a predicate that is correct today. Only a literal initializer is read — an
+  /// arbitrary expression could evaluate to anything, and registering a guess that differs from what a rebuild
+  /// produces is worse than registering nothing. A member whose declaration is not in this compilation is
+  /// skipped for the same reason: whether it has an initializer cannot be known from metadata.
+  /// </remarks>
+  private static string? _tryDeclaredDefault(IPropertySymbol property) {
+    if (property.Type.NullableAnnotation == NullableAnnotation.Annotated
+        || property.Type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T) {
+      return null;
+    }
+
+    foreach (var reference in property.DeclaringSyntaxReferences) {
+      if (reference.GetSyntax() is not PropertyDeclarationSyntax declaration) {
+        continue;
+      }
+
+      var typeName = TypeNameUtilities.FullyQualified(property.Type);
+      return declaration.Initializer?.Value switch {
+        // A value type's literal is cast to the member's own type so the registered value boxes as that type —
+        // `= 5` on a long must arrive as a long, not an int, or it binds against the column as the wrong type.
+        LiteralExpressionSyntax literal => property.Type.IsValueType
+            ? $"({typeName}){literal.Token.Text}"
+            : literal.Token.Text,
+        null => property.Type.IsValueType ? $"default({typeName})" : null,
+        _ => null,
+      };
+    }
+
+    return null;
+  }
+
   private static PhysicalFieldInfoCompact[] _discoverPhysicalFields(ITypeSymbol modelType) {
     var physicalFields = new List<PhysicalFieldInfoCompact>();
 

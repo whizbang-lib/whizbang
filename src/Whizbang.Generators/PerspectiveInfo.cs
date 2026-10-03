@@ -44,7 +44,8 @@ internal sealed record PerspectiveInfo(
     bool IsFullHistory = false,
     int RowCapPerScope = -1,
     string? RowCapScopeKey = null,
-    string? StreamGroupSpec = null
+    string? StreamGroupSpec = null,
+    string[]? MemberDefaults = null
 );
 
 /// <summary>
