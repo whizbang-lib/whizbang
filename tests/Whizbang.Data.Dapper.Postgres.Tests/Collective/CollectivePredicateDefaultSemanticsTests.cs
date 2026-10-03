@@ -33,6 +33,9 @@ public class CollectivePredicateDefaultSemanticsTests {
     PerspectivePhysicalFieldRegistry.Register(
       typeof(DefaultedModel), nameof(DefaultedModel.Rank), "rank", FieldStorageMode.Split);
     PerspectiveMemberDefaultRegistry.Register(typeof(DefaultedModel), nameof(DefaultedModel.Rank), 0L);
+
+    // A document-only numeric member, so the ordering comparisons read it as a number.
+    PerspectiveMemberDefaultRegistry.Register(typeof(DefaultedModel), nameof(DefaultedModel.Ordinal), 0L);
   }
 
   [SuppressIndexAdvisory("test fixture; compiled to SQL text, never queried")]
@@ -41,6 +44,8 @@ public class CollectivePredicateDefaultSemanticsTests {
     public string Status { get; init; } = "Draft";
     public string? Note { get; init; }
     public long Rank { get; init; }
+    public long Ordinal { get; init; }
+    public long? MaybeOrdinal { get; init; }
   }
 
   private static CollectivePredicateSqlCompiler<DefaultedModel>.CompiledWhereClause _compile(
@@ -156,5 +161,40 @@ public class CollectivePredicateDefaultSemanticsTests {
         + "column — the equality path now answers null with IS NULL and never binds it.");
     await Assert.That(result.Parameters.Values.Any(v => v is null)).IsTrue()
       .Because("The null element has to reach the parameter list as a real null, not as the text \"null\".");
+  }
+
+  // ── Ordering comparisons answer the same way equality does ───────────────────────────────
+
+  [Test]
+  public async Task Compile_LessThanOnAMemberWithADeclaredDefault_ReadsAnAbsentKeyAsThatDefaultAsync() {
+    var result = _compile(r => r.Data.Ordinal < 5L);
+
+    await Assert.That(result.SqlFragment)
+      .IsEqualTo("COALESCE((data->>'Ordinal')::numeric, @where_ordinal_else) < @where_ordinal")
+      .Because("NULL < 5 is NULL and the row drops out, while the replay sees Ordinal as 0 and keeps it. Equality "
+        + "already reads an absent key as the declared default, so ordering answering differently would make one "
+        + "member give two answers about the same absent key.");
+    await Assert.That(result.Parameters["where_ordinal_else"]).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task Compile_GreaterThanOnAMemberWithADeclaredDefault_ReadsAnAbsentKeyAsThatDefaultAsync() {
+    var result = _compile(r => r.Data.Ordinal > 5L);
+
+    await Assert.That(result.SqlFragment)
+      .IsEqualTo("COALESCE((data->>'Ordinal')::numeric, @where_ordinal_else) > @where_ordinal")
+      .Because("> and >= happen to agree with the replay for a zero default because both exclude the row. That is "
+        + "luck, not correctness — it breaks for any non-zero default — so the shape is made explicit here too.");
+  }
+
+  [Test]
+  public async Task Compile_AnExplicitCoalesceStillWinsOverTheDeclaredDefaultAsync() {
+    var result = _compile(r => (r.Data.MaybeOrdinal ?? 7L) < 5L);
+
+    await Assert.That(result.SqlFragment)
+      .IsEqualTo("COALESCE((data->>'MaybeOrdinal')::numeric, @where_maybeordinal_else) < @where_maybeordinal")
+      .Because("?? is the author saying what a missing key counts as, on a member that declares nothing. It must "
+        + "not be wrapped twice or have its value replaced.");
+    await Assert.That(result.Parameters["where_maybeordinal_else"]).IsEqualTo(7L);
   }
 }

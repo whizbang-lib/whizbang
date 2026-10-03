@@ -57,10 +57,11 @@ public sealed record ReferencedJsonPath(string Table, string ColumnExpression);
 /// text and text orders <c>'10'</c> before <c>'9'</c>. A temporal member is stored as its microsecond count
 /// (<see cref="CanonicalTemporalFormat"/>), so the value is bound as the same count and the comparison is exact to the
 /// microsecond; a key still holding a rendering makes Postgres refuse the statement rather than answer it wrongly. A
-/// missing key, or a JSON null, reads as SQL <c>NULL</c> and compares as null: the comparison is false, as a lifted
-/// comparison with a null operand is in C#, and under <c>!</c> it is made false before the negation
-/// (<c>NOT (COALESCE(a &lt; b, FALSE))</c>) so that <c>!(null &lt; 5)</c> is true in SQL exactly as in the in-memory
-/// replay. To have a missing key count as a value, declare the member nullable and coalesce it:
+/// member that declares a default reads a missing key as that default, so the comparison answers what the in-memory
+/// replay answers (#1044); a nullable member's missing key, or a JSON null, reads as SQL <c>NULL</c> and compares as
+/// null — the comparison is false, as a lifted comparison with a null operand is in C# — and under <c>!</c> it is made
+/// false before the negation (<c>NOT (COALESCE(a &lt; b, FALSE))</c>) so that <c>!(null &lt; 5)</c> is true in SQL
+/// exactly as in the replay. To have a nullable member's missing key count as a value, coalesce it explicitly:
 /// <c>(r.Data.X ?? 0) &lt; e.Y</c> becomes <c>COALESCE((data-&gt;&gt;'X')::numeric, @p) &lt; @q</c>. The row id cannot be
 /// ordered: Postgres orders a uuid by its bytes and .NET orders a Guid by its fields, so the two paths would disagree.
 /// </para>
@@ -315,7 +316,18 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     if (temporal) {
       scale = column.Kind == ColumnKind.Physical ? OrderingScale.ColumnTemporal : OrderingScale.StoredMicroseconds;
     }
-    return new OrderedColumn(column.Sql, column, scale);
+    var ordered = new OrderedColumn(column.Sql, column, scale);
+
+    // An absent key reads as the member's declared default here too (#1044). Without this one member answers two
+    // ways about the same absent row — equality selects it and `<` does not — and `>`/`>=` only appear to agree
+    // because a zero default excludes the row either way, which stops being true for any other default.
+    if (column.Kind == ColumnKind.JsonText && column.Physical is null
+        && PerspectiveMemberDefaultRegistry.TryResolve(typeof(TModel), column.PropName, out var declared)) {
+      var fallback = _bindOrderedConstant(ordered, declared, "_else", prefix, parameters);
+      return ordered with { Sql = "COALESCE(" + ordered.Sql + ", " + fallback + ")" };
+    }
+
+    return ordered;
   }
 
   private static void _ensureSameScale(in OrderedColumn left, in OrderedColumn right) {
@@ -329,8 +341,13 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
 
   // Binds the value an ordered column is compared with (or coalesced to) and returns its placeholder.
   private static string _bindOrderedValue(
-      in OrderedColumn column, Expression valueExpr, string suffix, string prefix, Dictionary<string, object?> parameters) {
-    var value = _evaluateValue(valueExpr);
+      in OrderedColumn column, Expression valueExpr, string suffix, string prefix, Dictionary<string, object?> parameters) =>
+    _bindOrderedConstant(column, _evaluateValue(valueExpr), suffix, prefix, parameters);
+
+  // The same binding for a value already in hand rather than still inside an expression tree — a member's declared
+  // default arrives from the registry, not from the predicate.
+  private static string _bindOrderedConstant(
+      in OrderedColumn column, object? value, string suffix, string prefix, Dictionary<string, object?> parameters) {
     var name = _uniqueName(parameters, $"{prefix}_{column.Column.PropName.ToLowerInvariant()}{suffix}");
     parameters[name] = column.Column.Physical is { } field
       ? _toColumnInstant(CollectivePhysicalColumns.ColumnValue(field, value))
