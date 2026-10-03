@@ -25,6 +25,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/CollectivePredicateDefaultSemanticsTests.cs</tests>
 public static class PerspectiveMemberDefaultRegistry {
   private static readonly ConcurrentDictionary<(Type ModelType, string PropertyName), object> _defaults = new();
 
