@@ -72,7 +72,7 @@ public class ReceivedEventOriginStampTests : EFCoreTestBase {
       MessageType = messageType,
       StreamId = envelope.Payload.ProbeId,
       IsEvent = true,
-      Metadata = new EnvelopeMetadata { MessageId = envelope.MessageId, Hops = envelope.Hops.ToList() },
+      Metadata = new EnvelopeMetadata { MessageId = envelope.MessageId, Hops = [.. envelope.Hops] },
       SourceServiceId = jsonEnvelope.SourceServiceId,
       SourceCommitSequence = jsonEnvelope.SourceCommitSequence,
     };

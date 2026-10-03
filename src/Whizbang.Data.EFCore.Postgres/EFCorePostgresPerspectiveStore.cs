@@ -68,25 +68,29 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     if (opened) {
       await connection.OpenAsync(cancellationToken);
     }
-    try {
-      await using var cmd = connection.CreateCommand();
-      // The promoted columns follow the document, where the shared column reader expects them; metadata comes last.
-      cmd.CommandText = "SELECT data::text" + physical + ", metadata::text FROM " + shadow + " WHERE id = @id";
-      cmd.Transaction = (Npgsql.NpgsqlTransaction?)_context.Database.CurrentTransaction?.GetDbTransaction();
-      cmd.Parameters.AddWithValue("id", id);
-      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-      if (!await reader.ReadAsync(cancellationToken)) {
-        return (null, null);
-      }
-      var options = Perspectives.PerspectiveDocumentSerialization.Options;
-      var model = (TModel?)System.Text.Json.JsonSerializer.Deserialize(reader.GetString(0), options.GetTypeInfo(typeof(TModel)));
-      var metadata = (PerspectiveMetadata?)System.Text.Json.JsonSerializer.Deserialize(
-        reader.GetString(1 + columns.Count), options.GetTypeInfo(typeof(PerspectiveMetadata)));
-      if (model is not null && split is not null) {
-        model = split.Hydrate(model, new Whizbang.Data.Postgres.Perspectives.NpgsqlPhysicalColumnReader(reader, columns, options));
-      }
-      return (model, metadata);
-    } finally {
+    await using var closer = new ConnectionCloser(connection, opened);
+    await using var cmd = connection.CreateCommand();
+    // The promoted columns follow the document, where the shared column reader expects them; metadata comes last.
+    cmd.CommandText = "SELECT data::text" + physical + ", metadata::text FROM " + shadow + " WHERE id = @id";
+    cmd.Transaction = (Npgsql.NpgsqlTransaction?)_context.Database.CurrentTransaction?.GetDbTransaction();
+    cmd.Parameters.AddWithValue(nameof(id), id);
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    if (!await reader.ReadAsync(cancellationToken)) {
+      return (null, null);
+    }
+    var options = Perspectives.PerspectiveDocumentSerialization.Options;
+    var model = (TModel?)System.Text.Json.JsonSerializer.Deserialize(reader.GetString(0), options.GetTypeInfo(typeof(TModel)));
+    var metadata = (PerspectiveMetadata?)System.Text.Json.JsonSerializer.Deserialize(
+      reader.GetString(1 + columns.Count), options.GetTypeInfo(typeof(PerspectiveMetadata)));
+    if (model is not null && split is not null) {
+      model = split.Hydrate(model, new Whizbang.Data.Postgres.Perspectives.NpgsqlPhysicalColumnReader(reader, columns, options));
+    }
+    return (model, metadata);
+  }
+
+  /// <summary>Closes a connection this store opened, and leaves one it found open as it was.</summary>
+  private readonly struct ConnectionCloser(System.Data.Common.DbConnection connection, bool opened) : IAsyncDisposable {
+    public async ValueTask DisposeAsync() {
       if (opened) {
         await connection.CloseAsync();
       }
@@ -97,12 +101,14 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// Deletes the row from the shadow table when a blue-green rebuild redirected this flow, and says whether it did;
   /// the mapped table is never touched by a rebuild.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("csharpsquid", "S2077:Formatting SQL queries is security-sensitive",
+    Justification = "The only text is the rebuild's own shadow-table name, a quoted identifier from the EF model; the id is a parameter.")]
   private async Task<bool> _purgeRedirectedAsync(Guid id, CancellationToken cancellationToken) {
     if (!PerspectiveTableRedirect.IsActive || PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is not { } shadow) {
       return false;
     }
     var sql = "DELETE FROM " + shadow + " WHERE id = @id";
-    await _context.Database.ExecuteSqlRawAsync(sql, [new Npgsql.NpgsqlParameter("id", id)], cancellationToken);
+    await _context.Database.ExecuteSqlRawAsync(sql, [new Npgsql.NpgsqlParameter(nameof(id), id)], cancellationToken);
     return true;
   }
 

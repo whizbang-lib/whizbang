@@ -800,8 +800,10 @@ public class DispatcherCoverageSweepOutboxTests {
     var strategy = new SweepWorkStrategy();
     var dispatcher = new SweepOutboxDispatcher(_buildProvider(strategy: strategy));
     var keyed = new DispatcherKeyedCollectiveStreamTests.KeyedFlipCollectiveEvent { Scope = new Whizbang.Core.Messaging.TenantCollectiveScope("t-1"), OrderingKey = "family-7" };
-    var unkeyed = new DispatcherKeyedCollectiveStreamTests.KeyedFlipCollectiveEvent { Scope = new Whizbang.Core.Messaging.TenantCollectiveScope("t-1") };
-    unkeyed.StreamId = Guid.CreateVersion7();
+    var unkeyed = new DispatcherKeyedCollectiveStreamTests.KeyedFlipCollectiveEvent {
+      Scope = new Whizbang.Core.Messaging.TenantCollectiveScope("t-1"),
+      StreamId = Guid.CreateVersion7()
+    };
 
     await dispatcher.CallPublishToOutboxDynamicAsync(keyed, keyed.GetType(), MessageId.New());
     await dispatcher.CallPublishToOutboxDynamicAsync(unkeyed, unkeyed.GetType(), MessageId.New());

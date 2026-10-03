@@ -3288,13 +3288,7 @@ public partial class PerspectiveWorker(
     var eventStore = scope.ServiceProvider.GetService<IEventStore>();
     var typeProvider = _eventTypeProvider;
 
-    if (dispatcher is null || sessionAccessor is null || eventStore is null || !typeProvider.IsAvailable) {
-#pragma warning disable CA1848
-      _logger.LogWarning(
-        "Collective sink work for stream {StreamId} skipped — collective infrastructure not registered " +
-        "(dispatcher={HasDispatcher}, sessionAccessor={HasSession}, eventStore={HasEventStore}, typeProvider={HasEventTypes}).",
-        streamId, dispatcher is not null, sessionAccessor is not null, eventStore is not null, typeProvider.IsAvailable);
-#pragma warning restore CA1848
+    if (!_collectiveInfrastructureReady(streamId, dispatcher, sessionAccessor, eventStore)) {
       return;
     }
 
@@ -3354,7 +3348,7 @@ public partial class PerspectiveWorker(
         LogCollectiveApplyLockBusy(_logger, streamId, envelope.MessageId.Value, busy.Table, busy.WaitedSeconds);
         await _completeAppliedCollectivesAsync(
           scope, workCoordinator, streamId, applied, _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
-          lastEventId, reportCursor: true, cancellationToken).ConfigureAwait(false);
+          reportCursor: true, cancellationToken).ConfigureAwait(false);
         return;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         // A failing collective apply must NOT crash the host. Without this guard the exception propagates out
@@ -3375,7 +3369,7 @@ public partial class PerspectiveWorker(
         await _completionStrategy.ReportFailureAsync(failure, workCoordinator, cancellationToken).ConfigureAwait(false);
         await _completeAppliedCollectivesAsync(
           scope, workCoordinator, streamId, applied, _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
-          lastEventId, reportCursor: false, cancellationToken).ConfigureAwait(false);
+          reportCursor: false, cancellationToken).ConfigureAwait(false);
         return;
       }
       _compositeMetrics?.CollectivesApplied.Add(1);
@@ -3389,7 +3383,7 @@ public partial class PerspectiveWorker(
       // next run on the stream, which the predecessor's arrival starts, or the wake when the wait runs out.
       var appliedWorkIds = _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count);
       await _completeAppliedCollectivesAsync(
-        scope, workCoordinator, streamId, applied, appliedWorkIds, lastEventId, reportCursor: true, cancellationToken)
+        scope, workCoordinator, streamId, applied, appliedWorkIds, reportCursor: true, cancellationToken)
         .ConfigureAwait(false);
       var waiting = sinkWorkIds.Except(appliedWorkIds).ToArray();
       _settleHeldBackSinkRows(streamId, sinkWorkIds, waiting);
@@ -3402,8 +3396,26 @@ public partial class PerspectiveWorker(
       pendingWake.Timer.Dispose();
     }
     await _completeAppliedCollectivesAsync(
-      scope, workCoordinator, streamId, applied, completedWorkIds, lastEventId, reportCursor: true, cancellationToken)
+      scope, workCoordinator, streamId, applied, completedWorkIds, reportCursor: true, cancellationToken)
       .ConfigureAwait(false);
+  }
+
+  /// <summary>Whether the collective sink can run; logs what is missing when it cannot.</summary>
+  private bool _collectiveInfrastructureReady(
+      Guid streamId,
+      [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] ICollectiveDispatcher? dispatcher,
+      [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] ICollectiveSessionAccessor? sessionAccessor,
+      [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] IEventStore? eventStore) {
+    if (dispatcher is not null && sessionAccessor is not null && eventStore is not null && _eventTypeProvider.IsAvailable) {
+      return true;
+    }
+#pragma warning disable CA1848
+    _logger.LogWarning(
+      "Collective sink work for stream {StreamId} skipped — collective infrastructure not registered " +
+      "(dispatcher={HasDispatcher}, sessionAccessor={HasSession}, eventStore={HasEventStore}, typeProvider={HasEventTypes}).",
+      streamId, dispatcher is not null, sessionAccessor is not null, eventStore is not null, _eventTypeProvider.IsAvailable);
+#pragma warning restore CA1848
+    return false;
   }
 
   /// <summary>
@@ -3540,7 +3552,7 @@ public partial class PerspectiveWorker(
   /// </summary>
   private async Task _completeAppliedCollectivesAsync(
       AsyncServiceScope scope, IWorkCoordinator workCoordinator, Guid streamId,
-      List<MessageEnvelope<IEvent>> applied, Guid[] workIds, Guid lastEventId, bool reportCursor,
+      List<MessageEnvelope<IEvent>> applied, Guid[] workIds, bool reportCursor,
       CancellationToken cancellationToken) {
     if (applied.Count == 0) {
       return;
@@ -3549,7 +3561,7 @@ public partial class PerspectiveWorker(
       var completion = new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
-        LastEventId = lastEventId,
+        LastEventId = applied[^1].MessageId.Value,
         Status = PerspectiveProcessingStatus.Completed,
         EventsProcessed = applied.Count,
         ProcessedEventIds = [.. applied.Select(e => e.MessageId.Value)],

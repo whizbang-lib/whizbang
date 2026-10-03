@@ -240,18 +240,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
         ? _compileComparison(cmp, a, idx, parameters)
         : ((string?)null, (string?)null);
       if (target is not { InDocument: false }) {
-        if (a.Comparison is null) {
-          parameters["p" + idx] = a.JsonValue;
-        }
-        var valueSql = a switch {
-          { ElementKey: { } key } => CollectiveElementUpsertSql.ValueSql(
-            a.PathName, key, "@p" + idx + JSONB_CAST, assigned.GetValueOrDefault(a.PathName)),
-          { Comparison: not null } => documentComparison!,
-          _ => "@p" + idx + JSONB_CAST,
-        };
-        // One key of the property's object, kept in the document too: jsonb_set's two-step path changes nothing
-        // when the object is null or absent, as the column's key set does.
-        parameters["path" + idx] = a.JsonbKey is { } jsonbKey ? new[] { a.PathName, jsonbKey } : new[] { a.PathName };  // text[] path
+        var valueSql = _documentValueSql(a, idx, documentComparison, assigned, parameters);
         assigned[a.PathName] = valueSql;
         setExpr.Insert(0, "jsonb_set(")
           .Append(", @path").Append(idx).Append(", ").Append(valueSql).Append(')');
@@ -265,6 +254,25 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     }
     var setList = CollectivePhysicalColumns.RenderSetList(documentWrites > 0 ? setExpr.ToString() : null, columns);
     return (setList, [.. parameters]);
+  }
+
+  // The new value of a document path: a computed comparison's boolean, a keyed element upsert from the property's value
+  // so far in this spec, or the value bound as jsonb. Also binds the jsonb_set path: one key of the property's object
+  // when the setter names one, kept in the document too (jsonb_set's two-step path changes nothing when the object is
+  // null or absent, as the column's key set does).
+  private static string _documentValueSql(
+      CollectiveSettersRewriter.CollectiveSetterAssignment a, string idx, string? documentComparison,
+      Dictionary<string, string> assigned, Dictionary<string, object> parameters) {
+    if (a.Comparison is null) {
+      parameters["p" + idx] = a.JsonValue;
+    }
+    parameters["path" + idx] = a.JsonbKey is { } jsonbKey ? new[] { a.PathName, jsonbKey } : [a.PathName];  // text[] path
+    return a switch {
+      { ElementKey: { } key } => CollectiveElementUpsertSql.ValueSql(
+        a.PathName, key, "@p" + idx + JSONB_CAST, assigned.GetValueOrDefault(a.PathName)),
+      { Comparison: not null } => documentComparison!,
+      _ => "@p" + idx + JSONB_CAST,
+    };
   }
 
   // The new value of a physical column: a computed comparison's boolean, the same keyed upsert a document path uses

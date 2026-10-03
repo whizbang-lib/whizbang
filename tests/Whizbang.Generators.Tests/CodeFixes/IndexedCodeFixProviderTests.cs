@@ -166,7 +166,7 @@ public class IndexedCodeFixProviderTests {
 
     var compilation = (await handler.Project.GetCompilationAsync())!;
     var diagnostics = await compilation
-      .WithAnalyzers(ImmutableArray.Create<DiagnosticAnalyzer>(new CollectivePredicateIndexAnalyzer()))
+      .WithAnalyzers([new CollectivePredicateIndexAnalyzer()])
       .GetAnalyzerDiagnosticsAsync();
 
     return (handler, diagnostics.Single(d => d.Id == "WHIZ309"));

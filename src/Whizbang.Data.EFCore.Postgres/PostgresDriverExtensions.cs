@@ -275,9 +275,7 @@ public static class PostgresDriverExtensions {
         // multi-schema services report THEIR tables instead of probing a bare public schema.
         selector.Services.TryAddSingleton<ITableStatisticsProvider>(sp => {
           var ds = sp.GetRequiredService<NpgsqlDataSource>();
-          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
-          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
-          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          var schema = defaultSchema(sp);
           return new PostgresTableStatisticsProvider(ds, schema);
         });
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
@@ -288,9 +286,7 @@ public static class PostgresDriverExtensions {
         // read. Schema-qualified for the same reason as the provider above.
         selector.Services.TryAddSingleton<IAdvisoryLedger>(sp => {
           var ds = sp.GetRequiredService<NpgsqlDataSource>();
-          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
-          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
-          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          var schema = defaultSchema(sp);
           // The logger is asked for directly rather than built from a factory: AddLogging registers
           // the open generic, so this resolves when logging is configured and is null when it is
           // not, which is the same answer with no conditional to leave half-tested.
@@ -318,9 +314,7 @@ public static class PostgresDriverExtensions {
         // controller, not a bare public schema.
         selector.Services.TryAddSingleton<INotifyDebounceStatsProvider>(sp => {
           var ds = sp.GetRequiredService<NpgsqlDataSource>();
-          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
-          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
-          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          var schema = defaultSchema(sp);
           return new PostgresNotifyDebounceStatsProvider(ds, schema);
         });
         selector.Services.TryAddSingleton<NotifyDebounceMetrics>();

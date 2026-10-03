@@ -169,7 +169,7 @@ public class PhysicalJsonbContainmentSqlTests {
   [Test]
   public async Task OffSwitch_DoesNotStopIt_BecauseNothingElseTranslatesTheShapeAsync() {
     var tag = "red";
-    using var context = _context();
+    await using var context = _context();
     JsonbContainmentSwitch.SetMode(ContainmentMode.Off);
     try {
       var sql = context.Set<PerspectiveRow<JsonbColumnsModel>>().Where(r => r.Data.Tags.Contains(tag)).ToQueryString();

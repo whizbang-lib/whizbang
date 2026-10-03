@@ -118,9 +118,6 @@ public static class JsonbDocument {
     _stringValue, _guidValue, _boolValue, _byteValue, _shortValue, _intValue, _longValue, _decimalValue,
   ];
 
-  /// <summary>Every <see cref="Value(string)"/> overload, for registration.</summary>
-  internal static IReadOnlyList<MethodInfo> ValueOverloads => _values;
-
   /// <summary>
   /// The <see cref="Value(string)"/> overload for a value of this type, or null when the type's stored
   /// form and PostgreSQL's <c>to_jsonb</c> rendering of it are not guaranteed to agree.

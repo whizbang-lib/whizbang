@@ -229,6 +229,8 @@ public class StreamPurgeTests : EFCoreTestBase {
 
     await Assert.That(sp.GetRequiredService<IPerspectivePurgeMarkerStore>()).IsTypeOf<PostgresPerspectivePurgeMarkerStore>();
     await Assert.That(sp.GetRequiredService<IStreamPurger>()).IsTypeOf<PostgresStreamPurger>();
+    await Assert.That(sp.GetService<IPerspectiveTableSwapper>()).IsTypeOf<Whizbang.Data.Postgres.Perspectives.PostgresPerspectiveTableSwapper>()
+      .Because("the driver registers the blue-green rebuild's swapper over an independent connection");
   }
 
   private sealed class PurgeRegistrationDbContext(DbContextOptions<PurgeRegistrationDbContext> options) : DbContext(options) {

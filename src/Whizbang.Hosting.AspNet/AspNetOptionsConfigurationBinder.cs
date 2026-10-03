@@ -23,7 +23,7 @@ internal sealed class AspNetOptionsConfigurationBinder(IConfiguration? configura
   public void Configure(WhizbangAvailabilityOptions options) {
     if (configuration is not null) {
 #pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-      ConfigurationBinder.Bind(configuration.GetSection("Whizbang:AspNet:Availability"), options);
+      configuration.GetSection("Whizbang:AspNet:Availability").Bind(options);
 #pragma warning restore IL2026, IL3050
     }
   }
@@ -31,7 +31,7 @@ internal sealed class AspNetOptionsConfigurationBinder(IConfiguration? configura
   public void Configure(WhizbangCorrelationOptions options) {
     if (configuration is not null) {
 #pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-      ConfigurationBinder.Bind(configuration.GetSection("Whizbang:AspNet:Correlation"), options);
+      configuration.GetSection("Whizbang:AspNet:Correlation").Bind(options);
 #pragma warning restore IL2026, IL3050
     }
   }
@@ -39,7 +39,7 @@ internal sealed class AspNetOptionsConfigurationBinder(IConfiguration? configura
   public void Configure(WhizbangSecurityHeadersOptions options) {
     if (configuration is not null) {
 #pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-      ConfigurationBinder.Bind(configuration.GetSection("Whizbang:AspNet:SecurityHeaders"), options);
+      configuration.GetSection("Whizbang:AspNet:SecurityHeaders").Bind(options);
 #pragma warning restore IL2026, IL3050
     }
   }

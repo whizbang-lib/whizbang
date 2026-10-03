@@ -34,7 +34,7 @@ internal sealed class CircuitBreakerOptionsPostConfigure(IServiceProvider servic
     var configuration = services.GetRequiredService<IConfiguration>();
 
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-    ConfigurationBinder.Bind(configuration.GetSection(CONFIGURATION_SECTION).GetSection(name), options);
+    configuration.GetSection(CONFIGURATION_SECTION).GetSection(name).Bind(options);
 #pragma warning restore IL2026
   }
 }

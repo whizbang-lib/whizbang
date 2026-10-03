@@ -965,15 +965,15 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         VectorIndexLists: null,
         // An object, a collection or a dictionary is a jsonb column unless the author declared otherwise.
         ColumnType: columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type),
-        IsContainmentIndexed: PhysicalFieldScalar.IsContainmentIndexed(
-          declaredKind, columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type)),
         IsSearch: isSearch,
         EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
         EnumMembers: PhysicalFieldScalar.EnumMembers(property.Type),
         EnumIsFlags: PhysicalFieldScalar.IsFlagsEnum(property.Type),
         IsInitOnly: property.SetMethod?.IsInitOnly == true,
         IsReadOnly: property.SetMethod is null
-    );
+,
+        IsContainmentIndexed: PhysicalFieldScalar.IsContainmentIndexed(
+          declaredKind, columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type)));
   }
 
   /// <summary>

@@ -56,6 +56,10 @@ public sealed record TableStorageInfo(string? DataCompression, int? ToastTupleTa
 /// <tests>tests/Whizbang.Generators.Tests/ColumnStorageSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/JsonbColumnStorageIntegrationTests.cs</tests>
 public static class ColumnStorageSql {
+  private const string DO_BEGIN = "DO $$ BEGIN\n";
+  private const string END_IF = "  END IF;\n";
+  private const string DO_END = "END $$;";
+
   /// <summary>The storage strategy's SQL name and its <c>pg_attribute.attstorage</c> code, for a <c>ColumnStorage</c> value.</summary>
   /// <param name="value">The attribute argument's value.</param>
   /// <returns>The name, or null for <c>Default</c> or an unknown value.</returns>
@@ -133,12 +137,12 @@ public static class ColumnStorageSql {
 
   /// <summary><c>SET STORAGE</c>, when the column's strategy differs.</summary>
   public static string SetStorage(string qualifiedTable, string column, string storage) =>
-    "DO $$ BEGIN\n"
+    DO_BEGIN
     + $"  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = '{qualifiedTable}'::regclass AND attname = '{column}'\n"
     + $"    AND attstorage <> '{_storageCode(storage)}') THEN\n"
     + $"    ALTER TABLE {qualifiedTable} ALTER COLUMN {column} SET STORAGE {storage};\n"
-    + "  END IF;\n"
-    + "END $$;";
+    + END_IF
+    + DO_END;
 
   /// <summary>The <c>pg_attribute.attstorage</c> code of a storage strategy.</summary>
   private static char _storageCode(string storage) => storage == "EXTENDED" ? 'x' : char.ToLowerInvariant(storage[0]);
@@ -148,24 +152,24 @@ public static class ColumnStorageSql {
   /// column as it is and says so in a warning, rather than failing the schema pass.
   /// </summary>
   public static string SetCompression(string qualifiedTable, string column, string compression) =>
-    "DO $$ BEGIN\n"
+    DO_BEGIN
     + $"  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = '{qualifiedTable}'::regclass AND attname = '{column}'\n"
     + $"    AND attcompression IS DISTINCT FROM '{compression[0]}') THEN\n"
     + $"    ALTER TABLE {qualifiedTable} ALTER COLUMN {column} SET COMPRESSION {compression};\n"
-    + "  END IF;\n"
+    + END_IF
     + "EXCEPTION WHEN feature_not_supported THEN\n"
     + $"  RAISE WARNING 'Whizbang: {compression} compression is not available on this server; {column} keeps its compression';\n"
-    + "END $$;";
+    + DO_END;
 
   /// <summary>The table's <c>toast_tuple_target</c>, when its storage parameters do not already say so.</summary>
   public static string SetToastTupleTarget(string qualifiedTable, int target) {
     var setting = "toast_tuple_target=" + target.ToString(CultureInfo.InvariantCulture);
-    return "DO $$ BEGIN\n"
+    return DO_BEGIN
       + $"  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = '{qualifiedTable}'::regclass\n"
       + $"    AND '{setting}' = ANY (coalesce(reloptions, ARRAY[]::text[]))) THEN\n"
       + $"    ALTER TABLE {qualifiedTable} SET ({setting.Replace("=", " = ")});\n"
-      + "  END IF;\n"
-      + "END $$;";
+      + END_IF
+      + DO_END;
   }
 
   /// <summary>
@@ -175,13 +179,13 @@ public static class ColumnStorageSql {
     var name = PostgresIdentifiers.WithinLimit($"ck_{tableName}_{column}_size");
     var limit = bytes.ToString(CultureInfo.InvariantCulture);
     var existing = $"SELECT 1 FROM pg_constraint WHERE conname = '{name}' AND conrelid = '{qualifiedTable}'::regclass";
-    return "DO $$ BEGIN\n"
+    return DO_BEGIN
       + $"  IF EXISTS ({existing} AND pg_get_constraintdef(oid) NOT LIKE '%<= {limit})%') THEN\n"
       + $"    ALTER TABLE {qualifiedTable} DROP CONSTRAINT {name};\n"
-      + "  END IF;\n"
+      + END_IF
       + $"  IF NOT EXISTS ({existing}) THEN\n"
       + $"    ALTER TABLE {qualifiedTable} ADD CONSTRAINT {name} CHECK (pg_column_size({column}) <= {limit}) NOT VALID;\n"
-      + "  END IF;\n"
-      + "END $$;";
+      + END_IF
+      + DO_END;
   }
 }

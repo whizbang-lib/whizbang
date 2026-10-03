@@ -386,9 +386,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableName: tableName,
         PhysicalFields: candidate.PhysicalFields,
         HasPolymorphicProperties: candidate.HasPolymorphicProperties,
-        IsSplitMode: candidate.IsSplitMode,
         BuildsDataIndex: candidate.BuildsDataIndex
-    );
+,
+        IsSplitMode: candidate.IsSplitMode);
   }
 
   private const string PERSPECTIVE_STORAGE_ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveStorageAttribute";

@@ -110,6 +110,31 @@ public class PhysicalJsonbColumnGenerationTests {
       .Because("a framework value type is a scalar, not an object.");
   }
 
+  // A jsonb column filtered by containment declares its GIN index portably; both drivers build it over the column.
+  private static readonly string _containmentModel = MODEL.Replace(
+    "public Dictionary<string, string[]> GridFilter",
+    "[Indexed(IndexKinds.Containment)] public Dictionary<string, string[]> GridFilter",
+    StringComparison.Ordinal);
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task ServiceRegistration_ContainmentIndex_IsAGinJsonbPathOpsIndexOnTheColumnAsync() {
+    await Assert.That(_containmentModel).IsNotEqualTo(MODEL).Because("the model must actually declare the index");
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(_containmentModel);
+    var sql = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
+
+    await Assert.That(sql).Contains("USING gin (grid_filter jsonb_path_ops)", StringComparison.Ordinal);
+    await Assert.That(sql).Contains("grid_filter_gin", StringComparison.Ordinal);
+  }
+
+  [Test]
+  public async Task SchemaGenerator_ContainmentIndex_IsAGinJsonbPathOpsIndexOnTheColumnAsync() {
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(_containmentModel);
+    var schema = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs") ?? "";
+
+    await Assert.That(schema).Contains("USING gin (grid_filter jsonb_path_ops)", StringComparison.Ordinal);
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task ServiceRegistration_NonScalarField_IsAddedAsJsonbAsync() {

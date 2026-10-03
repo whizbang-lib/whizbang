@@ -215,14 +215,13 @@ public static class PhysicalColumnSql {
       IEnumerable<string> documentProperties, IEnumerable<PhysicalFieldInfo> physicalFields) {
     var owned = new HashSet<string>(
       (physicalFields ?? []).Select(f => f.ColumnName.ToLowerInvariant()), StringComparer.Ordinal);
-    return (documentProperties ?? [])
+    return [.. (documentProperties ?? [])
       .Where(p => !string.IsNullOrEmpty(p) && p.All(c => char.IsLetterOrDigit(c) || c == '_'))
       .Select(p => (Column: NamingConventionUtilities.ToSnakeCase(p).ToLowerInvariant(), Key: p))
       .Where(c => !_frameworkColumns.Contains(c.Column) && !owned.Contains(c.Column))
       .GroupBy(c => c.Column, StringComparer.Ordinal)
       .Select(g => g.First())
-      .OrderBy(c => c.Column, StringComparer.Ordinal)
-      .ToList();
+      .OrderBy(c => c.Column, StringComparer.Ordinal)];
   }
 
   /// <summary>
@@ -246,7 +245,7 @@ public static class PhysicalColumnSql {
   /// </para>
   /// </remarks>
   public static string? Extraction(PhysicalFieldInfo field) {
-    if (field is null || field.IsVector) {
+    if (field?.IsVector != false) {
       return null;
     }
     var key = field.PropertyName;
@@ -303,7 +302,7 @@ public static class PhysicalColumnSql {
   private static string? _elementTypeName(string typeName) {
     var name = typeName.TrimEnd('?');
     if (name.EndsWith("[]", StringComparison.Ordinal)) {
-      return name.Substring(0, name.Length - 2);
+      return name[..^2];
     }
     var open = name.IndexOf('<');
     return open > 0 && name.EndsWith(">", StringComparison.Ordinal) && name.IndexOf(',', open) < 0
@@ -314,6 +313,6 @@ public static class PhysicalColumnSql {
   /// <summary>The schema of <paramref name="qualifiedTable"/> with its dot, or nothing for an unqualified table.</summary>
   private static string _schemaPrefix(string qualifiedTable) {
     var dot = qualifiedTable.IndexOf('.');
-    return dot > 0 ? qualifiedTable.Substring(0, dot + 1) : string.Empty;
+    return dot > 0 ? qualifiedTable[..(dot + 1)] : string.Empty;
   }
 }

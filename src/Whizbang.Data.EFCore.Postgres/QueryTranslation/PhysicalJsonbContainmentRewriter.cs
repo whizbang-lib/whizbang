@@ -354,13 +354,9 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
     // Metadata built without an attribute provider (the framework's own generated contexts) cannot say which
     // member a JSON property came from. Those contexts write a member under its own name, so a JSON property
     // of exactly that name is the member's; anything else stands down.
-    foreach (var property in info.Properties) {
-      if (property.AttributeProvider is null && string.Equals(property.Name, member, StringComparison.Ordinal)) {
-        return property.Name;
-      }
-    }
-
-    return null;
+    return info.Properties
+      .FirstOrDefault(property => property.AttributeProvider is null && string.Equals(property.Name, member, StringComparison.Ordinal))
+      ?.Name;
   }
 
   /// <summary>Whether this is <c>EF.Property(row, name)</c> for a property the model stores in a jsonb column.</summary>

@@ -91,6 +91,13 @@ public class PhysicalColumnFillMaintenanceStepTests {
   /// value is filled by the step and then found by a filter on the column.
   /// </summary>
   [Test]
+  public async Task ClaimWindow_IsTheSharedFillWindowAsync() {
+    // The EF step and the Dapper step claim the same key, so they must agree on the window or a fleet running
+    // both drivers would run the fill twice per window.
+    await Assert.That(PhysicalColumnFillMaintenanceStep.ClaimWindow).IsEqualTo(Whizbang.Data.Postgres.PhysicalColumnFill.ClaimWindow);
+  }
+
+  [Test]
   public async Task ARowWrittenWithOnlyTheDocumentValue_IsFilledAndFoundByAColumnFilterAsync() {
     await Assert.That(await _scalarAsync("SELECT string_agg(column_name, ',' ORDER BY column_name) FROM wh_physical_column_fills WHERE direction = 'to_column'"))
       .IsEqualTo("code,name,rank");

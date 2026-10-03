@@ -28,21 +28,21 @@ internal static class TransportConsumerOptionsBinder {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles these calls to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
   internal static MessageProcessingOptions Bind(IServiceProvider services, MessageProcessingOptions options) {
     foreach (var section in Sections(services, MESSAGE_PROCESSING_SECTION)) {
-      ConfigurationBinder.Bind(section, options);
+      section.Bind(options);
     }
     return options;
   }
 
   internal static TransportBatchOptions Bind(IServiceProvider services, TransportBatchOptions options) {
     foreach (var section in Sections(services, BATCH_SECTION)) {
-      ConfigurationBinder.Bind(section, options);
+      section.Bind(options);
     }
     return options;
   }
 
   internal static SubscriptionResilienceOptions Bind(IServiceProvider services, SubscriptionResilienceOptions options) {
     foreach (var section in Sections(services, SUBSCRIPTION_RESILIENCE_SECTION)) {
-      ConfigurationBinder.Bind(section, options);
+      section.Bind(options);
     }
     return options;
   }
@@ -99,9 +99,8 @@ internal static class TransportConsumerOptionsBinder {
   internal static IEnumerable<IConfigurationSection> Sections(IServiceProvider services, string child) {
     // AddTransportConsumer applies TryAddWhizbangDefaults, which guarantees an IConfiguration.
     var root = services.GetRequiredService<IConfiguration>().GetSection(TransportConfigurationSection.ROOT);
-    return services.GetServices<TransportConfigurationSection>()
+    return [.. services.GetServices<TransportConfigurationSection>()
       .Select(transport => root.GetSection(transport.Name).GetSection(child))
-      .Where(section => section.Exists())
-      .ToList();
+      .Where(section => section.Exists())];
   }
 }

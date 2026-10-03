@@ -154,7 +154,7 @@ public class SplitPromotionTests {
   /// <summary>A second start arms nothing, fills nothing and changes no value.</summary>
   [Test]
   public async Task ASecondStart_ChangesNothingAsync() {
-    await _execAsync($"UPDATE wh_physical_column_fills SET armed_at = TIMESTAMPTZ '2026-01-01 00:00:00+00'");
+    await _execAsync("UPDATE wh_physical_column_fills SET armed_at = TIMESTAMPTZ '2026-01-01 00:00:00+00'");
     await PhysicalMoves.ForgetSchemaAsync(_connectionString);
 
     await PhysicalMoves.StartAsync(_connectionString);

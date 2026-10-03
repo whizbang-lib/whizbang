@@ -58,7 +58,7 @@ internal static class ProcessWideOptionsBinding {
     services.AddSingleton<IConfigureOptions<RedeliveryPumpOptions>>(sp =>
       new ConfigureOptions<RedeliveryPumpOptions>(options => {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-        ConfigurationBinder.Bind(Section(sp, "Whizbang:Redelivery"), options);
+        Section(sp, "Whizbang:Redelivery").Bind(options);
 #pragma warning restore IL2026
       }));
     // The re-delivery receptor resolves the plain instance; hand it the bound one.
@@ -68,7 +68,7 @@ internal static class ProcessWideOptionsBinding {
     services.AddSingleton<IConfigureOptions<ThrottleRetryOptions>>(sp =>
       new ConfigureOptions<ThrottleRetryOptions>(options => {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-        ConfigurationBinder.Bind(Section(sp, "Whizbang:ThrottleRetry"), options);
+        Section(sp, "Whizbang:ThrottleRetry").Bind(options);
 #pragma warning restore IL2026
       }));
 
@@ -76,7 +76,7 @@ internal static class ProcessWideOptionsBinding {
     services.AddSingleton<IConfigureOptions<StreamRateLimiterOptions>>(sp =>
       new ConfigureOptions<StreamRateLimiterOptions>(options => {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-        ConfigurationBinder.Bind(Section(sp, "Whizbang:StreamRateLimiter"), options);
+        Section(sp, "Whizbang:StreamRateLimiter").Bind(options);
 #pragma warning restore IL2026
       }));
     // The limiter is keyed by stream, so one per process is the meaningful shape; an application
@@ -89,7 +89,7 @@ internal static class ProcessWideOptionsBinding {
     services.AddSingleton<IConfigureOptions<DebuggerAwareClockOptions>>(sp =>
       new ConfigureOptions<DebuggerAwareClockOptions>(options => {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-        ConfigurationBinder.Bind(Section(sp, "Whizbang:DebuggerAwareClock"), options);
+        Section(sp, "Whizbang:DebuggerAwareClock").Bind(options);
 #pragma warning restore IL2026
       }));
 
@@ -97,7 +97,7 @@ internal static class ProcessWideOptionsBinding {
     services.AddSingleton<IConfigureOptions<StandbyWatcherOptions>>(sp =>
       new ConfigureOptions<StandbyWatcherOptions>(options => {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-        ConfigurationBinder.Bind(Section(sp, "Whizbang:StandbyWatcher"), options);
+        Section(sp, "Whizbang:StandbyWatcher").Bind(options);
 #pragma warning restore IL2026
       }));
     // The watcher and the handshake take the plain instance. TryAdd keeps a host's own registration.
@@ -107,7 +107,7 @@ internal static class ProcessWideOptionsBinding {
     services.AddSingleton<IConfigureOptions<PerspectiveSnapshotOptions>>(sp =>
       new ConfigureOptions<PerspectiveSnapshotOptions>(options => {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-        ConfigurationBinder.Bind(Section(sp, "Whizbang:Perspectives:Snapshots"), options);
+        Section(sp, "Whizbang:Perspectives:Snapshots").Bind(options);
 #pragma warning restore IL2026
       }));
 
@@ -115,7 +115,7 @@ internal static class ProcessWideOptionsBinding {
     services.AddSingleton<IConfigureOptions<PerspectiveRewindOptions>>(sp =>
       new ConfigureOptions<PerspectiveRewindOptions>(options => {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-        ConfigurationBinder.Bind(Section(sp, "Whizbang:Perspectives:Rewind"), options);
+        Section(sp, "Whizbang:Perspectives:Rewind").Bind(options);
 #pragma warning restore IL2026
       }));
 
@@ -123,7 +123,7 @@ internal static class ProcessWideOptionsBinding {
     services.AddSingleton<IConfigureOptions<PerspectiveStreamLockOptions>>(sp =>
       new ConfigureOptions<PerspectiveStreamLockOptions>(options => {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-        ConfigurationBinder.Bind(Section(sp, "Whizbang:Perspectives:StreamLock"), options);
+        Section(sp, "Whizbang:Perspectives:StreamLock").Bind(options);
 #pragma warning restore IL2026
       }));
 
@@ -131,7 +131,7 @@ internal static class ProcessWideOptionsBinding {
     services.AddSingleton<IConfigureOptions<PerspectiveStreamAffinityOptions>>(sp =>
       new ConfigureOptions<PerspectiveStreamAffinityOptions>(options => {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-        ConfigurationBinder.Bind(Section(sp, "Whizbang:Workers:PerspectiveAffinity"), options);
+        Section(sp, "Whizbang:Workers:PerspectiveAffinity").Bind(options);
 #pragma warning restore IL2026
       }));
 
@@ -145,14 +145,14 @@ internal static class ProcessWideOptionsBinding {
   /// <summary>Applies <c>Whizbang:SystemEvents</c> to <paramref name="options"/>.</summary>
   internal static void BindSystemEvents(IServiceProvider services, SystemEventOptions options) {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-    ConfigurationBinder.Bind(Section(services, "Whizbang:SystemEvents"), options);
+    Section(services, "Whizbang:SystemEvents").Bind(options);
 #pragma warning restore IL2026
   }
 
   /// <summary>Applies <c>Whizbang:MessageSecurity</c> to <paramref name="options"/>.</summary>
   internal static MessageSecurityOptions BindMessageSecurity(IServiceProvider services, MessageSecurityOptions options) {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-    ConfigurationBinder.Bind(Section(services, "Whizbang:MessageSecurity"), options);
+    Section(services, "Whizbang:MessageSecurity").Bind(options);
 #pragma warning restore IL2026
     return options;
   }
@@ -160,7 +160,7 @@ internal static class ProcessWideOptionsBinding {
   /// <summary>Applies <c>Whizbang:Lifecycle</c> to <paramref name="options"/>.</summary>
   internal static WhizbangLifecycleOptions BindLifecycle(IServiceProvider services, WhizbangLifecycleOptions options) {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-    ConfigurationBinder.Bind(Section(services, "Whizbang:Lifecycle"), options);
+    Section(services, "Whizbang:Lifecycle").Bind(options);
 #pragma warning restore IL2026
     return options;
   }
@@ -173,7 +173,7 @@ internal static class ProcessWideOptionsBinding {
   internal static WhizbangHealthOptions BindHealth(IServiceProvider services, WhizbangHealthOptions options) {
     var section = new HealthConfigurationSection();
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-    ConfigurationBinder.Bind(Section(services, "Whizbang:Health"), section);
+    Section(services, "Whizbang:Health").Bind(section);
 #pragma warning restore IL2026
     if (section.Default is { } defaultPolicy) {
       options.Default = _healthPolicy(defaultPolicy, "Whizbang:Health:Default");
@@ -208,7 +208,7 @@ internal static class ProcessWideOptionsBinding {
   internal static WhizbangCoreOptions BindCore(IServiceProvider services, WhizbangCoreOptions options) {
     var section = new CoreConfigurationSection();
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-    ConfigurationBinder.Bind(Section(services, "Whizbang:Core"), section);
+    Section(services, "Whizbang:Core").Bind(section);
 #pragma warning restore IL2026
     section.ApplyTo(options);
 

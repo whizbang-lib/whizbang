@@ -56,7 +56,7 @@ public class CollectiveOrderingHeadSqlTests : PostgresTestBase {
       SELECT message_id, event_data->'p'->>'predecessorId', event_data->'p'->>'predecessorType'
       FROM wh_outbox WHERE stream_id = @key
       """;
-    cmd.Parameters.AddWithValue("key", key);
+    cmd.Parameters.AddWithValue(nameof(key), key);
     var links = new Dictionary<Guid, (Guid?, string?)>();
     await using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync()) {
@@ -72,7 +72,7 @@ public class CollectiveOrderingHeadSqlTests : PostgresTestBase {
     await conn.OpenAsync();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT last_event_id FROM wh_collective_ordering_heads WHERE stream_id = @key";
-    cmd.Parameters.AddWithValue("key", key);
+    cmd.Parameters.AddWithValue(nameof(key), key);
     return await cmd.ExecuteScalarAsync() is Guid id ? id : null;
   }
 
@@ -81,7 +81,7 @@ public class CollectiveOrderingHeadSqlTests : PostgresTestBase {
     await conn.OpenAsync();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT predecessor_id, predecessor_type FROM wh_link_collective_predecessor(@key, @id, @type, now())";
-    cmd.Parameters.AddWithValue("key", key);
+    cmd.Parameters.AddWithValue(nameof(key), key);
     cmd.Parameters.AddWithValue("id", eventId);
     cmd.Parameters.AddWithValue("type", LINK_TYPE);
     await using var reader = await cmd.ExecuteReaderAsync();

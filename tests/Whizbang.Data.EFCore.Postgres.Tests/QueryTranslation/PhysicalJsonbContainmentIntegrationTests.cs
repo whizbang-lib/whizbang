@@ -214,7 +214,7 @@ public class PhysicalJsonbContainmentIntegrationTests {
     await _assertSameRowsAsync(models, m => m.Labels.Any(l => l.Key == labelKey && l.Value == labelValue),
       r => r.Data.Labels.Any(l => l.Key == labelKey && l.Value == labelValue));
     await _assertSameRowsAsync(models, m => m.Place != null && m.Place.City == city, r => r.Data.Place!.City == city);
-    await _assertSameRowsAsync(models, m => m.Place != null && m.Place.Zone == 3, r => r.Data.Place!.Zone == 3);
+    await _assertSameRowsAsync(models, m => m.Place?.Zone == 3, r => r.Data.Place!.Zone == 3);
   }
 
   // ------------------------------------------------------------------

@@ -98,7 +98,7 @@ public class PhysicalJsonbContainmentRewriterTests {
   [Test]
   public async Task AsyncAndCountOperators_ArePredicatesTooAsync() {
     Model.Register();
-    using var context = new PhysicalJsonbContainmentSqlTests.JsonbColumnsDbContext(_options);
+    await using var context = new PhysicalJsonbContainmentSqlTests.JsonbColumnsDbContext(_options);
     var tag = "red";
     Expression<Func<IQueryable<Row>, int>> count = rows => rows.Count(r => r.Data.Tags.Contains(tag));
     var redirected = new PhysicalFieldExpressionVisitor().Visit(count.Body);
@@ -112,7 +112,7 @@ public class PhysicalJsonbContainmentRewriterTests {
   [Test]
   public async Task AnAsyncFilteringOperator_IsAPredicateTooAsync() {
     Model.Register();
-    using var context = new PhysicalJsonbContainmentSqlTests.JsonbColumnsDbContext(_options);
+    await using var context = new PhysicalJsonbContainmentSqlTests.JsonbColumnsDbContext(_options);
     var tag = "red";
     Expression<Func<Row, bool>> predicate = r => r.Data.Tags.Contains(tag);
     var source = ((IQueryable<Row>)context.Set<Row>()).Expression;
@@ -181,7 +181,7 @@ public class PhysicalJsonbContainmentRewriterTests {
   [Test]
   public async Task OutsideAFilter_NothingIsRewrittenAsync() {
     Model.Register();
-    using var context = new PhysicalJsonbContainmentSqlTests.JsonbColumnsDbContext(_options);
+    await using var context = new PhysicalJsonbContainmentSqlTests.JsonbColumnsDbContext(_options);
     var tag = "red";
     var query = context.Set<Row>().Select(r => r.Data.Tags.Contains(tag)).Expression;
     var counter = new ContainmentCounter();
@@ -196,7 +196,7 @@ public class PhysicalJsonbContainmentRewriterTests {
       .UseNpgsql(UNUSED_CONNECTION)
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options;
-    using var context = new BareDbContext(withoutMarkers);
+    await using var context = new BareDbContext(withoutMarkers);
     var tag = "red";
     Expression<Func<IQueryable<Row>, IQueryable<Row>>> query = rows => rows.Where(r => r.Data.Tags.Contains(tag));
     var counter = new ContainmentCounter();

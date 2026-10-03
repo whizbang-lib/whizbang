@@ -27,7 +27,7 @@ public class AspNetOptionsConfigurationBindingTests {
 
   [Test]
   public async Task AvailabilityGate_EveryKeyBindsAsync() {
-    using var provider = _build(new() {
+    await using var provider = _build(new() {
       ["Whizbang:AspNet:Availability:Enabled"] = "false",
       ["Whizbang:AspNet:Availability:Mode"] = "AllNonExempt",
       ["Whizbang:AspNet:Availability:ExemptPaths:0"] = "/healthz",
@@ -39,12 +39,12 @@ public class AspNetOptionsConfigurationBindingTests {
     await Assert.That(options.Enabled).IsFalse();
     await Assert.That(options.Mode).IsEqualTo(AvailabilityGateMode.AllNonExempt);
     await Assert.That(options.ExemptPaths).IsNotNull();
-    await Assert.That(options.ExemptPaths!).IsEquivalentTo(["/healthz", "/status"]);
+    await Assert.That(options.ExemptPaths).IsEquivalentTo(["/healthz", "/status"]);
   }
 
   [Test]
   public async Task SecurityHeaders_EveryKeyBindsAsync() {
-    using var provider = _build(new() {
+    await using var provider = _build(new() {
       ["Whizbang:AspNet:SecurityHeaders:Enabled"] = "false",
       ["Whizbang:AspNet:SecurityHeaders:StrictTransportSecurity"] = "max-age=60",
       ["Whizbang:AspNet:SecurityHeaders:XContentTypeOptions"] = "nosniff-custom",
@@ -70,7 +70,7 @@ public class AspNetOptionsConfigurationBindingTests {
 
   [Test]
   public async Task SecurityHeaders_AnEmptyValueBindsAsEmpty_WhichSuppressesTheHeaderAsync() {
-    using var provider = _build(new() {
+    await using var provider = _build(new() {
       ["Whizbang:AspNet:SecurityHeaders:PermissionsPolicy"] = "",
     });
 
@@ -84,7 +84,7 @@ public class AspNetOptionsConfigurationBindingTests {
     // HeaderNames is a get-only IList with a default entry, so the binder adds to it rather than
     // replacing it. A service configuring one extra header keeps X-Correlation-ID as well, and that
     // is worth pinning: an operator reading only the key would expect a replacement.
-    using var provider = _build(new() {
+    await using var provider = _build(new() {
       ["Whizbang:AspNet:Correlation:HeaderNames:0"] = "X-Request-Id",
     });
 
@@ -102,7 +102,7 @@ public class AspNetOptionsConfigurationBindingTests {
     services.AddSingleton<IConfiguration>(configuration);
     services.AddWhizbangAspNet();
     services.AddWhizbangAspNet();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var options = provider.GetRequiredService<IOptions<WhizbangCorrelationOptions>>().Value;
 
@@ -111,7 +111,7 @@ public class AspNetOptionsConfigurationBindingTests {
 
   [Test]
   public async Task DefaultsSurviveWhenNoSectionIsPresentAsync() {
-    using var provider = _build([]);
+    await using var provider = _build([]);
 
     var availability = provider.GetRequiredService<IOptions<WhizbangAvailabilityOptions>>().Value;
     var headers = provider.GetRequiredService<IOptions<WhizbangSecurityHeadersOptions>>().Value;
@@ -129,7 +129,7 @@ public class AspNetOptionsConfigurationBindingTests {
     // resolution failure, since the binder is registered unconditionally.
     var services = new ServiceCollection();
     services.AddWhizbangAspNet();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var headers = provider.GetRequiredService<IOptions<WhizbangSecurityHeadersOptions>>().Value;
     var availability = provider.GetRequiredService<IOptions<WhizbangAvailabilityOptions>>().Value;
@@ -155,7 +155,7 @@ public class AspNetOptionsConfigurationBindingTests {
       o.ReferrerPolicy = "same-origin";
     });
     services.AddWhizbangAspNet();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var options = provider.GetRequiredService<IOptions<WhizbangSecurityHeadersOptions>>().Value;
 
@@ -173,7 +173,7 @@ public class AspNetOptionsConfigurationBindingTests {
     services.AddSingleton<IConfiguration>(configuration);
     services.AddWhizbangAspNet();
     services.Configure<WhizbangAvailabilityOptions>(o => o.Mode = AvailabilityGateMode.MutationsOnly);
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var options = provider.GetRequiredService<IOptions<WhizbangAvailabilityOptions>>().Value;
 

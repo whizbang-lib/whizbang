@@ -64,9 +64,7 @@ public sealed partial class PostgresStreamPurger(
       await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
       if (!request.DryRun && !await _claimAsync(connection, transaction, prefix, request.PurgeId, index, cancellationToken).ConfigureAwait(false)) {
         await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-        if (logger is not null) {
-          LogBatchAlreadyClaimed(logger, request.PurgeId, index);
-        }
+        _reportSkipped(logger, request.PurgeId, index);
         results.Add(new StreamPurgeBatch(index, ids, Ran: false, new Dictionary<string, long>(StringComparer.Ordinal)));
         continue;
       }
@@ -78,11 +76,7 @@ public sealed partial class PostgresStreamPurger(
       } else {
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
       }
-      if (logger is not null) {
-        var eventCount = rows.GetValueOrDefault("wh_event_store");
-        LogBatch(logger, request.DryRun ? "Dry run of" : "Purged", request.PurgeId, index, ids.Count,
-          eventCount, request.RequestedBy, request.Reason);
-      }
+      _reportRan(logger, request, index, ids.Count, rows);
       results.Add(new StreamPurgeBatch(index, ids, Ran: true, rows));
     }
 
@@ -122,9 +116,22 @@ public sealed partial class PostgresStreamPurger(
     return rows;
   }
 
+  private static void _reportRan(ILogger? logger, StreamPurgeRequest request, int index, int streamCount, Dictionary<string, long> rows) {
+    if (logger is not null && logger.IsEnabled(LogLevel.Information)) {
+      LogBatch(logger, request.DryRun ? "Dry run of" : "Purged", request.PurgeId, index, streamCount,
+        rows.GetValueOrDefault("wh_event_store"), $"{request.RequestedBy}: {request.Reason}");
+    }
+  }
+
+  private static void _reportSkipped(ILogger? logger, Guid purgeId, int index) {
+    if (logger is not null) {
+      LogBatchAlreadyClaimed(logger, purgeId, index);
+    }
+  }
+
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "{Action} stream purge {PurgeId} batch {BatchIndex}: {StreamCount} stream(s), {EventCount} event(s); requested by {RequestedBy}: {Reason}")]
-  static partial void LogBatch(ILogger logger, string action, Guid purgeId, int batchIndex, int streamCount, long eventCount, string requestedBy, string reason);
+    Message = "{Action} stream purge {PurgeId} batch {BatchIndex}: {StreamCount} stream(s), {EventCount} event(s); requested by {Request}")]
+  static partial void LogBatch(ILogger logger, string action, Guid purgeId, int batchIndex, int streamCount, long eventCount, string request);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Stream purge {PurgeId} batch {BatchIndex} is already claimed (another instance, or an earlier run of this purge); skipped")]

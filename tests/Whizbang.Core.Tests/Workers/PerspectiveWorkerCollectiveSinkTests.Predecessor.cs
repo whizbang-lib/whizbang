@@ -330,8 +330,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     private void _armed(TimeSpan dueTime) {
       lock (_lock) {
         ArmedFor.Add(dueTime);
-        foreach (var waiter in _waiters.Where(w => ArmedFor.Count >= w.Count).ToList()) {
-          waiter.Signal.TrySetResult();
+        foreach (var (Count, Signal) in _waiters.Where(w => ArmedFor.Count >= w.Count).ToList()) {
+          Signal.TrySetResult();
         }
       }
     }

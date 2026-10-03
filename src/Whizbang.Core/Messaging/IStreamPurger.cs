@@ -78,7 +78,7 @@ public sealed record StreamPurgeRequest {
     if (StreamIds.Contains(Guid.Empty)) {
       throw new ArgumentException("The empty stream id cannot be purged: it would reach every streamless row.", nameof(StreamIds));
     }
-    return [.. StreamIds.Distinct().Order().Chunk(BatchSize).Select(chunk => (IReadOnlyList<Guid>)chunk)];
+    return [.. StreamIds.Distinct().Order().Chunk(BatchSize).Cast<IReadOnlyList<Guid>>()];
   }
 }
 

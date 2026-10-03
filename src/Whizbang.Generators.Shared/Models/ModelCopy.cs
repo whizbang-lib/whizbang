@@ -52,22 +52,31 @@ public static class ModelCopy {
     var members = new List<string>();
     var seen = new HashSet<string>(StringComparer.Ordinal);
     for (var type = model; type is { SpecialType: SpecialType.None }; type = type.BaseType) {
-      foreach (var property in type.GetMembers().OfType<IPropertySymbol>()) {
-        if (property.IsStatic || property.IsIndexer || property.DeclaredAccessibility != Accessibility.Public
-            || !seen.Add(property.Name)) {
-          continue;
+      foreach (var property in type.GetMembers().OfType<IPropertySymbol>().Where(p => _isCandidate(p, seen))) {
+        if (_blocker(property, type, within) is { } reason) {
+          return new ModelCopyInfo("", reason);
         }
-        if (property.SetMethod is { } setter) {
-          if (!_reachable(setter, within)) {
-            return new ModelCopyInfo("", $"the setter of {property.Name} is not public or internal");
-          }
+        if (property.SetMethod is not null) {
           members.Add(property.Name);
-        } else if (type.GetMembers().OfType<IFieldSymbol>().Any(f => SymbolEqualityComparer.Default.Equals(f.AssociatedSymbol, property))) {
-          return new ModelCopyInfo("", $"{property.Name} is a get-only property that stores a value, which a copy cannot carry");
         }
       }
     }
     return new ModelCopyInfo(string.Join(",", members), null);
+  }
+
+  /// <summary>A public instance property not yet seen lower in the hierarchy (an override or a hiding member).</summary>
+  private static bool _isCandidate(IPropertySymbol property, HashSet<string> seen) =>
+    !property.IsStatic && !property.IsIndexer && property.DeclaredAccessibility == Accessibility.Public
+    && seen.Add(property.Name);
+
+  /// <summary>Why <paramref name="property"/> stops the copy, or null when it is carried or is computed.</summary>
+  private static string? _blocker(IPropertySymbol property, INamedTypeSymbol type, IAssemblySymbol within) {
+    if (property.SetMethod is { } setter) {
+      return _reachable(setter, within) ? null : $"the setter of {property.Name} is not public or internal";
+    }
+    return type.GetMembers().OfType<IFieldSymbol>().Any(f => SymbolEqualityComparer.Default.Equals(f.AssociatedSymbol, property))
+      ? $"{property.Name} is a get-only property that stores a value, which a copy cannot carry"
+      : null;
   }
 
   /// <summary>

@@ -34,7 +34,7 @@ public class PhysicalJsonbColumnBindingTests {
 
   [Test]
   public async Task AJsonbColumn_IsBoundAsJsonbTextThroughItsConverterAsync() {
-    using var context = _context();
+    await using var context = _context();
     var property = context.Model.FindEntityType(typeof(PerspectiveRow<Model>))!.FindProperty("tags");
 
     var parameter = BaseUpsertStrategy.PhysicalColumnParameter("pf_0", property, new List<string> { "a", "b" });
@@ -46,7 +46,7 @@ public class PhysicalJsonbColumnBindingTests {
 
   [Test]
   public async Task EveryOtherColumn_IsBoundAsItsValueAsync() {
-    using var context = _context();
+    await using var context = _context();
     var entity = context.Model.FindEntityType(typeof(PerspectiveRow<Model>))!;
 
     var withoutConverter = BaseUpsertStrategy.PhysicalColumnParameter("pf_0", entity.FindProperty("Version"), 3);
@@ -60,7 +60,7 @@ public class PhysicalJsonbColumnBindingTests {
 
   [Test]
   public async Task AConvertedColumnThatIsNotJsonb_IsBoundAsItsValueAsync() {
-    using var context = new ConvertedTextDbContext(
+    await using var context = new ConvertedTextDbContext(
       new DbContextOptionsBuilder<ConvertedTextDbContext>().UseNpgsql(UNUSED_CONNECTION)
         .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)).Options);
     var property = context.Model.FindEntityType(typeof(PerspectiveRow<Model>))!.FindProperty("code");
@@ -77,7 +77,7 @@ public class PhysicalJsonbColumnBindingTests {
   /// </summary>
   [Test]
   public async Task DocumentCopySql_CoversOnlyTheJsonbColumnsTheWriteSetAsync() {
-    using var context = _context();
+    await using var context = _context();
     PerspectivePhysicalFieldRegistry.Register(typeof(Model), nameof(Model.Tags), "tags", FieldStorageMode.Extracted, columnType: "jsonb");
     PerspectivePhysicalFieldRegistry.Register(typeof(Model), nameof(Model.Counts), "counts", FieldStorageMode.Extracted, columnType: "jsonb");
     PerspectivePhysicalFieldRegistry.Register(typeof(Model), nameof(Model.Labels), "labels", FieldStorageMode.Split, columnType: "jsonb");

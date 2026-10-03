@@ -42,9 +42,9 @@ public class CommitOrderStamperRoleTests : EFCoreTestBase {
   }
 
   /// <summary>Completes when the worker logs the given event id.</summary>
-  private sealed class SignalingLogger : ILogger<PgCommitOrderStamperWorker> {
-    private readonly int _eventId;
-    public SignalingLogger(int eventId) => _eventId = eventId;
+  private sealed class SignalingLogger(int eventId) : ILogger<PgCommitOrderStamperWorker> {
+    private readonly int _eventId = eventId;
+
     public TaskCompletionSource Logged { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;

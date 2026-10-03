@@ -199,20 +199,19 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
   }
 
   private static async Task _appendAsync<TEvent>(IServiceProvider root, TEvent payload) where TEvent : IEvent {
-    await using (var scope = root.CreateAsyncScope()) {
-      var envelope = new MessageEnvelope<TEvent> {
-        MessageId = MessageId.New(),
-        Payload = payload,
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
-        Hops = [],
-      };
-      var streamId = payload switch {
-        RebuildCreditedEvent c => c.StreamId,
-        RebuildDebitedEvent d => d.StreamId,
-        _ => throw new ArgumentException("Unexpected event", nameof(payload)),
-      };
-      await scope.ServiceProvider.GetRequiredService<IEventStore>().AppendAsync(streamId, envelope);
-    }
+    await using var scope = root.CreateAsyncScope();
+    var envelope = new MessageEnvelope<TEvent> {
+      MessageId = MessageId.New(),
+      Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = [],
+    };
+    var streamId = payload switch {
+      RebuildCreditedEvent c => c.StreamId,
+      RebuildDebitedEvent d => d.StreamId,
+      _ => throw new ArgumentException("Unexpected event", nameof(payload)),
+    };
+    await scope.ServiceProvider.GetRequiredService<IEventStore>().AppendAsync(streamId, envelope);
   }
 
   private async Task _seedStaleLiveRowsAsync(Guid[] streams) {

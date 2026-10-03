@@ -70,12 +70,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
               .ToImmutableArray();
 
           // A Split class whose init-only promoted field can only be stripped through a copy, which it cannot make.
-          foreach (var uncopyable in validPerspectives
+          foreach (var (Model, Problem) in validPerspectives
               .Where(p => p.ModelCopy?.Problem is not null)
               .Select(p => (Model: p.InterfaceTypeArguments[0].Replace("global::", ""), p.ModelCopy!.Problem))
               .Distinct()) {
             ctx.ReportDiagnostic(Diagnostic.Create(
-                DiagnosticDescriptors.SplitClassModelCannotBeCopied, Location.None, uncopyable.Model, uncopyable.Problem));
+                DiagnosticDescriptors.SplitClassModelCannotBeCopied, Location.None, Model, Problem));
           }
 
           _generatePerspectiveRunners(ctx, compilation, validPerspectives);

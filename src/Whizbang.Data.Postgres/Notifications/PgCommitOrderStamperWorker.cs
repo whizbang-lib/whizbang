@@ -281,13 +281,7 @@ public sealed partial class PgCommitOrderStamperWorker(
         // Returning to wake-waiting ends any fenced-drain episode: subsequent stamps
         // are steady-state again and must not ring the make-up doorbell.
         fencedDrain = false;
-        var effectiveInterval = ComputeEffectivePollingInterval(
-          _stamperOptions,
-          _notifySignalingGate?.IsAvailable);
-        if (_roleElector is not null && effectiveInterval > _roleElector.RenewInterval) {
-          effectiveInterval = _roleElector.RenewInterval;
-        }
-        _ = await _wake.WaitAsync(effectiveInterval, stoppingToken);
+        await _waitForWakeAsync(stoppingToken);
       }
       skipWakeWait = false;
 
@@ -327,6 +321,18 @@ public sealed partial class PgCommitOrderStamperWorker(
         skipWakeWait = true;
       }
     }
+  }
+
+  /// <summary>
+  /// Waits for a NOTIFY-fired wake or the polling interval. Under role assignment the wait is capped at the
+  /// renew interval, because this loop's own verification is what renews the lease.
+  /// </summary>
+  private async Task _waitForWakeAsync(CancellationToken stoppingToken) {
+    var effectiveInterval = ComputeEffectivePollingInterval(_stamperOptions, _notifySignalingGate?.IsAvailable);
+    if (_roleElector is not null && effectiveInterval > _roleElector.RenewInterval) {
+      effectiveInterval = _roleElector.RenewInterval;
+    }
+    _ = await _wake.WaitAsync(effectiveInterval, stoppingToken);
   }
 
   /// <summary>

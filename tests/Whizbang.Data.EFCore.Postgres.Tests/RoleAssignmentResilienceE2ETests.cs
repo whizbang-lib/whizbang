@@ -343,8 +343,10 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
       await attempt.Grant!.DisposeAsync();
     }
 
+    // Bridge off, so the multi-role vote runs and finds no connection; with the bridge on (the default) the
+    // roles are attempted one at a time, which reports the same.
     var noConnection = new PgRoleElector(
-      Options.Create(new WhizbangNotificationOptions()), Options.Create(new RoleAssignmentOptions()), _config(), a,
+      Options.Create(new WhizbangNotificationOptions()), Options.Create(new RoleAssignmentOptions { HoldLegacySessionLock = false }), _config(), a,
       NullDutyElector.Instance, NullLogger<PgRoleElector>.Instance, null);
     var unavailable = await noConnection.TryAcquireManyAsync([ROLE, StartupDuties.MIGRATOR], cancellationToken);
     await Assert.That(unavailable.All(x => x.Refusal == DutyRefusal.Unavailable)).IsTrue();

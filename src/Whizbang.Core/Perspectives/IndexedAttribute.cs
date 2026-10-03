@@ -85,8 +85,8 @@ public enum IndexKinds {
   /// <remarks>
   /// Only a <c>[PhysicalField]</c> stored as jsonb can carry it; elsewhere it builds nothing. A perspective's
   /// <c>data</c> document needs no declaration: its own GIN index answers containment already. The same
-  /// index can be written out as <c>[PerspectiveIndex(nameof(Field), Method = PerspectiveIndexMethod.Gin,
-  /// OperatorClass = "jsonb_path_ops")]</c>; this is the portable spelling, built by both drivers.
+  /// index can be written out as <code>[PerspectiveIndex(nameof(Field), Method = PerspectiveIndexMethod.Gin,
+  /// OperatorClass = "jsonb_path_ops")]</code>; this is the portable spelling, built by both drivers.
   /// </remarks>
   /// <docs>fundamentals/perspectives/physical-fields#jsonb-columns</docs>
   Containment = 8,

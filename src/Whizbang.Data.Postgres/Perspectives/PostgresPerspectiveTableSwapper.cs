@@ -78,7 +78,7 @@ public sealed class PostgresPerspectiveTableSwapper(
     ArgumentNullException.ThrowIfNull(ids);
     await using var conn = await _openConnection(cancellationToken).ConfigureAwait(false);
     await using var cmd = new NpgsqlCommand($"DELETE FROM {_table(table)} WHERE id = ANY(@ids)", conn);
-    cmd.Parameters.AddWithValue("ids", ids.ToArray());
+    cmd.Parameters.AddWithValue(nameof(ids), ids.ToArray());
     await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 

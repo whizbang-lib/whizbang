@@ -52,12 +52,12 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT outcome, holder_instance_id, epoch, lease_remaining "
       + "FROM wh_vote_role(@role, @id, @lease, @cooldown, @legacy, @version, @bridge)";
-    cmd.Parameters.AddWithValue("role", role);
+    cmd.Parameters.AddWithValue(nameof(role), role);
     cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue("lease", lease ?? _lease);
+    cmd.Parameters.AddWithValue(nameof(lease), lease ?? _lease);
     cmd.Parameters.AddWithValue("cooldown", _cooldown);
     cmd.Parameters.Add(new NpgsqlParameter("legacy", NpgsqlDbType.Bigint) { Value = (object?)legacyKey ?? DBNull.Value });
-    cmd.Parameters.Add(new NpgsqlParameter("version", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = (object?)version ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(version), NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = (object?)version ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("bridge", NpgsqlDbType.Integer) { Value = (object?)bridgePid ?? DBNull.Value });
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     _ = await reader.ReadAsync(ct);
@@ -96,7 +96,7 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     cmd.CommandText = "SELECT wh_renew_role_lease(@role, @id, @epoch, @legacy)";
     cmd.Parameters.AddWithValue("role", ROLE);
     cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue("epoch", epoch);
+    cmd.Parameters.AddWithValue(nameof(epoch), epoch);
     cmd.Parameters.Add(new NpgsqlParameter("legacy", NpgsqlDbType.Bigint) { Value = (object?)legacyKey ?? DBNull.Value });
     return (string)(await cmd.ExecuteScalarAsync(ct))!;
   }

@@ -30,8 +30,8 @@ internal partial class StreamRedeliveryJsonContext : JsonSerializerContext;
 /// </code>
 /// </para>
 /// <para>
-/// <c>POST {prefix}/streams</c> takes <c>{ "originService", "streamIds", "originRequestTopic"?, "replyTopic"?,
-/// "tenantScope"?, "eventTypes"?, "stateOnly"? }</c> and answers <c>202 Accepted</c> with what was sent,
+/// <c>POST {prefix}/streams</c> takes <code>{ "originService", "streamIds", "originRequestTopic"?, "replyTopic"?,
+/// "tenantScope"?, "eventTypes"?, "stateOnly"? }</code> and answers <c>202 Accepted</c> with what was sent,
 /// <c>400</c> for a request that names no origin or no stream, and <c>409</c> when this service cannot send it (no
 /// known request topic for the origin, for instance), with the reason. The endpoint is unauthenticated unless the
 /// host requires authorization on the returned group, which it should before exposing it.

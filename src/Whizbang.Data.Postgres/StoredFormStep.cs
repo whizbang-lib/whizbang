@@ -74,6 +74,7 @@ public sealed class StoredFormStep {
   // A number as JSON or as text renders it. Anything else is not a number, whatever it looks like.
   private const string NUMERIC_TEXT = @"^-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$";
   private const string WHOLE_TEXT = "^-?[0-9]+$";
+  private const string END_IF = "  END IF;\n";
 
   private readonly Func<StepContext, string> _render;
 
@@ -272,7 +273,7 @@ public sealed class StoredFormStep {
       sb.Append(CultureInfo.InvariantCulture, $"    ALTER TABLE {c.QualifiedTable} ALTER COLUMN {col} TYPE {columnType} USING ({conversion});\n");
       sb.Append("    v_touched := v_touched + v_count;\n");
       sb.Append("    v_changed := true;\n");
-      sb.Append("  END IF;\n");
+      sb.Append(END_IF);
       return sb.ToString();
     });
   }
@@ -292,7 +293,7 @@ public sealed class StoredFormStep {
       return $"  IF {exists(from)} AND NOT {exists(to)} THEN\n"
         + $"    ALTER TABLE {c.QualifiedTable} RENAME COLUMN {SqlText.Identifier(from)} TO {SqlText.Identifier(to)};\n"
         + "    v_changed := true;\n"
-        + "  END IF;\n";
+        + END_IF;
     });
   }
 
@@ -340,7 +341,7 @@ public sealed class StoredFormStep {
       + "    EXECUTE 'DROP INDEX ' || v_index;\n"
       + "    RAISE NOTICE USING MESSAGE = format('%s: stored-form migration %s: dropped index %s, which casts %s to another type; it is built again for the new type',\n"
       + $"      {SqlText.Literal(c.TableName)}, {SqlText.Literal(c.MigrationName)}, v_index, {SqlText.Literal(p.JsonPath)});\n"
-      + "  END IF;\n",
+      + END_IF,
       (indexName, createStatement));
   }
 
@@ -375,7 +376,7 @@ public sealed class StoredFormStep {
         + "      RAISE NOTICE USING MESSAGE = format('%s: stored-form migration %s: brought forward the retries of %s parked row(s)',\n"
         + $"        {SqlText.Literal(c.TableName)}, {SqlText.Literal(c.MigrationName)}, v_count);\n"
         + "    END IF;\n"
-        + "  END IF;\n";
+        + END_IF;
     });
   }
 
@@ -399,7 +400,7 @@ public sealed class StoredFormStep {
     + "      'Stored-form migration %s cannot convert %s at %s: %s. Those values cannot be read as %s. '\n"
     + "      'Correct or clear them, or declare a custom migration that does, then restart.',\n"
     + $"      {SqlText.Literal(c.MigrationName)}, {SqlText.Literal(c.DisplayTable)}, {SqlText.Literal(where)}, v_bad, {SqlText.Literal(target)});\n"
-    + "  END IF;\n";
+    + END_IF;
 
   private static List<(string Name, string Value)> _members(IReadOnlyList<(string Name, string Value)> members) {
     ArgumentNullException.ThrowIfNull(members);

@@ -400,7 +400,7 @@ internal sealed class ChaosPod : IServiceInstanceProvider {
     await conn.OpenAsync(ct);
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT epoch FROM wh_role_assignments WHERE role = @role";
-    cmd.Parameters.AddWithValue("role", role);
+    cmd.Parameters.AddWithValue(nameof(role), role);
     return await cmd.ExecuteScalarAsync(ct) as long?;
   }
 
@@ -409,7 +409,7 @@ internal sealed class ChaosPod : IServiceInstanceProvider {
     await conn.OpenAsync(ct);
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT lease_remaining FROM wh_role_assignment_status() WHERE role = @role";
-    cmd.Parameters.AddWithValue("role", role);
+    cmd.Parameters.AddWithValue(nameof(role), role);
     return await cmd.ExecuteScalarAsync(ct) as TimeSpan?;
   }
 
