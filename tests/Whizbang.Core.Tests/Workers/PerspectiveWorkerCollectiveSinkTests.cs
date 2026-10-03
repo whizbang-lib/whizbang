@@ -1729,11 +1729,19 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     public List<PerspectiveCursorCompletion> ReportedCompletions { get; } = [];
     /// <summary>Completes on the first reported cursor completion.</summary>
     public Task FirstCompletion => _firstCompletion.Task;
+    private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), Guid> _cursors = new();
     Task IWorkCoordinator.ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken) {
       lock (ReportedCompletions) { ReportedCompletions.Add(completion); }
+      _cursors[(completion.StreamId, completion.PerspectiveName)] = completion.LastEventId;
       _firstCompletion.TrySetResult();
       return Task.CompletedTask;
     }
+    // The cursor a reported completion advanced, as the real coordinator keeps it. The worker's consumer loops share
+    // one work channel, so a stream's sink rows can reach two runs; the second starts from the cursor the first left.
+    Task<PerspectiveCursorInfo?> IWorkCoordinator.GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken) =>
+      Task.FromResult(_cursors.TryGetValue((streamId, perspectiveName), out var last)
+        ? new PerspectiveCursorInfo { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = last }
+        : null);
     Task IWorkCoordinator.ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken) {
       lock (ReportedFailures) { ReportedFailures.Add(failure); }
       _firstFailure.TrySetResult();
