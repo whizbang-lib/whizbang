@@ -135,7 +135,7 @@ public sealed class HotChocolateTransformer : ICodeTransformer {
     }
 
     var hasMartenUsing = compilationUnit.Usings
-        .Any(u => u.Name?.ToString() != null && _martenUsings.Contains(u.Name.ToString()!));
+        .Any(u => u.Name?.ToString() != null && _martenUsings.Contains(u.Name.ToString()));
 
     if (!hasMartenUsing) {
       return root;
