@@ -125,6 +125,38 @@ public class ReceivedOriginStampMonitorTests {
     await Assert.That(logger.Collector.Count).IsEqualTo(1);
   }
 
+  /// <summary>A clock whose next read runs a hook first: the seam that puts a second receive inside the first one's window close.</summary>
+  private sealed class InterleavingClock : TimeProvider {
+    public long Now { get; set; }
+    public Action? BeforeNextRead { get; set; }
+
+    public override long GetTimestamp() {
+      var hook = BeforeNextRead;
+      BeforeNextRead = null;
+      hook?.Invoke();
+      return Now;
+    }
+  }
+
+  [Test]
+  public async Task TwoReceives_ClosingTheSameWindow_WarnOnceWithBothCountedAsync() {
+    // The first receive reads the window start, then reads the clock to see whether the window closed. The
+    // hook runs a second receive at exactly that point: it sees the same start, closes the window and warns.
+    // The first receive then loses the swap of the window start and must neither warn again nor reset the
+    // counts the second one just reported.
+    var logger = new FakeLogger<ReceivedOriginStampMonitor>();
+    var clock = new InterleavingClock();
+    var monitor = new ReceivedOriginStampMonitor(Options.Create(new StreamIntegrityOptions()), logger, clock);
+    clock.Now += (long)(ReceivedOriginStampMonitor.Window.TotalSeconds * clock.TimestampFrequency);
+    clock.BeforeNextRead = () => monitor.Record(_row(Guid.Empty));
+
+    monitor.Record(_row(Guid.Empty));
+
+    await Assert.That(logger.Collector.Count).IsEqualTo(1)
+      .Because("only the receive that wins the window close reports it");
+    await Assert.That(logger.Collector.LatestRecord.Message).Contains("2 of 2 events");
+  }
+
   [Test]
   public async Task TheRowBuilder_RecordsEveryReceivedRowAsync() {
     var (monitor, logger, time) = _create();
