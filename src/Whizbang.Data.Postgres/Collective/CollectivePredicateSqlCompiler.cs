@@ -207,7 +207,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     var value = _evaluateValue(valueExpr);
     var paramName = _uniqueName(parameters, $"{prefix}_{column.PropName.ToLowerInvariant()}");
     parameters[paramName] = _bind(value, column);
-    sql.Append(column.Sql).Append(' ').Append(op).Append(" @").Append(paramName);
+    sql.Append(_withDeclaredDefault(column, prefix, parameters)).Append(' ').Append(op).Append(" @").Append(paramName);
   }
 
   // An ordering comparison: each side is an ordered column (optionally coalesced) or a value; at least one is a
@@ -395,6 +395,27 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   // column is a real uuid: Postgres refuses `uuid = text` outright (42883), so the guid goes through as itself
   // and the driver types the parameter. A guid arriving as text is parsed rather than passed along, because a
   // caller comparing an id to a string means the id.
+  /// <summary>
+  /// The column's SQL, reading an absent document key as the member's declared default so that equality and
+  /// <c>IN</c> select the same rows the in-memory replay does (#1044). A document written before the member existed
+  /// has no key for it: deserialization gives the replay the default, while the raw document gives SQL
+  /// <c>NULL</c>, and <c>NULL &lt;&gt; 'x'</c>, <c>NULL = 'x'</c> and <c>NULL IN (…)</c> are all <c>NULL</c>, so
+  /// every such row silently drops out of the cohort. Left alone where there is nothing to disagree about: a
+  /// physical column is filled when it is added (#1021), the row id always exists, and a member with no declared
+  /// default already reads as null in both places.
+  /// </summary>
+  private static string _withDeclaredDefault(
+      in ResolvedColumn column, string prefix, Dictionary<string, object?> parameters) {
+    if (column.Kind != ColumnKind.JsonText || column.Physical is not null
+        || !PerspectiveMemberDefaultRegistry.TryResolve(typeof(TModel), column.PropName, out var declared)) {
+      return column.Sql;
+    }
+
+    var paramName = _uniqueName(parameters, $"{prefix}_{column.PropName.ToLowerInvariant()}_else");
+    parameters[paramName] = _bind(declared, column);
+    return $"COALESCE({column.Sql}, @{paramName})";
+  }
+
   private static object? _bind(object? value, in ResolvedColumn column) => column switch {
     { Physical: { } field } => CollectivePhysicalColumns.ColumnValue(field, value),
     { Kind: ColumnKind.Uuid } => value switch {
@@ -470,7 +491,8 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       i++;
     }
 
-    sql.Append(item.Sql).Append(" IN (").Append(names.Count == 0 ? "NULL" : string.Join(", ", names)).Append(')');
+    sql.Append(_withDeclaredDefault(item, prefix, parameters))
+      .Append(" IN (").Append(names.Count == 0 ? "NULL" : string.Join(", ", names)).Append(')');
   }
 
   // q.Of<TOther>().Any(s => s.Id == r.Id && …) → EXISTS (SELECT 1 FROM <TOther table> s WHERE …).
