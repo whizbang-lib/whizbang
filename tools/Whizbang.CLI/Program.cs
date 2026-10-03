@@ -482,10 +482,9 @@ async Task<int> _validateSchemaAsync(string[] commandArgs) {
 
   // Check for required tables
   var requiredTables = new[] { "inbox", "outbox", "event_store", "request_response", "sequences" };
-  foreach (var table in requiredTables) {
-    if (!sql.Contains("_" + table, StringComparison.OrdinalIgnoreCase)) {
-      errors.Add($"Missing required table: {table}");
-    }
+  foreach (var table in requiredTables
+      .Where(t => !sql.Contains("_" + t, StringComparison.OrdinalIgnoreCase))) {
+    errors.Add($"Missing required table: {table}");
   }
 
   // Check for CREATE TABLE statements

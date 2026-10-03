@@ -109,7 +109,7 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
     }
 
     var hasWolverineHttpUsing = compilationUnit.Usings
-        .Any(u => u.Name?.ToString() != null && _wolverineHttpUsings.Contains(u.Name.ToString()!));
+        .Any(u => u.Name?.ToString() != null && _wolverineHttpUsings.Contains(u.Name.ToString()));
 
     if (!hasWolverineHttpUsing) {
       return root;
