@@ -153,6 +153,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         StorageMode: storageMode,
         PhysicalFields: physicalFields,
         DocumentProperties: [.. DocumentPropertyDiscovery.From(modelType as INamedTypeSymbol)],
+        BuildsMetadataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsMetadataIndex,
         TableStorage: TableStorageInfo.From(modelType)
     );
   }
@@ -177,6 +178,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         StorageMode: candidate.StorageMode,
         PhysicalFields: candidate.PhysicalFields,
         DocumentProperties: candidate.DocumentProperties,
+        BuildsMetadataIndex: candidate.BuildsMetadataIndex,
         TableStorage: candidate.TableStorage
     );
   }
@@ -512,8 +514,14 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _appendPostTableSql(
       StringBuilder perspectiveSqlBuilder, PerspectiveSchemaInfo perspective, string createIndexesSnippet) {
-    // Generate standard indexes from snippet
+    // Generate standard indexes from snippet. The metadata index follows [PerspectiveQueries] as it
+    // does on the other driver: nothing the framework runs matches on metadata, so it is built only
+    // for a model whose own queries do.
+    var metadataIndex = perspective.BuildsMetadataIndex
+        ? "CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___metadata_gin ON __TABLE_NAME__ USING GIN (metadata jsonb_path_ops);"
+        : "-- No metadata index: the model does not declare [PerspectiveQueries(MatchOnMetadata = true)].";
     var indexesCode = createIndexesSnippet
+        .Replace("__METADATA_GIN_INDEX__", metadataIndex)
         .Replace("__TABLE_NAME__", perspective.TableName);
 
     perspectiveSqlBuilder.AppendLine(indexesCode);
@@ -794,6 +802,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 /// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
+/// <param name="BuildsMetadataIndex">Whether the model's [PerspectiveQueries] asks for the metadata index</param>
 /// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 internal sealed record PerspectiveSchemaInfo(
     string ClassName,
@@ -805,6 +814,7 @@ internal sealed record PerspectiveSchemaInfo(
     GeneratorFieldStorageMode StorageMode,
     PhysicalFieldInfo[] PhysicalFields,
     string[] DocumentProperties,
+    bool BuildsMetadataIndex,
     TableStorageInfo? TableStorage = null
 );
 
@@ -836,6 +846,7 @@ public enum GeneratorFieldStorageMode {
 /// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
+/// <param name="BuildsMetadataIndex">Whether the model's [PerspectiveQueries] asks for the metadata index</param>
 /// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 internal sealed record PerspectiveCandidate(
     string ClassName,
@@ -847,5 +858,6 @@ internal sealed record PerspectiveCandidate(
     GeneratorFieldStorageMode StorageMode,
     PhysicalFieldInfo[] PhysicalFields,
     string[] DocumentProperties,
+    bool BuildsMetadataIndex,
     TableStorageInfo? TableStorage = null
 );

@@ -10,9 +10,9 @@ namespace Whizbang.Generators.Tests;
 /// <para>
 /// A perspective used to get an index over each of its three documents whether or not anything
 /// read them. The one over the model's document answers a whole-document match, which is what an
-/// equality filter on a field without its own index compiles to, so it stays unless the model says
-/// its queries never match that way. The one over the metadata document answers queries almost
-/// nobody writes, so it is built only when the model asks for it.
+/// equality filter on a field without its own index compiles to, and it is built only when the
+/// model says its queries match that way. The one over the metadata document answers queries almost
+/// nobody writes, so it too is built only when the model asks for it.
 /// </para>
 /// <para>
 /// The second half of this file is about duplicates. An index created by an earlier path under a
@@ -81,12 +81,12 @@ public class PerspectiveDocumentIndexGenerationTests {
   }
 
   // ========================================
-  // Undeclared: the transitional default
+  // Undeclared: neither document index
   // ========================================
 
   /// <summary>
-  /// The exact index block for a model that declares nothing: the document index is kept, the
-  /// metadata index is gone, and every index but the trigram one is created through the comparing
+  /// The exact index block for a model that declares nothing: neither the document index nor the
+  /// metadata index is built, and every index but the trigram one is created through the comparing
   /// statement.
   /// </summary>
   /// <remarks>
@@ -100,7 +100,6 @@ public class PerspectiveDocumentIndexGenerationTests {
     string[] expected = [
       "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_created_at ON \"\"testapp\"\".wh_per_ledger (created_at)$wbix$);",
       "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_updated_at ON \"\"testapp\"\".wh_per_ledger (updated_at)$wbix$);",
-      "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_data_gin ON \"\"testapp\"\".wh_per_ledger USING gin (data)$wbix$);",
       "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_scope_gin ON \"\"testapp\"\".wh_per_ledger USING gin (scope)$wbix$);",
       "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_scope_tenant ON \"\"testapp\"\".wh_per_ledger ((scope->>'t'))$wbix$);",
       "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_status_json ON \"\"testapp\"\".wh_per_ledger ((data ->> 'Status'))$wbix$);",
@@ -108,6 +107,19 @@ public class PerspectiveDocumentIndexGenerationTests {
     ];
 
     await Assert.That(lines).IsEquivalentTo(expected);
+  }
+
+  /// <summary>
+  /// The model's document is not indexed as a whole unless the model asks: the whole-document index
+  /// is the largest on the table and is rewritten on every change, so it is a decision, not a default.
+  /// </summary>
+  [Test]
+  public async Task Undeclared_BuildsNoDocumentIndexInEitherScriptAsync() {
+    var schema = await _schemaAsync("");
+
+    await Assert.That(schema).DoesNotContain("_data_gin", StringComparison.Ordinal)
+      .Because("an undeclared model no longer gets the whole-document index on a new database");
+    await Assert.That(schema).DoesNotContain("gin (data)", StringComparison.Ordinal);
   }
 
   /// <summary>The metadata document is not indexed unless the model asks.</summary>
@@ -129,9 +141,7 @@ public class PerspectiveDocumentIndexGenerationTests {
     var schema = await _schemaAsync("");
     var fallback = schema[..schema.IndexOf("(\"wh_per_ledger\", @\"", StringComparison.Ordinal)];
 
-    await Assert.That(fallback).Contains(
-      "wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_data_gin ON \"\"testapp\"\".wh_per_ledger USING gin (data)$wbix$);",
-      StringComparison.Ordinal);
+    await Assert.That(fallback).DoesNotContain("idx_ledger_data_gin", StringComparison.Ordinal);
     await Assert.That(fallback).Contains(
       "wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_scope_tenant ON \"\"testapp\"\".wh_per_ledger ((scope->>'t'))$wbix$);",
       StringComparison.Ordinal);
@@ -156,12 +166,13 @@ public class PerspectiveDocumentIndexGenerationTests {
       .Because("the tenant index serves tenant isolation, which is not what this declaration is about");
   }
 
-  /// <summary>Declaring the lookup keeps the document index, now as a decision rather than a default.</summary>
+  /// <summary>Declaring the lookup is the one way to get the document index.</summary>
   [Test]
-  public async Task MatchOnAnyFieldTrue_KeepsTheDocumentIndexAsync() {
+  public async Task MatchOnAnyFieldTrue_BuildsTheDocumentIndexAsync() {
     var lines = _entryIndexLines(await _schemaAsync("[PerspectiveQueries(MatchOnAnyField = true)]"));
 
-    await Assert.That(lines.Any(static l => l.Contains("idx_ledger_data_gin", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(lines).Contains(
+      "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_data_gin ON \"\"testapp\"\".wh_per_ledger USING gin (data)$wbix$);");
     await Assert.That(lines.Any(static l => l.Contains("_metadata_gin", StringComparison.Ordinal))).IsFalse();
   }
 
@@ -173,8 +184,8 @@ public class PerspectiveDocumentIndexGenerationTests {
 
     await Assert.That(lines).Contains(
       "SELECT \"\"testapp\"\".wh_ensure_index($wbix$CREATE INDEX IF NOT EXISTS idx_ledger_metadata_gin ON \"\"testapp\"\".wh_per_ledger USING gin (metadata)$wbix$);");
-    await Assert.That(lines.Any(static l => l.Contains("idx_ledger_data_gin", StringComparison.Ordinal))).IsTrue()
-      .Because("leaving MatchOnAnyField out still means the transitional default, whatever else is declared");
+    await Assert.That(lines.Any(static l => l.Contains("_data_gin", StringComparison.Ordinal))).IsFalse()
+      .Because("leaving MatchOnAnyField out means off, whatever else is declared");
   }
 
   /// <summary>A model inherits the declaration of the base it derives from.</summary>
@@ -183,6 +194,7 @@ public class PerspectiveDocumentIndexGenerationTests {
     var lines = _entryIndexLines(await _schemaAsync("", " : LedgerBase"));
 
     await Assert.That(lines.Any(static l => l.Contains("idx_ledger_metadata_gin", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(lines.Any(static l => l.Contains("idx_ledger_data_gin", StringComparison.Ordinal))).IsTrue();
   }
 
   /// <summary>The nearest declaration wins over one on a base.</summary>
@@ -276,6 +288,7 @@ public class PerspectiveDocumentIndexGenerationTests {
 
       public record Touched : IEvent;
 
+      [PerspectiveQueries(MatchOnAnyField = true)]
       public record OrganizationalReportingStructurePositionAssignmentHistoryModel {
         [StreamId]
         public Guid Id { get; init; }

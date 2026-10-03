@@ -891,6 +891,68 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
 
   #endregion
 
+  #region Polymorphic document index follows [PerspectiveQueries]
+
+  /// <summary>A polymorphic model whose queries declare a given document-matching stance.</summary>
+  private static string _polymorphicSource(string modelAttribute) => $$"""
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public abstract class Fee {
+        public string Code { get; init; } = "";
+      }
+
+      {{modelAttribute}}
+      public record InvoiceDto {
+        public string Number { get; init; } = "";
+        public Fee? Fee { get; init; }
+      }
+
+      public class InvoicePerspective(IPerspectiveStore<InvoiceDto> store)
+        : IPerspectiveFor<InvoiceDto, InvoiceRaised> {
+        public InvoiceDto Apply(InvoiceDto currentData, InvoiceRaised @event) => currentData;
+      }
+
+      public record InvoiceRaised : IEvent;
+      """;
+
+  private const string POLYMORPHIC_DATA_GIN = "entity.HasIndex(e => e.Data).HasMethod(\"gin\");";
+
+  /// <summary>
+  /// The polymorphic model's whole-document index answers the same lookups the schema's does, so it
+  /// follows the same declaration: built only for <c>MatchOnAnyField = true</c>.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Arguments("")]
+  [Arguments("[PerspectiveQueries(MatchOnAnyField = false)]")]
+  [Arguments("[PerspectiveQueries(MatchOnMetadata = true)]")]
+  public async Task Generator_PolymorphicModelWithoutTheOptIn_DeclaresNoDocumentIndexAsync(string modelAttribute) {
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(_polymorphicSource(modelAttribute));
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+
+    await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER);
+    await Assert.That(generated).DoesNotContain(POLYMORPHIC_DATA_GIN)
+      .Because("the model did not declare that its queries match on any field");
+    await Assert.That(generated).Contains("entity.HasIndex(e => e.Scope).HasMethod(\"gin\");")
+      .Because("the scope index serves scope matching, which this declaration is not about");
+  }
+
+  /// <summary>Declaring that queries match on any field keeps the polymorphic document index.</summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_PolymorphicModelThatMatchesOnAnyField_DeclaresTheDocumentIndexAsync() {
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(
+      _polymorphicSource("[PerspectiveQueries(MatchOnAnyField = true)]"));
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+
+    await Assert.That(generated).Contains(POLYMORPHIC_DATA_GIN);
+  }
+
+  #endregion
+
   #region Polymorphic discriminator extraction
 
   /// <summary>

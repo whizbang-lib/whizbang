@@ -366,7 +366,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableBaseName: tableBaseName,
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
-        IsSplitMode: isSplitMode
+        IsSplitMode: isSplitMode,
+        BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex
     );
   }
 
@@ -385,7 +386,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableName: tableName,
         PhysicalFields: candidate.PhysicalFields,
         HasPolymorphicProperties: candidate.HasPolymorphicProperties,
-        IsSplitMode: candidate.IsSplitMode
+        IsSplitMode: candidate.IsSplitMode,
+        BuildsDataIndex: candidate.BuildsDataIndex
     );
   }
 
@@ -952,10 +954,18 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // No temporal conversion is emitted. The canonical temporal form is applied by a convention
     // every generated context carries, which walks the model Entity Framework built and so reaches
     // inherited, nested and collection-element temporals a discovery here never saw.
+    // The polymorphic model's whole-document index answers the lookups the schema's own does, so it
+    // follows the same [PerspectiveQueries] declaration. Only the polymorphic snippet carries the
+    // placeholder; the standard one declares its document indexes in the schema script instead.
+    var dataIndex = perspective.BuildsDataIndex
+        ? "entity.HasIndex(e => e.Data).HasMethod(\"gin\");"
+        : "// No whole-document index: the model does not declare [PerspectiveQueries(MatchOnAnyField = true)].";
+
     return snippet
         .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
         .Replace("__TABLE_NAME__", perspective.TableName)
         .Replace("__SCHEMA__", effectiveSchema)
+        .Replace("__DATA_GIN_INDEX__", dataIndex)
         .Replace("__PHYSICAL_FIELD_CONFIGS__", physicalFieldConfigs)
         .Replace("/*__DATA_EXCLUSIONS__*/", _generateDocumentExclusions(perspective.PhysicalFields));
   }

@@ -27,8 +27,8 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// <para>
 /// Build-time diagnostics keep the declaration honest. WHIZ307 warns when a query compiles to a
-/// match that this declaration leaves without an index, and WHIZ308 notes the queries that rely on
-/// the whole-document index while <see cref="MatchOnAnyField"/> is left undeclared.
+/// match that this declaration leaves without an index, and WHIZ308 warns at the same match on a
+/// model that leaves <see cref="MatchOnAnyField"/> undeclared, which does not get the index either.
 /// </para>
 /// </remarks>
 /// <example>
@@ -64,10 +64,10 @@ public sealed class PerspectiveQueriesAttribute : Attribute {
   /// filters on instead, which is smaller and faster for the fields that matter.
   /// </para>
   /// <para>
-  /// <strong>Left undeclared, the index is still built.</strong> Every perspective built it before
-  /// this property existed, and a query that depends on it cannot be seen from every assembly that
-  /// might issue one. So the default stays until you decide, and WHIZ308 points at each query that
-  /// would lose its index, which is the list to check before writing <c>false</c>.
+  /// <strong>Left undeclared, the index is not built.</strong> Earlier releases built it for every
+  /// perspective; a new database no longer gets it unless the model declares <c>true</c>. A database
+  /// that already has it keeps it, because nothing drops an index for you. WHIZ308 points at each
+  /// query that needs it, which is the list to check: declare <c>true</c>, or index those fields.
   /// </para>
   /// </remarks>
   public bool MatchOnAnyField { get; init; }

@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS __TABLE_NAME__ (
 #region CREATE_INDEXES_SNIPPET
 -- Indexes for __TABLE_NAME__
 CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___updated_at ON __TABLE_NAME__(updated_at);
-CREATE INDEX IF NOT EXISTS ix___TABLE_NAME___metadata_gin ON __TABLE_NAME__ USING GIN (metadata jsonb_path_ops);
+__METADATA_GIN_INDEX__
 
 -- Retrofit any historical broken tenant index. The old snippet keyed on
 -- 'tenant_id' but PerspectiveScope serializes TenantId as 't', so the index
