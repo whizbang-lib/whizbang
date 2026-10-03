@@ -122,7 +122,7 @@ public class PhysicalPromotionIndexGenerationTests {
   public async Task EachBackfillableColumn_IsArmedBeforeItIsAddedAsync() {
     var schema = await _schemaAsync();
 
-    var arm = schema.IndexOf("INSERT INTO \"\"testapp\"\".wh_physical_column_fills (table_name, column_name, json_key, extraction) SELECT format('%I.%I', n.nspname, c.relname), 'rank', 'Rank', $wbfill$(data ->> 'Rank')::integer$wbfill$", StringComparison.Ordinal);
+    var arm = schema.IndexOf("SELECT \"\"testapp\"\".wh_arm_physical_column('\"\"testapp\"\".wh_per_item', 'rank', 'Rank', $wbfill$(data ->> 'Rank')::integer$wbfill$, false);", StringComparison.Ordinal);
     var add = schema.IndexOf("ADD COLUMN IF NOT EXISTS rank INTEGER", StringComparison.Ordinal);
     await Assert.That(arm).IsGreaterThan(-1);
     await Assert.That(add).IsGreaterThan(arm)
@@ -162,12 +162,14 @@ public class PhysicalPromotionIndexGenerationTests {
   }
 
   [Test]
-  public async Task NothingIsArmed_ForAColumnThatCannotBeFilledFromTheDocumentAsync() {
-    var split = new PhysicalFieldInfo("Name", "name", "global::System.String", IsIndexed: false, IsUnique: false,
-      MaxLength: null, IsVector: false, VectorDimensions: null, VectorDistanceMetric: null, VectorIndexType: null,
-      VectorIndexLists: null, IsSplit: true);
+  public async Task AColumnThatCannotBeFilledFromTheDocument_IsArmedWithNoExtractionAsync() {
+    var vector = new PhysicalFieldInfo("Embedding", "embedding", "global::System.Single[]", IsIndexed: false, IsUnique: false,
+      MaxLength: null, IsVector: true, VectorDimensions: 3, VectorDistanceMetric: null, VectorIndexType: null,
+      VectorIndexLists: null);
 
-    await Assert.That(PhysicalColumnSql.Arm("\"s\".wh_per_item", split)).IsNull()
-      .Because("a split field has no copy in the document to fill from");
+    await Assert.That(PhysicalColumnSql.Arm("\"s\".wh_per_item", vector))
+      .IsEqualTo("SELECT \"s\".wh_arm_physical_column('\"s\".wh_per_item', 'embedding', 'Embedding', NULL, false);")
+      .Because("with no extraction the function records a rebuild notice when the table has rows (#1021)");
+    await Assert.That(PhysicalColumnSql.Arm("\"s\".wh_per_item", null!)).IsNull();
   }
 }

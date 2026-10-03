@@ -255,7 +255,7 @@ public class PhysicalFieldDiscoveryTests {
     // Assert - Should generate standard JSONB-only schema
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("model_data JSONB NOT NULL");
+    await Assert.That(generatedSource).Contains("  data JSONB NOT NULL,");
     // Should NOT contain physical column definitions
     await Assert.That(generatedSource).DoesNotContain("VARCHAR(");
     await Assert.That(generatedSource).DoesNotContain("vector(");

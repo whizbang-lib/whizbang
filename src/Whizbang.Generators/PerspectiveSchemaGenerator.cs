@@ -31,7 +31,7 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_EntriesSqlMatchesConcatenatedSqlAsync</tests>
 /// Incremental source generator that discovers IPerspectiveFor implementations
 /// and generates PostgreSQL table schemas with 3-column JSONB pattern.
-/// Schemas use universal columns (id, created_at, updated_at, version) + JSONB (model_data, metadata, scope).
+/// Schemas use universal columns (id, created_at, updated_at, version) + JSONB (data, metadata, scope).
 /// Table names are configurable via MSBuild properties:
 /// - WhizbangStripTableNameSuffixes (default: true) - Strip common suffixes like Model, Projection, Dto
 /// - WhizbangTableNameSuffixesToStrip (default: ReadModel,Model,Projection,Dto,View) - Suffixes to strip
@@ -151,7 +151,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         PropertyCount: propertyCount,
         EstimatedSizeBytes: estimatedSize,
         StorageMode: storageMode,
-        PhysicalFields: physicalFields
+        PhysicalFields: physicalFields,
+        DocumentProperties: [.. DocumentPropertyDiscovery.From(modelType as INamedTypeSymbol)]
     );
   }
 
@@ -173,7 +174,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         PropertyCount: candidate.PropertyCount,
         EstimatedSizeBytes: candidate.EstimatedSizeBytes,
         StorageMode: candidate.StorageMode,
-        PhysicalFields: candidate.PhysicalFields
+        PhysicalFields: candidate.PhysicalFields,
+        DocumentProperties: candidate.DocumentProperties
     );
   }
 
@@ -385,7 +387,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Build SQL content — collect per-perspective SQL for both concatenated Sql and individual Entries[]
     var sqlBuilder = new StringBuilder();
     sqlBuilder.AppendLine("-- Whizbang Perspective Tables - Auto-Generated");
-    sqlBuilder.AppendLine("-- 3-Column JSONB Pattern: model_data (projection state), metadata (correlation/causation), scope (tenant/user)");
+    sqlBuilder.AppendLine("-- 3-Column JSONB Pattern: data (projection state), metadata (correlation/causation), scope (tenant/user)");
     sqlBuilder.AppendLine();
 
     var perspectiveEntries = new System.Collections.Generic.List<(string Name, string Sql)>();
@@ -431,8 +433,9 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         }
       }
 
-      // Build per-perspective SQL (table + indexes)
+      // Build per-perspective SQL (moves into existing columns, table, indexes)
       var perspectiveSqlBuilder = new StringBuilder();
+      _appendPreTableSql(perspectiveSqlBuilder, perspective);
       perspectiveSqlBuilder.AppendLine(tableCode);
       perspectiveSqlBuilder.AppendLine();
 
@@ -521,14 +524,53 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
     // Fill each physical column from the document for rows written before it existed. Post-table DDL, so
     // a column-copy migration runs it against the swapped-in table; idempotent, so a re-apply finds
-    // nothing to do. The same statements the EF Core schema emits, so both drivers agree.
-    var isSplit = perspective.StorageMode == GeneratorFieldStorageMode.Split;
-    foreach (var field in perspective.PhysicalFields) {
-      var backfill = PhysicalColumnSql.Backfill(perspective.TableName, field with { IsSplit = isSplit });
+    // nothing to do. The same statements the EF Core schema emits, so both drivers agree. A Split model's
+    // sync triggers go on first, on the table that is now in place, so a write that lands after the fill is
+    // synced. Then the fields the model keeps only in the document are offered for demotion (#1022).
+    var fields = _withStorageMode(perspective);
+    // Each promoted column recorded as the framework's, on the table now in place: the pre-table arm cannot
+    // see a table that does not exist yet, and a later demotion moves only a recorded column (#1022).
+    foreach (var field in fields) {
+      perspectiveSqlBuilder.AppendLine(PhysicalColumnSql.Arm(perspective.TableName, field));
+    }
+    if (fields.Any(f => f.IsSplit)) {
+      perspectiveSqlBuilder.AppendLine(PhysicalColumnSql.SyncMoves(perspective.TableName));
+    }
+    foreach (var field in fields) {
+      var backfill = PhysicalColumnSql.Backfill(perspective.TableName, field);
       if (backfill is not null) {
         perspectiveSqlBuilder.AppendLine(backfill);
       }
     }
+    var demote = PhysicalColumnSql.Demote(perspective.TableName, perspective.DocumentProperties, fields);
+    if (demote is not null) {
+      perspectiveSqlBuilder.AppendLine(demote);
+    }
+  }
+
+  /// <summary>
+  /// The statements that run before the table's <c>CREATE TABLE</c>, against the table as an earlier release
+  /// left it: each promoted field is armed while its column is still missing, then the column is added.
+  /// </summary>
+  /// <remarks>
+  /// A column-copy migration builds the new table under another name and swaps it in, so the column exists
+  /// on the swapped-in table before any post-table statement runs, and an arm there would never see it
+  /// missing (issue #1010). Run first, the arm sees the table as the previous release wrote it, exactly as the
+  /// EF Core schema's does, and the column it adds is copied across by the swap. A table that does not exist
+  /// yet arms and adds nothing: <c>CREATE TABLE</c> then creates it with every column and no rows.
+  /// </remarks>
+  private static void _appendPreTableSql(StringBuilder perspectiveSqlBuilder, PerspectiveSchemaInfo perspective) {
+    foreach (var field in _withStorageMode(perspective)) {
+      perspectiveSqlBuilder.AppendLine(PhysicalColumnSql.Arm(perspective.TableName, field));
+      perspectiveSqlBuilder.AppendLine(
+        $"ALTER TABLE IF EXISTS {perspective.TableName} ADD COLUMN IF NOT EXISTS {field.ColumnName} {_mapToPostgresType(field)};");
+    }
+  }
+
+  /// <summary>The model's promoted fields, each marked Split when the model is (vectors excepted).</summary>
+  private static PhysicalFieldInfo[] _withStorageMode(PerspectiveSchemaInfo perspective) {
+    var isSplit = perspective.StorageMode == GeneratorFieldStorageMode.Split;
+    return [.. perspective.PhysicalFields.Select(f => f with { IsSplit = isSplit && !f.IsVector })];
   }
 
   private static string _generatePhysicalColumnsSql(PhysicalFieldInfo[] physicalFields) {
@@ -729,6 +771,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 /// <param name="EstimatedSizeBytes">Estimated JSON size in bytes</param>
 /// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+/// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
 internal sealed record PerspectiveSchemaInfo(
     string ClassName,
     string FullyQualifiedClassName,
@@ -737,7 +780,8 @@ internal sealed record PerspectiveSchemaInfo(
     int PropertyCount,
     int EstimatedSizeBytes,
     GeneratorFieldStorageMode StorageMode,
-    PhysicalFieldInfo[] PhysicalFields
+    PhysicalFieldInfo[] PhysicalFields,
+    string[] DocumentProperties
 );
 
 /// <summary>
@@ -767,6 +811,7 @@ public enum GeneratorFieldStorageMode {
 /// <param name="EstimatedSizeBytes">Estimated JSON size in bytes</param>
 /// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+/// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
 internal sealed record PerspectiveCandidate(
     string ClassName,
     string FullyQualifiedClassName,
@@ -775,5 +820,6 @@ internal sealed record PerspectiveCandidate(
     int PropertyCount,
     int EstimatedSizeBytes,
     GeneratorFieldStorageMode StorageMode,
-    PhysicalFieldInfo[] PhysicalFields
+    PhysicalFieldInfo[] PhysicalFields,
+    string[] DocumentProperties
 );
