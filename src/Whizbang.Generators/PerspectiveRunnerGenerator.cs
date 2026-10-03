@@ -69,6 +69,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
               .Select(r => r!.Info!)
               .ToImmutableArray();
 
+          // A Split class whose init-only promoted field can only be stripped through a copy, which it cannot make.
+          foreach (var uncopyable in validPerspectives
+              .Where(p => p.ModelCopy?.Problem is not null)
+              .Select(p => (Model: p.InterfaceTypeArguments[0].Replace("global::", ""), p.ModelCopy!.Problem))
+              .Distinct()) {
+            ctx.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.SplitClassModelCannotBeCopied, Location.None, uncopyable.Model, uncopyable.Problem));
+          }
+
           _generatePerspectiveRunners(ctx, compilation, validPerspectives);
         }
     );
@@ -193,6 +202,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Check if model is a record type (supports 'with {}' expressions for immutable copies)
     var isModelRecord = modelType is INamedTypeSymbol namedModel && namedModel.IsRecord;
 
+    // Issue #1002: a Split class with an init-only promoted field is stripped and loaded through a copy, because a
+    // class can set an init-only property only while an instance is being created.
+    var modelCopy = storageMode == 2 && !isModelRecord && physicalFields.Any(f => f.IsInitOnly)
+        ? ModelCopy.For((INamedTypeSymbol)modelType, semanticModel.Compilation.Assembly)
+        : null;
+
     // Check if perspective implements IPerspectiveScopeFor<TModel> for IScopeEvent handling
     var hasScopeInterface = _hasScopeForInterface(classSymbol);
 
@@ -225,7 +240,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 ,
             RowCapPerScope: rowCapPerScope,
             RowCapScopeKey: rowCapScopeKey,
-            StreamGroupSpec: streamGroupSpec),
+            StreamGroupSpec: streamGroupSpec,
+            ModelCopy: modelCopy),
         Warning: null
     );
   }
@@ -692,9 +708,17 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var columns = string.Join(", ", fields.Select(f =>
         $"new global::Whizbang.Core.Perspectives.SplitPhysicalColumn(\"{f.ColumnName}\", {_csharpBool(f.IsVectorField)})"));
     var reads = fields.Select(f => (f.PropertyName, Read: _splitColumnRead(f))).ToArray();
-    var hydrate = perspective.IsModelRecord
-        ? $"static (model, read) => model with {{ {string.Join(", ", reads.Select(r => $"{r.PropertyName} = {r.Read}"))} }}"
-        : $"static (model, read) => {{ {string.Concat(reads.Select(r => $"model.{r.PropertyName} = {r.Read}; "))}return model; }}";
+    string hydrate;
+    if (perspective.IsModelRecord) {
+      hydrate = $"static (model, read) => model with {{ {string.Join(", ", reads.Select(r => $"{r.PropertyName} = {r.Read}"))} }}";
+    } else if (perspective.ModelCopy is { Problem: null } copy) {
+      hydrate = "static (model, read) => "
+          + ModelCopy.Render(modelTypeName, copy, "model", reads.ToDictionary(r => r.PropertyName, r => r.Read, StringComparer.Ordinal));
+    } else {
+      // An init-only field of a class that cannot be copied is reported (WHIZ808) rather than assigned.
+      var assigned = reads.Where(r => !fields.Any(f => f.PropertyName == r.PropertyName && f.IsInitOnly));
+      hydrate = $"static (model, read) => {{ {string.Concat(assigned.Select(r => $"model.{r.PropertyName} = {r.Read}; "))}return model; }}";
+    }
 
     return "[global::System.Runtime.CompilerServices.ModuleInitializer]\n" +
         "  internal static void _registerSplitPhysicalFields() =>\n" +
@@ -717,11 +741,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string _buildSnapshotBeforeWrite(PerspectiveInfo perspective, string modelTypeName) {
     var strippedInPlace = perspective.StorageMode == 2
         && perspective.PhysicalFields is { Length: > 0 }
-        && !perspective.IsModelRecord;
+        && !perspective.IsModelRecord
+        && perspective.ModelCopy is not { Problem: null };
     return strippedInPlace
-        ? "// The write strips this model's promoted fields in place, so its snapshot is taken first (issue #983).\n" +
-          $"private JsonDocument? SnapshotBeforeWrite({modelTypeName} model) =>\n" +
-          "    _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true ? ToSnapshotJson(model) : null;"
+        ? "// The write strips this model's promoted fields in place, so its snapshot is taken first (issue #983),\n" +
+          "// and only on a run whose snapshot is due (issue #1002).\n" +
+          $"private static JsonDocument? SnapshotBeforeWrite({modelTypeName} model) => ToSnapshotJson(model);"
         : "// The write does not strip this model in place, so its snapshot is taken after the write.\n" +
           $"private static JsonDocument? SnapshotBeforeWrite({modelTypeName} model) => null;";
   }
@@ -888,7 +913,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Split mode (StorageMode == 2): strips physical fields from the model before JSONB
   /// serialization so the JSONB payload only contains non-physical fields. Physical field
   /// values are already captured in the <c>physicalFieldValues</c> dictionary for column
-  /// storage. Records use <c>with { ... }</c> for an immutable copy; classes mutate in place.
+  /// storage. Records use <c>with { ... }</c> for an immutable copy; a class with an <c>init</c>-only promoted field is
+  /// copied with an object initializer (issue #1002); other classes mutate in place.
   /// Vector fields get <c>System.Array.Empty&lt;float&gt;()</c> because EF Core's
   /// JsonCollectionOfStructsReaderWriter crashes on a null JSON token.
   /// </summary>
@@ -898,8 +924,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       var withProps = string.Join(", ", perspective.PhysicalFields!.Select(f =>
         f.IsVectorField ? $"{f.PropertyName} = System.Array.Empty<float>()" : $"{f.PropertyName} = default!"));
       sb.AppendLine($"    model = model with {{ {withProps} }};");
+    } else if (perspective.ModelCopy is { Problem: null } copy) {
+      // An init-only field cannot be assigned once the instance exists, so the document is written from a copy, and
+      // the instance the runner applied keeps its fields for the snapshot taken after the write (issue #1002).
+      var stripped = perspective.PhysicalFields!.ToDictionary(
+          f => f.PropertyName, f => f.IsVectorField ? "System.Array.Empty<float>()" : "default!", StringComparer.Ordinal);
+      sb.AppendLine($"    model = {ModelCopy.Render(perspective.InterfaceTypeArguments[0], copy, "model", stripped)};");
     } else {
-      foreach (var field in perspective.PhysicalFields!) {
+      // An init-only field of a class that cannot be copied is reported (WHIZ808) rather than assigned.
+      foreach (var field in perspective.PhysicalFields!.Where(f => !f.IsInitOnly)) {
         if (field.IsVectorField) {
           sb.AppendLine($"    model.{field.PropertyName} = System.Array.Empty<float>();");
         } else {
@@ -1337,7 +1370,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
           // An object, a collection or a dictionary is a jsonb column unless the author declared otherwise.
           ColumnType: columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type),
-          TypeName: TypeNameUtilities.FullyQualifiedWithNullability(property.Type)
+          TypeName: TypeNameUtilities.FullyQualifiedWithNullability(property.Type),
+          IsInitOnly: property.SetMethod?.IsInitOnly == true
       );
     }
 

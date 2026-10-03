@@ -745,6 +745,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         var saveStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
         JsonDocument? snapshotBeforeWrite = null;
+        // Issue #1002: whether this run ends in a snapshot, decided before the write, so a model the write strips in
+        // place is serialized before it only when a snapshot is actually due.
+        var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
+            && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue
+            && _eventsSinceLastSnapshot + eventsProcessed >= _snapshotCadence().Threshold;
         if (pendingPurge) {
           // A stream that began this batch purged and stayed so has no row to remove.
           if (purgeEventId.HasValue) {
@@ -761,7 +766,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         } else if (updatedModel != null && hasWrittenUpdate) {
           var checkpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
               lastSuccessfulEventId!.Value, cancellationToken);
-          snapshotBeforeWrite = SnapshotBeforeWrite(updatedModel);
+          snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
           await SaveModelAndCheckpointAsync(
               streamId,
               updatedModel,
@@ -809,15 +814,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // produces no persisted row, so there's nothing to snapshot.
         if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
             && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue) {
-          // Ephemeral perspectives snapshot on their own aggressive, single-slot cadence so a fresh rewind
-          // floor exists within the grace window before consumed bodies are reaped; Sourced perspectives use
-          // the standard cadence/retention. The generator injects the mode-appropriate settings here.
-          #region SNAPSHOT_SETTINGS
-          var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;
-          var snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;
-          #endregion
+          // The cadence is the perspective's own (_snapshotCadence); whether this run is due was decided before the write.
+          var snapshotRetention = _snapshotCadence().Retention;
           _eventsSinceLastSnapshot += eventsProcessed;
-          if (_eventsSinceLastSnapshot >= snapshotThreshold) {
+          if (snapshotDue) {
             // Slice 26.11: resolve commit_sequence for the snapshot anchor so subsequent
             // rewinds can locate the snapshot by commit_sequence (deterministic) rather
             // than event_id (subject to UUIDv7 generation-time race). Null is OK — the
@@ -1574,7 +1574,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         var checkpointEventId = frontierEventId ?? lastSuccessfulEventId!.Value;
         var replayCheckpointCommitSequence = frontierCommitSequence
             ?? await _eventStore.GetCommitSequenceAsync(checkpointEventId, cancellationToken);
-        snapshotBeforeWrite = SnapshotBeforeWrite(updatedModel);
+        // Issue #1002: the snapshot below follows every rewind that applied something, when snapshots are on.
+        var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true && lastSuccessfulEventId.HasValue;
+        snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
         await SaveModelAndCheckpointAsync(
             streamId, updatedModel, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
             replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
@@ -1654,6 +1656,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     _logger.LogDebug(
         "Bootstrap snapshot created for {PerspectiveName} stream {StreamId} at event {EventId}",
         perspectiveName, streamId, lastProcessedEventId);
+  }
+
+  // The snapshot cadence: every how many applied events a run snapshots, and how many snapshots a stream keeps.
+  // Ephemeral perspectives snapshot on their own aggressive, single-slot cadence so a fresh rewind floor exists
+  // within the grace window before consumed bodies are reaped; Sourced perspectives use the standard
+  // cadence/retention. The generator injects the mode-appropriate settings here.
+  private (int Threshold, int Retention) _snapshotCadence() {
+    if (_snapshotOptions is null) {
+      return (int.MaxValue, 0);
+    }
+    #region SNAPSHOT_SETTINGS
+    var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;
+    var snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;
+    #endregion
+    return (snapshotThreshold, snapshotRetention);
   }
 
   #region SNAPSHOT_BEFORE_WRITE

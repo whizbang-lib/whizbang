@@ -38,7 +38,7 @@ public class SplitClassSnapshotRewindTests : EFCoreTestBase {
   }
 
   private static SplitClassSnapshotPerspectiveRunner _runner(
-      InMemoryEventStore eventStore, WorkCoordinationDbContext context, IPerspectiveSnapshotStore snapshotStore) {
+      InMemoryEventStore eventStore, WorkCoordinationDbContext context, IPerspectiveSnapshotStore snapshotStore, int everyNEvents = 1) {
     var services = new ServiceCollection();
     services.AddTransient<SplitClassSnapshotPerspective>();
     services.AddLogging();
@@ -52,7 +52,7 @@ public class SplitClassSnapshotRewindTests : EFCoreTestBase {
         snapshotStore: snapshotStore,
         snapshotOptions: Microsoft.Extensions.Options.Options.Create(new PerspectiveSnapshotOptions {
           Enabled = true,
-          SnapshotEveryNEvents = 1,
+          SnapshotEveryNEvents = everyNEvents,
           MaxSnapshotsPerStream = 10
         }));
   }
@@ -111,5 +111,28 @@ public class SplitClassSnapshotRewindTests : EFCoreTestBase {
     await Assert.That(stored.Priority).IsEqualTo(7);
     await Assert.That(stored.DocumentStatus).IsNull()
       .Because("the document of a Split model still does not hold its promoted fields");
+  }
+
+  [Test]
+  public async Task ASplitClassModel_IsSnapshottedOnlyOnARunThatReachesTheCadence_WithItsPromotedFieldsAsync() {
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    var snapshotStore = new EFCorePerspectiveSnapshotStore(dataSource);
+    var streamId = Guid.CreateVersion7();
+    var eventStore = new InMemoryEventStore();
+    await using var context = CreateDbContext();
+    // One runner across both runs, as a host keeps it: the count of events since the last snapshot is its own.
+    var runner = _runner(eventStore, context, snapshotStore, everyNEvents: 2);
+
+    await _appendAsync(eventStore, streamId, new SplitClassSnapshotStatusSetEvent { StreamId = streamId, Status = "active", Priority = 7 });
+    await runner.RunAsync(streamId, TABLE_NAME, null, CancellationToken.None);
+    await Assert.That(await snapshotStore.GetLatestSnapshotAsync(streamId, TABLE_NAME)).IsNull()
+      .Because("issue #1002: one event of a cadence of two is not due, decided before the write");
+
+    await _appendAsync(eventStore, streamId, new SplitClassSnapshotNoteChangedEvent { StreamId = streamId, Note = "second" });
+    await runner.RunAsync(streamId, TABLE_NAME, null, CancellationToken.None);
+    var snapshot = await snapshotStore.GetLatestSnapshotAsync(streamId, TABLE_NAME);
+    await Assert.That(snapshot).IsNotNull().Because("the second event reaches the cadence");
+    await Assert.That(snapshot!.Value.SnapshotData.RootElement.GetRawText()).Contains("active")
+      .Because("the due run serializes the model before the write strips it in place");
   }
 }

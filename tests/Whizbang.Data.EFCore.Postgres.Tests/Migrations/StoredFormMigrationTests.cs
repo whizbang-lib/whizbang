@@ -449,6 +449,164 @@ public class StoredFormMigrationTests : IAsyncDisposable {
     await Assert.That(log).Contains("table absent, waits for the table");
   }
 
+  // ─── Indexes over the old type (issue #1007) ──────────────────────────────────────────────────────────────
+
+  [Test]
+  public async Task AnIndexCastingToTheOldType_IsDroppedBeforeTheConversion_AndRebuiltForTheNewTypeAsync() {
+    await _seedAsync("""{"Stage": 0, "Label": "a"}""", """{"Stage": 2, "Label": "b"}""");
+    await _executeAsync($"CREATE INDEX idx_thing_stage_json ON {TABLE} (((data ->> 'Stage')::integer))");
+    await _executeAsync($"CREATE INDEX idx_thing_stage_label ON {TABLE} (((data ->> 'Stage')::integer), (data ->> 'Label'))");
+    var migration = _generated("wh_per_thing.Stage:Stage->String",
+      StoredFormStep.ReplaceIndex("Stage", null, "idx_thing_stage_json",
+        $"CREATE INDEX IF NOT EXISTS idx_thing_stage_json ON public.{TABLE} ((data ->> 'Stage'));"),
+      StoredFormStep.ReplaceIndex("Stage", null, "idx_thing_stage_label",
+        $"CREATE INDEX IF NOT EXISTS idx_thing_stage_label ON public.{TABLE} ((data ->> 'Stage'), (data ->> 'Label'));"),
+      StoredFormStep.EnumNumberToName("Stage", [("Draft", "0"), ("Open", "1"), ("Closed", "2")]));
+
+    var log = await _applyAsync(migration);
+
+    await Assert.That(await _documentsAsync()).IsEqualTo("""{"Label": "a", "Stage": "Draft"}|{"Label": "b", "Stage": "Closed"}""")
+      .Because("The index cast the key to integer, so it had to go before a name could be stored there.");
+    await Assert.That(log).Contains("wh_per_thing: stored-form migration wh_per_thing.Stage:Stage->String: dropped index idx_thing_stage_json");
+    await Assert.That(log).Contains("dropped index idx_thing_stage_label");
+    await Assert.That(await _indexDefinitionAsync("idx_thing_stage_json")).IsNull();
+
+    var rebuildLog = new ListLogger();
+    var built = await StoredFormIndexRebuild.ApplyAsync(() => new NpgsqlConnection(_connectionString), [migration], TIMEOUT_SECONDS, rebuildLog);
+
+    await Assert.That(built).IsEqualTo(2);
+    await Assert.That(await _indexDefinitionAsync("idx_thing_stage_json")).IsEqualTo(
+      "CREATE INDEX idx_thing_stage_json ON public.wh_per_thing USING btree (((data ->> 'Stage'::text)))");
+    await Assert.That(await _indexDefinitionAsync("idx_thing_stage_label")).IsEqualTo(
+      "CREATE INDEX idx_thing_stage_label ON public.wh_per_thing USING btree (((data ->> 'Stage'::text)), ((data ->> 'Label'::text)))");
+    await Assert.That(string.Join("\n", rebuildLog.Messages)).Contains("built idx_thing_stage_json on public.wh_per_thing concurrently");
+    await _seedAsync("""{"Stage": "Open"}""");
+
+    await Assert.That(await StoredFormIndexRebuild.ApplyAsync(() => new NpgsqlConnection(_connectionString), [migration], TIMEOUT_SECONDS))
+      .IsEqualTo(0).Because("An index already there and valid is left alone.");
+  }
+
+  [Test]
+  public async Task ReplaceIndex_KeepsAnIndexOverTheNewType_AnIndexUnderAnotherName_AndOneUnderTheNameOverAnotherKeyAsync() {
+    await _seedAsync("""{"Qty": 5, "Other": 1}""");
+    await _executeAsync($"CREATE INDEX idx_thing_qty_json ON {TABLE} (((data ->> 'Qty')::bigint))");
+    await _executeAsync($"CREATE INDEX operator_qty ON {TABLE} (((data ->> 'Qty')::integer))");
+    await _executeAsync($"CREATE INDEX idx_thing_other_json ON {TABLE} (((data ->> 'Other')::integer))");
+    const string CREATE = "CREATE INDEX IF NOT EXISTS {0} ON public.wh_per_thing (((data ->> 'Qty')::bigint));";
+
+    var log = await _applyAsync(_generated("wh_per_thing.Qty:Int32->Int64",
+      StoredFormStep.ReplaceIndex("Qty", "bigint", "idx_thing_qty_json", string.Format(System.Globalization.CultureInfo.InvariantCulture, CREATE, "idx_thing_qty_json")),
+      StoredFormStep.ReplaceIndex("Qty", "bigint", "idx_thing_other_json", string.Format(System.Globalization.CultureInfo.InvariantCulture, CREATE, "idx_thing_other_json")),
+      StoredFormStep.ToNumber("Qty", StoredNumber.Int64)));
+
+    await Assert.That(log).DoesNotContain("dropped index");
+    await Assert.That(await _indexDefinitionAsync("idx_thing_qty_json")).Contains("::bigint")
+      .Because("An index already over the new type is what the schema would build.");
+    await Assert.That(await _indexDefinitionAsync("operator_qty")).Contains("::integer")
+      .Because("An index the schema did not name is never touched, whatever it casts to.");
+    await Assert.That(await _indexDefinitionAsync("idx_thing_other_json")).Contains("'Other'")
+      .Because("An index under the name that is over another key is not the schema's index for this key.");
+  }
+
+  [Test]
+  public async Task Rebuild_ReplacesAnInvalidLeftoverUnderTheName_WithAValidIndexAsync() {
+    await _seedAsync("""{"Label": "same"}""", """{"Label": "same"}""");
+    await Assert.That(() => _executeAsync($"CREATE UNIQUE INDEX CONCURRENTLY idx_thing_label_json ON {TABLE} ((data ->> 'Label'))"))
+      .Throws<PostgresException>();
+    await Assert.That(await _indexValidAsync("idx_thing_label_json")).IsFalse().Because("A failed concurrent build leaves an invalid index.");
+    var migration = _generated("m", StoredFormStep.ReplaceIndex("Label", null, "idx_thing_label_json",
+      $"CREATE INDEX IF NOT EXISTS idx_thing_label_json ON public.{TABLE} ((data ->> 'Label'));"), StoredFormStep.ToText("Label"));
+
+    var built = await StoredFormIndexRebuild.ApplyAsync(() => new NpgsqlConnection(_connectionString), [migration], TIMEOUT_SECONDS);
+
+    await Assert.That(built).IsEqualTo(1);
+    await Assert.That(await _indexValidAsync("idx_thing_label_json")).IsTrue();
+  }
+
+  [Test]
+  public async Task Rebuild_ThatFails_WarnsAndLeavesNoInvalidIndex_ForTheSchemaPassToBuildAsync() {
+    await _seedAsync("""{"Label": "same"}""", """{"Label": "same"}""");
+    var migration = _generated("m", StoredFormStep.ReplaceIndex("Label", null, "idx_thing_label_json",
+      $"CREATE UNIQUE INDEX IF NOT EXISTS idx_thing_label_json ON public.{TABLE} ((data ->> 'Label'));"), StoredFormStep.ToText("Label"));
+    var log = new ListLogger();
+
+    var built = await StoredFormIndexRebuild.ApplyAsync(() => new NpgsqlConnection(_connectionString), [migration], TIMEOUT_SECONDS, log);
+
+    await Assert.That(built).IsEqualTo(0);
+    await Assert.That(string.Join("\n", log.Messages)).Contains("could not build idx_thing_label_json on public.wh_per_thing concurrently");
+    await Assert.That(await _indexValidAsync("idx_thing_label_json")).IsNull()
+      .Because("The invalid index a failed concurrent build leaves would pass for the index on every later start.");
+  }
+
+  [Test]
+  public async Task Rebuild_ForATableNotCreatedYet_IsSkipped_AndWithNothingToRebuildOpensNothingAsync() {
+    var migration = StoredFormMigrationSql.Generated("public", "wh_per_absent", "m", StoredFormStep.ReplaceIndex("Label", null, "idx_absent_label_json",
+      "CREATE INDEX IF NOT EXISTS idx_absent_label_json ON public.wh_per_absent ((data ->> 'Label'));"), StoredFormStep.ToText("Label"));
+
+    await Assert.That(await StoredFormIndexRebuild.ApplyAsync(() => new NpgsqlConnection(_connectionString), [migration], TIMEOUT_SECONDS))
+      .IsEqualTo(0);
+    await Assert.That(await StoredFormIndexRebuild.ApplyAsync(
+      () => throw new InvalidOperationException("no connection is opened"), [_generated("n", StoredFormStep.ToText("Label"))], TIMEOUT_SECONDS))
+      .IsEqualTo(0);
+  }
+
+  // ─── Parked streams (issue #1007) ────────────────────────────────────────────────────────────────────────
+
+  [Test]
+  public async Task AConvertingPass_BringsForwardTheRetriesOfItsParkedStreams_AndNoOtherRowsAsync() {
+    await _createWorkTableAsync();
+    var parked = await _parkAsync("App.ThingPerspective");
+    var parkedToo = await _parkAsync("App.ThingAuditPerspective");
+    var otherPerspective = await _parkAsync("App.OtherPerspective");
+    var otherReason = await _parkAsync("App.ThingPerspective", reason: 1);
+    var leased = await _parkAsync("App.ThingPerspective", leased: true);
+    var notFailed = await _parkAsync("App.ThingPerspective", status: 1);
+    await _seedAsync("""{"Status": 1}""");
+    var migration = _generated("wh_per_thing.Status:Int32->String", StoredFormStep.ToText("Status"),
+      StoredFormStep.RetryParkedStreams("App.ThingPerspective", "App.ThingAuditPerspective"));
+
+    var log = await _applyAsync(migration);
+
+    await Assert.That(log).Contains("wh_per_thing: stored-form migration wh_per_thing.Status:Int32->String: brought forward the retries of 2 parked row(s)");
+    await Assert.That(await _dueAsync(parked)).IsTrue();
+    await Assert.That(await _dueAsync(parkedToo)).IsTrue();
+    await Assert.That(await _dueAsync(otherPerspective)).IsFalse().Because("Another table's stream is not this migration's to fix.");
+    await Assert.That(await _dueAsync(otherReason)).IsFalse().Because("A stream parked for another reason keeps its backoff.");
+    await Assert.That(await _dueAsync(leased)).IsFalse().Because("A leased row is being worked.");
+    await Assert.That(await _dueAsync(notFailed)).IsFalse();
+    await Assert.That(await _scalarAsync($"SELECT failures FROM wh_perspective_events WHERE event_work_id = '{parked}'")).IsEqualTo(2)
+      .Because("The failure count stays, so a stream the migration did not fix still reaches the dead-letter threshold.");
+
+    // The settling pass changes nothing, so it brings nothing forward.
+    await _executeAsync($"UPDATE wh_perspective_events SET scheduled_for = NOW() + INTERVAL '1 hour' WHERE event_work_id = '{parked}'");
+    var settling = await _applyAsync(migration);
+    await Assert.That(settling).Contains("nothing left to convert, settled");
+    await Assert.That(await _dueAsync(parked)).IsFalse();
+  }
+
+  [Test]
+  public async Task ACustomMigration_BringsForwardTheRetriesOfItsParkedStreamsAsync() {
+    await _createWorkTableAsync();
+    var parked = await _parkAsync("App.ThingPerspective");
+    await _seedAsync("""{"Count": 1}""");
+
+    var log = await _applyAsync(StoredFormMigrationSql.Custom("public", TABLE, new IncrementCount(), "App.ThingPerspective"));
+
+    await Assert.That(await _dueAsync(parked)).IsTrue();
+    await Assert.That(log).Contains("brought forward the retries of 1 parked row(s)");
+  }
+
+  [Test]
+  public async Task RetryParkedStreams_WithoutAWorkTable_IsANoOpAsync() {
+    await _seedAsync("""{"Status": 1}""");
+
+    var log = await _applyAsync(_generated("wh_per_thing.Status:Int32->String", StoredFormStep.ToText("Status"),
+      StoredFormStep.RetryParkedStreams("App.ThingPerspective")));
+
+    await Assert.That(await _documentsAsync()).IsEqualTo("""{"Status": "1"}""");
+    await Assert.That(log).DoesNotContain("brought forward");
+  }
+
   // ─── Helpers ─────────────────────────────────────────────────────────────────────────────────────────────
 
   private sealed class IncrementCount : IStoredFormMigration {
@@ -517,6 +675,34 @@ public class StoredFormMigrationTests : IAsyncDisposable {
     await using var reader = await command.ExecuteReaderAsync();
     return await reader.ReadAsync() ? (reader.GetInt64(0), reader.GetBoolean(1), reader.GetString(2)) : null;
   }
+
+  private async Task<string?> _indexDefinitionAsync(string name) =>
+    (string?)await _scalarAsync($"SELECT pg_get_indexdef(c.oid) FROM pg_class c WHERE c.relname = '{name}' AND c.relkind = 'i'");
+
+  private async Task<bool?> _indexValidAsync(string name) =>
+    (bool?)await _scalarAsync($"SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = '{name}'");
+
+  // The columns of wh_perspective_events the retry reads and writes, as migration 009 declares them.
+  private Task _createWorkTableAsync() => _executeAsync("""
+    CREATE TABLE wh_perspective_events (
+      event_work_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      perspective_name varchar(200) NOT NULL,
+      instance_id uuid,
+      status integer NOT NULL DEFAULT 0,
+      failures integer NOT NULL DEFAULT 0,
+      failure_reason integer,
+      scheduled_for timestamptz)
+    """);
+
+  private async Task<Guid> _parkAsync(string perspective, int status = 32768 | 1, int reason = 3, bool leased = false) =>
+    (Guid)(await _scalarAsync($"""
+      INSERT INTO wh_perspective_events (perspective_name, instance_id, status, failures, failure_reason, scheduled_for)
+      VALUES ('{perspective}', {(leased ? "gen_random_uuid()" : "NULL")}, {status}, 2, {reason}, NOW() + INTERVAL '1 hour')
+      RETURNING event_work_id
+      """))!;
+
+  private async Task<bool> _dueAsync(Guid work) =>
+    (bool)(await _scalarAsync($"SELECT scheduled_for <= NOW() FROM wh_perspective_events WHERE event_work_id = '{work}'"))!;
 
   private async Task<object?> _scalarAsync(string sql) {
     await using var connection = new NpgsqlConnection(_connectionString);
