@@ -45,15 +45,18 @@ public class CollectivePredicateSqlCompilerCoverageTests {
   /// syntax for uuid), so the apply fails rather than matching no rows.
   /// </remarks>
   [Test]
-  public async Task Compile_IdComparedWithNull_BindsNullRatherThanTextAsync() {
+  public async Task Compile_IdComparedWithNull_AsksWhetherTheColumnIsNullAsync() {
     Guid? nothing = null;
     Expression<Func<PerspectiveRow<JobModel>, bool>> filter = row => row.Id == nothing;
 
     var result = CollectivePredicateSqlCompiler<JobModel>.Compile(filter);
 
-    await Assert.That(result.SqlFragment).IsEqualTo("id = @where_id");
-    await Assert.That(result.Parameters["where_id"]).IsNull()
-      .Because("null is the absence of a value, and the uuid column takes it as one");
+    await Assert.That(result.SqlFragment).IsEqualTo("id IS NULL")
+      .Because("A null comparand is a null test rather than a bound value (#1044). The 22P02 this test was written "
+        + "to prevent — null reaching the uuid column as an empty string — is now unreachable on this path, because "
+        + "nothing is bound at all. It remains reachable through a null inside an IN list over the row id, and is "
+        + "covered there by CollectivePredicateDefaultSemanticsTests.");
+    await Assert.That(result.Parameters.ContainsKey("where_id")).IsFalse();
   }
 
   /// <summary>An id held as text is parsed into the guid the uuid column compares against.</summary>
