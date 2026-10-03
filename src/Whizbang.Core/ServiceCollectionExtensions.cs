@@ -170,6 +170,8 @@ public static class ServiceCollectionExtensions {
       SystemEvents.SystemEventCoalesceDefaults.Apply(
         tagOptions,
         sp.GetService<IOptions<SystemEvents.SystemEventOptions>>()?.Value);
+      // Whizbang:Tags:Coalesce:<tag> overrides the code policies (#1012).
+      TagCoalesceConfigurationBinder.Apply(tagOptions, sp.GetService<IConfiguration>());
       return new CoalesceGroupResolver(tagOptions, sp.GetService<TimeProvider>());
     });
 

@@ -113,8 +113,16 @@ public static class ServiceCollectionExtensions {
     Action<RabbitMQOptions>? configureOptions
   ) {
     // Configure options
-    var options = new RabbitMQOptions();
-    configureOptions?.Invoke(options);
+    var codeOptions = new RabbitMQOptions();
+    configureOptions?.Invoke(codeOptions);
+
+    // #1012: Whizbang:Transports:RabbitMQ overrides the code values per key at resolution time
+    // (the AzureServiceBus section's idiom), so every consumer below resolves the bound instance.
+    // Registering the transport's name makes the same section's MessageProcessing, Batch,
+    // SubscriptionResilience and Consumer children count for the transport consumer.
+    services.AddSingleton(sp => RabbitMQOptionsConfigurationBinder.Apply(
+      codeOptions, sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
+    TransportConfigurationSection.Register(services, RabbitMQOptionsConfigurationBinder.TRANSPORT_SECTION_NAME);
 
     // Topology arc phase 8.5 — hand this transport's delivery cap to Core's poison threshold
     // derivation. RabbitMQ supplies no lock-renewal term (no per-delivery lock exists), so that
@@ -122,7 +130,8 @@ public static class ServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       Microsoft.Extensions.Options.IPostConfigureOptions<Whizbang.Core.Routing.PoisonMessageOptions>,
       RabbitMQPoisonOptionsPostConfigure>(
-        _ => new RabbitMQPoisonOptionsPostConfigure(Microsoft.Extensions.Options.Options.Create(options))));
+        sp => new RabbitMQPoisonOptionsPostConfigure(
+          Microsoft.Extensions.Options.Options.Create(sp.GetRequiredService<RabbitMQOptions>()))));
 
     // Get JSON options from JsonContextRegistry
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
@@ -132,6 +141,7 @@ public static class ServiceCollectionExtensions {
     var existingConn = services.Any(sd => sd.ServiceType == typeof(IConnection));
     if (!existingConn) {
       services.AddSingleton<IConnection>(sp => {
+        var options = sp.GetRequiredService<RabbitMQOptions>();
         var logger = sp.GetService<ILogger<RabbitMQConnectionRetry>>();
         if (logger?.IsEnabled(LogLevel.Information) == true) {
           var initialAttempts = options.InitialRetryAttempts;
@@ -159,7 +169,7 @@ public static class ServiceCollectionExtensions {
     // Register channel pool
     services.AddSingleton(sp => new RabbitMQChannelPool(
       sp.GetRequiredService<IConnection>(),
-      options.MaxChannels
+      sp.GetRequiredService<RabbitMQOptions>().MaxChannels
     ));
 
     // Connection factory for the NON-default TransportNamespaces (topology arc phase 8).
@@ -173,7 +183,7 @@ public static class ServiceCollectionExtensions {
     // provisioner (two views of the same broker). Lazily built, container-disposed.
     services.TryAddSingleton(sp => new RabbitMQNamespaceResources(
       sp.GetRequiredService<IRabbitMQNamespaceConnectionFactory>(),
-      options,
+      sp.GetRequiredService<RabbitMQOptions>(),
       _mergedNamespaces(sp, nonDefaultNamespaces)));
 
     // Topology ownership-drift surface (phase 5): the provisioner records findings, the
@@ -195,6 +205,7 @@ public static class ServiceCollectionExtensions {
     // manifest-driven DARK provisioning (phase 5) — queue args must mirror the transport's,
     // so the SAME options instance flows in.
     services.AddSingleton<IInfrastructureProvisioner>(sp => {
+      var options = sp.GetRequiredService<RabbitMQOptions>();
       var pool = sp.GetRequiredService<RabbitMQChannelPool>();
       var logger = sp.GetRequiredService<ILogger<RabbitMQInfrastructureProvisioner>>();
       var driftState = sp.GetRequiredService<Whizbang.Core.Routing.TopologyDriftState>();
@@ -245,6 +256,7 @@ public static class ServiceCollectionExtensions {
     // own connection + channel pool here; with none configured this is EXACTLY today's
     // single-connection factory — _buildNamespaceRouter returns the transport unchanged.
     services.AddSingleton<ITransport>(sp => {
+      var options = sp.GetRequiredService<RabbitMQOptions>();
       var connection = sp.GetRequiredService<IConnection>();
       var pool = sp.GetRequiredService<RabbitMQChannelPool>();
       var logger = sp.GetService<ILogger<RabbitMQTransport>>();

@@ -376,6 +376,9 @@ public static class PostgresDriverExtensions {
         var derivedConnectionStringName = selector.ConnectionStringName
           ?? _deriveConnectionStringName(selector.DbContextType.Name);
         if (!string.IsNullOrWhiteSpace(derivedConnectionStringName)) {
+          // #1012: the same name keys this database's PostgresOptions section,
+          // Whizbang:Postgres:<name>, which overrides the code values per key.
+          selector.Services.AddWhizbangPostgresOptionsBinding(derivedConnectionStringName);
           selector.Services.PostConfigure<WhizbangNotificationOptions>(options => {
             if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
               options.ConnectionStringKey = derivedConnectionStringName;

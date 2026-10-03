@@ -56,6 +56,8 @@ internal sealed class TagPolicyStartupValidator : IHostedService {
     // Payload-size thresholds (Whizbang:Tags:PayloadSize...) bind here too, so a value that is
     // not a number fails startup with its key rather than surfacing on the first tagged message.
     TagPayloadSizeConfigurationBinder.Apply(_options, _configuration);
+    // Configuration-bound coalesce policies (Whizbang:Tags:Coalesce:<tag>) are validated like code ones.
+    TagCoalesceConfigurationBinder.Apply(_options, _configuration);
     TagPolicyValidator.Validate(_registrationSource(), _options.CoalesceBindings, _options.RouteNamespaceBindings);
     return Task.CompletedTask;
   }

@@ -300,6 +300,24 @@ public class ServiceCollectionExtensionsTests {
   }
 
   [Test]
+  public async Task AddAzureServiceBusTransport_RegistersItsSection_AndBindsConsumerSubscriptionsAsync() {
+    // #1012: registering the transport is what makes its section count for the transport
+    // consumer, and ServiceBusConsumerWorker's subscriptions bind from Consumer:Subscriptions.
+    var services = new ServiceCollection();
+    services.AddSingleton(_configWith(
+      ("Consumer:Subscriptions:0:TopicName", "orders"),
+      ("Consumer:Subscriptions:0:SubscriptionName", "orders-sub")));
+
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING);
+    await using var provider = services.BuildServiceProvider();
+
+    var sections = provider.GetServices<TransportConfigurationSection>().Select(s => s.Name).ToList();
+    var consumer = provider.GetRequiredService<ServiceBusConsumerOptions>();
+    await Assert.That(sections).IsEquivalentTo(["AzureServiceBus"]);
+    await Assert.That(consumer.Subscriptions).IsEquivalentTo([new TopicSubscription("orders", "orders-sub")]);
+  }
+
+  [Test]
   public async Task AddAzureServiceBusTransport_BindsEveryRuntimeKnobFromConfigurationAsync() {
     // Arrange — every configuration-bindable property set to a non-default value
     var services = new ServiceCollection();
