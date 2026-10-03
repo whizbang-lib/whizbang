@@ -88,18 +88,28 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
   /// <see cref="Flush"/>, so every computed value reads the original state — matching the SQL path.
   /// </summary>
   private sealed class InMemorySetters(TModel original) : ICollectiveSetters<TModel> {
-    private readonly List<(PropertyInfo Property, object? Value)> _writes = [];
+    // Key is set for a key inside a jsonb physical column (m => m.Settings.Theme): Property is the column's model
+    // property, and only that one member of its value is written.
+    private readonly List<(PropertyInfo Property, PropertyInfo? Key, object? Value)> _writes = [];
 
     public ICollectiveSetters<TModel> SetProperty<TProp>(
         Expression<Func<TModel, TProp>> selector, TProp value) {
-      _writes.Add((_property(selector), value));
+      if (CollectivePhysicalColumns.TryJsonbKey(typeof(TModel), selector) is { } nested) {
+        _writes.Add((nested.Root, nested.Key, value));
+        return this;
+      }
+      _writes.Add((_property(selector), null, value));
       return this;
     }
 
     public ICollectiveSetters<TModel> SetProperty<TProp>(
         Expression<Func<TModel, TProp>> selector, Expression<Func<TModel, TProp>> computed) {
+      if (CollectivePhysicalColumns.TryJsonbKey(typeof(TModel), selector) is not null) {
+        throw new NotSupportedException(
+          $"CollectiveInMemoryEvaluator<{typeof(TModel).Name}> sets a key inside a jsonb column only to a value, not a computed expression, as the live apply does.");
+      }
       var value = computed.Compile().Invoke(original);
-      _writes.Add((_property(selector), value));
+      _writes.Add((_property(selector), null, value));
       return this;
     }
 
@@ -119,7 +129,7 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
       var target = keyOf(element);
       // Start from this spec's own earlier write to the property, if any, so upserts on one list compose in
       // call order as they do in SQL; otherwise from the pre-apply state.
-      var pending = _writes.FindLastIndex(w => w.Property == property);
+      var pending = _writes.FindLastIndex(w => w.Property == property && w.Key is null);
       var list = new List<TElement>(pending >= 0
         ? (IEnumerable<TElement>?)_writes[pending].Value ?? []
         : collection.Compile().Invoke(original) ?? []);
@@ -129,13 +139,27 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
       } else {
         list.Add(element);
       }
-      _writes.Add((property, list));
+      _writes.Add((property, null, list));
       return this;
     }
 
+    // Writes in call order, as the SQL composes them. A key inside a jsonb column is set on the property's current
+    // value, so it lands on a value an earlier setter of this spec assigned. A null value is left null: the live
+    // jsonb_set over a column holding no object changes nothing. A struct value is a boxed copy, so it is written
+    // back to the property once its member is set.
     public void Flush() {
-      foreach (var (property, value) in _writes) {
-        property.SetValue(original, value);
+      foreach (var (property, key, value) in _writes) {
+        if (key is null) {
+          property.SetValue(original, value);
+          continue;
+        }
+        if (property.GetValue(original) is not { } container) {
+          continue;
+        }
+        key.SetValue(container, value);
+        if (property.PropertyType.IsValueType) {
+          property.SetValue(original, container);
+        }
       }
     }
 
@@ -149,7 +173,8 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
       }
       throw new NotSupportedException(
         $"CollectiveInMemoryEvaluator<{typeof(TModel).Name}> only supports scalar top-level property selectors " +
-        "(o => o.PropertyName). Nested paths, indexed access, or computed selectors are not replayable in-memory.");
+        "(o => o.PropertyName), or one key inside a jsonb physical column (o => o.Column.Key). Other nested paths, " +
+        "indexed access, or computed selectors are not replayable in-memory.");
     }
   }
 }

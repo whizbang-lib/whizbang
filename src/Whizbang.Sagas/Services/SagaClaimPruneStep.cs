@@ -38,6 +38,15 @@ public sealed partial class SagaClaimPruneStep(ILogger<SagaClaimPruneStep> logge
   /// </summary>
   internal static readonly string[] SpentClaimPrefixes = ["saga-watchdog-sweep:", "saga-completed:", "saga-continuation:"];
 
+  /// <summary>The key prefix of <see cref="Helpers.SagaAbandonGuard"/>'s abandonment claims, which are never pruned.</summary>
+  internal const string ABANDONED_CLAIM_PREFIX = "saga-abandoned:";
+
+  /// <summary>
+  /// Every prefix the saga framework owns: kept out of the general expiry prune, because this step prunes
+  /// the spent ones on <see cref="SagaOptions.ClaimRetention"/> and the abandonment claims must never go.
+  /// </summary>
+  internal static IEnumerable<string> OwnedClaimPrefixes => SpentClaimPrefixes.Append(ABANDONED_CLAIM_PREFIX);
+
   /// <inheritdoc />
   public string Name => "saga-claim-prune";
 

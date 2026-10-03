@@ -25,6 +25,12 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     JsonSerializerOptions jsonOptions) : IPerspectiveStore<TModel>
     where TModel : class {
 
+  /// <summary>
+  /// The table this statement uses: the store's own, or the shadow table a blue-green rebuild redirected it to in
+  /// this flow (see <see cref="PerspectiveTableRedirect"/>).
+  /// </summary>
+  private string _table => PerspectiveTableRedirect.Resolve(tableName);
+
   /// <inheritdoc/>
   /// <remarks>
   /// A <see cref="FieldStorageMode.Split"/> model's promoted fields live only in their columns, so they are
@@ -40,7 +46,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     await using var conn = new NpgsqlConnection(connectionString);
     await conn.OpenAsync(cancellationToken);
 
-    var sql = $"SELECT data{physicalSelect} FROM {tableName} WHERE id = @p_id";
+    var sql = $"SELECT data{physicalSelect} FROM {_table} WHERE id = @p_id";
     await using var cmd = new NpgsqlCommand(sql, conn);
     cmd.Parameters.AddWithValue("p_id", streamId);
 
@@ -81,7 +87,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       Guid streamId, CancellationToken cancellationToken = default) {
     await using var conn = new NpgsqlConnection(connectionString);
     await conn.OpenAsync(cancellationToken);
-    await using var cmd = new NpgsqlCommand(PerspectiveRowVersionCommands.ReadForApplySql(tableName), conn);
+    await using var cmd = new NpgsqlCommand(PerspectiveRowVersionCommands.ReadForApplySql(_table), conn);
     cmd.Parameters.AddWithValue("id", streamId);
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
     return await PerspectiveRowVersionCommands.ReadApplyAsync(reader, cancellationToken);
@@ -183,7 +189,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     await using var conn = new NpgsqlConnection(connectionString);
     await conn.OpenAsync(cancellationToken);
 
-    var sql = $"DELETE FROM {tableName} WHERE id = @p_id";
+    var sql = $"DELETE FROM {_table} WHERE id = @p_id";
     await using var cmd = new NpgsqlCommand(sql, conn);
     cmd.Parameters.AddWithValue("p_id", streamId);
     await cmd.ExecuteNonQueryAsync(cancellationToken);
@@ -246,13 +252,13 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
             metadata = EXCLUDED.metadata,
             scope = EXCLUDED.scope,
             updated_at = EXCLUDED.updated_at,
-            version = {tableName}.version + @p_versionbump
+            version = {_table}.version + @p_versionbump
           """
         : $"""
             data = EXCLUDED.data,
             metadata = EXCLUDED.metadata,
             updated_at = EXCLUDED.updated_at,
-            version = {tableName}.version + @p_versionbump
+            version = {_table}.version + @p_versionbump
           """;
 
     // Physical columns are written on insert and rewritten on update, like the document they copy.
@@ -265,7 +271,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     // parameter in the conditional update, the only place the incoming metadata differs.
     var isVersionedTarget = typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel));
     string guard(string incoming) =>
-      PerspectiveRowVersionCommands.OrderingGuard(tableName, incoming, isVersionedTarget);
+      PerspectiveRowVersionCommands.OrderingGuard(_table, incoming, isVersionedTarget);
 
     // A checked write lands only on the version the apply read. An existing row is updated in place
     // on that exact version -- an UPDATE, not an upsert, so a row deleted meanwhile is not brought
@@ -274,17 +280,17 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     // statement this store always issued, so the common path still costs one statement.
     var physicalUpdate = string.Concat(physical.Select(pf => $", {pf.Column} = @{pf.Parameter.ParameterName}"));
     var insert = $"""
-      INSERT INTO {tableName} (id, data, metadata, scope, created_at, updated_at, version{physicalColumns})
+      INSERT INTO {_table} (id, data, metadata, scope, created_at, updated_at, version{physicalColumns})
       VALUES (@p_id, @p_data::jsonb, @p_metadata::jsonb, @p_scope::jsonb, @p_created, @p_updated, 1{physicalValues})
       """;
     var sql = expectedVersion.State switch {
       PerspectiveRowVersionState.Present => $"""
-        UPDATE {tableName} SET
+        UPDATE {_table} SET
           data = @p_data::jsonb,
           metadata = @p_metadata::jsonb,
           updated_at = @p_updated,
-          version = {tableName}.version + @p_versionbump{(forceUpdateScope ? ", scope = @p_scope::jsonb" : "")}{physicalUpdate}
-        WHERE {tableName}.id = @p_id AND {tableName}.xmin = @p_expectedversion
+          version = {_table}.version + @p_versionbump{(forceUpdateScope ? ", scope = @p_scope::jsonb" : "")}{physicalUpdate}
+        WHERE {_table}.id = @p_id AND {_table}.xmin = @p_expectedversion
           AND ({guard("@p_metadata::jsonb")})
         """,
       // The separator is explicit: a raw string literal keeps no trailing newline, so concatenating
@@ -331,7 +337,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   /// </remarks>
   private async Task _explainRefusedWriteAsync(
       NpgsqlConnection conn, Guid streamId, PerspectiveRowVersion expected, CancellationToken cancellationToken) {
-    await using var cmd = new NpgsqlCommand(PerspectiveRowVersionCommands.ReadVersionSql(tableName, lockRow: false), conn);
+    await using var cmd = new NpgsqlCommand(PerspectiveRowVersionCommands.ReadVersionSql(_table, lockRow: false), conn);
     cmd.Parameters.AddWithValue("id", streamId);
     var actual = await cmd.ExecuteScalarAsync(cancellationToken) is uint xmin
       ? PerspectiveRowVersion.Of(xmin)
@@ -353,7 +359,8 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
       if (!_isPlainIdentifier(column)) {
         throw new ArgumentException($"'{column}' is not a plain column name.", nameof(values));
       }
-      columns.Add((column, _physicalParameter($"p_pf{columns.Count}", value, jsonOptions)));
+      var jsonb = PerspectivePhysicalFieldRegistry.TryResolveColumn(typeof(TModel), column, out var field) && field.IsJsonbColumn;
+      columns.Add((column, _physicalParameter($"p_pf{columns.Count}", value, jsonOptions, jsonb)));
     }
     return columns;
   }
@@ -364,12 +371,17 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   /// <summary>
   /// The driver sends the common types natively. An instant is sent in UTC, which is the same instant. An
   /// enumeration is sent as its underlying number, the form its column holds (see
-  /// <see cref="PerspectivePhysicalValues"/>). A collection the JSON options can describe (a keyed list in a jsonb
-  /// column) is sent as its JSON text. Anything else (a vector) is sent as its text form. Both text forms go
-  /// with no declared type, so the column's own type parses them, exactly as it would parse a literal.
+  /// <see cref="PerspectivePhysicalValues"/>). The value of a column registered as jsonb (an object, a dictionary,
+  /// a list) is sent as its JSON text, from the JSON options' contract for its type; an object there used to be
+  /// sent as its type's name, which no jsonb column parses. Elsewhere a collection the JSON options can describe (a
+  /// keyed list) is sent as its JSON text. Anything else (a vector, a value object a column type parses) is sent as
+  /// its text form. Both text forms go with no declared type, so the column's own type parses them, exactly as it
+  /// would parse a literal.
   /// </summary>
-  private static NpgsqlParameter _physicalParameter(string name, object? value, JsonSerializerOptions jsonOptions) => value switch {
+  private static NpgsqlParameter _physicalParameter(string name, object? value, JsonSerializerOptions jsonOptions, bool jsonb) => value switch {
     null => new NpgsqlParameter(name, DBNull.Value),
+    _ when jsonb =>
+      new NpgsqlParameter(name, NpgsqlDbType.Unknown) { Value = JsonSerializer.Serialize(value, jsonOptions.GetTypeInfo(value.GetType())) },
     DateTimeOffset instant => new NpgsqlParameter(name, instant.ToUniversalTime()),
     Enum => new NpgsqlParameter(name, PerspectivePhysicalValues.ToColumnScalar(value)),
     string or Guid or bool or short or int or long or float or double or decimal

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using static Whizbang.Core.Messaging.ProcessingModeAccessor;
 
@@ -49,13 +50,11 @@ public sealed partial class PerspectiveRebuilder(
     return Task.FromResult(status);
   }
 
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The rebuild separates state-based models from event-sourced ones, because a state-based model is repopulated by its guard rather than replayed, and then replays the rest stream by stream with per-stream failure containment.")]
   private async Task<RebuildResult> _rebuildCoreAsync(
       string perspectiveName, RebuildMode mode, List<Guid>? streamIds, CancellationToken ct) {
 
     var sw = Stopwatch.StartNew();
-    int streamsProcessed = 0;
-    int eventsReplayed = 0;
+    RebuildRun? run = null;
 
     try {
       await using var scope = scopeFactory.CreateAsyncScope();
@@ -75,56 +74,35 @@ public sealed partial class PerspectiveRebuilder(
       // rebuild end-state. Optional dependency — when no driver registers a completer, the
       // rebuilder still updates projections and just skips cursor persistence.
       var completer = sp.GetService<IPerspectiveCheckpointCompleter>();
-      var pendingCompletions = completer != null ? new List<PerspectiveCursorCompletion>(64) : null;
+      run = new RebuildRun(runner, perspectiveName, mode, completer);
 
       // When the caller didn't supply an explicit list, narrow to streams that actually contain
       // events this perspective handles — otherwise we'd iterate every stream for every
       // perspective (most RunAsync calls become no-ops).
-      streamIds ??= await _resolveStreamIdsToReplayAsync(sp, registry, perspectiveName, ct);
+      var eventTypes = _effectiveEventTypes(sp, registry, perspectiveName);
+      streamIds ??= await _resolveStreamIdsToReplayAsync(sp, perspectiveName, eventTypes, ct);
+      streamIds = await _withoutStateBasedStreamsAsync(sp, perspectiveName, streamIds, ct);
 
-      // StateBased streams (ephemeral OR compacted) are NOT a rebuildable source of truth — an ephemeral
-      // stream's events self-destruct + bodies are reaped, a compacted stream replays only to its Compacted
-      // origin — so replaying one from events would corrupt the projection. Refuse them up front (the runtime
-      // backstop to the compile-time analyzer). Optional dependency: an absent coordinator = no filtering,
-      // so engines without the flags are unaffected.
-      var stateBasedGuard = sp.GetService<IWorkCoordinator>();
-      if (stateBasedGuard is not null && streamIds.Count > 0) {
-        var stateBased = await stateBasedGuard.GetStateBasedStreamIdsAsync(streamIds, ct);
-        if (stateBased.Count > 0) {
-          var stateBasedSet = stateBased as ISet<Guid> ?? new HashSet<Guid>(stateBased);
-          var kept = new List<Guid>(streamIds.Count);
-          foreach (var id in streamIds) {
-            if (stateBasedSet.Contains(id)) {
-              LogRebuildRefusedEphemeral(logger, perspectiveName, id);
-            } else {
-              kept.Add(id);
-            }
-          }
-          streamIds = kept;
-        }
+      // Blue-green needs a driver that can build and swap a shadow table. Without one the rebuild
+      // replays in place, as it always did, and says so rather than claiming a swap it never made.
+      var swapper = mode == RebuildMode.BlueGreen ? sp.GetService<IPerspectiveTableSwapper>() : null;
+      if (mode == RebuildMode.BlueGreen && swapper is null) {
+        LogBlueGreenInPlace(logger, perspectiveName);
       }
 
-      var totalStreams = streamIds.Count;
-
-      // Track active rebuild status
-      var status = new RebuildStatus(perspectiveName, mode, totalStreams, 0, DateTimeOffset.UtcNow);
-      _activeRebuilds[perspectiveName] = status;
-
-      LogRebuildStarting(logger, mode, perspectiveName, totalStreams, completer != null);
+      LogRebuildStarting(logger, mode, perspectiveName, streamIds.Count, completer != null);
 
       // Set ambient processing mode so lifecycle receptors are suppressed during rebuild
       // unless they opt in with [FireDuringReplay]
       var previousMode = Current;
       Current = ProcessingMode.Rebuild;
       try {
-        foreach (var streamId in streamIds) {
-          ct.ThrowIfCancellationRequested();
-          (streamsProcessed, eventsReplayed) = await _replayStreamAsync(
-            runner, perspectiveName, streamId, completer, pendingCompletions,
-            status, streamsProcessed, eventsReplayed, totalStreams, sw, ct);
+        if (swapper is null) {
+          await _replayStreamsAsync(run, streamIds, RebuildPhase.Replaying, ct);
+        } else {
+          var modelTypeName = registry.GetRegisteredPerspectives().FirstOrDefault(p => p.ClrTypeName == perspectiveName)?.ModelType;
+          await _rebuildBlueGreenAsync(run, sp, swapper, new ChangeQuery(sp, eventTypes, modelTypeName), streamIds, ct);
         }
-
-        await _flushPendingCompletionsAsync(completer, pendingCompletions, perspectiveName, streamsProcessed, totalStreams, ct);
       } finally {
         Current = previousMode;
       }
@@ -139,16 +117,159 @@ public sealed partial class PerspectiveRebuilder(
       await _streamGroupPresenceReconcileAsync(perspectiveName, sp, ct);
 
       sw.Stop();
-      LogRebuildCompleted(logger, mode, perspectiveName, streamsProcessed, sw.ElapsedMilliseconds);
+      LogRebuildCompleted(logger, mode, perspectiveName, run.StreamsProcessed, sw.ElapsedMilliseconds);
 
-      return new RebuildResult(perspectiveName, streamsProcessed, eventsReplayed, sw.Elapsed, true, null);
+      return new RebuildResult(perspectiveName, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, true, null);
     } catch (Exception ex) {
       sw.Stop();
+      var streamsProcessed = run?.StreamsProcessed ?? 0;
       LogRebuildFailed(logger, ex, mode, perspectiveName, streamsProcessed, sw.ElapsedMilliseconds);
-      return new RebuildResult(perspectiveName, streamsProcessed, eventsReplayed, sw.Elapsed, false, ex.Message);
+      return new RebuildResult(perspectiveName, streamsProcessed, run?.EventsReplayed ?? 0, sw.Elapsed, false, ex.Message);
     } finally {
       _activeRebuilds.TryRemove(perspectiveName, out _);
     }
+  }
+
+  /// <summary>
+  /// StateBased streams (ephemeral OR compacted) are NOT a rebuildable source of truth — an ephemeral
+  /// stream's events self-destruct + bodies are reaped, a compacted stream replays only to its Compacted
+  /// origin — so replaying one from events would corrupt the projection. Refuse them up front (the runtime
+  /// backstop to the compile-time analyzer). Optional dependency: an absent coordinator = no filtering,
+  /// so engines without the flags are unaffected.
+  /// </summary>
+  private async Task<List<Guid>> _withoutStateBasedStreamsAsync(
+      IServiceProvider sp, string perspectiveName, List<Guid> streamIds, CancellationToken ct) {
+    var stateBasedGuard = sp.GetService<IWorkCoordinator>();
+    if (stateBasedGuard is null || streamIds.Count == 0) {
+      return streamIds;
+    }
+    var stateBased = await stateBasedGuard.GetStateBasedStreamIdsAsync(streamIds, ct);
+    if (stateBased.Count == 0) {
+      return streamIds;
+    }
+    var stateBasedSet = stateBased as ISet<Guid> ?? new HashSet<Guid>(stateBased);
+    var kept = new List<Guid>(streamIds.Count);
+    foreach (var id in streamIds) {
+      if (stateBasedSet.Contains(id)) {
+        LogRebuildRefusedEphemeral(logger, perspectiveName, id);
+      } else {
+        kept.Add(id);
+      }
+    }
+    return kept;
+  }
+
+  /// <summary>
+  /// Replays <paramref name="streamIds"/> as one phase of the rebuild, reporting the phase's progress through
+  /// <see cref="GetRebuildStatusAsync"/>, and flushes the cursor completions it queued.
+  /// </summary>
+  private async Task _replayStreamsAsync(RebuildRun run, IReadOnlyList<Guid> streamIds, RebuildPhase phase, CancellationToken ct) {
+    var status = new RebuildStatus(run.PerspectiveName, run.Mode, streamIds.Count, 0, run.StartedAt) { Phase = phase };
+    _activeRebuilds[run.PerspectiveName] = status;
+    var processed = 0;
+    foreach (var streamId in streamIds) {
+      ct.ThrowIfCancellationRequested();
+      processed = await _replayStreamAsync(run, streamId, status, processed, ct);
+    }
+    await _flushPendingCompletionsAsync(run, processed, streamIds.Count, ct);
+  }
+
+  /// <summary>
+  /// The blue-green rebuild. Every stream is replayed into a shadow table while readers keep the live table,
+  /// which nothing in the rebuild touches. Writers keep writing the live table meanwhile, so the shadow is then
+  /// caught up with the streams whose events were committed after the rebuild read them: up to
+  /// <see cref="BlueGreenRebuildOptions.MaxCatchUpPasses"/> times while the live table stays open, and a last time
+  /// inside the swap, with the live table closed to writers and still open to readers. The swap is one
+  /// transaction, so a reader sees the old table or the new one, never anything between.
+  /// </summary>
+  /// <remarks>
+  /// A caught-up stream's shadow row is deleted and the stream replayed whole, so it is folded exactly as the
+  /// first pass folded it. A failed rebuild drops the shadow table and leaves the live one as it was.
+  /// </remarks>
+  private async Task _rebuildBlueGreenAsync(
+      RebuildRun run, IServiceProvider sp, IPerspectiveTableSwapper swapper, ChangeQuery changes,
+      List<Guid> streamIds, CancellationToken ct) {
+    var table = await swapper.FindTableAsync(run.PerspectiveName, ct).ConfigureAwait(false)
+      ?? throw new InvalidOperationException(
+        $"Perspective '{run.PerspectiveName}' has no registered table, so there is nothing to rebuild blue-green.");
+    var options = sp.GetService<IOptions<BlueGreenRebuildOptions>>()?.Value ?? new BlueGreenRebuildOptions();
+
+    var mark = await changes.WatermarkAsync(ct).ConfigureAwait(false);
+    var shadow = await swapper.CreateShadowAsync(table, ct).ConfigureAwait(false);
+    LogBlueGreenShadowCreated(logger, run.PerspectiveName, table, shadow);
+    try {
+      using var redirect = PerspectiveTableRedirect.Begin(table, shadow);
+      await _replayStreamsAsync(run, streamIds, RebuildPhase.Replaying, ct).ConfigureAwait(false);
+
+      for (var pass = 0; pass < options.MaxCatchUpPasses; pass++) {
+        var next = await changes.WatermarkAsync(ct).ConfigureAwait(false);
+        var changed = await changes.StreamsChangedSinceAsync(mark, streamIds, ct).ConfigureAwait(false);
+        mark = next;
+        if (changed.Count == 0) {
+          break;
+        }
+        await _catchUpAsync(run, swapper, shadow, changed, RebuildPhase.CatchingUp, ct).ConfigureAwait(false);
+      }
+
+      var swap = new PerspectiveTableSwap(table, shadow, options.KeepPreviousTable, options.SwapLockTimeout);
+      var previous = await swapper.SwapAsync(swap, async lockedCt => {
+        var changed = await changes.StreamsChangedSinceAsync(mark, streamIds, lockedCt).ConfigureAwait(false);
+        await _catchUpAsync(run, swapper, shadow, changed, RebuildPhase.Swapping, lockedCt).ConfigureAwait(false);
+      }, ct).ConfigureAwait(false);
+      LogBlueGreenSwapped(logger, run.PerspectiveName, table, previous ?? "(dropped)");
+    } catch {
+      await _dropShadowAsync(swapper, run.PerspectiveName, shadow).ConfigureAwait(false);
+      throw;
+    }
+  }
+
+  /// <summary>Deletes the shadow rows of <paramref name="changed"/> and replays those streams whole.</summary>
+  private async Task _catchUpAsync(
+      RebuildRun run, IPerspectiveTableSwapper swapper, string shadow, IReadOnlyList<Guid> changed, RebuildPhase phase,
+      CancellationToken ct) {
+    if (changed.Count > 0) {
+      await swapper.DeleteRowsAsync(shadow, changed, ct).ConfigureAwait(false);
+    }
+    LogBlueGreenCatchingUp(logger, run.PerspectiveName, phase, changed.Count);
+    await _replayStreamsAsync(run, changed, phase, ct).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Drops a failed rebuild's shadow table. Best effort and never canceled: the failure being reported is the
+  /// rebuild's, and a shadow left behind is replaced by the next rebuild's.
+  /// </summary>
+  private async Task _dropShadowAsync(IPerspectiveTableSwapper swapper, string perspectiveName, string shadow) {
+    try {
+      await swapper.DropAsync(shadow, CancellationToken.None).ConfigureAwait(false);
+    } catch (Exception ex) {
+      LogBlueGreenShadowDropFailed(logger, ex, perspectiveName, shadow);
+    }
+  }
+
+  /// <summary>
+  /// The event types this perspective folds, widened by the source types of upcasters that change an event's
+  /// type into one of them; null when the registry carries no event-type metadata for the perspective (rare —
+  /// incomplete registration), which means every stream.
+  /// </summary>
+  private static IReadOnlyList<string>? _effectiveEventTypes(
+      IServiceProvider sp, IPerspectiveRunnerRegistry registry, string perspectiveName) {
+    var relevantEventTypes = registry.GetRegisteredPerspectives()
+        .FirstOrDefault(p => p.ClrTypeName == perspectiveName)?.EventTypes;
+    if (relevantEventTypes is not { Count: > 0 }) {
+      return null;
+    }
+    // A type-change upcaster (LegacyA → GenericB) lets a stream that only carries the legacy
+    // input feed this perspective on rebuild — but such a stream has none of the perspective's
+    // own subscribed types, so the scoping below would skip it. Widen the scope with those
+    // upcasters' source-type names (scoped to upcasters whose target this perspective subscribes
+    // to). Empty for the common no-type-change case, so the query shape is unchanged there.
+    var extraNames = sp.GetService<EventUpcasterPipeline>()?.ExtraInputTypeNamesFor(relevantEventTypes);
+    if (extraNames is not { Count: > 0 }) {
+      return relevantEventTypes;
+    }
+    var widened = new List<string>(relevantEventTypes);
+    widened.AddRange(extraNames);
+    return widened;
   }
 
   /// <summary>
@@ -157,35 +278,15 @@ public sealed partial class PerspectiveRebuilder(
   /// incomplete registration). The source-generated registry supplies the event-type set.
   /// </summary>
   private async Task<List<Guid>> _resolveStreamIdsToReplayAsync(
-      IServiceProvider sp, IPerspectiveRunnerRegistry registry, string perspectiveName, CancellationToken ct) {
+      IServiceProvider sp, string perspectiveName, IReadOnlyList<string>? eventTypes, CancellationToken ct) {
     var eventStoreQuery = sp.GetRequiredService<IEventStoreQuery>();
-    var perspectiveInfo = registry.GetRegisteredPerspectives()
-        .FirstOrDefault(p => p.ClrTypeName == perspectiveName);
-    var relevantEventTypes = perspectiveInfo?.EventTypes;
-
-    if (relevantEventTypes is { Count: > 0 }) {
-      // A type-change upcaster (LegacyA → GenericB) lets a stream that only carries the legacy
-      // input feed this perspective on rebuild — but such a stream has none of the perspective's
-      // own subscribed types, so the scoping below would skip it. Widen the scope with those
-      // upcasters' source-type names (scoped to upcasters whose target this perspective subscribes
-      // to). Empty for the common no-type-change case, so the query shape is unchanged there.
-      IReadOnlyList<string> effectiveEventTypes = relevantEventTypes;
-      var pipeline = sp.GetService<EventUpcasterPipeline>();
-      if (pipeline is not null) {
-        var extraNames = pipeline.ExtraInputTypeNamesFor(relevantEventTypes);
-        if (extraNames.Count > 0) {
-          var widened = new List<string>(relevantEventTypes);
-          widened.AddRange(extraNames);
-          effectiveEventTypes = widened;
-        }
-      }
-
+    if (eventTypes is not null) {
       var streamIds = await eventStoreQuery.Query
-          .Where(e => effectiveEventTypes.Contains(e.EventType))
+          .Where(e => eventTypes.Contains(e.EventType))
           .Select(e => e.StreamId)
           .Distinct()
           .ToListAsync(ct);
-      LogStreamScoping(logger, perspectiveName, streamIds.Count, effectiveEventTypes.Count);
+      LogStreamScoping(logger, perspectiveName, streamIds.Count, eventTypes.Count);
       return streamIds;
     }
 
@@ -240,76 +341,140 @@ public sealed partial class PerspectiveRebuilder(
     await coordinator.ReconcileFollowerPresenceAsync(followerTable, announcerTables, ct).ConfigureAwait(false);
   }
 
-  [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Replays one stream inside a rebuild that is already in progress: the runner and stream to replay, the completion seam and its pending batch, and the running totals the caller keeps across streams. The totals are the caller's loop state, threaded through rather than held in a field the rebuild would share.")]
-  private async Task<(int StreamsProcessed, int EventsReplayed)> _replayStreamAsync(
-      IPerspectiveRunner runner,
-      string perspectiveName,
-      Guid streamId,
-      IPerspectiveCheckpointCompleter? completer,
-      List<PerspectiveCursorCompletion>? pendingCompletions,
-      RebuildStatus status,
-      int streamsProcessed,
-      int eventsReplayed,
-      int totalStreams,
-      Stopwatch overallSw,
-      CancellationToken ct) {
+  /// <summary>
+  /// Replays a single stream: runner.RunRebuildAsync, log, queue the cursor completions for flush, and
+  /// periodic progress reporting. Exceptions are logged (LogStreamFailed) and swallowed so one bad stream
+  /// doesn't kill the rebuild. Returns the phase's processed count.
+  /// </summary>
+  private async Task<int> _replayStreamAsync(
+      RebuildRun run, Guid streamId, RebuildStatus status, int processed, CancellationToken ct) {
     var streamSw = Stopwatch.StartNew();
     try {
       // RunRebuildAsync replays the physical stream and returns one completion per TARGET stream.
       // Without re-key upcasters this is a single completion equal to streamId (identical to the
       // old RunAsync path); with a re-key upcaster, events fan out onto their target rows and a
-      // cursor is queued for each. streamsProcessed counts physical streams (one per call) so the
+      // cursor is queued for each. Processed counts physical streams (one per call) so the
       // rebuild result stays keyed to the resolved stream list.
-      var completions = await runner.RunRebuildAsync(streamId, perspectiveName, ct);
+      var completions = await run.Runner.RunRebuildAsync(streamId, run.PerspectiveName, ct);
       streamSw.Stop();
-      streamsProcessed++;
-      eventsReplayed += completions.Count;
+      processed++;
+      run.StreamsProcessed++;
+      run.EventsReplayed += completions.Count;
 
       foreach (var completion in completions) {
-        LogStreamReplayed(logger, perspectiveName, completion.StreamId, completion.LastEventId,
-            completion.Status, streamSw.ElapsedMilliseconds, streamsProcessed, totalStreams);
+        LogStreamReplayed(logger, run.PerspectiveName, completion.StreamId, completion.LastEventId,
+            completion.Status, streamSw.ElapsedMilliseconds, processed, status.TotalStreams);
 
-        if (pendingCompletions != null) {
-          pendingCompletions.Add(completion);
-          if (pendingCompletions.Count >= COMPLETION_FLUSH_BATCH_SIZE) {
-            await _flushPendingCompletionsAsync(completer, pendingCompletions, perspectiveName, streamsProcessed, totalStreams, ct);
+        if (run.PendingCompletions != null) {
+          run.PendingCompletions.Add(completion);
+          if (run.PendingCompletions.Count >= COMPLETION_FLUSH_BATCH_SIZE) {
+            await _flushPendingCompletionsAsync(run, processed, status.TotalStreams, ct);
           }
         }
       }
 
-      if (streamsProcessed % 100 == 0 || streamsProcessed == totalStreams) {
-        _activeRebuilds[perspectiveName] = status with { ProcessedStreams = streamsProcessed };
-        LogRebuildProgress(logger, perspectiveName, streamsProcessed, totalStreams,
-            overallSw.ElapsedMilliseconds);
+      if (processed % 100 == 0 || processed == status.TotalStreams) {
+        _activeRebuilds[run.PerspectiveName] = status with { ProcessedStreams = processed };
+        LogRebuildProgress(logger, run.PerspectiveName, processed, status.TotalStreams,
+            run.Elapsed.ElapsedMilliseconds);
       }
     } catch (Exception ex) {
       streamSw.Stop();
-      LogStreamFailed(logger, ex, perspectiveName, streamId, streamsProcessed, totalStreams);
+      LogStreamFailed(logger, ex, run.PerspectiveName, streamId, processed, status.TotalStreams);
     }
-    return (streamsProcessed, eventsReplayed);
+    return processed;
   }
 
   /// <summary>Flushes any queued cursor completions through the optional
   /// <see cref="IPerspectiveCheckpointCompleter"/> and logs the batch size + flush time.
   /// No-op when the completer or pending list is null/empty.</summary>
-  private async Task _flushPendingCompletionsAsync(
-      IPerspectiveCheckpointCompleter? completer,
-      List<PerspectiveCursorCompletion>? pendingCompletions,
-      string perspectiveName,
-      int streamsProcessed,
-      int totalStreams,
-      CancellationToken ct) {
-    if (completer is null || pendingCompletions is not { Count: > 0 }) {
+  private async Task _flushPendingCompletionsAsync(RebuildRun run, int processed, int totalStreams, CancellationToken ct) {
+    if (run.Completer is null || run.PendingCompletions is not { Count: > 0 } pending) {
       return;
     }
     var flushSw = Stopwatch.StartNew();
-    var flushCount = pendingCompletions.Count;
-    await completer.CompleteAsync(pendingCompletions, ct);
+    var flushCount = pending.Count;
+    await run.Completer.CompleteAsync(pending, ct);
     flushSw.Stop();
-    LogCursorFlushed(logger, perspectiveName, flushCount, flushSw.ElapsedMilliseconds,
-        streamsProcessed, totalStreams);
-    pendingCompletions.Clear();
+    LogCursorFlushed(logger, run.PerspectiveName, flushCount, flushSw.ElapsedMilliseconds, processed, totalStreams);
+    pending.Clear();
   }
+
+  /// <summary>One rebuild's fixed inputs and running totals, threaded through its phases.</summary>
+  private sealed class RebuildRun(
+      IPerspectiveRunner runner, string perspectiveName, RebuildMode mode, IPerspectiveCheckpointCompleter? completer) {
+    public IPerspectiveRunner Runner { get; } = runner;
+    public string PerspectiveName { get; } = perspectiveName;
+    public RebuildMode Mode { get; } = mode;
+    public IPerspectiveCheckpointCompleter? Completer { get; } = completer;
+    public List<PerspectiveCursorCompletion>? PendingCompletions { get; } = completer is null ? null : new(64);
+    public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
+    public Stopwatch Elapsed { get; } = Stopwatch.StartNew();
+    public int StreamsProcessed { get; set; }
+    public int EventsReplayed { get; set; }
+  }
+
+  /// <summary>
+  /// What a blue-green rebuild asks the event store while it runs: the commit-sequence watermark, and the streams
+  /// whose events were committed after one.
+  /// </summary>
+  /// <remarks>
+  /// The commit sequence is stamped after commit and only ever grows, so an event committed after a watermark was
+  /// read is stamped above it, or not yet stamped at all; both count as changed. A stream already replayed with an
+  /// event that was merely stamped late is replayed once more, which folds it the same way.
+  /// </remarks>
+  private sealed class ChangeQuery(IServiceProvider sp, IReadOnlyList<string>? eventTypes, string? modelTypeName) {
+    private readonly IEventStoreQuery _events = sp.GetRequiredService<IEventStoreQuery>();
+    private readonly IReadOnlyList<string> _collectiveTypes = modelTypeName is null
+      ? []
+      : sp.GetService<ICollectiveReplayApplier>()?.CollectiveEventTypeNamesFor(modelTypeName) ?? [];
+
+    /// <summary>The highest commit sequence stamped so far, or 0 when none is.</summary>
+    public async Task<long> WatermarkAsync(CancellationToken ct) {
+      var top = await _events.Query
+        .Where(e => e.CommitSequence != null)
+        .OrderByDescending(e => e.CommitSequence)
+        .Select(e => e.CommitSequence)
+        .Take(1)
+        .ToListAsync(ct);
+      return top.Count == 0 ? 0 : top[0]!.Value;
+    }
+
+    /// <summary>
+    /// The streams with events this perspective folds committed after <paramref name="mark"/>. A collective
+    /// committed after it can change any row, so it makes every stream changed, along with any new ones.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> StreamsChangedSinceAsync(long mark, IReadOnlyList<Guid> allStreams, CancellationToken ct) {
+      var recent = _events.Query.Where(e => e.CommitSequence == null || e.CommitSequence > mark);
+      var perspectiveEvents = eventTypes is null ? recent : recent.Where(e => eventTypes.Contains(e.EventType));
+      var changed = await perspectiveEvents.Select(e => e.StreamId).Distinct().ToListAsync(ct);
+      if (_collectiveTypes.Count == 0) {
+        return changed;
+      }
+      var collectives = await recent.Where(e => _collectiveTypes.Contains(e.EventType)).Select(e => e.Id).Take(1).ToListAsync(ct);
+      return collectives.Count == 0 ? changed : [.. allStreams.Union(changed)];
+    }
+  }
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "Blue-green rebuild of {Perspective}: the driver has no shadow-table support, so it is rebuilt in place")]
+  private static partial void LogBlueGreenInPlace(ILogger logger, string perspective);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Blue-green rebuild of {Perspective}: replaying into {Shadow} while {Table} keeps serving reads")]
+  private static partial void LogBlueGreenShadowCreated(ILogger logger, string perspective, string table, string shadow);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Blue-green rebuild of {Perspective}: {Phase}, {Count} stream(s) written during the rebuild")]
+  private static partial void LogBlueGreenCatchingUp(ILogger logger, string perspective, RebuildPhase phase, int count);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Blue-green rebuild of {Perspective}: the rebuilt table is now {Table}; the previous one is {Previous}")]
+  private static partial void LogBlueGreenSwapped(ILogger logger, string perspective, string table, string previous);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "Blue-green rebuild of {Perspective} failed and its shadow table {Shadow} could not be dropped; the next rebuild replaces it")]
+  private static partial void LogBlueGreenShadowDropFailed(ILogger logger, Exception ex, string perspective, string shadow);
 
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Starting {Mode} rebuild of perspective {Perspective} — {StreamCount} streams; cursor persistence enabled={CursorPersistence}")]

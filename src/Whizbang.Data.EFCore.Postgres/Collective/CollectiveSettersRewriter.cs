@@ -35,7 +35,8 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 ///   <item><description>Constant value sources (literal, captured local, captured field) — supported.</description></item>
 ///   <item><description>Multiple chained <c>SetProperty</c> calls — collected in source order.</description></item>
 ///   <item><description>Computed expressions (<c>j =&gt; j.X + 1</c>) — UNSUPPORTED in v1.0; throws <see cref="NotSupportedException"/> with a pointer to <c>SpecKind = RawSql</c>. Matches the Dapper compiler's constraint matrix.</description></item>
-///   <item><description>Nested paths (<c>j =&gt; j.Nested.X</c>) — UNSUPPORTED in v1.0; throws <see cref="NotSupportedException"/>.</description></item>
+///   <item><description>One key inside a jsonb physical column (<c>j =&gt; j.Settings.Theme</c>) — supported, to a constant value.</description></item>
+///   <item><description>Other nested paths (<c>j =&gt; j.Nested.X</c> over the document) — UNSUPPORTED in v1.0; throws <see cref="NotSupportedException"/>.</description></item>
 /// </list>
 /// <para>
 /// AOT note: value evaluation compiles a captured sub-expression
@@ -71,10 +72,15 @@ internal static class CollectiveSettersRewriter {
   /// whose target, or whose compared property, is a <c>[PhysicalField]</c> binds the column from it as a typed
   /// parameter.
   /// </para>
+  /// <para>
+  /// <see cref="JsonbKey"/> is set for a setter of one key inside a jsonb physical column
+  /// (<c>m =&gt; m.Settings.Theme</c>): <see cref="PathName"/> is the column's property, <see cref="JsonValue"/> the
+  /// key's new value, and the adapter sets that key with <c>jsonb_set</c> instead of replacing the column.
+  /// </para>
   /// </remarks>
   public sealed record CollectiveSetterAssignment(
     string PathName, string JsonValue, bool IsNull, object? Value,
-    CollectiveComputedComparison? Comparison = null, string? ElementKey = null);
+    CollectiveComputedComparison? Comparison = null, string? ElementKey = null, string? JsonbKey = null);
 
   /// <summary>
   /// A computed setter of the shape <c>j =&gt; j.SomeProp == value</c> (or <c>!=</c>): the new value is a
@@ -107,10 +113,10 @@ internal static class CollectiveSettersRewriter {
       // For a computed comparison the serialized value is the RHS constant; the adapter wraps it in the
       // to_jsonb(...) comparison. For a constant setter it is the value itself. Serialize against the RHS's own
       // runtime type (comparison) or the target property type (constant).
-      var valueType = a.Value?.GetType() ?? (a.Comparison is null ? a.Property.PropertyType : typeof(object));
+      var valueType = a.Value?.GetType() ?? a.JsonbKey?.PropertyType ?? (a.Comparison is null ? a.Property.PropertyType : typeof(object));
       var json = JsonSerializer.Serialize(a.Value, valueType, _persistenceJsonOptions);
       result.Add(new CollectiveSetterAssignment(
-        a.Property.Name, json, a.Value is null && a.Comparison is null, a.Value, a.Comparison, a.ElementKey));
+        a.Property.Name, json, a.Value is null && a.Comparison is null, a.Value, a.Comparison, a.ElementKey, a.JsonbKey?.Name));
     }
     return result;
   }
@@ -132,7 +138,8 @@ internal static class CollectiveSettersRewriter {
     return result;
   }
 
-  private sealed record PropertyAssignment(PropertyInfo Property, object? Value, CollectiveComputedComparison? Comparison, string? ElementKey = null);
+  private sealed record PropertyAssignment(
+    PropertyInfo Property, object? Value, CollectiveComputedComparison? Comparison, string? ElementKey = null, PropertyInfo? JsonbKey = null);
 
   /// <summary>
   /// Walks the spec body and accumulates one
@@ -171,12 +178,21 @@ internal static class CollectiveSettersRewriter {
       }
 
       var selector = _unwrapLambda(node.Arguments[0]);
+      var valueExpr = node.Arguments[1];
+      // One key inside a jsonb physical column: a constant value only, as the replay applies it.
+      if (CollectivePhysicalColumns.TryJsonbKey(modelType, selector) is { } nested) {
+        if (_isLambda(valueExpr)) {
+          throw new NotSupportedException(
+            $"A collective sets {modelType.Name}.{nested.Root.Name}.{nested.Key.Name} only to a value, not a computed expression.");
+        }
+        Assignments.Add(new PropertyAssignment(nested.Root, _evaluateValue(valueExpr), Comparison: null, JsonbKey: nested.Key));
+        return node;
+      }
       var property = _extractScalarProperty(selector);
 
       // Computed setter: currently a property-vs-constant comparison (j => j.SomeProp == value). The RHS
       // constant becomes the assignment value; the comparison metadata tells the adapter to emit the
       // to_jsonb((data->'X')::jsonb <op> @value::jsonb) shape. Arithmetic / string ops remain RawSql-only.
-      var valueExpr = node.Arguments[1];
       if (_isLambda(valueExpr)) {
         var (comparison, rhs) = _parseComputedComparison(valueExpr, property.Name);
         Assignments.Add(new PropertyAssignment(property, rhs, comparison));

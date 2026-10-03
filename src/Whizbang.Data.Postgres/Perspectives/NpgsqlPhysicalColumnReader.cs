@@ -1,7 +1,7 @@
 using Npgsql;
 using Whizbang.Core.Perspectives;
 
-namespace Whizbang.Data.Dapper.Postgres;
+namespace Whizbang.Data.Postgres.Perspectives;
 
 /// <summary>
 /// Reads a Split model's promoted columns from the row the document was read from. The columns follow the
@@ -11,9 +11,12 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Reads each value as the property's own type, which the driver converts natively for everything the store
 /// writes natively. An enum is the exception: its column holds the underlying number (a <c>ulong</c>-backed one as
 /// <c>numeric</c>), which is converted back to the member, and a column still holding names is parsed from them.
+/// Shared by the Dapper store and the EF Core store's read of a shadow table during a blue-green rebuild, which
+/// reads the row with SQL because EF Core cannot map a JSON complex property over raw SQL.
 /// </remarks>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperSplitPhysicalFieldReloadTests.cs</tests>
-internal sealed class NpgsqlPhysicalColumnReader(NpgsqlDataReader reader, IReadOnlyList<SplitPhysicalColumn> columns)
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/BlueGreenRebuildIntegrationTests.cs</tests>
+public sealed class NpgsqlPhysicalColumnReader(NpgsqlDataReader reader, IReadOnlyList<SplitPhysicalColumn> columns)
     : IPhysicalColumnReader {
 
   /// <inheritdoc/>

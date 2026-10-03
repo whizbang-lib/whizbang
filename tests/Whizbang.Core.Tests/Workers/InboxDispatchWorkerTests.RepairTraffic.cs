@@ -94,6 +94,27 @@ public partial class InboxDispatchWorkerTests {
     await Assert.That(log.Any(e => e.Message.Contains("RepairMode is ReportOnly", StringComparison.Ordinal))).IsFalse();
   }
 
+  /// <summary>
+  /// Report-only opts out of AUTOMATIC repair. A bundle an operator asked for (#1028) is applied, so the operator's
+  /// repair for events lost in transport works on a service that never enabled automatic repair.
+  /// </summary>
+  [Test]
+  public async Task OperatorRequestedBundle_UnderReportOnly_FansOutAsync() {
+    var bundle = _redeliveryBundle(2);
+    var operatorBundle = new RedeliveryComposite {
+      OriginServiceId = bundle.OriginServiceId,
+      InnerPayloads = bundle.InnerPayloads,
+      InnerTypeNames = bundle.InnerTypeNames,
+      InnerEventIds = bundle.InnerEventIds,
+      OperatorRequested = true,
+    };
+
+    var (routed, log) = await _runCompositeUnderRepairModeAsync(operatorBundle, IntegrityRepairMode.ReportOnly);
+
+    await Assert.That(routed.NewInboxMessages?.Count ?? 0).IsEqualTo(2);
+    await Assert.That(log.Any(e => e.Message.Contains("RepairMode is ReportOnly", StringComparison.Ordinal))).IsFalse();
+  }
+
   [Test]
   public async Task OrdinaryComposite_UnderReportOnly_StillFansOutAsync() {
     var composite = new BulkComposite(new InnerImportEvent("J-1"), new InnerImportEvent("J-2"));

@@ -136,6 +136,18 @@ public static class PostgresDriverExtensions {
         selector.Services.TryAddScoped<IClaimedEmissionStore>(sp =>
             new EFCoreClaimedEmissionStore(
                 (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType)));
+        // TURNKEY: the maintenance step that deletes claims a day past their expiry, except under the
+        // prefixes their owners retain (#999). Without it the claim table grew by a row per key for good.
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<Whizbang.Core.Workers.IMaintenanceStep, Whizbang.Core.Workers.ClaimedEmissionPruneStep>(sp =>
+            new Whizbang.Core.Workers.ClaimedEmissionPruneStep(
+                sp.GetService<ILogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep>>(),
+                sp.GetService<TimeProvider>())));
+
+        // TURNKEY: blue-green perspective rebuilds build a shadow table and swap it in (#1025). The swapper opens
+        // connections of its own from the context's data source; with no way to open one it is absent, and the
+        // rebuilder replays in place and says so.
+        selector.Services.TryAddSingleton<Whizbang.Core.Perspectives.IPerspectiveTableSwapper>(sp =>
+            EFCorePerspectiveTableSwapperFactory.Create(sp, dbContextType)!);
 
         // TURNKEY: the maintenance step that analyzes perspective tables whose expression indexes have no
         // statistics yet, so a selective predicate on a new index is not planned as a full scan (#1004).

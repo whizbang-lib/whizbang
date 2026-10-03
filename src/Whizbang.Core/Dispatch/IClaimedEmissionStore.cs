@@ -10,17 +10,17 @@ namespace Whizbang.Core.Dispatch;
 /// <para>
 /// The claim store is messaging infrastructure, not domain state. Claim
 /// rows do not participate in projection replay; rebuilds reconstruct
-/// state from the event store alone. Claims expire on a wide safety
-/// margin (30 minutes by default in the Postgres driver) so the rare
-/// "claim taken, emission crashed" case eventually self-heals when the
-/// retry path re-attempts the operation.
+/// state from the event store alone. A claim records an expiry (30 minutes
+/// after it is taken in the Postgres driver), and the claimed-emission prune
+/// maintenance step deletes it one day after that (<see cref="PruneExpiredAsync"/>).
+/// Until it is deleted the claim holds its key.
 /// </para>
 /// <para>
 /// The claim key is opaque to the framework — callers choose any string
-/// unique within their domain. Convention for sagas (see
-/// <c>Whizbang.Sagas.SagaCompletionGuard</c>) is to use the saga id as
-/// the key, which is unique-per-saga-completion because each saga emits
-/// exactly one terminal completion event.
+/// unique within their domain. A package that owns a key convention can keep
+/// its claims out of the general prune with a <see cref="RetainedClaimKeyPrefix"/>
+/// and prune them itself (<see cref="PruneAsync"/>): the saga framework does,
+/// and never prunes its abandonment claims.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/publish-once</docs>
@@ -116,5 +116,35 @@ public interface IClaimedEmissionStore {
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/ClaimedEmissionStoreDefaultsTests.cs:Prune_Default_PrunesNothingAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:Prune_RemovesOnlyThePrefixesClaimsTakenBeforeTheCutoffAsync</tests>
   Task<int> PruneAsync(string keyPrefix, DateTimeOffset claimedBefore, CancellationToken cancellationToken)
+    => Task.FromResult(0);
+
+  /// <summary>
+  /// Deletes up to <paramref name="maxClaims"/> claims whose expiry passed before
+  /// <paramref name="expiredBefore"/>, except claims whose key starts with one of
+  /// <paramref name="retainedKeyPrefixes"/>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The general expiry prune, for every claim no owner manages: the claims <c>PublishOnceAsync</c>
+  /// takes for a caller's own keys, and the window claims of the framework's maintenance steps. A
+  /// retained prefix belongs to an owner that prunes its own claims on its own terms, such as the
+  /// saga framework, whose abandonment claims must never expire. Prefixes are matched literally. The
+  /// default prunes nothing.
+  /// </para>
+  /// <para>
+  /// Bounded by <paramref name="maxClaims"/> so a table that grew for a long time is drained over
+  /// several calls rather than in one long delete.
+  /// </para>
+  /// </remarks>
+  /// <param name="expiredBefore">Only claims whose expiry is before this are deleted.</param>
+  /// <param name="retainedKeyPrefixes">Key prefixes whose claims are never deleted by this prune.</param>
+  /// <param name="maxClaims">The most claims one call deletes; must be positive.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>How many claims were deleted.</returns>
+  /// <docs>fundamentals/dispatcher/publish-once#claim-expiry</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/ClaimedEmissionStoreDefaultsTests.cs:PruneExpired_Default_PrunesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Dispatch/ClaimedEmissionStoreTests.cs:PruneExpired_RemovesExpiredClaims_AndKeepsRetainedPrefixesAndUnexpiredOnesAsync</tests>
+  Task<int> PruneExpiredAsync(
+      DateTimeOffset expiredBefore, IReadOnlyCollection<string> retainedKeyPrefixes, int maxClaims, CancellationToken cancellationToken)
     => Task.FromResult(0);
 }

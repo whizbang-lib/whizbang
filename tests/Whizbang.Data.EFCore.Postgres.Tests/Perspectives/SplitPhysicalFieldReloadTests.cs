@@ -72,6 +72,34 @@ public class SplitPhysicalFieldReloadTests : EFCoreTestBase {
     await Assert.That(result.EventsProcessed).IsEqualTo(expectedEvents);
   }
 
+  /// <summary>
+  /// In a blue-green rebuild's flow the store reads the shadow table with SQL (EF Core cannot map a JSON complex
+  /// property over a raw query), and a Split model still comes back with its promoted columns (#1025).
+  /// </summary>
+  [Test]
+  public async Task Load_InARedirectedFlow_ReadsTheShadowRowWithItsPromotedColumnsAsync() {
+    var streamId = Guid.CreateVersion7();
+    var eventStore = new InMemoryEventStore();
+    await using (var connection = new NpgsqlConnection(ConnectionString)) {
+      await connection.OpenAsync();
+      await using var command = new NpgsqlCommand($"CREATE TABLE {TABLE_NAME}_bg (LIKE {TABLE_NAME} INCLUDING ALL)", connection);
+      await command.ExecuteNonQueryAsync();
+    }
+
+    using (PerspectiveTableRedirect.Begin(TABLE_NAME, TABLE_NAME + "_bg")) {
+      await _appendAsync(eventStore, streamId, new SplitReloadStatusSetEvent { StreamId = streamId, Status = "active", Priority = 7 });
+      await _runAsync(eventStore, streamId, null, expectedEvents: 1);
+      await using var context = CreateDbContext();
+      var store = new EFCorePostgresPerspectiveStore<SplitReloadModel>(context, TABLE_NAME);
+
+      var model = await store.GetByStreamIdAsync(streamId);
+
+      await Assert.That(model!.Status).IsEqualTo("active");
+      await Assert.That(model.Priority).IsEqualTo(7);
+      await Assert.That(await store.GetByStreamIdAsync(Guid.CreateVersion7())).IsNull();
+    }
+  }
+
   [Test]
   public async Task Apply_AnEventThatLeavesThePromotedFieldsAlone_KeepsTheirColumnsAsync() {
     var streamId = Guid.CreateVersion7();

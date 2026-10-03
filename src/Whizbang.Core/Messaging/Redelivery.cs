@@ -135,4 +135,12 @@ public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage {
   /// subscriber missed, receptors and all.
   /// </summary>
   public bool StateOnly { get; init; }
+
+  /// <summary>
+  /// True for a request an operator made for an explicit list of streams (<see cref="IStreamRedeliveryRequester"/>),
+  /// rather than one the integrity ledger drove. Report-only (<see cref="IntegrityRepairMode.ReportOnly"/>) opts a
+  /// service out of AUTOMATIC repair, so an operator's request is served and its bundles are applied whatever the
+  /// repair mode on either side; the bundles carry the flag as <see cref="Minting.RedeliveryComposite.OperatorRequested"/>.
+  /// </summary>
+  public bool OperatorRequested { get; init; }
 }

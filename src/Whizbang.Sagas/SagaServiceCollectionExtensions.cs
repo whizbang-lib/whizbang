@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Sagas.Observability;
@@ -72,6 +73,11 @@ public static class SagaServiceCollectionExtensions {
     // The claims a saga spends as it runs are pruned once past their retention; the abandonment
     // claim, a record, is kept.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<Whizbang.Core.Workers.IMaintenanceStep, SagaClaimPruneStep>());
+    // The general expiry prune leaves the saga claims to that step, so a completion claim lives out its
+    // retention and an abandonment claim is never pruned (#999).
+    foreach (var prefix in SagaClaimPruneStep.OwnedClaimPrefixes) {
+      services.AddRetainedClaimKeyPrefix(prefix);
+    }
 
     return services;
   }

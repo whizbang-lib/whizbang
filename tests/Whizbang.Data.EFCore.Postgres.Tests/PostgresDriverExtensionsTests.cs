@@ -147,6 +147,25 @@ public class PostgresDriverExtensionsTests {
                "scope so the same transaction sees the claim row.");
   }
 
+  /// <summary>
+  /// The driver that registers the claim store also registers the step that prunes its expired claims
+  /// (#999), once however often the driver is selected.
+  /// </summary>
+  [Test]
+  public async Task Postgres_RegistersTheClaimPruneStep_OnceAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    var steps = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>()
+      .OfType<Whizbang.Core.Workers.ClaimedEmissionPruneStep>().ToList();
+    await Assert.That(steps).Count().IsEqualTo(1);
+  }
+
   [Test]
   public async Task Postgres_DoesNotOverrideExistingClaimedEmissionStore_Async() {
     // Locks the TryAdd semantics: consumers who already supply an IClaimedEmissionStore

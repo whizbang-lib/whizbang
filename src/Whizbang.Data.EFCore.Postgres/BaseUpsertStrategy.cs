@@ -219,6 +219,11 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var expiryAnchor = applyAnchor;
     DateTimeOffset? expiresAt = ttlSeconds >= 0 ? expiryAnchor.AddSeconds(ttlSeconds) : null;
 
+    // A blue-green rebuild redirects this flow's writes to its shadow table. Only the atomic path takes the table
+    // by name; the Entity Framework paths write the mapped (live) table, which the rebuild must never touch.
+    var mappedTable = args.TableName;
+    args = args with { TableName = PerspectiveTableRedirect.Resolve(args.TableName) };
+
     // Path 1 atomic upsert. When this strategy uses it (see UsesAtomicUpsert) and it applies
     // (Npgsql, plain identifiers, a resolvable model), this single round-trip replaces
     // the SELECT-then-INSERT/UPDATE pattern and structurally eliminates the 23505 dup-key
@@ -227,6 +232,12 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // or any other unsupported case).
     if (UsesAtomicUpsert && await _tryAtomicUpsertAsync(context, args, hookPlan, expiresAt, expiryAnchor.UtcDateTime, cancellationToken)) {
       return;
+    }
+    if (!string.Equals(args.TableName, mappedTable, StringComparison.Ordinal)) {
+      throw new InvalidOperationException(
+        $"A blue-green rebuild writes {typeof(TModel).Name} rows to {args.TableName} only through the atomic upsert, and this row " +
+        "could not take it (a provider other than PostgreSQL, or a value the upsert cannot bind). The rebuild stops rather than " +
+        $"write {mappedTable}, the table readers are using.");
     }
 
     if (args.ExpectedVersion.IsChecked) {
