@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
@@ -140,7 +141,8 @@ public static class PostgresDriverExtensions {
         // prefixes their owners retain (#999). Without it the claim table grew by a row per key for good.
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<Whizbang.Core.Workers.IMaintenanceStep, Whizbang.Core.Workers.ClaimedEmissionPruneStep>(sp =>
             new Whizbang.Core.Workers.ClaimedEmissionPruneStep(
-                sp.GetService<ILogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep>>(),
+                sp.GetService<ILogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep>>()
+                  ?? NullLogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep>.Instance,
                 sp.GetService<TimeProvider>())));
 
         // TURNKEY: blue-green perspective rebuilds build a shadow table and swap it in (#1025). The swapper opens

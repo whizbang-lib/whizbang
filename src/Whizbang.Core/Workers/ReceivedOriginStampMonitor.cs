@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 
@@ -35,11 +34,12 @@ internal sealed partial class ReceivedOriginStampMonitor {
   /// <summary>Creates the monitor; it records nothing unless gap detection or the audit is enabled.</summary>
   public ReceivedOriginStampMonitor(
       IOptions<StreamIntegrityOptions> options,
-      ILogger<ReceivedOriginStampMonitor>? logger = null,
+      ILogger<ReceivedOriginStampMonitor> logger,
       TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(options);
+    ArgumentNullException.ThrowIfNull(logger);
     _enabled = options.Value.GapDetectionEnabled || options.Value.AuditEnabled;
-    _logger = logger ?? NullLogger<ReceivedOriginStampMonitor>.Instance;
+    _logger = logger;
     _timeProvider = timeProvider ?? TimeProvider.System;
     _windowStart = _timeProvider.GetTimestamp();
   }

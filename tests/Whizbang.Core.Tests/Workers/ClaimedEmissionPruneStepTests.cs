@@ -102,7 +102,7 @@ public class ClaimedEmissionPruneStepTests {
     await using var services = _services(store);
     var before = DateTimeOffset.UtcNow - TimeSpan.FromDays(1);
 
-    await new ClaimedEmissionPruneStep().RunAsync(services, CancellationToken.None);
+    await new ClaimedEmissionPruneStep(NullLogger<ClaimedEmissionPruneStep>.Instance).RunAsync(services, CancellationToken.None);
 
     await Assert.That(store.Calls[0].ExpiredBefore).IsGreaterThanOrEqualTo(before);
   }

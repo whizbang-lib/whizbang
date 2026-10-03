@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Startup;
 
@@ -30,12 +29,12 @@ namespace Whizbang.Core.Workers;
 /// instance does, and the repeat is a no-op because the delete is by age.
 /// </para>
 /// </remarks>
-/// <param name="logger">Optional logger.</param>
+/// <param name="logger">The logger; registration supplies a null logger where the host has none.</param>
 /// <param name="timeProvider">The clock expiry is read against.</param>
 /// <docs>fundamentals/dispatcher/publish-once#claim-expiry</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ClaimedEmissionPruneStepTests.cs</tests>
 public sealed partial class ClaimedEmissionPruneStep(
-    ILogger<ClaimedEmissionPruneStep>? logger = null,
+    ILogger<ClaimedEmissionPruneStep> logger,
     TimeProvider? timeProvider = null) : IMaintenanceStep {
 
   /// <summary>How many claims one delete removes at most.</summary>
@@ -47,7 +46,7 @@ public sealed partial class ClaimedEmissionPruneStep(
   /// <summary>How long past its expiry a claim is kept before it is deleted.</summary>
   public static readonly TimeSpan Grace = TimeSpan.FromDays(1);
 
-  private readonly ILogger _logger = (ILogger?)logger ?? NullLogger.Instance;
+  private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
   /// <inheritdoc />

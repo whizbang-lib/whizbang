@@ -174,15 +174,34 @@ public class ReceivedOriginStampMonitorTests {
   }
 
   [Test]
-  public async Task Defaults_ResolveFromTheContainer_WithoutALoggerOrClockAsync() {
+  public async Task TheWorkers_ResolveIt_WithoutALoggerOrClockAsync() {
     var services = new ServiceCollection();
-    services.AddSingleton(Options.Create(new StreamIntegrityOptions()));
-    services.AddSingleton<ReceivedOriginStampMonitor>();
+    services.AddWhizbangWorkers();
     await using var provider = services.BuildServiceProvider();
 
     var monitor = provider.GetRequiredService<ReceivedOriginStampMonitor>();
     monitor.Record(_row(Guid.Empty));
 
-    await Assert.That(monitor).IsNotNull();
+    await Assert.That(provider.GetRequiredService<ReceivedOriginStampMonitor>()).IsSameReferenceAs(monitor)
+      .Because("one monitor counts every receive path, so a host without logging still gets the one instance");
+  }
+
+  [Test]
+  public async Task TheWorkers_ResolveIt_WithTheHostsLoggerAndClockAsync() {
+    var logger = new FakeLogger<ReceivedOriginStampMonitor>();
+    var time = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+    var services = new ServiceCollection();
+    services.AddSingleton<ILogger<ReceivedOriginStampMonitor>>(logger);
+    services.AddSingleton<TimeProvider>(time);
+    services.AddWhizbangWorkers();
+    await using var provider = services.BuildServiceProvider();
+    var monitor = provider.GetRequiredService<ReceivedOriginStampMonitor>();
+
+    monitor.Record(_row(Guid.Empty));
+    time.Advance(ReceivedOriginStampMonitor.Window);
+    monitor.Record(_row(Guid.Empty));
+
+    await Assert.That(logger.Collector.LatestRecord.Message).Contains("2 of 2 events")
+      .Because("the warning goes to the host's logger, on the host's clock");
   }
 }
