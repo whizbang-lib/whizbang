@@ -1482,6 +1482,10 @@ public partial class PerspectiveWorker(
     }
   }
 
+  /// <summary>Whether a gate is resident for (stream, perspective); read by tests of the eviction cascade.</summary>
+  internal bool HasStreamAffinityGate(Guid streamId, string perspectiveName) =>
+    _streamAffinityGates.ContainsKey((streamId, perspectiveName));
+
   /// <summary>
   /// Runs <paramref name="body"/> while holding the per-<c>(streamId, perspectiveName)</c> affinity
   /// semaphore, so at most one thread inside this pod applies for that key at a time. This is the
