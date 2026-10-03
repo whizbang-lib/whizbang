@@ -154,4 +154,41 @@ namespace TestNamespace {
     await Assert.That(runner).DoesNotContain("\"Rank\"")
       .Because("Both are nullable, so they already agree on both paths and there is nothing to declare.");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_AMemberInheritedFromAnotherAssembly_IsNotRegisteredAsync() {
+    // Standing in for a model that inherits a library base class: those members are metadata symbols with no
+    // syntax, so whether they carry an initializer cannot be known and a guess would be worse than nothing.
+    const string source = """
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+using System.IO;
+
+namespace TestNamespace {
+  public record StreamTouchedEvent : IEvent { public Guid Id { get; init; } }
+
+  public class InheritedModel : MemoryStream {
+    [StreamId]
+    public Guid Id { get; init; }
+    public string? Note { get; init; }
+  }
+
+  public class InheritedPerspective : IPerspectiveFor<InheritedModel, StreamTouchedEvent> {
+    public InheritedModel Apply(InheritedModel currentData, StreamTouchedEvent @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runner = GeneratorTestHelper.GetGeneratedSource(result, "InheritedPerspectiveRunner.g.cs");
+
+    await Assert.That(runner).IsNotNull();
+    foreach (var inherited in new[] { "\"Length\"", "\"Position\"", "\"CanRead\"", "\"Capacity\"" }) {
+      await Assert.That(runner).DoesNotContain(inherited)
+        .Because("Length, Position, CanRead and Capacity are non-nullable value types, so the nullability rule alone "
+          + "would register them — they are skipped because their declarations are not in this compilation.");
+    }
+  }
 }

@@ -316,18 +316,24 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     if (temporal) {
       scale = column.Kind == ColumnKind.Physical ? OrderingScale.ColumnTemporal : OrderingScale.StoredMicroseconds;
     }
-    var ordered = new OrderedColumn(column.Sql, column, scale);
+    return _withOrderedDeclaredDefault(new OrderedColumn(column.Sql, column, scale), prefix, parameters);
+  }
 
-    // An absent key reads as the member's declared default here too (#1044). Without this one member answers two
-    // ways about the same absent row — equality selects it and `<` does not — and `>`/`>=` only appear to agree
-    // because a zero default excludes the row either way, which stops being true for any other default.
-    if (column.Kind == ColumnKind.JsonText && column.Physical is null
-        && PerspectiveMemberDefaultRegistry.TryResolve(typeof(TModel), column.PropName, out var declared)) {
-      var fallback = _bindOrderedConstant(ordered, declared, "_else", prefix, parameters);
-      return ordered with { Sql = "COALESCE(" + ordered.Sql + ", " + fallback + ")" };
+  /// <summary>
+  /// An ordered operand that reads an absent key as the member's declared default (#1044). Without it one member
+  /// answers two ways about the same absent row — equality selects it and <c>&lt;</c> does not — and <c>&gt;</c>
+  /// and <c>&gt;=</c> only appear to agree because a zero default excludes the row either way, which stops being
+  /// true for any other default.
+  /// </summary>
+  private static OrderedColumn _withOrderedDeclaredDefault(
+      OrderedColumn ordered, string prefix, Dictionary<string, object?> parameters) {
+    if (ordered.Column.Kind != ColumnKind.JsonText || ordered.Column.Physical is not null
+        || !PerspectiveMemberDefaultRegistry.TryResolve(typeof(TModel), ordered.Column.PropName, out var declared)) {
+      return ordered;
     }
 
-    return ordered;
+    var fallback = _bindOrderedConstant(ordered, declared, "_else", prefix, parameters);
+    return ordered with { Sql = "COALESCE(" + ordered.Sql + ", " + fallback + ")" };
   }
 
   private static void _ensureSameScale(in OrderedColumn left, in OrderedColumn right) {

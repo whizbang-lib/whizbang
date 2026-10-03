@@ -225,7 +225,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
             EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
             PhysicalFields: physicalFields.Length > 0 ? physicalFields : null,
-            MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null,
             StorageMode: storageMode,
             IsModelRecord: isModelRecord,
             HasScopeInterface: hasScopeInterface,
@@ -236,7 +235,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 ,
             RowCapPerScope: rowCapPerScope,
             RowCapScopeKey: rowCapScopeKey,
-            StreamGroupSpec: streamGroupSpec),
+            StreamGroupSpec: streamGroupSpec,
+            MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null),
         Warning: null
     );
   }
@@ -549,7 +549,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Member defaults register the same turnkey way: the collective predicate compiler reads them so a document
     // with no key for a member is filtered as the value a rebuild sees, rather than as SQL NULL (#1044).
     result = TemplateUtilities.ReplaceRegion(result, "MEMBER_DEFAULT_REGISTRATION",
-        _buildMemberDefaultRegistration(perspective, modelTypeName));
+        perspective.MemberDefaults is { Length: > 0 } ? _buildMemberDefaultRegistration(perspective, modelTypeName) : "");
     // Issue #977: a Split model's promoted fields live only in their columns, so the store has to read them
     // back into the model the next event is applied to. The copy is generated here, where the fields are known.
     result = TemplateUtilities.ReplaceRegion(result, "SPLIT_PHYSICAL_FIELD_REGISTRATION",
@@ -1301,9 +1301,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// for it, in <c>PerspectiveMemberDefaultRegistry</c>. Empty when the model declares none.
   /// </summary>
   private static string _buildMemberDefaultRegistration(PerspectiveInfo perspective, string modelTypeName) {
-    if (perspective.MemberDefaults is not { Length: > 0 } defaults) {
-      return "";
-    }
+    var defaults = perspective.MemberDefaults!;
     var sb = new StringBuilder();
     sb.Append("[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerMemberDefaults() {");
     foreach (var entry in defaults) {
@@ -1353,24 +1351,27 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return null;
     }
 
-    foreach (var reference in property.DeclaringSyntaxReferences) {
-      if (reference.GetSyntax() is not PropertyDeclarationSyntax declaration) {
-        continue;
-      }
+    // A member declared outside this compilation has no syntax to read, so whether it carries an initializer cannot
+    // be known from metadata — the same reason a non-literal initializer is skipped.
+    var declaration = property.DeclaringSyntaxReferences
+      .Select(reference => reference.GetSyntax())
+      .OfType<PropertyDeclarationSyntax>()
+      .FirstOrDefault();
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
-      var typeName = TypeNameUtilities.FullyQualified(property.Type);
-      return declaration.Initializer?.Value switch {
-        // A value type's literal is cast to the member's own type so the registered value boxes as that type —
-        // `= 5` on a long must arrive as a long, not an int, or it binds against the column as the wrong type.
-        LiteralExpressionSyntax literal => property.Type.IsValueType
-            ? $"({typeName}){literal.Token.Text}"
-            : literal.Token.Text,
-        null => property.Type.IsValueType ? $"default({typeName})" : null,
-        _ => null,
-      };
+    if (declaration is null) {
+      return null;
     }
 
-    return null;
+    return declaration.Initializer?.Value switch {
+      // A value type's literal is cast to the member's own type so the registered value boxes as that type —
+      // `= 5` on a long must arrive as a long, not an int, or it binds against the column as the wrong type.
+      LiteralExpressionSyntax literal => property.Type.IsValueType
+          ? $"({typeName}){literal.Token.Text}"
+          : literal.Token.Text,
+      null => property.Type.IsValueType ? $"default({typeName})" : null,
+      _ => null,
+    };
   }
 
   private static PhysicalFieldInfoCompact[] _discoverPhysicalFields(ITypeSymbol modelType) {
