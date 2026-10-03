@@ -332,6 +332,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // would insert a phantom default row.
     var modelLoadedFromDb = currentModel != null;
 
+    // Purge stays purged (issue #1027): true when the row is missing BECAUSE it was purged.
+    var startedPurged = false;
+
     // Create new model if none exists (null from DB)
     if (currentModel == null) {
       // Resurrection-on-wake (perspective row retention): for a row-TTL SOURCED perspective a
@@ -358,6 +361,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         return await _rewindAndRunCoreAsync(
             streamId, perspectiveName, events[0].MessageId.Value, null, cancellationToken);
       }
+
+      // Purge stays purged (issue #1027). A missing row is otherwise a new stream; when the stream carries a
+      // purge marker it is a purged one, and this batch is skipped unless an Apply resurrects it. Consulted
+      // only here, on a missing row, and a marker exists only after a purge, so a stream that was never purged
+      // (new or live) is never affected and the steady state pays nothing.
+      // <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
+      startedPurged = events.Count > 0 && await _isPurgedAsync(streamId, perspectiveName, cancellationToken);
 
       _logger.LogDebug(
           "No existing model found for stream {StreamId} in {PerspectiveName}, creating new model",
@@ -487,7 +497,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // True once Apply has contributed a concrete model OR the row came from DB.
     // When false at save time, updatedModel is only the scaffolded default and must not be written.
     var hasWrittenUpdate = modelLoadedFromDb;
-    var pendingPurge = false;  // Track if model should be purged (hard deleted)
+    var pendingPurge = startedPurged;  // True while the stream is purged: the row is (to be) removed
+    Guid? purgeEventId = null;  // The event whose Apply purged in this batch, if one did
+    var resurrected = false;  // An Apply returned Resurrect while the stream was purged
+    var purgedEventsSkipped = 0;  // Events skipped because the stream was purged
     PerspectiveScope? lastScope = null;  // Track scope from last processed envelope
     var scopeChanged = false;  // Track if an IScopeEvent changed scope (forces scope UPDATE)
 
@@ -605,14 +618,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Track event type for summary
         appliedEventTypes.Add(eventTypeName);
 
-        // Once purge is set, skip applying further events — the model is null
-        // and calling Apply would cause NullReferenceException.
-        // We still advance the checkpoint so these events aren't reprocessed.
+        // A purged stream stays purged (issue #1027): an event after the purge is skipped, not applied to an
+        // empty model, unless its Apply returns Resurrect. The checkpoint still advances past a skipped event.
         if (pendingPurge) {
+          var resurrection = TryResurrect(perspective, streamId, @event);
           processedEvents.Add(envelope);
           lastSuccessfulEventId = envelope.MessageId.Value;
           lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
           eventsProcessed++;
+          if (resurrection is null) {
+            purgedEventsSkipped++;
+            continue;
+          }
+          pendingPurge = false;
+          resurrected = true;
+          updatedModel = resurrection;
+          hasWrittenUpdate = true;
+          lastSuccessfulEventType = @event.GetType().FullName ?? eventTypeName;
           continue;
         }
 
@@ -668,6 +690,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           case global::Whizbang.Core.Perspectives.ModelAction.Purge:
             // Hard delete: Mark for purge, skip upsert
             pendingPurge = true;
+            purgeEventId = envelope.MessageId.Value;
             updatedModel = null;
             break;
           default:
@@ -723,13 +746,18 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
         JsonDocument? snapshotBeforeWrite = null;
         if (pendingPurge) {
-          // Hard delete: Remove model from database entirely
-          await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
-          _logger.LogDebug(
-              "Model purged for {PerspectiveName} stream {StreamId}",
-              perspectiveName,
-              streamId
-          );
+          // A stream that began this batch purged and stayed so has no row to remove.
+          if (purgeEventId.HasValue) {
+            // Hard delete: record the purge FIRST, then remove the row — a crash between the two leaves a marker
+            // on a live row (harmless), never a missing row a later event could recreate.
+            await _markPurgedAsync(streamId, perspectiveName, purgeEventId, cancellationToken);
+            await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
+            _logger.LogDebug(
+                "Model purged for {PerspectiveName} stream {StreamId}",
+                perspectiveName,
+                streamId
+            );
+          }
         } else if (updatedModel != null && hasWrittenUpdate) {
           var checkpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
               lastSuccessfulEventId!.Value, cancellationToken);
@@ -746,7 +774,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               scopeChanged,
               rowVersion
           );
+          // Forget the purge only once the resurrected row is written.
+          if (resurrected && startedPurged) {
+            await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
+          }
         }
+        _reportPurgedEventsSkipped(perspectiveName, streamId, purgedEventsSkipped);
 
         // CRITICAL: Explicitly flush all changes to ensure data is committed and queryable
         // PostgresUpsertStrategy.UpsertPerspectiveRowAsync() calls SaveChangesAsync() internally,
@@ -964,6 +997,87 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             $"Perspective {perspective.GetType().Name} does not handle event type {@event.GetType().Name}"
         );
     }
+  }
+
+  /// <summary>
+  /// Applies an event to a purged stream (issue #1027). Returns the model to recreate the row with when the
+  /// Apply returned <see cref="global::Whizbang.Core.Perspectives.ModelAction.Resurrect"/> with a model; null
+  /// means the event is skipped. The Apply sees an empty model, as on a new stream, and its result is discarded
+  /// unless it resurrects. An Apply that throws on a purged stream is a skip, not a failure: the row it would
+  /// have changed is gone.
+  /// </summary>
+  private __MODEL_TYPE_NAME__? TryResurrect(
+      __PERSPECTIVE_CLASS_NAME__ perspective,
+      Guid streamId,
+      IEvent @event) {
+    try {
+      var (model, action) = ApplyEvent(perspective, CreateEmptyModel(streamId), @event);
+      return action == global::Whizbang.Core.Perspectives.ModelAction.Resurrect ? model : null;
+    } catch (Exception applyEx) when (applyEx is not OperationCanceledException) {
+      _logger.LogDebug(
+          applyEx,
+          "Apply of {EventType} threw on purged stream {StreamId}; the event is skipped",
+          @event.GetType().Name,
+          streamId
+      );
+      return null;
+    }
+  }
+
+  /// <summary>The purge markers, when a driver registered them; without them a purge is honored within its batch only.</summary>
+  private global::Whizbang.Core.Perspectives.IPerspectivePurgeMarkerStore? _PurgeMarkers =>
+      _serviceProvider.GetService<global::Whizbang.Core.Perspectives.IPerspectivePurgeMarkerStore>();
+
+  private async Task<bool> _isPurgedAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken) {
+    var markers = _PurgeMarkers;
+    return markers is not null && await markers.IsPurgedAsync(streamId, perspectiveName, cancellationToken);
+  }
+
+  private async Task _markPurgedAsync(Guid streamId, string perspectiveName, Guid? purgeEventId, CancellationToken cancellationToken) {
+    var markers = _PurgeMarkers;
+    if (markers is not null) {
+      await markers.MarkPurgedAsync(streamId, perspectiveName, purgeEventId, cancellationToken);
+    }
+  }
+
+  private async Task _clearPurgeAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken) {
+    var markers = _PurgeMarkers;
+    if (markers is not null) {
+      await markers.ClearAsync(streamId, perspectiveName, cancellationToken);
+    }
+  }
+
+  /// <summary>Logs and counts the events a purged stream skipped (whizbang.perspective.purged_events_skipped).</summary>
+  private void _reportPurgedEventsSkipped(string perspectiveName, Guid streamId, int skipped) {
+    if (skipped == 0) {
+      return;
+    }
+    _logger.LogInformation(
+        "Skipped {SkippedCount} event(s) for {PerspectiveName} stream {StreamId}: the stream was purged and no Apply resurrected it",
+        skipped,
+        perspectiveName,
+        streamId
+    );
+    _serviceProvider.GetService<PerspectiveMetrics>()?.PurgedEventsSkipped.Add(
+        skipped, new KeyValuePair<string, object?>("perspective_name", perspectiveName));
+  }
+
+  /// <summary>
+  /// Moves the replay frontier (max event id, max local commit sequence) past an envelope.
+  /// </summary>
+  private static (Guid? EventId, long? CommitSequence) _advanceFrontier(
+      Guid? frontierEventId,
+      long? frontierCommitSequence,
+      MessageEnvelope<IEvent> envelope) {
+    if (frontierEventId is null || string.CompareOrdinal(
+          envelope.MessageId.Value.ToString("D"), frontierEventId.Value.ToString("D")) > 0) {
+      frontierEventId = envelope.MessageId.Value;
+    }
+    if (envelope.LocalCommitSequence is long seq
+        && (frontierCommitSequence is null || seq > frontierCommitSequence.Value)) {
+      frontierCommitSequence = seq;
+    }
+    return (frontierEventId, frontierCommitSequence);
   }
 
   #region EXTRACT_STREAM_ID_METHODS
@@ -1216,6 +1330,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Use provided model or create empty one (full replay from event zero)
     var currentModel = initialModel ?? CreateEmptyModel(streamId);
 
+    // Purge stays purged (issue #1027): a full replay begins purged when the stream is marked, exactly as the
+    // live drain does on a missing row — the history before an operator purge is gone, so the fold alone could
+    // not reproduce it. A replay from a snapshot starts from a live row and folds any purge it meets.
+    var startedPurged = initialModel is null && await _isPurgedAsync(streamId, perspectiveName, cancellationToken);
+
     // Get perspective instance from DI
     var perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>();
 
@@ -1225,7 +1344,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     string? lastSuccessfulEventType = null;
     DateTime? lastSuccessfulEventAt = null;
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
-    var pendingPurge = false;
+    var pendingPurge = startedPurged;
+    Guid? purgeEventId = null;
+    var resurrected = false;
+    var purgedEventsSkipped = 0;
     PerspectiveScope? lastScope = null;
     // The replay FRONTIER — max event id / max local commit_sequence across everything
     // applied. The checkpoint metadata must carry the frontier, not the origin-order-last
@@ -1328,11 +1450,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       var envelopeScope = envelope.GetCurrentScope();
       if (envelopeScope?.Scope != null) lastScope = envelopeScope.Scope;
 
-      // Once purge is set, skip applying further events — the model is null
+      // A purged stream stays purged: skip the event unless its Apply returns Resurrect. The frontier still
+      // moves past a skipped event, so the cursor never re-flags it as a straggler.
       if (pendingPurge) {
+        var resurrection = TryResurrect(perspective, streamId, @event);
         lastSuccessfulEventId = envelope.MessageId.Value;
         lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
         eventsProcessed++;
+        (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, envelope);
+        if (resurrection is null) {
+          purgedEventsSkipped++;
+          continue;
+        }
+        pendingPurge = false;
+        resurrected = true;
+        updatedModel = resurrection;
+        lastSuccessfulEventType = @event.GetType().FullName ?? @event.GetType().Name;
         continue;
       }
 
@@ -1361,6 +1494,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           break;
         case global::Whizbang.Core.Perspectives.ModelAction.Purge:
           pendingPurge = true;
+          purgeEventId = envelope.MessageId.Value;
           updatedModel = null;
           break;
         default:
@@ -1375,14 +1509,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
       lastSuccessfulEventType = @event.GetType().FullName ?? @event.GetType().Name;
       eventsProcessed++;
-      if (frontierEventId is null || string.CompareOrdinal(
-            envelope.MessageId.Value.ToString("D"), frontierEventId.Value.ToString("D")) > 0) {
-        frontierEventId = envelope.MessageId.Value;
-      }
-      if (envelope.LocalCommitSequence is long seq
-          && (frontierCommitSequence is null || seq > frontierCommitSequence.Value)) {
-        frontierCommitSequence = seq;
-      }
+      (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, envelope);
 
       // Slice 24c: take an intermediate snapshot every N replayed events. Puts a snapshot
       // at THIS point in the stream's history so future rewinds for late events with
@@ -1438,6 +1565,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
       JsonDocument? snapshotBeforeWrite = null;
       if (pendingPurge) {
+        // The replay ends purged: record it first, then remove the row (a rewind can run over a live one).
+        if (purgeEventId.HasValue) {
+          await _markPurgedAsync(streamId, perspectiveName, purgeEventId, cancellationToken);
+        }
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
       } else if (updatedModel != null) {
         var checkpointEventId = frontierEventId ?? lastSuccessfulEventId!.Value;
@@ -1447,7 +1578,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         await SaveModelAndCheckpointAsync(
             streamId, updatedModel, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
             replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
+        if (resurrected && startedPurged) {
+          await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
+        }
       }
+      _reportPurgedEventsSkipped(perspectiveName, streamId, purgedEventsSkipped);
 
       await _perspectiveStore.FlushAsync(cancellationToken);
 

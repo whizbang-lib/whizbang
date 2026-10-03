@@ -36,6 +36,15 @@ public class ModelActionTests {
   }
 
   [Test]
+  public async Task ModelAction_Resurrect_HasValueThreeAsync() {
+    // Arrange
+    var action = ModelAction.Resurrect;
+
+    // Assert - Resurrect is appended after Purge so stored and compiled values never shift
+    await Assert.That((int)action).IsEqualTo(3);
+  }
+
+  [Test]
   public async Task ModelAction_Values_AreDistinctAsync() {
     // Arrange
     var values = Enum.GetValues<ModelAction>();
@@ -54,11 +63,11 @@ public class ModelActionTests {
   }
 
   [Test]
-  public async Task ModelAction_HasThreeValuesAsync() {
+  public async Task ModelAction_HasFourValuesAsync() {
     // Arrange
     var values = Enum.GetValues<ModelAction>();
 
-    // Assert - should have exactly None, Delete, Purge
-    await Assert.That(values.Length).IsEqualTo(3);
+    // Assert - should have exactly None, Delete, Purge, Resurrect
+    await Assert.That(values.Length).IsEqualTo(4);
   }
 }

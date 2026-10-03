@@ -56,6 +56,13 @@ public sealed class PerspectiveMetrics {
   /// <docs>operations/infrastructure/migrations</docs>
   public PassiveCounter<long> ReadFailures { get; }
 
+  /// <summary>
+  /// Events skipped because their stream was purged and the Apply did not resurrect it. Tags: perspective_name.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PurgeStaysPurgedTests.cs:LaterBatch_AfterPurge_IsSkipped_AndNoRowIsRecreatedAsync</tests>
+  public PassiveCounter<long> PurgedEventsSkipped { get; }
+
   // Batch composition
 
   /// <summary>Work items claimed per batch.</summary>
@@ -110,6 +117,7 @@ public sealed class PerspectiveMetrics {
     Errors = meter.CreatePassiveCounter<long>("whizbang.perspective.errors", description: "Processing errors");
     EmptyBatches = meter.CreatePassiveCounter<long>("whizbang.perspective.empty_batches", description: "Polling cycles with no work");
     ReadFailures = meter.CreatePassiveCounter<long>("whizbang.perspective.read_failures", description: "Rows a perspective could not read, by perspective and reason");
+    PurgedEventsSkipped = meter.CreatePassiveCounter<long>("whizbang.perspective.purged_events_skipped", description: "Events skipped because their stream was purged, by perspective");
 
     BatchWorkItems = meter.CreateHistogram<int>("whizbang.perspective.batch.work_items", description: "Work items claimed per batch");
     BatchEventCount = meter.CreateHistogram<int>("whizbang.perspective.batch.event_count", description: "Events loaded per batch");

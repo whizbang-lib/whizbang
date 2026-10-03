@@ -55,5 +55,20 @@ public enum ModelAction {
   /// Hard delete - remove the model from the database entirely.
   /// Use only when data retention is not required.
   /// </summary>
-  Purge = 2
+  /// <remarks>
+  /// A purged stream stays purged: the framework records the purge, and a later event on the stream is
+  /// skipped (logged and counted) instead of being applied to an empty model. Only an Apply that returns
+  /// <see cref="Resurrect"/> brings the row back.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
+  Purge = 2,
+
+  /// <summary>
+  /// Recreate the row of a purged stream with the returned model, and forget the purge. Use it on the
+  /// events that legitimately start the stream over (a reopen, a restore). On a stream that is not purged
+  /// it is an ordinary update. A <c>Resurrect</c> with no model is skipped like any other event on a
+  /// purged stream.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
+  Resurrect = 3
 }

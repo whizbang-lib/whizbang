@@ -27,6 +27,7 @@ try {
     "schema" => await _handleSchemaCommandAsync(args),
     "migrate" => await _handleMigrateCommandAsync(args),
     "stored-forms" => await _handleStoredFormsCommandAsync(args),
+    "streams" => await _handleStreamsCommandAsync(args),
     _ => throw new InvalidOperationException($"Unknown command: {args[0]}")
   };
 } catch (Exception ex) {
@@ -77,6 +78,93 @@ async Task<int> _handleStoredFormsCommandAsync(string[] commandArgs) {
   Console.WriteLine();
   Console.WriteLine(Whizbang.Data.Postgres.StoredFormMigrationJournal.Format(statuses));
   return 0;
+}
+
+async Task<int> _handleStreamsCommandAsync(string[] commandArgs) {
+  // Usage: whizbang streams purge --connection <cs> [--schema <schema>] --reason <text> [--requested-by <name>]
+  //        (--stream <id> ... | --streams-file <path>) [--dry-run] [--batch-size <n>] [--purge-id <guid>]
+  if (commandArgs.Length < 2 || commandArgs[1] is "--help" or "-h") {
+    _showStreamsHelp();
+    return commandArgs.Length < 2 ? 1 : 0;
+  }
+  if (!string.Equals(commandArgs[1], "purge", StringComparison.OrdinalIgnoreCase)) {
+    throw new InvalidOperationException($"Unknown streams subcommand: {commandArgs[1]}");
+  }
+
+  var connectionString = _option(commandArgs, "--connection", "-c");
+  var reason = _option(commandArgs, "--reason", "-r");
+  var streamIds = new List<Guid>();
+  foreach (var value in _options(commandArgs, "--stream")) {
+    streamIds.Add(Guid.Parse(value, CultureInfo.InvariantCulture));
+  }
+  var streamsFile = _option(commandArgs, "--streams-file", "-f");
+  if (streamsFile is not null) {
+    foreach (var line in await File.ReadAllLinesAsync(streamsFile)) {
+      var trimmed = line.Trim();
+      if (trimmed.Length > 0 && !trimmed.StartsWith('#')) {
+        streamIds.Add(Guid.Parse(trimmed, CultureInfo.InvariantCulture));
+      }
+    }
+  }
+  if (string.IsNullOrWhiteSpace(connectionString) || string.IsNullOrWhiteSpace(reason) || streamIds.Count == 0) {
+    Console.WriteLine("❌ Error: --connection, --reason and at least one stream (--stream or --streams-file) are required");
+    Console.WriteLine();
+    _showStreamsHelp();
+    return 1;
+  }
+
+  var request = new Whizbang.Core.Messaging.StreamPurgeRequest {
+    StreamIds = streamIds,
+    Reason = reason,
+    RequestedBy = _option(commandArgs, "--requested-by", "-u") ?? Environment.UserName,
+    DryRun = commandArgs.Contains("--dry-run"),
+    BatchSize = _option(commandArgs, "--batch-size", "-b") is { } size
+      ? int.Parse(size, CultureInfo.InvariantCulture)
+      : Whizbang.Core.Messaging.StreamPurgeRequest.DEFAULT_BATCH_SIZE,
+  };
+  if (_option(commandArgs, "--purge-id", "-p") is { } purgeId) {
+    request = request with { PurgeId = Guid.Parse(purgeId, CultureInfo.InvariantCulture) };
+  }
+
+  await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+  await connection.OpenAsync();
+  var report = await Whizbang.Data.Postgres.PostgresStreamPurger.RunAsync(
+    connection, _option(commandArgs, "--schema", "-s") ?? "public", request);
+  Console.WriteLine(report.Format());
+  return 0;
+}
+
+IEnumerable<string> _options(string[] commandArgs, string name) {
+  for (var i = 2; i < commandArgs.Length - 1; i++) {
+    if (commandArgs[i] == name) {
+      yield return commandArgs[i + 1];
+    }
+  }
+}
+
+void _showStreamsHelp() {
+  Console.WriteLine("Stream Commands");
+  Console.WriteLine();
+  Console.WriteLine("Usage: whizbang streams purge [options]");
+  Console.WriteLine();
+  Console.WriteLine("Removes durable streams that should never have existed from one service's store: events, every");
+  Console.WriteLine("perspective's rows, perspective work, cursors and snapshots, outbox, inbox and deduplication entries.");
+  Console.WriteLine("One transaction per batch; each batch is audited, and the streams stay purged: a later event on one");
+  Console.WriteLine("is skipped by every perspective. Stop whatever produces events for the streams first.");
+  Console.WriteLine();
+  Console.WriteLine("Options:");
+  Console.WriteLine("  --connection, -c <string>   PostgreSQL connection string of the service's database");
+  Console.WriteLine("  --schema, -s <name>         The schema the service uses (default: public)");
+  Console.WriteLine("  --reason, -r <text>         Why, recorded in the audit (required)");
+  Console.WriteLine("  --requested-by, -u <name>   Who, recorded in the audit (default: the OS user)");
+  Console.WriteLine("  --stream <id>               A stream to purge (repeatable)");
+  Console.WriteLine("  --streams-file, -f <path>   A file of stream ids, one per line ('#' comments)");
+  Console.WriteLine("  --dry-run                   Report the rows per table that would go, and change nothing");
+  Console.WriteLine($"  --batch-size, -b <n>        Streams per transaction (default: {Whizbang.Core.Messaging.StreamPurgeRequest.DEFAULT_BATCH_SIZE})");
+  Console.WriteLine("  --purge-id, -p <guid>       Resume an earlier purge: batches it committed are skipped");
+  Console.WriteLine();
+  Console.WriteLine("Example:");
+  Console.WriteLine("  whizbang streams purge -c \"Host=...;Database=...;Username=...\" -r \"orphaned by a replay\" -f ids.txt --dry-run");
 }
 
 string? _option(string[] commandArgs, string name, string alias) {
@@ -520,6 +608,7 @@ void _showHelp() {
   Console.WriteLine("  schema          Manage database schemas");
   Console.WriteLine("  migrate         Migrate from Marten/Wolverine to Whizbang");
   Console.WriteLine("  stored-forms    List pending and applied stored-form migrations of perspective data");
+  Console.WriteLine("  streams         Purge durable streams from a service's store (dry run, audited)");
   Console.WriteLine();
   Console.WriteLine("Options:");
   Console.WriteLine("  --help, -h      Show this help message");
