@@ -117,9 +117,14 @@ public sealed partial class PostgresStreamPurger(
   }
 
   private static void _reportRan(ILogger? logger, StreamPurgeRequest request, int index, int streamCount, Dictionary<string, long> rows) {
-    if (logger is not null && logger.IsEnabled(LogLevel.Information)) {
-      LogBatch(logger, request.DryRun ? "Dry run of" : "Purged", request.PurgeId, index, streamCount,
-        rows.GetValueOrDefault("wh_event_store"), $"{request.RequestedBy}: {request.Reason}");
+    if (logger is null) {
+      return;
+    }
+    var eventCount = rows.GetValueOrDefault("wh_event_store");
+    if (request.DryRun) {
+      LogDryRunBatch(logger, request.PurgeId, index, streamCount, eventCount, request.RequestedBy, request.Reason);
+    } else {
+      LogPurgedBatch(logger, request.PurgeId, index, streamCount, eventCount, request.RequestedBy, request.Reason);
     }
   }
 
@@ -130,8 +135,12 @@ public sealed partial class PostgresStreamPurger(
   }
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "{Action} stream purge {PurgeId} batch {BatchIndex}: {StreamCount} stream(s), {EventCount} event(s); requested by {Request}")]
-  static partial void LogBatch(ILogger logger, string action, Guid purgeId, int batchIndex, int streamCount, long eventCount, string request);
+    Message = "Stream purge {PurgeId} batch {BatchIndex}: {StreamCount} stream(s), {EventCount} event(s) purged; requested by {RequestedBy}: {Reason}")]
+  static partial void LogPurgedBatch(ILogger logger, Guid purgeId, int batchIndex, int streamCount, long eventCount, string requestedBy, string reason);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Stream purge {PurgeId} batch {BatchIndex}: {StreamCount} stream(s), {EventCount} event(s) in a dry run; requested by {RequestedBy}: {Reason}")]
+  static partial void LogDryRunBatch(ILogger logger, Guid purgeId, int batchIndex, int streamCount, long eventCount, string requestedBy, string reason);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Stream purge {PurgeId} batch {BatchIndex} is already claimed (another instance, or an earlier run of this purge); skipped")]

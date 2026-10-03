@@ -35,13 +35,13 @@ public class PostgresPerspectiveTableSwapperTests : PostgresTestBase {
 
   private async Task _createLiveAsync() {
     await using var conn = await _openAsync();
-    await conn.ExecuteAsync($"""
-      CREATE TABLE {LIVE} (
-        id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb, scope jsonb NOT NULL DEFAULT '{{}}',
+    await conn.ExecuteAsync($$"""
+      CREATE TABLE {{LIVE}} (
+        id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb, scope jsonb NOT NULL DEFAULT '{}',
         created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
         version bigint NOT NULL DEFAULT 1, lane text NOT NULL DEFAULT 'cold');
-      CREATE INDEX idx_swap_order_lane ON {LIVE} (lane);
-      CREATE UNIQUE INDEX idx_swap_order_data ON {LIVE} ((data->>'Number'));
+      CREATE INDEX idx_swap_order_lane ON {{LIVE}} (lane);
+      CREATE UNIQUE INDEX idx_swap_order_data ON {{LIVE}} ((data->>'Number'));
       """);
   }
 

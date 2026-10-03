@@ -135,6 +135,43 @@ public class PhysicalJsonbContainmentIntegrationTests {
   }
 
   /// <summary>
+  /// The change-tracker write inside a transaction the caller already opened joins it: the row and the document's
+  /// copy of its jsonb columns commit together with the caller's work, and roll back with it.
+  /// </summary>
+  [Test]
+  public async Task TrackedWrite_InTheCallersTransaction_CommitsAndRollsBackWithItAsync() {
+    var committedId = Guid.NewGuid();
+    var rolledBackId = Guid.NewGuid();
+    var model = _extracted(committedId, "north", "red");
+    var physical = new Dictionary<string, object?> {
+      ["grid_filter"] = model.GridFilter,
+      ["labels"] = model.Labels,
+      ["tags"] = model.Tags,
+      ["place"] = model.Place,
+      ["stamp"] = model.Stamp,
+    };
+
+    await using (var context = Context(_connectionString)) {
+      var store = new EFCorePostgresPerspectiveStore<JsonbExtractedItem.Model>(context, EXTRACTED_TABLE, UpsertWritePath.Strategy(false));
+      await using var transaction = await context.Database.BeginTransactionAsync();
+      await store.UpsertWithPhysicalFieldsAsync(committedId, model, physical);
+      await transaction.CommitAsync();
+    }
+    await using (var context = Context(_connectionString)) {
+      var store = new EFCorePostgresPerspectiveStore<JsonbExtractedItem.Model>(context, EXTRACTED_TABLE, UpsertWritePath.Strategy(false));
+      await using var transaction = await context.Database.BeginTransactionAsync();
+      model.Id = rolledBackId;
+      await store.UpsertWithPhysicalFieldsAsync(rolledBackId, model, physical);
+      await transaction.RollbackAsync();
+    }
+
+    await Assert.That(await _scalarAsync($"SELECT (grid_filter = data -> 'GridFilter')::text FROM {EXTRACTED_TABLE} WHERE id = '{committedId}'"))
+      .IsEqualTo("true").Because("the document's copy is written in the caller's transaction and commits with it");
+    await Assert.That(await _scalarAsync($"SELECT count(*)::text FROM {EXTRACTED_TABLE} WHERE id = '{rolledBackId}'"))
+      .IsEqualTo("0").Because("the write joined the caller's transaction, so its rollback removes the row too");
+  }
+
+  /// <summary>
   /// A Split model's jsonb columns are the only copy, and the model the next event is applied to reads them back.
   /// </summary>
   [Test]

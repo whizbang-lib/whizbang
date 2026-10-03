@@ -124,6 +124,7 @@ public class PhysicalJsonbColumnBindingTests {
     await Assert.That(() => JsonbDocument.Value((byte)1)).Throws<NotSupportedException>();
     await Assert.That(() => JsonbDocument.Value((short)1)).Throws<NotSupportedException>();
     await Assert.That(() => JsonbDocument.Value(1)).Throws<NotSupportedException>();
+    await Assert.That(() => JsonbDocument.Value((int?)1)).Throws<NotSupportedException>();
     await Assert.That(() => JsonbDocument.Value(1L)).Throws<NotSupportedException>();
     await Assert.That(() => JsonbDocument.Value(1m)).Throws<NotSupportedException>();
     await Assert.That(() => JsonbDocument.Member("k", "v")).Throws<NotSupportedException>();
