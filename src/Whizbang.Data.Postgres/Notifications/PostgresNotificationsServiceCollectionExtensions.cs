@@ -180,10 +180,13 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddSingleton<PgDurableSignalRetentionWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<PgDurableSignalRetentionWorker>());
 
-    // Duty election (startup-pipeline increment 7): duties are won on a session advisory lock over
-    // a dedicated direct connection, with holdings recorded via record_capability — the lock
-    // decides, the row reports.
-    services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IDutyElector, PgDutyElector>();
+    // Duty election (#966 phase 3): duties are held by role assignment by default — a vote decides,
+    // the row is the role, with an epoch that fences exclusive work. The session-lock elector stays
+    // as the delegate for any duty not held by assignment, and a host's own elector is left alone.
+    // The commit-order stamper's leadership is one of the roles while the stamper is enabled.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      IPostConfigureOptions<Whizbang.Core.Startup.RoleAssignmentOptions>, CommitOrderStamperRoleOptions>());
+    services.AddWhizbangRoleAssignmentByDefault();
 
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call

@@ -138,17 +138,29 @@ public class SchemaMigratorDeferralGenerationTests {
         + "without a registration is refused for the wrong reason");
   }
 
-  /// <summary>A non-holder waits on the duty lock, not the schema lock.</summary>
+  /// <summary>A non-holder waits on the migrator, not the schema lock.</summary>
   /// <remarks>
-  /// The two keys are different. Watching the schema lock would report the migrator as gone the
-  /// moment it finished its bootstrap and before it started migrating.
+  /// Watching the schema lock would report the migrator as gone the moment it finished its bootstrap
+  /// and before it started migrating. The migrator is held by assignment (#966 phase 4), so the watch
+  /// reads its assignment row, and the duty's session lock for a migrator on an older release.
   /// </remarks>
   [Test]
-  public async Task AWaiterWatchesTheDutyLockAsync() {
+  public async Task AWaiterWatchesTheMigratorAsync() {
     var output = await _generatedAsync(MINIMAL_CONTEXT);
 
-    await Assert.That(output).Contains("DutyLockKey.Compute", StringComparison.Ordinal);
-    await Assert.That(output).Contains("StartupDuties.MIGRATOR", StringComparison.Ordinal);
+    await Assert.That(output).Contains("MigratorWatch.IsMigratingElsewhereAsync", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// The migrator keeps its assignment through the migration: it renews between phases and marks the
+  /// DDL connection's backend, so one long statement does not lose the role (#968, decision 1).
+  /// </summary>
+  [Test]
+  public async Task TheMigratorRenewsItsRole_AndMarksTheBackendRunningTheMigrationAsync() {
+    var output = await _generatedAsync(MINIMAL_CONTEXT);
+
+    await Assert.That(output).Contains("migratorGrant.VerifyStillHeldAsync", StringComparison.Ordinal);
+    await Assert.That(output).Contains("PgRoleElector.MarkDutyBackendAsync", StringComparison.Ordinal);
   }
 
   /// <summary>

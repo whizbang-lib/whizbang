@@ -248,14 +248,17 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       try {
         await using var waitConnection = segmentConnectionFactory();
         await waitConnection.OpenAsync(cancellationToken);
-        var watchedKey = isWaiter
-          ? Whizbang.Data.Postgres.DutyLockKey.Compute("__SCHEMA__", Whizbang.Core.Startup.StartupDuties.MIGRATOR)
-          : lockId;
+        // A waiter watches the migrator: its assignment row (the duty is held by assignment) or,
+        // while an older release may be the migrator, the duty's session lock (DutyLockKey for
+        // StartupDuties.MIGRATOR). Anyone else watches the schema lock.
+        System.Func<System.Threading.CancellationToken, System.Threading.Tasks.Task<bool>> isMigrating = isWaiter
+          ? ct => Whizbang.Data.Postgres.MigratorWatch.IsMigratingElsewhereAsync(waitConnection, "__SCHEMA__", ct)
+          : ct => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, ct);
         if (isWaiter
             || await Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, cancellationToken)) {
           var waitOutcome = await Whizbang.Data.Postgres.SchemaMigrationDeferral.DeferAsync(
             ct => _isSchemaCurrentAsync(waitConnection, ct),
-            ct => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, watchedKey, ct),
+            isMigrating,
             TimeProvider.System,
             "__SCHEMA__",
             logger,
@@ -276,6 +279,13 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       }
     }
 
+    // The migrator holds its duty by assignment: verifying renews the lease between phases, so a
+    // long rewrite does not lose it. A lost assignment changes nothing here, since the schema lock
+    // still excludes; it only means a waiter may stop waiting and contend for that lock.
+    if (migratorGrant is not null) {
+      _ = await migratorGrant.VerifyStillHeldAsync(cancellationToken);
+    }
+
     // Outer retry loop: retries on transient failures (connection drops, timeouts, deadlocks).
     // Separate from the inner advisory lock retry loop which handles normal lock contention.
     // No max attempt limit — loops until cancellationToken fires (host shutdown).
@@ -291,6 +301,17 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
       try {
         var connection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
+
+        // The migrator renews its assignment and marks this connection's backend as its duty's, so
+        // the assignment stays live while a long migration statement runs here past its lease. The
+        // mark is committed before the DDL transaction begins (a mark inside it would be invisible to
+        // every voter until it committed) and cleared when this attempt ends. Nothing for an
+        // instance that is not the migrator.
+        if (migratorGrant is not null) {
+          _ = await migratorGrant.VerifyStillHeldAsync(cancellationToken);
+        }
+        await using var migratorBackend = await Whizbang.Data.Postgres.Notifications.PgRoleElector.MarkDutyBackendAsync(
+          connection, migratorGrant, cancellationToken);
 
         // ═══════════════════════════════════════════════════════════════════════════
         // FAST PATH: Bulk-query existing per-object hashes BEFORE acquiring any lock.
