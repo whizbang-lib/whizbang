@@ -74,6 +74,7 @@ public static class JsonbGraphItem {
     [StreamId]
     public Guid Id { get; set; }
 
+    [SuppressIndexAdvisory("The GraphQL lens exposes Title, but the test filters only the jsonb columns.")]
     public string Title { get; set; } = "";
 
     [PhysicalField]
