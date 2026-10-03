@@ -326,7 +326,7 @@ public sealed class StartupPipelineRunner {
   private async ValueTask<(DutyAttempt? Attempt, Exception? Transient)> _tryAcquireAsync(
       string duty, CancellationToken cancellationToken) {
     try {
-      return (await _dutyElector!.TryAcquireAsync(duty, cancellationToken).ConfigureAwait(false), null);
+      return (await _dutyElector.TryAcquireAsync(duty, cancellationToken).ConfigureAwait(false), null);
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
       throw;   // shutdown, not a transport failure — the caller unwinds deliberately
     } catch (Exception ex) {

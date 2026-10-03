@@ -192,11 +192,9 @@ public sealed class SearchService : IDisposable {
       if (_reverseSynonymMap.TryGetValue(term, out var key)) {
         expandedParts.Add(key);
         if (_synonymMap.TryGetValue(key, out var related)) {
-          foreach (var syn in related) {
-            if (!string.Equals(syn, term, StringComparison.OrdinalIgnoreCase)) {
-              expandedParts.Add(syn.Contains(' ') ? $"\"{syn}\"" : syn);
-            }
-          }
+          expandedParts.AddRange(related
+            .Where(syn => !string.Equals(syn, term, StringComparison.OrdinalIgnoreCase))
+            .Select(syn => syn.Contains(' ') ? $"\"{syn}\"" : syn));
         }
       }
     }
