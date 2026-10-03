@@ -212,6 +212,16 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   }
 
   private static async Task<bool> _markAsync(NpgsqlConnection connection, Tenure tenure, bool mark, CancellationToken cancellationToken) {
+    // The mark is a backstop, and on a database that has not yet applied 184 the function does not
+    // exist: the migrator marks its backend before running the migrations that create it. Probing
+    // first, rather than catching the error, keeps a failed statement from aborting the caller's
+    // transaction.
+    await using (var probe = connection.CreateCommand()) {
+      probe.CommandText = "SELECT to_regprocedure('wh_mark_role_duty_backend(text, uuid, bigint, boolean)') IS NOT NULL";
+      if (await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
+        return false;
+      }
+    }
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = "SELECT wh_mark_role_duty_backend(@role, @id, @epoch, @mark)";
     cmd.Parameters.AddWithValue("role", tenure.Role);

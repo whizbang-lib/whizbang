@@ -60,7 +60,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   IConfiguration configuration,
   ISharedNotifyConnection sharedConnection,
   ILogger<PgCommitOrderStamperWorker> logger,
-  IDutyElector? dutyElector,
+  IDutyElector? dutyElector = null,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null,
   INotifySignalingGate? notifySignalingGate = null,

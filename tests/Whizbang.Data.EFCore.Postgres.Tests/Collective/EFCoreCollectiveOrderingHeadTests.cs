@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("CollectiveEvents")]
+[Category("Shard2")]
 public class EFCoreCollectiveOrderingHeadTests : EFCoreTestBase {
   private const string LINK_TYPE = "Test.Collectives.Flip";
 

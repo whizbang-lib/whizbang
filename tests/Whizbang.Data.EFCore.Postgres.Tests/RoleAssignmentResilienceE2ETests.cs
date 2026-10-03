@@ -231,6 +231,30 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
 
   [Test]
   [Timeout(120000)]
+  public async Task MarkDutyBackend_BeforeTheMarkFunctionExists_MarksNothing_AndLeavesTheTransactionUsableAsync(CancellationToken cancellationToken) {
+    // A database that has not applied 184 yet: the migrator marks its backend before running the
+    // migrations that create the mark function. Seen through a search path without that function.
+    var a = await _joinAsync(cancellationToken);
+    var grant = (await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    await using var duty = await _openAsync(cancellationToken);
+    await using (var setup = duty.CreateCommand()) {
+      setup.CommandText = "CREATE SCHEMA IF NOT EXISTS wh_premark_probe; SET search_path TO wh_premark_probe";
+      _ = await setup.ExecuteNonQueryAsync(cancellationToken);
+    }
+    await using var tx = await duty.BeginTransactionAsync(cancellationToken);
+
+    await using (await PgRoleElector.MarkDutyBackendAsync(duty, grant, cancellationToken)) {
+      await using var stillUsable = duty.CreateCommand();
+      stillUsable.CommandText = "SELECT 1";
+      await Assert.That(await stillUsable.ExecuteScalarAsync(cancellationToken)).IsEqualTo(1)
+        .Because("probing for the function must not abort the caller's transaction the way a failed call would");
+    }
+    await tx.RollbackAsync(cancellationToken);
+    await grant.DisposeAsync();
+  }
+
+  [Test]
+  [Timeout(120000)]
   public async Task ClearingAMark_OnAConnectionThatDied_DoesNotThrowAsync(CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
     var grant = (await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken)).Grant!;

@@ -96,7 +96,13 @@ public static class RoleAssignmentServiceCollectionExtensions {
       sp.GetService<INotificationDataSource>(),
       metrics: sp.GetRequiredService<RoleAssignmentMetrics>()));
     services.AddSingleton<IRoleAssignmentReader>(sp => sp.GetRequiredService<PgRoleElector>());
-    services.TryAddEnumerable(ServiceDescriptor.Singleton<IWhizbangHealthSource, RoleAssignmentHealthSource>());
+    // The health source reads through a deferred reader: listing health sources must not build the
+    // elector, whose construction resolves the notification data source (and through it, under
+    // auto-discovery, the application's DbContext model).
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IWhizbangHealthSource, RoleAssignmentHealthSource>(sp =>
+      new RoleAssignmentHealthSource(
+        new DeferredRoleAssignmentReader(sp),
+        sp.GetRequiredService<IOptions<RoleAssignmentOptions>>())));
 
     // Pending duty work, and the holder loop that runs it: a skipped duty step is owed to the role
     // (the startup pipeline resolves this store), and whichever instance holds the role runs it.
@@ -175,4 +181,15 @@ internal sealed class CommitOrderStamperRoleOptions(IOptions<CommitOrderStamperO
     var baseKey = stamper.AdvisoryLockKey;
     options.LegacyLockKeys[CommitOrderStamperOptions.ROLE] = schema => CommitOrderStamperLockKey.Compute(schema, baseKey);
   }
+}
+
+/// <summary>
+/// An <see cref="IRoleAssignmentReader"/> that resolves the registered reader on first use, so the
+/// <c>roles</c> health source can be constructed without constructing the role elector.
+/// </summary>
+/// <docs>proposals/duty-role-assignment</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_RegistersAnEventStoreHealthSourceWiredToTheDriversProbeAsync</tests>
+internal sealed class DeferredRoleAssignmentReader(IServiceProvider services) : IRoleAssignmentReader {
+  public Task<IReadOnlyList<RoleAssignmentSnapshot>> ReadAssignmentsAsync(CancellationToken cancellationToken) =>
+    services.GetRequiredService<IRoleAssignmentReader>().ReadAssignmentsAsync(cancellationToken);
 }
