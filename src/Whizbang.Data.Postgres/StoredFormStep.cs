@@ -74,14 +74,19 @@ public sealed class StoredFormStep {
   // A number as JSON or as text renders it. Anything else is not a number, whatever it looks like.
   private const string NUMERIC_TEXT = @"^-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$";
   private const string WHOLE_TEXT = "^-?[0-9]+$";
+  private const string END_IF = "  END IF;\n";
 
   private readonly Func<StepContext, string> _render;
 
-  private StoredFormStep(Func<StepContext, string> render) {
+  private StoredFormStep(Func<StepContext, string> render, (string Name, string CreateStatement)? rebuild = null) {
     _render = render;
+    Rebuild = rebuild;
   }
 
   internal string Render(StepContext context) => _render(context);
+
+  /// <summary>The index this step drops when it is stale, and the statement that builds it for the new type.</summary>
+  internal (string Name, string CreateStatement)? Rebuild { get; }
 
   /// <summary>A number or a boolean at <paramref name="path"/> becomes its text; a string is left alone.</summary>
   /// <param name="path">The property's path in the document.</param>
@@ -268,7 +273,7 @@ public sealed class StoredFormStep {
       sb.Append(CultureInfo.InvariantCulture, $"    ALTER TABLE {c.QualifiedTable} ALTER COLUMN {col} TYPE {columnType} USING ({conversion});\n");
       sb.Append("    v_touched := v_touched + v_count;\n");
       sb.Append("    v_changed := true;\n");
-      sb.Append("  END IF;\n");
+      sb.Append(END_IF);
       return sb.ToString();
     });
   }
@@ -288,7 +293,90 @@ public sealed class StoredFormStep {
       return $"  IF {exists(from)} AND NOT {exists(to)} THEN\n"
         + $"    ALTER TABLE {c.QualifiedTable} RENAME COLUMN {SqlText.Identifier(from)} TO {SqlText.Identifier(to)};\n"
         + "    v_changed := true;\n"
-        + "  END IF;\n";
+        + END_IF;
+    });
+  }
+
+  /// <summary>
+  /// Drops the index named <paramref name="indexName"/> when it casts the extraction of <paramref name="path"/> to a
+  /// type other than <paramref name="storeType"/>, the one the property's values now take, so that neither the
+  /// conversion nor a later write is refused by an index that casts to the old type. The index is built again for the
+  /// new type with <paramref name="createStatement"/>, concurrently, once the pass has committed
+  /// (<see cref="StoredFormIndexRebuild"/>).
+  /// </summary>
+  /// <remarks>
+  /// Only an index the schema built is touched, found the way the schema finds its own: by the name it gave it, and by
+  /// a definition over the key's extraction. An index under any other name, an index under that name over anything
+  /// else, and a constraint's index are left alone. The step goes before the conversion, because an index over the
+  /// old cast refuses the converted values (an enum's number cast from its new name, say).
+  /// </remarks>
+  /// <param name="path">The property's key at the document root.</param>
+  /// <param name="storeType">The type the index casts the extraction to now (<c>integer</c>), or <see langword="null"/> for text.</param>
+  /// <param name="indexName">The index's name, as the schema derives it.</param>
+  /// <param name="createStatement">The schema's <c>CREATE INDEX IF NOT EXISTS</c> statement for the index.</param>
+  public static StoredFormStep ReplaceIndex(string path, string? storeType, string indexName, string createStatement) {
+    var p = DocumentPath.Parse(path);
+    if (p.Segments.Count != 1) {
+      throw new ArgumentException($"'{path}' is not a key at the document root, the only place an index extracts from.", nameof(path));
+    }
+    if (storeType is not null && (storeType.Length == 0 || !storeType.All(ch => ch is (>= 'a' and <= 'z') or ' '))) {
+      throw new ArgumentException($"'{storeType}' is not a type an index casts to.", nameof(storeType));
+    }
+    ArgumentException.ThrowIfNullOrWhiteSpace(indexName);
+    ArgumentException.ThrowIfNullOrWhiteSpace(createStatement);
+    if (StoredFormIndexRebuild.Concurrently(createStatement) is null) {
+      throw new ArgumentException("The statement is not a CREATE [UNIQUE] INDEX IF NOT EXISTS statement.", nameof(createStatement));
+    }
+
+    var extraction = $"(data ->> '{p.Leaf}'::text)";
+    var cast = "\\(data ->> '" + p.Leaf + "'::text\\)\\)::([a-z][a-z ]*[a-z])";
+    var expected = storeType is null ? "NULL" : SqlText.Literal(storeType);
+    return new StoredFormStep(c =>
+      "  SELECT i.indexrelid::regclass::text, pg_get_indexdef(i.indexrelid) INTO v_index, v_definition\n"
+      + "  FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid\n"
+      + $"  WHERE i.indrelid = {SqlText.Literal(c.QualifiedTable)}::regclass AND ic.relname = left({SqlText.Literal(indexName)}, 63)\n"
+      + "    AND NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conindid = i.indexrelid);\n"
+      + $"  IF strpos(v_definition, {SqlText.Literal(extraction)}) > 0\n"
+      + $"     AND substring(v_definition from {SqlText.Literal(cast)}) IS DISTINCT FROM {expected} THEN\n"
+      + "    EXECUTE 'DROP INDEX ' || v_index;\n"
+      + "    RAISE NOTICE USING MESSAGE = format('%s: stored-form migration %s: dropped index %s, which casts %s to another type; it is built again for the new type',\n"
+      + $"      {SqlText.Literal(c.TableName)}, {SqlText.Literal(c.MigrationName)}, v_index, {SqlText.Literal(p.JsonPath)});\n"
+      + END_IF,
+      (indexName, createStatement));
+  }
+
+  /// <summary>
+  /// Brings forward the retries of the streams of <paramref name="perspectiveNames"/> parked on a stored document no
+  /// reader could take, once the migration has changed something: their failed work rows fall due now instead of at
+  /// the end of their backoff. List it last, after the steps that convert.
+  /// </summary>
+  /// <remarks>
+  /// A parked row is one the perspective worker reported as a serialization failure: the failed flag set, the reason
+  /// <see cref="Whizbang.Core.Messaging.MessageFailureReason.SerializationError"/>, no lease, and a retry scheduled
+  /// in the future. Its failure count is kept, so a stream the migration did not fix still reaches the dead-letter
+  /// threshold. Nothing happens on a pass that changed nothing, or where the work table does not exist.
+  /// </remarks>
+  /// <param name="perspectiveNames">The perspectives that store into the migration's table, by their CLR type names.</param>
+  public static StoredFormStep RetryParkedStreams(params string[] perspectiveNames) {
+    ArgumentNullException.ThrowIfNull(perspectiveNames);
+    if (perspectiveNames.Length == 0 || Array.Exists(perspectiveNames, string.IsNullOrWhiteSpace)) {
+      throw new ArgumentException("Name at least one perspective, and no blank name.", nameof(perspectiveNames));
+    }
+    var names = "ARRAY[" + string.Join(", ", perspectiveNames.Select(SqlText.Literal)) + "]::text[]";
+    const int FAILED = (int)Whizbang.Core.Messaging.MessageProcessingStatus.Failed;
+    const int UNREADABLE = (int)Whizbang.Core.Messaging.MessageFailureReason.SerializationError;
+    return new StoredFormStep(c => {
+      var work = $"{SqlText.Identifier(c.Schema)}.wh_perspective_events";
+      return $"  IF v_changed AND to_regclass({SqlText.Literal(work)}) IS NOT NULL THEN\n"
+        + $"    UPDATE {work} SET scheduled_for = NOW()\n"
+        + $"    WHERE perspective_name = ANY({names}) AND (status & {FAILED}) <> 0 AND failure_reason = {UNREADABLE}\n"
+        + "      AND instance_id IS NULL AND scheduled_for > NOW();\n"
+        + "    GET DIAGNOSTICS v_count = ROW_COUNT;\n"
+        + "    IF v_count > 0 THEN\n"
+        + "      RAISE NOTICE USING MESSAGE = format('%s: stored-form migration %s: brought forward the retries of %s parked row(s)',\n"
+        + $"        {SqlText.Literal(c.TableName)}, {SqlText.Literal(c.MigrationName)}, v_count);\n"
+        + "    END IF;\n"
+        + END_IF;
     });
   }
 
@@ -312,7 +400,7 @@ public sealed class StoredFormStep {
     + "      'Stored-form migration %s cannot convert %s at %s: %s. Those values cannot be read as %s. '\n"
     + "      'Correct or clear them, or declare a custom migration that does, then restart.',\n"
     + $"      {SqlText.Literal(c.MigrationName)}, {SqlText.Literal(c.DisplayTable)}, {SqlText.Literal(where)}, v_bad, {SqlText.Literal(target)});\n"
-    + "  END IF;\n";
+    + END_IF;
 
   private static List<(string Name, string Value)> _members(IReadOnlyList<(string Name, string Value)> members) {
     ArgumentNullException.ThrowIfNull(members);
@@ -344,7 +432,13 @@ public sealed class StoredFormStep {
 }
 
 /// <summary>What a step needs to know about the migration it is part of.</summary>
-internal readonly record struct StepContext(string MigrationName, string QualifiedTable, string DisplayTable);
+internal readonly record struct StepContext(string MigrationName, string Schema, string TableName) {
+  /// <summary>The schema-qualified table, each part quoted.</summary>
+  public string QualifiedTable => $"{SqlText.Identifier(Schema)}.{SqlText.Identifier(TableName)}";
+
+  /// <summary>The table as a message names it: <c>schema.table</c>.</summary>
+  public string DisplayTable => $"{Schema}.{TableName}";
+}
 
 /// <summary>A path into the <c>data</c> document: its keys from the root.</summary>
 internal readonly record struct DocumentPath(IReadOnlyList<string> Segments) {

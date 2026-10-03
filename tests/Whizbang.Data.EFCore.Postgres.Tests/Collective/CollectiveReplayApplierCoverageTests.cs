@@ -209,4 +209,42 @@ public class CollectiveReplayApplierCoverageTests {
              + "block or short-circuit the search");
     await Assert.That(result.Applied).IsEqualTo(1);
   }
+  // A blue-green rebuild reads these names to notice a collective that committed while it ran, so the lookup
+  // must name exactly this model's collective event types: once each, with or without the global:: prefix the
+  // perspective registry may record, and none of another model's.
+  [Test]
+  public async Task CollectiveEventTypeNamesFor_NamesTheModelsCollectivesOnlyAsync() {
+    static CollectiveApplyEntry entry(Type model, Type evt) => new(
+      ModelType: model, EventType: evt, HandlerType: typeof(ProbeHandler), MethodName: "Apply",
+      ScopeHandling: default, SpecKind: default, Invoker: (_, _, _) => new object());
+    var applier = new CollectiveReplayApplier(
+      [entry(typeof(ProbeModel), typeof(ProbeCollectiveEvent)),
+       entry(typeof(ProbeModel), typeof(ProbeCollectiveEvent)),
+       entry(typeof(OtherModel), typeof(ProbeEvent))],
+      new ServiceCollection().BuildServiceProvider(), new NoOpEventStore(), new FakeEventStoreQuery(), []);
+    var modelName = typeof(ProbeModel).FullName!.Replace('+', '.');
+    var expected = new[] { TypeNameFormatter.Format(typeof(ProbeCollectiveEvent)) };
+
+    await Assert.That(applier.CollectiveEventTypeNamesFor(modelName)).IsEquivalentTo(expected);
+    await Assert.That(applier.CollectiveEventTypeNamesFor("global::" + modelName)).IsEquivalentTo(expected);
+    await Assert.That(applier.CollectiveEventTypeNamesFor("Unknown.Model")).IsEmpty();
+    await Assert.That(() => applier.CollectiveEventTypeNamesFor(null!)).Throws<ArgumentNullException>();
+  }
+
+  // An applier written against the interface before the lookup existed names no collectives, so a blue-green
+  // rebuild over it simply has nothing to watch for.
+  [Test]
+  public async Task CollectiveEventTypeNamesFor_DefaultsToNoneAsync() {
+    ICollectiveReplayApplier minimal = new MinimalApplier();
+
+    await Assert.That(minimal.CollectiveEventTypeNamesFor("Any.Model")).IsEmpty();
+  }
+
+  private sealed class MinimalApplier : ICollectiveReplayApplier {
+    public Task<IReadOnlyList<MessageEnvelope<IEvent>>> InterleaveForReplayAsync(
+        Type modelType, IReadOnlyList<MessageEnvelope<IEvent>> streamEvents, CancellationToken cancellationToken) =>
+      Task.FromResult(streamEvents);
+
+    public object ApplyInMemory(Type modelType, object currentModel, Guid streamId, IEvent collectiveEvent) => currentModel;
+  }
 }

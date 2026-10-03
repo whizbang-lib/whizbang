@@ -712,6 +712,21 @@ public static class DiagnosticDescriptors {
       description: "Physical fields were discovered on a perspective model and will be included as database columns."
   );
 
+  /// <summary>
+  /// WHIZ808: Error - A Split class model with an init-only promoted field cannot be copied.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz808</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerSplitInitOnlyTests.cs:AnUncopyableSplitClass_IsWHIZ808Async</tests>
+  public static readonly DiagnosticDescriptor SplitClassModelCannotBeCopied = new(
+      id: "WHIZ808",
+      title: "Split class model cannot be copied",
+      messageFormat: "The Split model {0} has an init-only promoted field, which the runner strips and loads through a copy, and {0} cannot be copied: {1}. Make the model a record, make the promoted field settable, or make the class copyable.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A Split model's promoted fields live only in their columns, so the runner strips them before the write and copies the columns back into a model it loads. A class can set an init-only property only while an instance is created, so the runner creates a copy: from a public or internal parameterless constructor, carrying every public property with a public or internal setter. A get-only property that stores a value, or a setter the generated code cannot reach, would be lost."
+  );
+
   // ========================================
   // Vector Dependency Diagnostics (WHIZ070)
   // ========================================

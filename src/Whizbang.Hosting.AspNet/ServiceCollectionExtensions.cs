@@ -1,7 +1,9 @@
 using System.Linq;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Health;
 
 namespace Whizbang.Hosting.AspNet;
@@ -31,6 +33,20 @@ public static class ServiceCollectionExtensions {
   /// <tests>tests/Whizbang.Hosting.AspNet.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbangAspNet_RegistersStartupFilterAsync</tests>
   /// <tests>tests/Whizbang.Hosting.AspNet.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbangAspNet_CalledMultipleTimes_RegistersOnceAsync</tests>
   public static IServiceCollection AddWhizbangAspNet(this IServiceCollection services) {
+    // The hosting options bind from Whizbang:AspNet:* so a deployment can change them without a code
+    // change (#1014). One binder type serves all three, registered with TryAddEnumerable so a second
+    // AddWhizbangAspNet call does not bind twice (the list-valued keys would otherwise double).
+    // Registered before the filters below, which resolve through IOptions<T>.
+    services.AddOptions<WhizbangAvailabilityOptions>();
+    services.AddOptions<WhizbangCorrelationOptions>();
+    services.AddOptions<WhizbangSecurityHeadersOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<WhizbangAvailabilityOptions>, AspNetOptionsConfigurationBinder>(
+      static sp => new AspNetOptionsConfigurationBinder(sp.GetService<IConfiguration>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<WhizbangCorrelationOptions>, AspNetOptionsConfigurationBinder>(
+      static sp => new AspNetOptionsConfigurationBinder(sp.GetService<IConfiguration>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<WhizbangSecurityHeadersOptions>, AspNetOptionsConfigurationBinder>(
+      static sp => new AspNetOptionsConfigurationBinder(sp.GetService<IConfiguration>())));
+
     services.TryAddEnumerable(
       ServiceDescriptor.Singleton<IStartupFilter, WhizbangFlushStartupFilter>());
     // Turnkey: capture an inbound correlation id (default X-Correlation-ID) at the start of the pipeline so
@@ -46,8 +62,8 @@ public static class ServiceCollectionExtensions {
       ServiceDescriptor.Singleton<IStartupFilter, WhizbangSecurityHeadersStartupFilter>());
 
     // Turnkey: auto-inject the schema-availability gate (serve reads / 503 writes during a startup
-    // migration, pass-through once ready). Configure the mode or disable via WhizbangAvailabilityOptions.
-    services.AddOptions<WhizbangAvailabilityOptions>();
+    // migration, pass-through once ready). Configure the mode or disable via WhizbangAvailabilityOptions,
+    // or from Whizbang:AspNet:Availability.
     services.TryAddEnumerable(
       ServiceDescriptor.Singleton<IStartupFilter, WhizbangAvailabilityStartupFilter>());
     // Surfaces that must not share a failure domain with what they report on (the startup status

@@ -96,8 +96,8 @@ public class DocumentIndexInitializationTests {
   public async Task AFreshSchemaBuildsOnlyTheDeclaredDocumentIndexesAsync(CancellationToken cancellationToken) {
     await _initializeAsync(cancellationToken);
 
-    await Assert.That(await _indexesAsync(UNDECLARED, "gin (data)")).Count().IsEqualTo(1)
-      .Because("undeclared keeps the whole-document index for now");
+    await Assert.That(await _indexesAsync(UNDECLARED, "gin (data)")).IsEmpty()
+      .Because("the whole-document index is off unless asked for, from 1.0");
     await Assert.That(await _indexesAsync(UNDECLARED, "gin (metadata)")).IsEmpty()
       .Because("the metadata index is off unless asked for");
     await Assert.That(await _indexesAsync(OPTED_OUT, "gin (data)")).IsEmpty();
@@ -118,6 +118,7 @@ public class DocumentIndexInitializationTests {
     // What an earlier release left: both document indexes on every table.
     await _execAsync($"""
       CREATE INDEX idx_document_index_opted_out_data_gin ON {OPTED_OUT} USING gin (data);
+      CREATE INDEX idx_document_index_undeclared_data_gin ON {UNDECLARED} USING gin (data);
       CREATE INDEX idx_document_index_undeclared_metadata_gin ON {UNDECLARED} USING gin (metadata);
       """);
     await _forgetPerspectiveHashesAsync();
@@ -127,6 +128,9 @@ public class DocumentIndexInitializationTests {
     await Assert.That(await _indexesAsync(OPTED_OUT, "gin (data)"))
       .IsEquivalentTo(["idx_document_index_opted_out_data_gin"])
       .Because("dropping an index a production query may use is an operator's decision, never an upgrade's");
+    await Assert.That(await _indexesAsync(UNDECLARED, "gin (data)"))
+      .IsEquivalentTo(["idx_document_index_undeclared_data_gin"])
+      .Because("the 1.0 default stops building the index on new databases; it never drops an existing one");
     await Assert.That(await _indexesAsync(UNDECLARED, "gin (metadata)"))
       .IsEquivalentTo(["idx_document_index_undeclared_metadata_gin"]);
   }

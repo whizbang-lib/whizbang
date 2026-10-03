@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
@@ -16,17 +15,15 @@ namespace Whizbang.Core.Tests.Observability;
 /// Direct tests for <see cref="WhizbangStartupLogger"/> — the IHostedService that
 /// fires once at host startup to print the banner + log the framework version.
 /// Coverage report showed 0/18 lines; the class only runs in the full DI host path
-/// (sample apps) so the StartAsync logic — config-vs-options precedence, the
-/// banner enable/disable, the version log line — was untested directly.
+/// (sample apps) so the StartAsync logic — the banner enable/disable and the version
+/// log line — was untested directly. Configuration-over-code precedence for the banner
+/// now lives where the options bind (#1014), and is tested there.
 /// </para>
 /// <para>
 /// Locked invariants:
 ///   1. StartAsync logs Whizbang version + service name regardless of banner setting.
 ///   2. WhizbangCoreOptions.ShowBanner = false suppresses the banner.
-///   3. Whizbang:ShowBanner appsettings value overrides the code option.
-///   4. Bad appsettings value (non-bool) silently falls back to the code option.
-///   5. Null configuration leaves the code option authoritative (no crash).
-///   6. StopAsync is a no-op returning a completed task.
+///   3. StopAsync is a no-op returning a completed task.
 /// </para>
 /// </summary>
 /// <docs>operations/observability/logging#startup</docs>
@@ -39,7 +36,7 @@ public class WhizbangStartupLoggerTests {
     var instanceProvider = new StubInstanceProvider("Whizbang.Test.Service");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
 
-    var sut = new WhizbangStartupLogger(loggerFactory: loggerFactory, instanceProvider: instanceProvider, coreOptions: coreOptions, configuration: new ConfigurationBuilder().Build());
+    var sut = new WhizbangStartupLogger(loggerFactory: loggerFactory, instanceProvider: instanceProvider, coreOptions: coreOptions);
 
     await sut.StartAsync(CancellationToken.None);
 
@@ -49,87 +46,11 @@ public class WhizbangStartupLoggerTests {
   }
 
   [Test]
-  public async Task StartAsync_ConfigShowBannerOverridesCodeOption_TrueAsync() {
-    var capturing = new CapturingLogger();
-    var loggerFactory = new FactoryReturning(capturing);
-    var instanceProvider = new StubInstanceProvider("SvcA");
-    var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
-    var config = new ConfigurationBuilder()
-      .AddInMemoryCollection(new Dictionary<string, string?> {
-        ["Whizbang:ShowBanner"] = "true",
-      })
-      .Build();
-
-    var sut = new WhizbangStartupLogger(loggerFactory, instanceProvider, coreOptions, config);
-
-    // Should not throw — the override path runs, the banner attempts to print to
-    // Console.Out which TUnit captures cleanly.
-    await sut.StartAsync(CancellationToken.None);
-
-    await Assert.That(capturing.Messages).IsNotEmpty();
-  }
-
-  [Test]
-  public async Task StartAsync_ConfigShowBannerOverridesCodeOption_FalseAsync() {
-    var capturing = new CapturingLogger();
-    var loggerFactory = new FactoryReturning(capturing);
-    var instanceProvider = new StubInstanceProvider("SvcB");
-    var coreOptions = new WhizbangCoreOptions { ShowBanner = true };
-    var config = new ConfigurationBuilder()
-      .AddInMemoryCollection(new Dictionary<string, string?> {
-        ["Whizbang:ShowBanner"] = "false",
-      })
-      .Build();
-
-    var sut = new WhizbangStartupLogger(loggerFactory, instanceProvider, coreOptions, config);
-
-    await sut.StartAsync(CancellationToken.None);
-
-    // Version line always fires.
-    await Assert.That(capturing.Messages).IsNotEmpty();
-  }
-
-  [Test]
-  public async Task StartAsync_ConfigNonBool_FallsBackToCodeOptionAsync() {
-    var capturing = new CapturingLogger();
-    var loggerFactory = new FactoryReturning(capturing);
-    var instanceProvider = new StubInstanceProvider("SvcC");
-    var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
-    var config = new ConfigurationBuilder()
-      .AddInMemoryCollection(new Dictionary<string, string?> {
-        ["Whizbang:ShowBanner"] = "not-a-boolean",
-      })
-      .Build();
-
-    var sut = new WhizbangStartupLogger(loggerFactory, instanceProvider, coreOptions, config);
-
-    // Bool.TryParse fails silently; code option stays authoritative; no crash.
-    await sut.StartAsync(CancellationToken.None);
-
-    await Assert.That(capturing.Messages).IsNotEmpty();
-  }
-
-  [Test]
-  public async Task StartAsync_NullConfiguration_UsesCodeOptionAsync() {
-    var capturing = new CapturingLogger();
-    var loggerFactory = new FactoryReturning(capturing);
-    var instanceProvider = new StubInstanceProvider("SvcD");
-    var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
-
-    var sut = new WhizbangStartupLogger(loggerFactory: loggerFactory, instanceProvider: instanceProvider, coreOptions: coreOptions, configuration: new ConfigurationBuilder().Build());
-
-    await sut.StartAsync(CancellationToken.None);
-
-    await Assert.That(capturing.Messages).IsNotEmpty();
-  }
-
-  [Test]
   public async Task StopAsync_ReturnsCompletedTaskAsync() {
     var sut = new WhizbangStartupLogger(
       loggerFactory: NullLoggerFactory.Instance,
       instanceProvider: new StubInstanceProvider("SvcE"),
-      coreOptions: new WhizbangCoreOptions(),
-      configuration: new ConfigurationBuilder().Build());
+      coreOptions: new WhizbangCoreOptions());
 
     var task = sut.StopAsync(CancellationToken.None);
 

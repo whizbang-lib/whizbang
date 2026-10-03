@@ -8,6 +8,14 @@ namespace Whizbang.Core.Notifications;
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
 public sealed class CommitOrderStamperOptions {
+#pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
+  /// <summary>
+  /// The role the stamper's leader holds when duties are held by assignment (#966): one holder per
+  /// schema, renewed by the stamping loop itself, with every stamp fenced by the holder's epoch.
+  /// </summary>
+  public const string ROLE = "commit-stamper";
+#pragma warning restore CA1707
+
   /// <summary>
   /// Polling interval — how often the lock-holder calls <c>stamp_pending_commit_sequences</c>
   /// when no <c>wh_committed</c> NOTIFY has arrived. Acts as the correctness floor in

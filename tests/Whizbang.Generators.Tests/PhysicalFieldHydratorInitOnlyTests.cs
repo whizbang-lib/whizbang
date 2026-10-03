@@ -100,6 +100,63 @@ public class PhysicalFieldHydratorInitOnlyTests {
     }
     """;
 
+  private const string SPLIT_CLASS_SOURCE = """
+    #nullable enable
+    using System;
+    using Microsoft.EntityFrameworkCore;
+    using Whizbang.Core;
+    using Whizbang.Core.Perspectives;
+    using Whizbang.Data.EFCore.Custom;
+
+    namespace TestApp;
+
+    public record TicketEvent : IEvent;
+
+    [PerspectiveStorage(FieldStorageMode.Split)]
+    public class TicketModel {
+      [StreamId]
+      public Guid Id { get; set; }
+
+      [PhysicalField]
+      public string Status { get; init; } = "";
+
+      [PhysicalField]
+      public int? Size { get; set; }
+
+      [PhysicalField]
+      public string Code => "fixed";
+
+      public string? Note { get; set; }
+    }
+
+    [PerspectiveStorage(FieldStorageMode.Split)]
+    public class UncopyableModel {
+      public UncopyableModel(Guid id) { Id = id; }
+
+      [StreamId]
+      public Guid Id { get; set; }
+
+      [PhysicalField]
+      public string Status { get; init; } = "";
+
+      [PhysicalField]
+      public int? Size { get; set; }
+    }
+
+    public class TicketPerspective : IPerspectiveFor<TicketModel, TicketEvent> {
+      public TicketModel Apply(TicketModel currentData, TicketEvent @event) => currentData;
+    }
+
+    public class UncopyablePerspective : IPerspectiveFor<UncopyableModel, TicketEvent> {
+      public UncopyableModel Apply(UncopyableModel currentData, TicketEvent @event) => currentData;
+    }
+
+    [WhizbangDbContext]
+    public class TestDbContext : DbContext {
+      public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+    }
+    """;
+
   private static async Task<string> _registrationAsync(string source) {
     var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
     var file = result.GeneratedSources.FirstOrDefault(s => s.HintName == REGISTRATION_FILE);
@@ -161,5 +218,27 @@ public class PhysicalFieldHydratorInitOnlyTests {
     await Assert.That(generated).DoesNotContain("row.Data.Code =");
     await Assert.That(generated).DoesNotContain("row.Data = row.Data with")
       .Because("a class has no with expression");
+  }
+
+  [Test]
+  public async Task SplitClass_WithAnInitOnlyPromotedField_IsHydratedThroughACopyAsync() {
+    var lines = _lines(await _registrationAsync(SPLIT_CLASS_SOURCE));
+
+    await Assert.That(lines.Count(l => l ==
+      "row.Data = new global::TestApp.TicketModel { Id = row.Data.Id, Status = _status, Size = _size ?? row.Data.Size, Note = row.Data.Note };"))
+      .IsEqualTo(2)
+      .Because("issue #1002: a class sets an init-only property only while an instance is created, so both hydrators copy the model");
+    await Assert.That(lines).Contains("var _status = (string)entry.Property(\"status\").CurrentValue!;");
+    await Assert.That(lines).Contains("var _status = materializationData.GetPropertyValue<string>(\"status\");");
+    await Assert.That(lines).DoesNotContain("row.Data.Status = _status;");
+  }
+
+  [Test]
+  public async Task SplitClass_ThatCannotBeCopied_KeepsTheInPlaceCopyOfItsSettableFieldsAsync() {
+    var lines = _lines(await _registrationAsync(SPLIT_CLASS_SOURCE));
+
+    await Assert.That(lines.Count(l => l == "row.Data.Size = _size ?? row.Data.Size;")).IsEqualTo(2)
+      .Because("the runner reports the model (WHIZ808); the hydrators still compile, assigning what a class can");
+    await Assert.That(lines).DoesNotContain("row.Data = new global::TestApp.UncopyableModel {");
   }
 }

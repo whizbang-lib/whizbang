@@ -116,6 +116,49 @@ public class StoredFormMigrationSqlTests {
     await Assert.That(() => StoredFormStep.ToNumber("N", (StoredNumber)99)).Throws<ArgumentOutOfRangeException>();
   }
 
+  [Test]
+  public async Task ReplaceIndex_RefusesWhatIsNotAnIndexTheSchemaBuildsOverARootKeyAsync() {
+    const string CREATE = "CREATE INDEX IF NOT EXISTS ix ON public.t ((data ->> 'A'));";
+    await Assert.That(() => StoredFormStep.ReplaceIndex("A.B", null, "ix", CREATE)).Throws<ArgumentException>()
+      .WithMessageContaining("document root");
+    await Assert.That(() => StoredFormStep.ReplaceIndex("A", "", "ix", CREATE)).Throws<ArgumentException>();
+    await Assert.That(() => StoredFormStep.ReplaceIndex("A", "integer); DROP TABLE t; --", "ix", CREATE)).Throws<ArgumentException>();
+    await Assert.That(() => StoredFormStep.ReplaceIndex("A", null, " ", CREATE)).Throws<ArgumentException>();
+    await Assert.That(() => StoredFormStep.ReplaceIndex("A", null, "ix", " ")).Throws<ArgumentException>();
+    await Assert.That(() => StoredFormStep.ReplaceIndex("A", null, "ix", "DROP INDEX ix")).Throws<ArgumentException>()
+      .WithMessageContaining("CREATE [UNIQUE] INDEX IF NOT EXISTS");
+    await Assert.That(StoredFormStep.ReplaceIndex("A", "double precision", "ix", CREATE)).IsNotNull();
+  }
+
+  [Test]
+  public async Task Concurrently_BuildsTheSchemasStatementWithoutBlockingWrites_OrRefusesAnotherStatementAsync() {
+    await Assert.That(StoredFormIndexRebuild.Concurrently("CREATE INDEX IF NOT EXISTS ix ON t ((data ->> 'A'));"))
+      .IsEqualTo("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix ON t ((data ->> 'A'));");
+    await Assert.That(StoredFormIndexRebuild.Concurrently("create unique index if not exists ix ON t (a);"))
+      .IsEqualTo("create unique index CONCURRENTLY if not exists ix ON t (a);");
+    await Assert.That(StoredFormIndexRebuild.Concurrently("CREATE INDEX ix ON t (a);")).IsNull();
+    await Assert.That(StoredFormIndexRebuild.Concurrently("SELECT 1")).IsNull();
+  }
+
+  [Test]
+  public async Task Generated_CarriesTheIndexesItReplaces_ForTheRebuildAfterThePassAsync() {
+    const string CREATE = "CREATE INDEX IF NOT EXISTS ix ON public.t ((data ->> 'A'));";
+
+    var migration = StoredFormMigrationSql.Generated("public", "wh_per_t", "m",
+      StoredFormStep.ReplaceIndex("A", null, "ix", CREATE), StoredFormStep.ToText("A"));
+
+    await Assert.That(migration.IndexRebuilds).IsEquivalentTo([new StoredFormIndexRebuild("public", "wh_per_t", "ix", CREATE)]);
+    await Assert.That(StoredFormMigrationSql.Custom("public", "wh_per_t", new Named("c")).IndexRebuilds).IsEmpty();
+  }
+
+  [Test]
+  public async Task RetryParkedStreams_NeedsAtLeastOneNamedPerspectiveAsync() {
+    await Assert.That(() => StoredFormStep.RetryParkedStreams()).Throws<ArgumentException>();
+    await Assert.That(() => StoredFormStep.RetryParkedStreams("App.A", " ")).Throws<ArgumentException>();
+    await Assert.That(() => StoredFormStep.RetryParkedStreams(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => StoredFormMigrationSql.Custom("public", "t", new Named("c"), null!)).Throws<ArgumentNullException>();
+  }
+
   private sealed class Named(string name, string sql = "SELECT 1") : IStoredFormMigration {
     public string Name => name;
 

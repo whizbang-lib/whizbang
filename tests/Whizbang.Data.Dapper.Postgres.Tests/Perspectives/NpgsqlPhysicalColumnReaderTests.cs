@@ -1,6 +1,8 @@
+using System.Text.Json;
 using Npgsql;
 using TUnit.Core;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.Postgres.Perspectives;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 
@@ -9,7 +11,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// underlying number, as the store writes it, in whichever numeric type the enum's underlying type maps to; a
 /// column an earlier release created as text still holds the member's name, and reads back from it.
 /// </summary>
-/// <tests>src/Whizbang.Data.Dapper.Postgres/NpgsqlPhysicalColumnReader.cs</tests>
+/// <tests>src/Whizbang.Data.Postgres/Perspectives/NpgsqlPhysicalColumnReader.cs</tests>
 [NotInParallel("PostgreSQL")]
 public class NpgsqlPhysicalColumnReaderTests : PostgresTestBase {
   public enum Tier { None, Gold }
@@ -22,7 +24,7 @@ public class NpgsqlPhysicalColumnReaderTests : PostgresTestBase {
     await using var command = new NpgsqlCommand($"SELECT '{{}}'::jsonb, {columnSql} AS tier", connection);
     await using var reader = await command.ExecuteReaderAsync();
     await reader.ReadAsync();
-    return new NpgsqlPhysicalColumnReader(reader, [new SplitPhysicalColumn("tier", IsVector: false)]).Read<T>("tier");
+    return new NpgsqlPhysicalColumnReader(reader, [new SplitPhysicalColumn("tier", IsVector: false)], new JsonSerializerOptions()).Read<T>("tier");
   }
 
   [Test]

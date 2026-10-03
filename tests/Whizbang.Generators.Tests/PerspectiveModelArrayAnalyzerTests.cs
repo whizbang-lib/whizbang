@@ -10,20 +10,31 @@ namespace Whizbang.Generators.Tests;
 /// </summary>
 [Category("Analyzers")]
 public class PerspectiveModelArrayAnalyzerTests {
-  // Stub attributes for test compilation - placed between usings and test code
+  // Stub attributes for test compilation - placed between usings and test code. Rooted in global::System:
+  // inside namespace Whizbang.Core.Perspectives, a bare System resolves to Whizbang.Core.Perspectives.System, which
+  // left every stub an error type with no named arguments.
   private const string STUB_ATTRIBUTES = """
 
     namespace Whizbang.Core.Perspectives {
-      [System.AttributeUsage(System.AttributeTargets.Class)]
-      public sealed class PerspectiveAttribute : System.Attribute { }
+      [global::System.AttributeUsage(global::System.AttributeTargets.Class)]
+      public sealed class PerspectiveAttribute : global::System.Attribute { }
 
-      [System.AttributeUsage(System.AttributeTargets.Property)]
-      public sealed class StreamIdAttribute : System.Attribute { }
+      [global::System.AttributeUsage(global::System.AttributeTargets.Property)]
+      public sealed class StreamIdAttribute : global::System.Attribute { }
+
+      [global::System.AttributeUsage(global::System.AttributeTargets.Property)]
+      public sealed class PhysicalFieldAttribute : global::System.Attribute {
+        public string? ColumnType { get; init; }
+        public string? ColumnName { get; init; }
+      }
+
+      [global::System.AttributeUsage(global::System.AttributeTargets.Property)]
+      public sealed class IndexedAttribute : global::System.Attribute { }
     }
 
     namespace Whizbang.Core.Lenses {
-      [System.AttributeUsage(System.AttributeTargets.Property)]
-      public sealed class VectorFieldAttribute : System.Attribute {
+      [global::System.AttributeUsage(global::System.AttributeTargets.Property)]
+      public sealed class VectorFieldAttribute : global::System.Attribute {
         public VectorFieldAttribute(int dimensions) { }
       }
     }
@@ -134,6 +145,41 @@ public class PerspectiveModelArrayAnalyzerTests {
 
     // Assert - No WHIZ200 warnings (VectorField is excluded)
     await Assert.That(diagnostics.Where(d => d.Id == "WHIZ200")).IsEmpty();
+  }
+
+  /// <summary>
+  /// An array promoted to a jsonb column is read and written as one converted value, outside the mapped
+  /// document, so the change-tracking hazard does not apply: silent there, flagged everywhere else, including
+  /// a promotion whose declared type is not jsonb and an array with a native column of its own.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("[PhysicalField] public Guid[] Owners { get; set; }", false)]
+  [Arguments("[PhysicalField(ColumnType = \"jsonb\")] public Guid[] Owners { get; set; }", false)]
+  [Arguments("[PhysicalField(ColumnName = \"owners\")] public Guid[] Owners { get; set; }", false)]
+  [Arguments("public Guid[] Owners { get; set; }", true)]
+  [Arguments("[PhysicalField(ColumnType = \"uuid[]\")] public Guid[] Owners { get; set; }", true)]
+  [Arguments("[PhysicalField] public double[] Owners { get; set; }", true)]
+  [Arguments("[Indexed] public Guid[] Owners { get; set; }", true)]
+  public async Task Analyzer_ArrayPromotedToJsonb_IsSilent_OtherwiseFlaggedAsync(string property, bool flagged) {
+    var source = _createSource(
+        """
+        using System;
+        using Whizbang.Core.Perspectives;
+        """,
+        $$"""
+        namespace TestApp {
+          [Perspective]
+          public class OwnersModel {
+            public Guid Id { get; set; }
+            {{property}}
+          }
+        }
+        """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelArrayAnalyzer>(source);
+
+    await Assert.That(diagnostics.Any(d => d.Id == "WHIZ200")).IsEqualTo(flagged);
   }
 
   /// <summary>

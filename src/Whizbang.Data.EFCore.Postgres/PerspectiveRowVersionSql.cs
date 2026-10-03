@@ -48,13 +48,32 @@ internal static class PerspectiveRowVersionSql {
   /// model itself is read from.
   /// </summary>
   /// <exception cref="InvalidOperationException">The context does not map the perspective to a table.</exception>
+  /// <remarks>
+  /// A blue-green rebuild redirects the table in its own flow (<see cref="PerspectiveTableRedirect"/>); the
+  /// shadow table it names is in the same schema.
+  /// </remarks>
   internal static string QualifiedTable<TModel>(DbContext context) where TModel : class {
+    var (schema, table) = _mapped<TModel>(context);
+    return PgIdentifier.QualifyPrefix(schema) + PgIdentifier.Quote(PerspectiveTableRedirect.Resolve(table));
+  }
+
+  /// <summary>
+  /// The quoted, schema-qualified shadow table a blue-green rebuild redirected <c>PerspectiveRow&lt;TModel&gt;</c>
+  /// to in this flow, or null when this flow reads and writes the mapped table.
+  /// </summary>
+  internal static string? RedirectedTable<TModel>(DbContext context) where TModel : class {
+    var (schema, table) = _mapped<TModel>(context);
+    var target = PerspectiveTableRedirect.Resolve(table);
+    return target == table ? null : PgIdentifier.QualifyPrefix(schema) + PgIdentifier.Quote(target);
+  }
+
+  private static (string? Schema, string Table) _mapped<TModel>(DbContext context) where TModel : class {
     var entityType = context.Model.FindEntityType(typeof(PerspectiveRow<TModel>));
     if (entityType?.GetTableName() is not { } table) {
       throw new InvalidOperationException(
         $"PerspectiveRow<{typeof(TModel).Name}> is not mapped to a table in {context.GetType().Name}, so its row version cannot be read.");
     }
-    return PgIdentifier.QualifyPrefix(entityType.GetSchema()) + PgIdentifier.Quote(table);
+    return (entityType.GetSchema(), table);
   }
 
   /// <summary>

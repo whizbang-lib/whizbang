@@ -26,5 +26,9 @@ public sealed record ReadOnlyListTypeInfo(
     .Replace(">", "_")
     .Replace(",", "_")
     .Replace(" ", "")
-    .Replace("?", "__Nullable");
+    .Replace("?", "__Nullable")
+    // An array type argument (Dictionary<string, string[]>) is not an identifier either.
+    .Replace("[]", "_Array")
+    .Replace("[", "_")
+    .Replace("]", "_");
 }

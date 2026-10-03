@@ -38,6 +38,13 @@ public class ClaimedEmissionStoreDefaultsTests {
     await Assert.That(await store.PruneAsync("saga-completed:", DateTimeOffset.UtcNow, CancellationToken.None)).IsEqualTo(0);
   }
 
+  [Test]
+  public async Task PruneExpired_Default_PrunesNothingAsync() {
+    IClaimedEmissionStore store = new ClaimOnlyStore();
+
+    await Assert.That(await store.PruneExpiredAsync(DateTimeOffset.UtcNow, [], 100, CancellationToken.None)).IsEqualTo(0);
+  }
+
   private sealed class ClaimOnlyStore : IClaimedEmissionStore {
     public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken)
       => Task.FromResult(true);

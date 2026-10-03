@@ -79,4 +79,34 @@ public interface ICollectiveEvent : IEvent {
   /// <docs>fundamentals/messaging/collective-events</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveOrderingKeyTests.cs:AHandWrittenCollective_HasNoOrderingKeyAsync</tests>
   string? OrderingKey => null;
+
+  /// <summary>
+  /// The id of the collective its publisher sent on the same <see cref="OrderingKey"/> just before this one, or null
+  /// for the first on its key, an unkeyed collective, or one from a publisher that sends no link.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A receiver applies a key's collectives in the order it committed them, which is the order they arrived, and
+  /// transport can deliver them in another order than they were sent. The link lets the receiver put them back:
+  /// when it handles <see cref="PredecessorType"/> and has not seen the predecessor yet, it holds this collective for a
+  /// bounded time and applies the two in order when the predecessor arrives. It applies at once when it does not
+  /// handle that type, when it has already seen the predecessor, or when the wait runs out.
+  /// </para>
+  /// <para>
+  /// The store writes it into a <see cref="CollectiveEventBase"/>'s payload in the transaction that stores it, from the
+  /// key's head, which every publisher instance shares (<see cref="CollectivePredecessorLink"/>); a hand-written
+  /// collective that wants the link derives from that base. It is not set by a producer.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorLinkTests.cs</tests>
+  Guid? PredecessorId => null;
+
+  /// <summary>
+  /// The type of the collective named by <see cref="PredecessorId"/>, in the form the event store records event types,
+  /// so a receiver can tell whether it handles that type at all; a receiver that does not never sees the predecessor
+  /// and so does not wait for it.
+  /// </summary>
+  /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
+  string? PredecessorType => null;
 }

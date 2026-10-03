@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
@@ -136,6 +137,19 @@ public static class PostgresDriverExtensions {
         selector.Services.TryAddScoped<IClaimedEmissionStore>(sp =>
             new EFCoreClaimedEmissionStore(
                 (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType)));
+        // TURNKEY: the maintenance step that deletes claims a day past their expiry, except under the
+        // prefixes their owners retain (#999). Without it the claim table grew by a row per key for good.
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<Whizbang.Core.Workers.IMaintenanceStep, Whizbang.Core.Workers.ClaimedEmissionPruneStep>(sp =>
+            new Whizbang.Core.Workers.ClaimedEmissionPruneStep(
+                sp.GetService<ILogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep>>()
+                  ?? NullLogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep>.Instance,
+                sp.GetService<TimeProvider>())));
+
+        // TURNKEY: blue-green perspective rebuilds build a shadow table and swap it in (#1025). The swapper opens
+        // connections of its own from the context's data source; with no way to open one it is absent, and the
+        // rebuilder replays in place and says so.
+        selector.Services.TryAddSingleton<Whizbang.Core.Perspectives.IPerspectiveTableSwapper>(sp =>
+            EFCorePerspectiveTableSwapperFactory.Create(sp, dbContextType)!);
 
         // TURNKEY: the maintenance step that analyzes perspective tables whose expression indexes have no
         // statistics yet, so a selective predicate on a new index is not planned as a full scan (#1004).
@@ -225,6 +239,25 @@ public static class PostgresDriverExtensions {
           return new EFCorePerspectiveSnapshotStore(ds, snapshotLogger);
         });
 
+        // TURNKEY: purged perspective rows stay purged (the markers the runner consults on a missing row), and the
+        // operator stream purge. Both are the shared Postgres implementations over the same NpgsqlDataSource.
+        // <docs>operations/infrastructure/purging-streams</docs>
+        // Schema-qualified for the same reason as the statistics provider below: the connection comes
+        // from the shared data source, whose search path is not the service's schema.
+        string defaultSchema(IServiceProvider services) {
+          using var scope = services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
+          return dbContext.Model.GetDefaultSchema() ?? "public";
+        }
+        selector.Services.TryAddSingleton<IPerspectivePurgeMarkerStore>(sp =>
+          new PostgresPerspectivePurgeMarkerStore(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync, defaultSchema(sp)));
+        selector.Services.TryAddSingleton<IStreamPurger>(sp =>
+          new PostgresStreamPurger(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            defaultSchema(sp),
+            logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+
         // TURNKEY: managed-resource health for the event-store DB. AlwaysRequired — a DB fault is a
         // real fault even during a migration (the migration needs it), so this replaces a consumer's
         // naive readiness check (no SELECT count(*) that a migration would make time out). The probe
@@ -242,9 +275,7 @@ public static class PostgresDriverExtensions {
         // multi-schema services report THEIR tables instead of probing a bare public schema.
         selector.Services.TryAddSingleton<ITableStatisticsProvider>(sp => {
           var ds = sp.GetRequiredService<NpgsqlDataSource>();
-          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
-          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
-          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          var schema = defaultSchema(sp);
           return new PostgresTableStatisticsProvider(ds, schema);
         });
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
@@ -255,9 +286,7 @@ public static class PostgresDriverExtensions {
         // read. Schema-qualified for the same reason as the provider above.
         selector.Services.TryAddSingleton<IAdvisoryLedger>(sp => {
           var ds = sp.GetRequiredService<NpgsqlDataSource>();
-          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
-          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
-          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          var schema = defaultSchema(sp);
           // The logger is asked for directly rather than built from a factory: AddLogging registers
           // the open generic, so this resolves when logging is configured and is null when it is
           // not, which is the same answer with no conditional to leave half-tested.
@@ -285,9 +314,7 @@ public static class PostgresDriverExtensions {
         // controller, not a bare public schema.
         selector.Services.TryAddSingleton<INotifyDebounceStatsProvider>(sp => {
           var ds = sp.GetRequiredService<NpgsqlDataSource>();
-          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
-          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
-          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          var schema = defaultSchema(sp);
           return new PostgresNotifyDebounceStatsProvider(ds, schema);
         });
         selector.Services.TryAddSingleton<NotifyDebounceMetrics>();
@@ -354,6 +381,9 @@ public static class PostgresDriverExtensions {
         var derivedConnectionStringName = selector.ConnectionStringName
           ?? _deriveConnectionStringName(selector.DbContextType.Name);
         if (!string.IsNullOrWhiteSpace(derivedConnectionStringName)) {
+          // #1012: the same name keys this database's PostgresOptions section,
+          // Whizbang:Postgres:<name>, which overrides the code values per key.
+          selector.Services.AddWhizbangPostgresOptionsBinding(derivedConnectionStringName);
           selector.Services.PostConfigure<WhizbangNotificationOptions>(options => {
             if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
               options.ConnectionStringKey = derivedConnectionStringName;

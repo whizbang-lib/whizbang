@@ -58,6 +58,62 @@ public static class PhysicalFieldScalar {
       });
   }
 
+  /// <summary>The column type a promoted object, collection or dictionary gets when the author declares none.</summary>
+  public const string JSONB = "jsonb";
+
+  /// <summary>
+  /// The column type a field gets when <c>[PhysicalField]</c> declares none and the CLR type has no scalar
+  /// column: <c>jsonb</c> for an object, a record, a user struct, a collection or a dictionary, and null for
+  /// everything the mapping tables already type.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Decided once here, at discovery, so every generator that describes the column reads the same
+  /// declared type: both schema generators, the EF Core model and the runner's registration. Before
+  /// this each mapping table fell through to text, so a list became a column holding its type's name.
+  /// </para>
+  /// <para>
+  /// Left to the mapping tables: special types (primitives, <c>string</c>, <c>decimal</c>,
+  /// <c>DateTime</c>), enumerations, the framework's own value types in <c>System</c> (<c>Guid</c>,
+  /// <c>DateTimeOffset</c>, <c>DateOnly</c>, <c>TimeOnly</c>, <c>TimeSpan</c>), and the arrays with a
+  /// native column of their own: <c>byte[]</c>, <c>float[]</c> and <c>double[]</c>.
+  /// </para>
+  /// </remarks>
+  /// <param name="type">The property's type.</param>
+  /// <returns><c>jsonb</c>, or null to leave the type to the mapping tables.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/PhysicalJsonbColumnGenerationTests.cs</tests>
+  public static string? DefaultColumnType(ITypeSymbol type) {
+    type = _unwrapNullable(type);
+
+    if (type is IArrayTypeSymbol array) {
+      return array.ElementType.SpecialType is SpecialType.System_Byte or SpecialType.System_Single or SpecialType.System_Double
+        ? null
+        : JSONB;
+    }
+
+    var structured = type.SpecialType == SpecialType.None
+      && type.TypeKind is TypeKind.Class or TypeKind.Struct or TypeKind.Interface
+      && type.ContainingNamespace is not { Name: "System", ContainingNamespace.IsGlobalNamespace: true };
+
+    return structured ? JSONB : null;
+  }
+
+  /// <summary>Whether a column type is jsonb, as declared or defaulted, ignoring case and padding.</summary>
+  /// <param name="columnType">The column type, or null.</param>
+  /// <returns>True for <c>jsonb</c>.</returns>
+  public static bool IsJsonb(string? columnType) =>
+    string.Equals(columnType?.Trim(), JSONB, System.StringComparison.OrdinalIgnoreCase);
+
+  /// <summary>
+  /// Whether a promoted field gets a containment index: it declares <c>IndexKinds.Containment</c> and its column
+  /// is jsonb, the only column a <c>jsonb_path_ops</c> index can be built over.
+  /// </summary>
+  /// <param name="declaredKind">The field's declared index kinds, combined.</param>
+  /// <param name="columnType">The field's column type, declared or defaulted.</param>
+  /// <returns>True when the index is built.</returns>
+  public static bool IsContainmentIndexed(int declaredKind, string? columnType) =>
+    JsonIndexDiscovery.IncludesContainment(declaredKind) && IsJsonb(columnType);
+
   private static ITypeSymbol _unwrapNullable(ITypeSymbol type) =>
     type is INamedTypeSymbol { IsGenericType: true } nullable
       && nullable.ConstructedFrom.SpecialType == SpecialType.System_Nullable_T

@@ -6013,6 +6013,41 @@ public record BulkImported(IReadOnlyList<IMessage> Items) : ICompositeEvent {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_TypedEnvelopeContract_CarriesTheProducersOriginAndDispatchContextAsync() {
+    // #1029: the typed receive contract named only id, payload, hops, target, state-only and priority. The
+    // producer's service id (sid) and commit sequence (sseq) were dropped on every typed receive, so each
+    // received event was stored as locally originated and stream integrity could not attribute it. The
+    // causality pair, the envelope version and the dispatch context ride the wire beside them.
+    const string source = @"
+using System;
+using Whizbang.Core;
+
+namespace MyApp.Events;
+
+public record OrderShipped([property: StreamId] Guid OrderId) : IEvent;
+";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var contextCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(contextCode).IsNotNull();
+
+    foreach (var wireName in new[] { "\"v\"", "\"dc\"", "\"sid\"", "\"sseq\"", "\"cbid\"", "\"cbseq\"" }) {
+      await Assert.That(contextCode).Contains(wireName)
+        .Because($"the typed contract must name {wireName}, the wire name the attribute-honoring shape writes");
+    }
+    await Assert.That(contextCode).Contains("SourceServiceId = (global::System.Guid)args[5]")
+      .Because("the producer's service id is init-only, so it binds as a member initializer of the constructor call");
+    await Assert.That(contextCode).Contains("SourceCommitSequence = (long)args[6]");
+    await Assert.That(contextCode).Contains("(global::Whizbang.Core.Observability.MessageDispatchContext?)args[4]")
+      .Because("the dispatch context binds through the constructor, which keeps the v1 default when dc is absent");
+    await Assert.That(contextCode).Contains("DefaultValue = 1")
+      .Because("an envelope without v is version 1, never version 0");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_WithMixedMessageTypes_GeneratesCorrectBaseTypeRegistrationsAsync() {
     // Arrange - mix of commands and events
     const string source = @"

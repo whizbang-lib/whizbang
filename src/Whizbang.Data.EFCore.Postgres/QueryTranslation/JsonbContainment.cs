@@ -663,6 +663,9 @@ public static class JsonbContainmentModelExtensions {
       modelBuilder.HasDbFunction(overload).HasTranslation(JsonbContainment.EmitSet);
     }
 
+    // The document builders a filter on a promoted jsonb column is compiled into.
+    JsonbDocument.Register(modelBuilder);
+
     return modelBuilder;
   }
 }

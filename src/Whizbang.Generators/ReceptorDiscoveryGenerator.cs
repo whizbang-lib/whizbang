@@ -61,6 +61,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_IS_EXPLICIT = "__IS_EXPLICIT__";
   private const string PLACEHOLDER_FIRE_DURING_REPLAY = "__FIRE_DURING_REPLAY__";
   private const string PLACEHOLDER_IS_IDEMPOTENT = "__IS_IDEMPOTENT__";
+  private const string PLACEHOLDER_IS_ONCE_ACROSS_SERVICES = "__IS_ONCE_ACROSS_SERVICES__";
   private const string PLACEHOLDER_RECEPTOR_INVOCATIONS = "__RECEPTOR_INVOCATIONS__";
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string PLACEHOLDER_RECEPTOR_COUNT = "{{RECEPTOR_COUNT}}";
@@ -318,7 +319,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           HasFireDuringReplayAttribute: hasFireDuringReplayAttribute,
           IsIdempotent: isIdempotent,
           SuppressesRegistration: _suppressesRegistration(classSymbol),
-          LikelyNotInjectableParameter: _likelyNotInjectableParameter(classSymbol)
+          LikelyNotInjectableParameter: _likelyNotInjectableParameter(classSymbol),
+          IsOnceAcrossServices: _hasReceptorOnceAcrossServicesAttribute(classSymbol)
       );
     }
 
@@ -823,6 +825,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     return false;
+  }
+
+  /// <summary>
+  /// Returns true when the receptor is decorated with <c>[ReceptorOnceAcrossServices]</c>: it runs once
+  /// for a message across every service, so a prior invocation recorded by any service stops it.
+  /// </summary>
+  private static bool _hasReceptorOnceAcrossServicesAttribute(INamedTypeSymbol classSymbol) {
+    const string RECEPTOR_ONCE_ACROSS_SERVICES_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorOnceAcrossServicesAttribute";
+    return classSymbol.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, RECEPTOR_ONCE_ACROSS_SERVICES_ATTRIBUTE));
   }
 
   /// <summary>
@@ -2053,7 +2064,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
         .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode)
         .Replace(PLACEHOLDER_FIRE_DURING_REPLAY, receptor.HasFireDuringReplayAttribute ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)
-        .Replace(PLACEHOLDER_IS_IDEMPOTENT, receptor.IsIdempotent ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL);
+        .Replace(PLACEHOLDER_IS_IDEMPOTENT, receptor.IsIdempotent ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)
+        .Replace(PLACEHOLDER_IS_ONCE_ACROSS_SERVICES, receptor.IsOnceAcrossServices ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL);
 
     if (!receptor.IsVoid && receptor.ResponseType is not null) {
       result = result.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType);
@@ -2108,7 +2120,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("  },");
     sb.AppendLine($"  SyncAttributes: {syncAttributesCode},");
     sb.AppendLine($"  FireDuringReplay: {(receptor.HasFireDuringReplayAttribute ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)},");
-    sb.AppendLine($"  IsIdempotent: {(receptor.IsIdempotent ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)}");
+    sb.AppendLine($"  IsIdempotent: {(receptor.IsIdempotent ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)},");
+    sb.AppendLine($"  IsOnceAcrossServices: {(receptor.IsOnceAcrossServices ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)}");
     sb.Append(')');
 
     return sb.ToString();

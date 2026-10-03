@@ -240,16 +240,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
         ? _compileComparison(cmp, a, idx, parameters)
         : ((string?)null, (string?)null);
       if (target is not { InDocument: false }) {
-        if (a.Comparison is null) {
-          parameters["p" + idx] = a.JsonValue;
-        }
-        var valueSql = a switch {
-          { ElementKey: { } key } => CollectiveElementUpsertSql.ValueSql(
-            a.PathName, key, "@p" + idx + JSONB_CAST, assigned.GetValueOrDefault(a.PathName)),
-          { Comparison: not null } => documentComparison!,
-          _ => "@p" + idx + JSONB_CAST,
-        };
-        parameters["path" + idx] = new[] { a.PathName };  // text[] path
+        var valueSql = _documentValueSql(a, idx, documentComparison, assigned, parameters);
         assigned[a.PathName] = valueSql;
         setExpr.Insert(0, "jsonb_set(")
           .Append(", @path").Append(idx).Append(", ").Append(valueSql).Append(')');
@@ -265,20 +256,50 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     return (setList, [.. parameters]);
   }
 
+  // The new value of a document path: a computed comparison's boolean, a keyed element upsert from the property's value
+  // so far in this spec, or the value bound as jsonb. Also binds the jsonb_set path: one key of the property's object
+  // when the setter names one, kept in the document too (jsonb_set's two-step path changes nothing when the object is
+  // null or absent, as the column's key set does).
+  private static string _documentValueSql(
+      CollectiveSettersRewriter.CollectiveSetterAssignment a, string idx, string? documentComparison,
+      Dictionary<string, string> assigned, Dictionary<string, object> parameters) {
+    if (a.Comparison is null) {
+      parameters["p" + idx] = a.JsonValue;
+    }
+    parameters["path" + idx] = a.JsonbKey is { } jsonbKey ? new[] { a.PathName, jsonbKey } : [a.PathName];  // text[] path
+    return a switch {
+      { ElementKey: { } key } => CollectiveElementUpsertSql.ValueSql(
+        a.PathName, key, "@p" + idx + JSONB_CAST, assigned.GetValueOrDefault(a.PathName)),
+      { Comparison: not null } => documentComparison!,
+      _ => "@p" + idx + JSONB_CAST,
+    };
+  }
+
   // The new value of a physical column: a computed comparison's boolean, the same keyed upsert a document path uses
-  // (over the jsonb column, from its value so far in this spec), a typed pgvector parameter, or the column scalar
-  // (an enumeration as its underlying number).
+  // (over the jsonb column, from its value so far in this spec), one key of a jsonb column set in place, a whole jsonb
+  // value bound as jsonb, a typed pgvector parameter, or the column scalar (an enumeration as its underlying number).
   private static string _columnValueSql(
       CollectiveSettersRewriter.CollectiveSetterAssignment a, PerspectivePhysicalField physical, string idx,
       string? columnComparison, Dictionary<string, string> assignedColumns, Dictionary<string, object> parameters) {
     if (columnComparison is not null) {
       return columnComparison;
     }
+    var source = assignedColumns.GetValueOrDefault(physical.ColumnName) ?? CollectivePhysicalColumns.Quote(physical.ColumnName);
     if (a.ElementKey is { } key) {
       parameters["p" + idx] = a.JsonValue;  // the element, shared with the document path when both are written
-      return CollectiveElementUpsertSql.ValueSql(
-        a.PathName, key, "@p" + idx + JSONB_CAST,
-        assignedColumns.GetValueOrDefault(physical.ColumnName) ?? CollectivePhysicalColumns.Quote(physical.ColumnName));
+      return CollectiveElementUpsertSql.ValueSql(a.PathName, key, "@p" + idx + JSONB_CAST, source);
+    }
+    if (a.JsonbKey is { } jsonbKey) {
+      // One key of the stored object, set from the column's value so far in this spec; the other keys stay.
+      parameters["p" + idx] = a.JsonValue;
+      parameters["kpath" + idx] = new[] { jsonbKey };
+      return CollectivePhysicalColumns.JsonbKeySetSql(source, "@kpath" + idx, "@p" + idx + JSONB_CAST);
+    }
+    if (physical.IsJsonbColumn) {
+      // The whole value, as the JSON the persistence profile writes, cast to jsonb; null clears the column, as the
+      // per-event write of a null property does.
+      parameters["pc" + idx] = a.IsNull ? DBNull.Value : a.JsonValue;
+      return "@pc" + idx + JSONB_CAST;
     }
     object? value = physical.IsVector
       ? _vector(a.Value)

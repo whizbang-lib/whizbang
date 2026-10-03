@@ -126,4 +126,20 @@ public class ServiceCollectionExtensionsTests {
     await Assert.That(strategy2).IsNotNull();
     await Assert.That(ReferenceEquals(strategy1, strategy2)).IsTrue();
   }
+
+  [Test]
+  public async Task AddRabbitMQTransport_PublishStrategy_ReadsTheBoundThrottleRetryOptionsAsync() {
+    // #1014: Whizbang:ThrottleRetry binds into IOptions<ThrottleRetryOptions>; the strategy used to be
+    // handed null, so neither configuration nor services.Configure ever reached it.
+    var services = new ServiceCollection();
+    services.AddSingleton<IConnection>(_ => new FakeConnection(() => Task.FromResult<IChannel>(new FakeChannel())));
+    services.AddLogging();
+    services.Configure<ThrottleRetryOptions>(o => o.MaxAttempts = 9);
+    services.AddRabbitMQTransport("amqp://guest:guest@localhost:5672/");
+    var provider = services.BuildServiceProvider();
+
+    var strategy = provider.GetRequiredService<IMessagePublishStrategy>();
+
+    await Assert.That(((TransportPublishStrategy)strategy).ThrottleRetry.MaxAttempts).IsEqualTo(9);
+  }
 }

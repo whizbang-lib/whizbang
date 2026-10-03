@@ -1041,64 +1041,53 @@ public static class JsonContextRegistry {
   /// <summary>
   /// Creates a polymorphic JsonTypeInfo for MessageEnvelope&lt;T&gt; with polymorphic payload.
   /// </summary>
+  /// <remarks>
+  /// This shape names its members by their CLR names (<c>MessageId</c>, <c>Payload</c>, ...), not the wire
+  /// names the attribute-honoring envelope writes, so it is not the transport wire; it serves the
+  /// interface-typed envelope (<c>MessageEnvelope&lt;IEvent&gt;</c> and kin) wherever a resolver is asked
+  /// for one. It names every field the envelope carries, because hand-built metadata silently drops whatever
+  /// it does not name on each round trip: the producer's origin and causality (#1029), the version and
+  /// dispatch context, the directed target, the state-only marker and the priority. Fields absent from an
+  /// older body bind to their unstamped defaults (version 1, the v1 dispatch context, an empty origin).
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/PolymorphicEnvelopeOriginTests.cs</tests>
   private static JsonTypeInfo<MessageEnvelope<TBase>> _createPolymorphicEnvelopeTypeInfo<TBase>(
     JsonSerializerOptions _options,
     JsonTypeInfo<TBase> _payloadTypeInfo)
     where TBase : class {
-    // Create property metadata - the key is specifying PropertyTypeInfo for Payload
-    var properties = new JsonPropertyInfo[4];
-
-    properties[0] = _createProperty<ValueObjects.MessageId, MessageEnvelope<TBase>>(
-      _options,
-      "MessageId",
-      obj => obj.MessageId,
-      null);
-
-    // CRITICAL: Use the polymorphic type info for the Payload property
-    properties[1] = _createPropertyWithTypeInfo(
-      _options,
-      "Payload",
-      (MessageEnvelope<TBase> obj) => obj.Payload,
-      _payloadTypeInfo);
-
-    properties[2] = _createProperty<List<MessageHop>, MessageEnvelope<TBase>>(
-      _options,
-      "Hops",
-      obj => obj.Hops?.ToList() ?? [],
-      null);
-
-    // Priority step 1: hand-built metadata names every field it carries; a number it does not name is dropped
-    // on every round trip. Omitted when zero, like the attribute-honoring shape.
-    properties[3] = _createProperty<int, MessageEnvelope<TBase>>(
-      _options,
-      "Priority",
-      obj => obj.Priority,
-      (obj, value) => obj.Priority = value);
+    var properties = new JsonPropertyInfo[] {
+      _createProperty<ValueObjects.MessageId, MessageEnvelope<TBase>>(_options, "MessageId", obj => obj.MessageId, null),
+      // CRITICAL: Use the polymorphic type info for the Payload property
+      _createPropertyWithTypeInfo(_options, "Payload", (MessageEnvelope<TBase> obj) => obj.Payload, _payloadTypeInfo),
+      _createProperty<List<MessageHop>, MessageEnvelope<TBase>>(_options, "Hops", obj => obj.Hops?.ToList() ?? [], null),
+      // Priority step 1: omitted when zero, like the attribute-honoring shape.
+      _createProperty<int, MessageEnvelope<TBase>>(_options, "Priority", obj => obj.Priority, (obj, value) => obj.Priority = value),
+      _createProperty<string?, MessageEnvelope<TBase>>(_options, "Target", obj => obj.Target, (obj, value) => obj.Target = value),
+      _createProperty<bool, MessageEnvelope<TBase>>(_options, "StateOnly", obj => obj.StateOnly, (obj, value) => obj.StateOnly = value),
+      _createProperty<int, MessageEnvelope<TBase>>(_options, "Version", obj => obj.Version, null),
+      _createProperty<MessageDispatchContext, MessageEnvelope<TBase>>(_options, "DispatchContext", obj => obj.DispatchContext, null),
+      _createProperty<Guid, MessageEnvelope<TBase>>(_options, "SourceServiceId", obj => obj.SourceServiceId, null),
+      _createProperty<long, MessageEnvelope<TBase>>(_options, "SourceCommitSequence", obj => obj.SourceCommitSequence, null),
+      _createProperty<Guid?, MessageEnvelope<TBase>>(_options, "CausedByServiceId", obj => obj.CausedByServiceId, null),
+      _createProperty<long?, MessageEnvelope<TBase>>(_options, "CausedByCommitSequence", obj => obj.CausedByCommitSequence, null),
+    };
     properties[3].ShouldSerialize = static (_, value) => value is int priority && priority != 0;
+    properties[4].ShouldSerialize = static (_, value) => value is not null;
+    properties[5].ShouldSerialize = static (_, value) => value is true;
 
-    // Constructor parameters for deserialization
+    // Constructor parameters for deserialization. Version and DispatchContext bind through the constructor
+    // (which supplies the v1 dispatch context when absent); the origin and causality pairs are init-only
+    // member initializers of the same call.
     var ctorParams = new JsonParameterInfoValues[] {
-      new() {
-        Name = "MessageId",
-        ParameterType = typeof(ValueObjects.MessageId),
-        Position = 0,
-        HasDefaultValue = false,
-        DefaultValue = default!
-      },
-      new() {
-        Name = "Payload",
-        ParameterType = typeof(TBase),
-        Position = 1,
-        HasDefaultValue = false,
-        DefaultValue = default!
-      },
-      new() {
-        Name = "Hops",
-        ParameterType = typeof(List<MessageHop>),
-        Position = 2,
-        HasDefaultValue = false,
-        DefaultValue = default!
-      }
+      _ctorParam("MessageId", typeof(ValueObjects.MessageId), 0),
+      _ctorParam("Payload", typeof(TBase), 1),
+      _ctorParam("Hops", typeof(List<MessageHop>), 2),
+      new() { Name = "Version", ParameterType = typeof(int), Position = 3, HasDefaultValue = true, DefaultValue = 1 },
+      _ctorParam("DispatchContext", typeof(MessageDispatchContext), 4),
+      _ctorParam("SourceServiceId", typeof(Guid), 5),
+      _ctorParam("SourceCommitSequence", typeof(long), 6),
+      _ctorParam("CausedByServiceId", typeof(Guid?), 7),
+      _ctorParam("CausedByCommitSequence", typeof(long?), 8),
     };
 
     var objectInfo = new JsonObjectInfoValues<MessageEnvelope<TBase>> {
@@ -1106,13 +1095,28 @@ public static class JsonContextRegistry {
       ObjectWithParameterizedConstructorCreator = args => new MessageEnvelope<TBase>(
         (ValueObjects.MessageId)args[0],
         (TBase)args[1],
-        (List<MessageHop>)args[2]),
+        (List<MessageHop>)args[2],
+        (int)args[3],
+        (MessageDispatchContext?)args[4]) {
+        SourceServiceId = (Guid)args[5],
+        SourceCommitSequence = (long)args[6],
+        CausedByServiceId = (Guid?)args[7],
+        CausedByCommitSequence = (long?)args[8],
+      },
       ConstructorParameterMetadataInitializer = () => ctorParams,
       PropertyMetadataInitializer = _ => properties
     };
 
     return JsonMetadataServices.CreateObjectInfo<MessageEnvelope<TBase>>(_options, objectInfo);
   }
+
+  private static JsonParameterInfoValues _ctorParam(string name, Type type, int position) => new() {
+    Name = name,
+    ParameterType = type,
+    Position = position,
+    HasDefaultValue = false,
+    DefaultValue = null
+  };
 
   /// <summary>
   /// Helper to create a JsonPropertyInfo without requiring typed JsonTypeInfo.

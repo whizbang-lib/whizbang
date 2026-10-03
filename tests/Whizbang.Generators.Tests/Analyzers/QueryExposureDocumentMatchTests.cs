@@ -122,16 +122,20 @@ public class QueryExposureDocumentMatchTests {
     await Assert.That(await _diagnosticsAsync(source, "WHIZ307")).Count().IsEqualTo(1);
   }
 
-  /// <summary>An undeclared model relies on the default index for composed filters, and is noted.</summary>
+  /// <summary>
+  /// An undeclared model has no whole-document index for composed filters, because the default is
+  /// off, and the warning names the opt-in.
+  /// </summary>
   [Test]
-  public async Task AFilterableLensOverAnUndeclaredModel_IsNotedAsync() {
+  public async Task AFilterableLensOverAnUndeclaredModel_WarnsAsync() {
     var reported = await _diagnosticsAsync("""
       [FilterOnly]
       public interface IUndeclaredLens : ILensQuery<UndeclaredModel>;
       """, "WHIZ308");
 
     await Assert.That(reported).Count().IsEqualTo(1);
-    await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Info);
+    await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
+    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("[PerspectiveQueries(MatchOnAnyField = true)]");
   }
 
   /// <summary>

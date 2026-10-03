@@ -1,4 +1,3 @@
-using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -12,7 +11,8 @@ using Whizbang.Data.Postgres;
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
-/// The maintenance step that fills promoted columns for rows written with the value only in the document.
+/// The maintenance step that completes perspective field moves: it fills promoted columns for rows written
+/// with the value only in the document, settles demotions, and reports columns only a rebuild can restore.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -47,7 +47,7 @@ public sealed partial class PhysicalColumnFillMaintenanceStep(
     TimeSpan? settle = null) : IMaintenanceStep {
 
   /// <summary>How long one instance's claim to run the step lasts: the fleet runs it once per window.</summary>
-  public static readonly TimeSpan ClaimWindow = TimeSpan.FromMinutes(10);
+  public static readonly TimeSpan ClaimWindow = PhysicalColumnFill.ClaimWindow;
 
   private readonly Type _dbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
   private readonly ILogger _logger = (ILogger?)logger ?? NullLogger.Instance;
@@ -78,9 +78,7 @@ public sealed partial class PhysicalColumnFillMaintenanceStep(
         return;
       }
 
-      var now = _timeProvider.GetUtcNow();
-      var window = now.UtcTicks - (now.UtcTicks % ClaimWindow.Ticks);
-      var key = string.Create(CultureInfo.InvariantCulture, $"whizbang:physical-column-fill:{schema}:{window}");
+      var key = PhysicalColumnFill.ClaimKey(schema, _timeProvider.GetUtcNow());
       if (!await claims.TryClaimAsync(key, Guid.CreateVersion7(), cancellationToken).ConfigureAwait(false)) {
         return;
       }

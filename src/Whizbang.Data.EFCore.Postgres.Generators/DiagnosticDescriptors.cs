@@ -204,4 +204,19 @@ internal static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "A declaration on a property of a collection's element type has no single document path a generated statement could convert."
   );
+
+  /// <summary>
+  /// WHIZ833: Warning - Two custom stored-form migrations of one table state the same order.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/stored-form-migrations#diagnostics</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StoredFormMigrationGenerationTests.cs:TwoMigrationsOfOneTableSharingAnOrder_AreWHIZ833_OncePerSharedOrderAsync</tests>
+  public static readonly DiagnosticDescriptor StoredFormMigrationOrderShared = new(
+      id: "WHIZ833",
+      title: "Stored-form migrations share an order",
+      messageFormat: "The stored-form migrations {0} of {1} share Order {2}, so they run in class-name order. Give each its own Order.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Custom stored-form migrations of one table run in the Order their authors state. Two with the same Order still run in a stable order, their classes' full names, but that order is an accident of naming rather than a decision; renaming a class would change it."
+  );
 }

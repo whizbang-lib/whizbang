@@ -1072,16 +1072,16 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // A model that declares nothing keeps the data and scope document indexes. The metadata one is
-    // built only for [PerspectiveQueries(MatchOnMetadata = true)]; see
+    // A model that declares nothing keeps only the scope document index. The data and metadata ones
+    // are built only when [PerspectiveQueries] turns on matching on any field or on metadata. See
     // PerspectiveDocumentIndexGenerationTests for each declaration.
     // GIN indexes use "USING gin (column)" syntax
-    await Assert.That(sourceText).Contains("USING gin (data)");
+    await Assert.That(sourceText).DoesNotContain("USING gin (data)");
     await Assert.That(sourceText).DoesNotContain("USING gin (metadata)");
     await Assert.That(sourceText).Contains("USING gin (scope)");
 
     // Should have index names following convention
-    await Assert.That(sourceText).Contains("_data_gin");
+    await Assert.That(sourceText).DoesNotContain("_data_gin");
     await Assert.That(sourceText).DoesNotContain("_metadata_gin");
     await Assert.That(sourceText).Contains("_scope_gin");
   }

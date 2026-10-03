@@ -189,6 +189,11 @@ public class PhysicalFieldPromotionTests {
     await Assert.That(indexes["idx_promoted_item_name"]).Contains("btree (name)");
     await Assert.That(indexes["idx_promoted_item_name_fold_trgm"]).Contains("wh_fold(name) gin_trgm_ops");
     await Assert.That(indexes["idx_promoted_item_code_ci_trgm"]).Contains("lower(code) gin_trgm_ops");
-    await Assert.That(await ScalarAsync(_connectionString, "SELECT count(*) FROM wh_physical_column_fills")).IsEqualTo("0");
+    await Assert.That(await ScalarAsync(_connectionString, "SELECT count(*) FROM wh_physical_column_fills WHERE direction <> 'recorded'"))
+      .IsEqualTo("0");
+    await Assert.That(await ScalarAsync(_connectionString,
+      "SELECT string_agg(column_name || ':' || json_key, ',' ORDER BY column_name) FROM wh_physical_column_fills WHERE direction = 'recorded'"))
+      .IsEqualTo("code:Code,name:Name,rank:Rank")
+      .Because("each column is recorded as the framework's, under its field, so only it can later be demoted (#1022)");
   }
 }

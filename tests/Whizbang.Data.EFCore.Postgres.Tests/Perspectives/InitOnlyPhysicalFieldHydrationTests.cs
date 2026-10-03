@@ -35,6 +35,7 @@ public class InitOnlyPhysicalFieldHydrationTests : EFCoreTestBase {
   private const string SPLIT_TABLE = "wh_per_init_only_split";
   private const string EXTRACTED_TABLE = "wh_per_init_only_extracted";
   private const string EXTRACTED_CLASS_TABLE = "wh_per_init_only_extracted_class";
+  private const string SPLIT_CLASS_TABLE = "wh_per_init_only_split_class";
 
   private static void _registerGeneratedHydrators() {
     GeneratedModelRegistration.Initialize();
@@ -152,5 +153,57 @@ public class InitOnlyPhysicalFieldHydrationTests : EFCoreTestBase {
       .Because("a settable property of a class is assigned from its column");
     await Assert.That(row.Data.Status).IsEqualTo("active")
       .Because("an init-only property of a class cannot be assigned after construction, and an Extracted document holds it");
+  }
+
+  [Test]
+  public async Task SplitClass_TheRunnerWritesAStrippedCopy_SnapshotsTheModelItApplied_AndAQueryCopiesTheColumnsBackAsync() {
+    var streamId = Guid.CreateVersion7();
+    var eventStore = new InMemoryEventStore();
+    await _appendAsync(eventStore, _event(streamId));
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    var snapshotStore = new EFCorePerspectiveSnapshotStore(dataSource);
+    await using (var writeContext = CreateDbContext()) {
+      var provider = _services<InitOnlySplitClassPerspective>();
+      var runner = new InitOnlySplitClassPerspectiveRunner(
+          provider, provider.GetRequiredService<ILogger<InitOnlySplitClassPerspectiveRunner>>(), eventStore,
+          new EFCorePostgresPerspectiveStore<InitOnlySplitClassModel>(writeContext, SPLIT_CLASS_TABLE),
+          provider.GetRequiredService<IServiceScopeFactory>(),
+          snapshotStore: snapshotStore,
+          snapshotOptions: Microsoft.Extensions.Options.Options.Create(new PerspectiveSnapshotOptions {
+            Enabled = true,
+            SnapshotEveryNEvents = 1,
+            MaxSnapshotsPerStream = 10
+          }));
+      var result = await runner.RunAsync(streamId, SPLIT_CLASS_TABLE, null, CancellationToken.None);
+      await Assert.That(result.EventsProcessed).IsEqualTo(1);
+    }
+
+    await using (var connection = new NpgsqlConnection(ConnectionString)) {
+      await connection.OpenAsync();
+      await using var command = new NpgsqlCommand(
+          $"SELECT status, priority, data ->> 'Status', data ->> 'Note' FROM {SPLIT_CLASS_TABLE} WHERE id = @id", connection);
+      command.Parameters.AddWithValue("id", streamId);
+      await using var reader = await command.ExecuteReaderAsync();
+      await Assert.That(await reader.ReadAsync()).IsTrue();
+      await Assert.That(reader.GetString(0)).IsEqualTo("active");
+      await Assert.That(reader.GetInt32(1)).IsEqualTo(7);
+      await Assert.That(await reader.IsDBNullAsync(2)).IsTrue()
+        .Because("the document is written from a copy with the promoted fields stripped");
+      await Assert.That(reader.GetString(3)).IsEqualTo("document");
+    }
+    var snapshot = await snapshotStore.GetLatestSnapshotAsync(streamId, SPLIT_CLASS_TABLE);
+    await Assert.That(snapshot!.Value.SnapshotData.RootElement.GetRawText()).Contains("active")
+      .Because("the copy was stripped, not the model the runner applied, so the snapshot after the write keeps the field");
+
+    _registerGeneratedHydrators();
+    await using var context = CreateDbContext();
+    SplitModeChangeTrackerHydrator.EnsureHooked(context);
+
+    var row = await context.Set<PerspectiveRow<InitOnlySplitClassModel>>().SingleAsync(r => r.Id == streamId);
+
+    await Assert.That(row.Data.Status).IsEqualTo("active")
+      .Because("an init-only field of a class reaches the model through a copy made with its column in it");
+    await Assert.That(row.Data.Priority).IsEqualTo(7);
+    await Assert.That(row.Data.Note).IsEqualTo("document");
   }
 }

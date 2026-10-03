@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Models;
 using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
@@ -123,6 +124,21 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
     return false;
   }
 
+  /// <summary>
+  /// Whether the property is a <c>[PhysicalField]</c> whose column is jsonb, declared or defaulted.
+  /// </summary>
+  private static bool _isPromotedToJsonb(IPropertySymbol propertySymbol) {
+    var attribute = propertySymbol.GetAttributes().FirstOrDefault(a =>
+      a.AttributeClass is { } attributeClass
+      && TypeNameUtilities.Display(attributeClass) == "Whizbang.Core.Perspectives.PhysicalFieldAttribute");
+    if (attribute is null) {
+      return false;
+    }
+
+    var declared = attribute.NamedArguments.FirstOrDefault(a => a.Key == "ColumnType").Value.Value as string;
+    return PhysicalFieldScalar.IsJsonb(declared ?? PhysicalFieldScalar.DefaultColumnType(propertySymbol.Type));
+  }
+
   private static void _checkPropertyForArray(
       SyntaxNodeAnalysisContext context,
       IPropertySymbol propertySymbol,
@@ -131,6 +147,12 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
     // Skip properties with [VectorField] attribute - these are intentionally float[]
     // for vector embeddings and are handled specially by the source generator
     if (_hasVectorFieldAttribute(propertySymbol)) {
+      return;
+    }
+
+    // Skip a [PhysicalField] stored as jsonb: the generated model keeps it out of the mapped document and
+    // reads and writes it as one converted value, so the change tracker never grows it in place.
+    if (_isPromotedToJsonb(propertySymbol)) {
       return;
     }
 

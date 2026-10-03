@@ -128,6 +128,29 @@ public class SagaClaimPruneStepTests {
     await Assert.That(SagaAbandonGuard.ClaimKey("S", sagaId)).StartsWith("saga-abandoned:");
   }
 
+  /// <summary>
+  /// The general expiry prune leaves every saga claim to this step: a completion claim lives out the
+  /// saga retention instead of going a day after its expiry, and an abandonment claim never goes (#999).
+  /// </summary>
+  [Test]
+  public async Task AddWhizbangSagas_RetainsEverySagaPrefixFromTheGeneralPrune_OnceEachAsync() {
+    var prior = SagaItemStreams.AppDefaultNamespace;
+    try {
+      var services = new ServiceCollection();
+      services.AddWhizbangSagas();
+      services.AddWhizbangSagas();
+
+      var retained = services
+        .Where(d => d.ServiceType == typeof(RetainedClaimKeyPrefix))
+        .Select(d => ((RetainedClaimKeyPrefix)d.ImplementationInstance!).KeyPrefix)
+        .ToList();
+      await Assert.That(retained).IsEquivalentTo(["saga-watchdog-sweep:", "saga-completed:", "saga-continuation:", "saga-abandoned:"]);
+      await Assert.That(SagaAbandonGuard.ClaimKey("S", Guid.Empty)).StartsWith(SagaClaimPruneStep.ABANDONED_CLAIM_PREFIX);
+    } finally {
+      SagaItemStreams.AppDefaultNamespace = prior;
+    }
+  }
+
   [Test]
   public async Task Options_ClaimRetention_MustBePositiveAsync() {
     await Assert.That(() => new SagaOptions { ClaimRetention = TimeSpan.Zero }).ThrowsExactly<ArgumentOutOfRangeException>();

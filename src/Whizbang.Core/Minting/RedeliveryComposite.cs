@@ -111,6 +111,12 @@ public sealed class RedeliveryComposite
   /// <summary>Original origin commit sequences, parallel to <see cref="InnerEventIds"/> (null = not carried).</summary>
   public List<long?>? InnerCommitSequences { get; init; }
 
+  /// <summary>
+  /// True when an operator asked for this redelivery (<see cref="RequestRedeliveryCommand.OperatorRequested"/>): the
+  /// receiving service applies it even when it is report-only, which opts out of automatic repair only.
+  /// </summary>
+  public bool OperatorRequested { get; init; }
+
   IReadOnlyList<Guid> IIdentityPreservingComposite.InnerEventIds => InnerEventIds;
 
   Guid IIdentityPreservingComposite.OriginServiceId => OriginServiceId;

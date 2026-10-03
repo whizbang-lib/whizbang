@@ -199,19 +199,16 @@ public static class JsonIndexSql {
 
     // Every name is kept within PostgreSQL's identifier limit. Truncated, the exact and the folded
     // names of a long property became one identifier and the second index was never created.
-    if (index.Ordered) {
-      var name = $"idx_{indexPrefix}_{suffix}{fold}_json";
-
+    if (OrderedIndex(index, qualifiedTable, indexPrefix) is { } ordered) {
       if (index.Superseded != JsonIndexCast.None) {
         // An index whose expression changed under the same name is never rebuilt: IF NOT EXISTS
         // matches by name alone. So the index over the old cast is dropped by its old name, cheaply
         // once it is gone, and the new one carries its store type in its name. The old name is
         // dropped as it was written: PostgreSQL truncates it the same way it did when creating it.
-        yield return $"DROP INDEX IF EXISTS {_schemaOf(qualifiedTable)}{name};";
-        name = $"idx_{indexPrefix}_{suffix}{fold}_{StoreType(index.Cast)}_json";
+        yield return $"DROP INDEX IF EXISTS {_schemaOf(qualifiedTable)}idx_{indexPrefix}_{suffix}{fold}_json;";
       }
 
-      yield return $"CREATE INDEX IF NOT EXISTS {PostgresIdentifiers.WithinLimit(name)} ON {qualifiedTable} ({element});";
+      yield return ordered.Statement;
     }
 
     if (index.Search) {
@@ -229,6 +226,31 @@ public static class JsonIndexSql {
       yield return $"CREATE INDEX IF NOT EXISTS {PostgresIdentifiers.WithinLimit($"idx_{indexPrefix}_{suffix}{fold}_trgm")} "
           + $"ON {qualifiedTable} USING gin ({element} gin_trgm_ops);";
     }
+  }
+
+  /// <summary>
+  /// The btree index a declaration's ordered kind builds, the one whose expression casts the extraction to the
+  /// field's type: its name and its statement, or null when the declaration asks for no ordering.
+  /// </summary>
+  /// <param name="index">The field's declaration.</param>
+  /// <param name="qualifiedTable">The table, schema-qualified.</param>
+  /// <param name="indexPrefix">The prefix index names carry.</param>
+  /// <returns>The name within the identifier limit, and the <c>CREATE INDEX IF NOT EXISTS</c> statement.</returns>
+  /// <remarks>
+  /// A stored-form type change hands this index to the migration, which drops it when it still casts to the old type
+  /// and builds it again from this statement (issue #1007).
+  /// </remarks>
+  public static (string Name, string Statement)? OrderedIndex(JsonIndexInfo index, string qualifiedTable, string indexPrefix) {
+    if (!index.Ordered) {
+      return null;
+    }
+
+    var suffix = index.JsonKey.ToLowerInvariant();
+    var fold = index.CaseInsensitive ? "_ci" : string.Empty;
+    var store = index.Superseded == JsonIndexCast.None ? string.Empty : $"_{StoreType(index.Cast)}";
+    var name = PostgresIdentifiers.WithinLimit($"idx_{indexPrefix}_{suffix}{fold}{store}_json");
+    var element = Expression("data", index.JsonKey, index.Cast, index.CaseInsensitive);
+    return (name, $"CREATE INDEX IF NOT EXISTS {name} ON {qualifiedTable} ({element});");
   }
 
   /// <summary>The function that drops a promoted field's document index, defined by migration 179.</summary>

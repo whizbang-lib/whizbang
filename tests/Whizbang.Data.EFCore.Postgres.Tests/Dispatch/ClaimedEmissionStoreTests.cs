@@ -356,6 +356,64 @@ public class ClaimedEmissionStoreTests : EFCoreTestBase {
       .Because("the prefix is matched literally: another prefix, or one a LIKE wildcard would stretch to, is not the caller's to prune");
   }
 
+  /// <summary>
+  /// The general expiry prune deletes a claim whose expiry passed, keeps one that has not expired, and
+  /// keeps a claim under a retained prefix however long ago it expired (the saga framework's abandonment
+  /// claims, #999). A retained prefix is literal, so a key a LIKE wildcard would match is not kept.
+  /// </summary>
+  [Test]
+  public async Task PruneExpired_RemovesExpiredClaims_AndKeepsRetainedPrefixesAndUnexpiredOnesAsync() {
+    await using var ctx = CreateDbContext();
+    var store = new EFCoreClaimedEmissionStore(ctx);
+    var run = Guid.NewGuid().ToString("N");
+    var expired = $"publish-once-{run}:expired";
+    var live = $"publish-once-{run}:live";
+    var retained = $"keep_{run}:abandoned";
+    var wildcardLookalike = $"keepX{run}:abandoned";
+    foreach (var key in new[] { expired, live, retained, wildcardLookalike }) {
+      await store.TryClaimAsync(key, TrackedGuid.New(), CancellationToken.None);
+    }
+    // Long expired, so the cutoff below reaches these rows and no other test's.
+    foreach (var key in new[] { expired, retained, wildcardLookalike }) {
+      await _executeAsync(ctx, "UPDATE wh_unique_emission_claims SET expires_at = NOW() - INTERVAL '400 days' WHERE claim_key = @key", key);
+    }
+
+    var pruned = await store.PruneExpiredAsync(DateTimeOffset.UtcNow.AddDays(-300), [$"keep_{run}:"], 100, CancellationToken.None);
+
+    await Assert.That(pruned).IsEqualTo(2);
+    var left = await store.FindClaimedAsync([expired, live, retained, wildcardLookalike], CancellationToken.None);
+    await Assert.That(left).IsEquivalentTo([live, retained]);
+  }
+
+  [Test]
+  public async Task PruneExpired_DeletesAtMostTheBatch_OldestExpiryFirstAsync() {
+    await using var ctx = CreateDbContext();
+    var store = new EFCoreClaimedEmissionStore(ctx);
+    var run = Guid.NewGuid().ToString("N");
+    var oldest = $"batch-{run}:oldest";
+    var older = $"batch-{run}:older";
+    await store.TryClaimAsync(oldest, TrackedGuid.New(), CancellationToken.None);
+    await store.TryClaimAsync(older, TrackedGuid.New(), CancellationToken.None);
+    await _executeAsync(ctx, "UPDATE wh_unique_emission_claims SET expires_at = NOW() - INTERVAL '500 days' WHERE claim_key = @key", oldest);
+    await _executeAsync(ctx, "UPDATE wh_unique_emission_claims SET expires_at = NOW() - INTERVAL '450 days' WHERE claim_key = @key", older);
+
+    var pruned = await store.PruneExpiredAsync(DateTimeOffset.UtcNow.AddDays(-300), [], 1, CancellationToken.None);
+
+    await Assert.That(pruned).IsEqualTo(1);
+    await Assert.That(await store.FindClaimedAsync([oldest, older], CancellationToken.None)).IsEquivalentTo([older]);
+  }
+
+  [Test]
+  public async Task PruneExpired_RejectsANonPositiveBatchAndNullPrefixesAsync() {
+    await using var ctx = CreateDbContext();
+    var store = new EFCoreClaimedEmissionStore(ctx);
+
+    await Assert.That(() => store.PruneExpiredAsync(DateTimeOffset.UtcNow, [], 0, CancellationToken.None))
+      .ThrowsExactly<ArgumentOutOfRangeException>();
+    await Assert.That(() => store.PruneExpiredAsync(DateTimeOffset.UtcNow, null!, 1, CancellationToken.None))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
   // ── Helpers ──────────────────────────────────────────────────────────
 
   private static async Task _executeAsync(DbContext ctx, string sql, string? key) {

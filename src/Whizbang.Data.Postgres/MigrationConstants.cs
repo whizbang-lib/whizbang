@@ -54,8 +54,9 @@ public static partial class MigrationConstants {
 
   /// <summary>
   /// Parses the constants file: <c>#</c> comments and blank lines are skipped; every other line is
-  /// <c>__TOKEN__ = value</c>. A reserved, malformed or duplicate token, an empty value, or a token that is a
-  /// substring of another (one substitution would eat the other) is a defect in the file and throws.
+  /// <c>__TOKEN__ = value</c>. A reserved, malformed or duplicate token, an empty value, a value with a brace (the EF
+  /// Core path cannot carry one), or a token that is a substring of another (one substitution would eat the other) is
+  /// a defect in the file and throws.
   /// </summary>
   internal static IReadOnlyList<KeyValuePair<string, string>> Parse(string text) {
     ArgumentNullException.ThrowIfNull(text);
@@ -94,6 +95,12 @@ public static partial class MigrationConstants {
     }
     if (value.Length == 0) {
       throw new InvalidDataException($"constants.txt line {lineNumber}: '{token}' has no value.");
+    }
+    // The EF Core schema path doubles every brace in a migration for ExecuteSqlRawAsync and substitutes the constants
+    // after, so a brace in a value would reach the format parser unescaped and fail schema setup. Write a path as
+    // ARRAY['a','b'] rather than '{a,b}'.
+    if (value.AsSpan().IndexOfAny('{', '}') >= 0) {
+      throw new InvalidDataException($"constants.txt line {lineNumber}: '{token}' has a brace in its value; the EF Core schema path cannot carry one. Write a JSON path as ARRAY['a','b'].");
     }
     return new KeyValuePair<string, string>(token, value);
   }

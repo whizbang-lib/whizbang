@@ -31,11 +31,28 @@ public static class ModelRegistrationRegistry {
     }
   }
 
-  /// <summary>Clears registrars and the invoked set; for tests that share this process-wide registry.</summary>
-  internal static void ResetForTesting() {
+  /// <summary>
+  /// Clears registrars and the invoked set; for tests that share this process-wide registry. The
+  /// returned scope puts the registrars back: they come from module initializers, which never run
+  /// again, so a reset that is not undone silently unregisters every generated model for the rest of
+  /// the process.
+  /// </summary>
+  internal static IDisposable ResetForTesting() {
     lock (_lock) {
+      var saved = _registrars.ToArray();
       _registrars.Clear();
       _invoked.Clear();
+      return new RegistrarRestore(saved);
+    }
+  }
+
+  private sealed class RegistrarRestore(Action<IServiceCollection, Type, IDbUpsertStrategy>[] saved) : IDisposable {
+    public void Dispose() {
+      lock (_lock) {
+        _registrars.Clear();
+        _registrars.AddRange(saved);
+        _invoked.Clear();
+      }
     }
   }
 
