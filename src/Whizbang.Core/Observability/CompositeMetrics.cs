@@ -45,6 +45,8 @@ public sealed class CompositeMetrics {
       description: "Collective events applied to the collective sink");
     CollectivesSkipped = meter.CreatePassiveCounter<long>("whizbang.collectives.skipped",
       description: "Collective events the sink skipped (already applied or filtered)");
+    CollectivesPredecessorTimedOut = meter.CreatePassiveCounter<long>("whizbang.collectives.predecessor_timed_out",
+      description: "Collective events applied without their predecessor on the ordering key, after waiting the configured time for it");
   }
 
   /// <summary>Composite inbox rows the dispatcher took up.</summary>
@@ -76,4 +78,7 @@ public sealed class CompositeMetrics {
 
   /// <summary>Collective events the sink skipped.</summary>
   public PassiveCounter<long> CollectivesSkipped { get; }
+
+  /// <summary>Collective events applied without their predecessor after the wait for it ran out (#1003).</summary>
+  public PassiveCounter<long> CollectivesPredecessorTimedOut { get; }
 }

@@ -636,7 +636,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     if (currentIsPerspectiveScoped) {
       return false;
     }
-    var prior = await _dedupStore.TryGetPriorInvocationAsync(ctx.Envelope, receptor.ReceptorId, cancellationToken).ConfigureAwait(false);
+    // Once per service: only a record this service wrote stops the receptor, unless it is marked to run
+    // once across services. A host that does not know its own name compares with every record, as before.
+    var serviceName = receptor.IsOnceAcrossServices ? null : _serviceName;
+    var prior = await _dedupStore.TryGetPriorInvocationAsync(ctx.Envelope, receptor.ReceptorId, serviceName, cancellationToken).ConfigureAwait(false);
     if (prior is null) {
       return false;
     }

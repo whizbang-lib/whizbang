@@ -237,6 +237,14 @@ public partial class PerspectiveWorker(
 
   /// <summary>How many sink streams have a row held back right now (#963); read by tests of the map's bound.</summary>
   internal int HeldBackSinkStreamCount => _collectiveSinkHeldBack.Count;
+
+  // #1003: when each collective started waiting for its predecessor, and the one wake per sink stream that re-offers a
+  // held collective's rows when its wait runs out.
+  private readonly CollectivePredecessorHolds _collectivePredecessorHolds = new(timeProvider ?? TimeProvider.System);
+  private readonly ConcurrentDictionary<Guid, CollectiveHoldWake> _collectiveHoldWakes = new();
+
+  /// <summary>How many sink streams have a predecessor wake pending (#1003); read by tests.</summary>
+  internal int PendingCollectiveHoldWakes => _collectiveHoldWakes.Count;
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), StreamAffinityGateEntry> _streamAffinityGates = new();
   private readonly PerspectiveStreamAffinityOptions _streamAffinityOptions = streamAffinityOptions.Value;
   private long _lastStreamAffinitySweepTicks = DateTimeOffset.UtcNow.Ticks;
@@ -320,6 +328,10 @@ public partial class PerspectiveWorker(
       _perspectiveNotificationListener.OnSignal -= _onPerspectiveSignal;
       _perspectiveSignalSubscribed = false;
     }
+    foreach (var wake in _collectiveHoldWakes.Values) {
+      wake.Timer.Dispose();
+    }
+    _collectiveHoldWakes.Clear();
     return base.StopAsync(cancellationToken);
   }
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions.Value;
@@ -3301,7 +3313,9 @@ public partial class PerspectiveWorker(
     if (batch is null) {
       return;
     }
-    var (collectiveEnvelopes, completedWorkIds) = batch.Value;
+    var collectiveEnvelopes = batch.Envelopes;
+    var completedWorkIds = batch.WorkIds;
+    var workIdByEventId = batch.WorkIdByEventId;
     if (collectiveEnvelopes.Count == 0) {
       // No collective event to dispatch, yet the sink rows were leased — the cursor already advanced
       // past them (a prior run applied the event and advanced the cursor without completing the row,
@@ -3314,10 +3328,17 @@ public partial class PerspectiveWorker(
     }
     _compositeMetrics?.CollectivesReceived.Add(collectiveEnvelopes.Count);
 
+    // #1003: each collective goes after its predecessor when both are in this run, and the run stops at the first one
+    // that has to wait for a predecessor this receiver has not seen yet.
+    collectiveEnvelopes = _orderAfterPredecessors(collectiveEnvelopes);
+    var (holdAt, holdFor) = await _findPredecessorHoldAsync(
+      collectiveEnvelopes, batch.QueuedEventIds, workCoordinator, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
+
     var session = sessionAccessor.GetSession(scope.ServiceProvider);
     var lastEventId = lastProcessedEventId ?? Guid.Empty;
+    var applied = new List<MessageEnvelope<IEvent>>(collectiveEnvelopes.Count);
 
-    foreach (var envelope in collectiveEnvelopes) {
+    foreach (var envelope in holdAt < 0 ? collectiveEnvelopes : collectiveEnvelopes.GetRange(0, holdAt)) {
       var collectiveEvent = (ICollectiveEvent)envelope.Payload;
       try {
         await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session,
@@ -3327,9 +3348,13 @@ public partial class PerspectiveWorker(
       } catch (CollectiveApplyLockBusyException busy) when (!_options.CollectiveLockBusyCountsAsFailure) {
         // Busy, not failed (#964): another batch holds the apply lock for the same table and scope, and this one
         // waited out every renewal of its bounded wait. Nothing is wrong with the event, so no failure is reported
-        // (the failure count drives dead-lettering) and nothing is completed: the rows stay and the collective is
-        // applied later. The ones applied before it in this run are re-applied then, in the same order.
+        // (the failure count drives dead-lettering) and its row is not completed: it applies later, in full, even
+        // if some of its batches committed. The collectives this run applied before it are complete (#1003), so the
+        // retry starts at this one.
         LogCollectiveApplyLockBusy(_logger, streamId, envelope.MessageId.Value, busy.Table, busy.WaitedSeconds);
+        await _completeAppliedCollectivesAsync(
+          scope, workCoordinator, streamId, applied, _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
+          lastEventId, reportCursor: true, cancellationToken).ConfigureAwait(false);
         return;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         // A failing collective apply must NOT crash the host. Without this guard the exception propagates out
@@ -3337,7 +3362,7 @@ public partial class PerspectiveWorker(
         // = StopHost — one poison collective event then crash-loops the whole service. Instead: report the
         // failure (records it + increments the __collective__ sink row's attempt count for eventual
         // dead-lettering), advance the cursor only to the last SUCCESSFUL event, and stop processing this
-        // stream's collective batch without re-throwing.
+        // stream's collective batch without re-throwing. The collectives applied before it are complete (#1003).
         LogErrorProcessingPerspectiveCursor(_logger, ex, CollectiveRouting.SINK_PERSPECTIVE_NAME, streamId);
         _metrics?.Errors.Add(1);
         var failure = new PerspectiveCursorFailure {
@@ -3348,39 +3373,207 @@ public partial class PerspectiveWorker(
           Error = ex.Message,
         };
         await _completionStrategy.ReportFailureAsync(failure, workCoordinator, cancellationToken).ConfigureAwait(false);
+        await _completeAppliedCollectivesAsync(
+          scope, workCoordinator, streamId, applied, _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
+          lastEventId, reportCursor: false, cancellationToken).ConfigureAwait(false);
         return;
       }
       _compositeMetrics?.CollectivesApplied.Add(1);
       lastEventId = envelope.MessageId.Value;
+      applied.Add(envelope);
+      _collectivePredecessorHolds.Forget(lastEventId);
     }
 
-    var completion = new PerspectiveCursorCompletion {
-      StreamId = streamId,
-      PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
-      LastEventId = lastEventId,
-      Status = PerspectiveProcessingStatus.Completed,
-      EventsProcessed = collectiveEnvelopes.Count,
-      ProcessedEventIds = [.. collectiveEnvelopes.Select(e => e.MessageId.Value)],
-    };
-    await _reportCompletionAndSignalSyncAsync(
-      completion, collectiveEnvelopes, workCoordinator, streamId,
-      CollectiveRouting.SINK_PERSPECTIVE_NAME, cancellationToken).ConfigureAwait(false);
+    if (holdAt >= 0) {
+      // The collectives before the held one are complete; the held one and every one behind it wait, held back for the
+      // next run on the stream, which the predecessor's arrival starts, or the wake when the wait runs out.
+      var appliedWorkIds = _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count);
+      await _completeAppliedCollectivesAsync(
+        scope, workCoordinator, streamId, applied, appliedWorkIds, lastEventId, reportCursor: true, cancellationToken)
+        .ConfigureAwait(false);
+      var waiting = sinkWorkIds.Except(appliedWorkIds).ToArray();
+      _settleHeldBackSinkRows(streamId, sinkWorkIds, waiting);
+      _wakeAfterPredecessorHold(streamId, waiting, holdFor);
+      return;
+    }
+
+    // Nothing on the stream is waiting any more, so a wake armed for an earlier hold has nothing left to re-offer.
+    if (_collectiveHoldWakes.TryRemove(streamId, out var pendingWake)) {
+      pendingWake.Timer.Dispose();
+    }
+    await _completeAppliedCollectivesAsync(
+      scope, workCoordinator, streamId, applied, completedWorkIds, lastEventId, reportCursor: true, cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// The run's collectives with each one moved after its predecessor when both are in the run (#1003). A receiver
+  /// applies a key's collectives in the order it committed them, the order they arrived, and transport can deliver
+  /// them in another order than they were sent; the predecessor link puts them back. Otherwise queue order is kept.
+  /// </summary>
+  private static List<MessageEnvelope<IEvent>> _orderAfterPredecessors(List<MessageEnvelope<IEvent>> envelopes) {
+    var byId = new Dictionary<Guid, MessageEnvelope<IEvent>>(envelopes.Count);
+    foreach (var envelope in envelopes) {
+      byId[envelope.MessageId.Value] = envelope;
+    }
+    var ordered = new List<MessageEnvelope<IEvent>>(envelopes.Count);
+    var placed = new HashSet<Guid>();
+    foreach (var envelope in envelopes) {
+      _placeAfterPredecessor(envelope, byId, placed, ordered);
+    }
+    return ordered;
+  }
+
+  /// <summary>Places a collective, its predecessor in the run first; a collective already placed is not placed again.</summary>
+  private static void _placeAfterPredecessor(
+      MessageEnvelope<IEvent> envelope, Dictionary<Guid, MessageEnvelope<IEvent>> byId, HashSet<Guid> placed,
+      List<MessageEnvelope<IEvent>> ordered) {
+    if (!placed.Add(envelope.MessageId.Value)) {
+      return;
+    }
+    if (((ICollectiveEvent)envelope.Payload).PredecessorId is { } predecessorId
+        && byId.TryGetValue(predecessorId, out var predecessor)) {
+      _placeAfterPredecessor(predecessor, byId, placed, ordered);
+    }
+    ordered.Add(envelope);
+  }
+
+  /// <summary>
+  /// The first of the run's collectives that has to wait for its predecessor, and how much longer, or -1 (#1003). A
+  /// collective waits when it names a predecessor of a type this receiver handles that it has not seen: neither earlier
+  /// in the run nor in its event store, or still queued behind a run that does not hold it. It waits at most
+  /// <see cref="PerspectiveWorkerOptions.CollectivePredecessorWaitSeconds"/>, then applies with a warning and a count.
+  /// A collective with no link, which is what a publisher that sends none produces, applies as it always did. Without
+  /// the sink queue there is no ordering to restore, so nothing waits.
+  /// </summary>
+  private async Task<(int Index, TimeSpan HoldFor)> _findPredecessorHoldAsync(
+      List<MessageEnvelope<IEvent>> envelopes, HashSet<Guid>? queuedEventIds, IWorkCoordinator workCoordinator,
+      IEventTypeProvider typeProvider, Guid streamId, CancellationToken cancellationToken) {
+    if (queuedEventIds is null || _options.CollectivePredecessorWaitSeconds <= 0) {
+      return (-1, TimeSpan.Zero);
+    }
+    var wait = TimeSpan.FromSeconds(_options.CollectivePredecessorWaitSeconds);
+    var handledTypes = EventTypeMatchingHelper.BuildTypeLookup(typeProvider.GetEventTypes());
+    var seenInRun = new HashSet<Guid>();
+    for (var i = 0; i < envelopes.Count; i++) {
+      var eventId = envelopes[i].MessageId.Value;
+      var collective = (ICollectiveEvent)envelopes[i].Payload;
+      if (collective.PredecessorId is { } predecessorId
+          && !seenInRun.Contains(predecessorId)
+          && collective.PredecessorType is { } predecessorType
+          && EventTypeMatchingHelper.TryResolveType(handledTypes, predecessorType, out _)
+          && (queuedEventIds.Contains(predecessorId)
+              || (await workCoordinator.FetchEventsByIdsAsync([predecessorId], cancellationToken).ConfigureAwait(false)).Count == 0)) {
+        var holdFor = _collectivePredecessorHolds.HoldFor(eventId, wait);
+        if (holdFor > TimeSpan.Zero) {
+          LogCollectiveHeldForPredecessor(_logger, streamId, eventId, predecessorId);
+          return (i, holdFor);
+        }
+        LogCollectivePredecessorTimedOut(_logger, streamId, eventId, predecessorId, _options.CollectivePredecessorWaitSeconds);
+        _compositeMetrics?.CollectivesPredecessorTimedOut.Add(1);
+      }
+      seenInRun.Add(eventId);
+    }
+    return (-1, TimeSpan.Zero);
+  }
+
+  /// <summary>
+  /// Re-offers a sink stream's held rows when its predecessor wait runs out (#1003), so a collective whose predecessor
+  /// never arrives applies then rather than when its lease lapses. One wake per stream: a later hold replaces it.
+  /// </summary>
+  private void _wakeAfterPredecessorHold(Guid streamId, Guid[] waitingWorkIds, TimeSpan holdFor) {
+    var wake = new CollectiveHoldWake(streamId, waitingWorkIds, _reofferHeldSinkRows);
+    // Created disarmed and armed once it is in the map, so it cannot fire before it can be found and disposed.
+    wake.Timer = _timeProvider.CreateTimer(
+      static state => ((CollectiveHoldWake)state!).Fire(), wake, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    _collectiveHoldWakes.AddOrUpdate(streamId, wake, (_, replaced) => {
+      replaced.Timer.Dispose();
+      return wake;
+    });
+    wake.Timer.Change(holdFor, Timeout.InfiniteTimeSpan);
+  }
+
+  /// <summary>Puts a held stream's rows back on the perspective channel; the run they start takes the held rows over.</summary>
+  private void _reofferHeldSinkRows(CollectiveHoldWake wake) {
+    _collectiveHoldWakes.TryRemove(new KeyValuePair<Guid, CollectiveHoldWake>(wake.StreamId, wake));
+    wake.Timer.Dispose();
+    foreach (var workId in wake.WorkIds) {
+      _perspectiveChannelWriter.TryWrite(new PerspectiveWork {
+        WorkId = workId,
+        StreamId = wake.StreamId,
+        PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
+      });
+    }
+  }
+
+  /// <summary>A pending predecessor wake: the stream, the rows it re-offers and the timer that fires it.</summary>
+  private sealed class CollectiveHoldWake(Guid streamId, Guid[] workIds, Action<CollectiveHoldWake> onFire) {
+    public Guid StreamId { get; } = streamId;
+    public Guid[] WorkIds { get; } = workIds;
+    public ITimer Timer { get; set; } = null!;
+    public void Fire() => onFire(this);
+  }
+
+  /// <summary>
+  /// The work rows to complete when a run stops after applying only the first <paramref name="appliedCount"/> of its
+  /// collectives: every row the run completes except those of the collectives it did not apply. Without the queue the
+  /// rows are not tied to collectives, so none is completed; the cursor alone records the progress.
+  /// </summary>
+  private static Guid[] _workIdsOfApplied(
+      Guid[] completedWorkIds, Dictionary<Guid, Guid>? workIdByEventId,
+      List<MessageEnvelope<IEvent>> collectiveEnvelopes, int appliedCount) {
+    if (workIdByEventId is null) {
+      return [];
+    }
+    var notApplied = new HashSet<Guid>();
+    for (var i = appliedCount; i < collectiveEnvelopes.Count; i++) {
+      notApplied.Add(workIdByEventId[collectiveEnvelopes[i].MessageId.Value]);
+    }
+    return [.. completedWorkIds.Where(id => !notApplied.Contains(id))];
+  }
+
+  /// <summary>
+  /// Completes the collectives a sink run applied (#1003): a collective is complete as soon as every one of its batches
+  /// has committed, whether or not the run goes on to apply the ones behind it. Reports the cursor at the last applied
+  /// collective (unless a failure report already carries it), completes their work rows by event_work_id, and runs
+  /// them through the post-apply lifecycle.
+  /// </summary>
+  private async Task _completeAppliedCollectivesAsync(
+      AsyncServiceScope scope, IWorkCoordinator workCoordinator, Guid streamId,
+      List<MessageEnvelope<IEvent>> applied, Guid[] workIds, Guid lastEventId, bool reportCursor,
+      CancellationToken cancellationToken) {
+    if (applied.Count == 0) {
+      return;
+    }
+    if (reportCursor) {
+      var completion = new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
+        LastEventId = lastEventId,
+        Status = PerspectiveProcessingStatus.Completed,
+        EventsProcessed = applied.Count,
+        ProcessedEventIds = [.. applied.Select(e => e.MessageId.Value)],
+      };
+      await _reportCompletionAndSignalSyncAsync(
+        completion, applied, workCoordinator, streamId,
+        CollectiveRouting.SINK_PERSPECTIVE_NAME, cancellationToken).ConfigureAwait(false);
+    }
 
     // Delete the sink's own __collective__ work rows by event_work_id. The cursor completion above only
     // advances the cursor + marks processed_at by event_id — it does NOT delete the wh_perspective_events
     // rows. Standard perspectives get the DELETE via _bufferCompletionsAndUpdateCache; the sink must do the
     // same here or claim_orphaned re-leases the row forever and re-dispatches the whole-cohort UPDATE — a
     // production death spiral (re-dispatch loop → ~95% table bloat → lock convoy).
-    _completeCollectiveSinkWorkRows(completedWorkIds);
+    _completeCollectiveSinkWorkRows(workIds);
 
     // The apply is now durably complete. A collective event has no per-stream runner, so it never reaches
     // the normal PostAllPerspectives gate — but the apply finishing IS its "all perspectives complete"
     // moment. Run each applied event through the PostAllPerspectives + PostLifecycle lifecycle so
     // PostAllPerspectives receptors (e.g. a completion-notification emitter) fire and any [NotificationTag]
     // on the collective event is processed. Without this, a UI waiting on a completion tag never learns the
-    // set-based apply finished (the "Template Activating" toast hang). Only reached on the success path —
-    // a failed apply returns above, so we never signal completion for an apply that did not happen.
-    await _fireCollectivePostApplyLifecycleAsync(scope, streamId, collectiveEnvelopes, cancellationToken)
+    // set-based apply finished (the "Template Activating" toast hang). Only applied collectives get here, so we
+    // never signal completion for an apply that did not happen.
+    await _fireCollectivePostApplyLifecycleAsync(scope, streamId, applied, cancellationToken)
       .ConfigureAwait(false);
   }
 
@@ -3401,7 +3594,7 @@ public partial class PerspectiveWorker(
   /// ordering key share this stream, and the queue is what keeps them in line; without it the stream is read after
   /// its cursor.
   /// </summary>
-  private async Task<(List<MessageEnvelope<IEvent>> Envelopes, Guid[] WorkIds)?> _loadCollectiveSinkBatchAsync(
+  private async Task<CollectiveSinkBatch?> _loadCollectiveSinkBatchAsync(
       IWorkCoordinator workCoordinator, IEventStore eventStore, IEventTypeProvider typeProvider, Guid streamId,
       Guid[] sinkWorkIds, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
     var queue = await workCoordinator.FetchCollectiveSinkQueueAsync(streamId, cancellationToken).ConfigureAwait(false);
@@ -3412,7 +3605,7 @@ public partial class PerspectiveWorker(
     var events = await eventStore.GetEventsBetweenPolymorphicAsync(
       streamId, lastProcessedEventId, Guid.Empty, typeProvider.GetEventTypes(), cancellationToken)
       .ConfigureAwait(false);
-    return ([.. events.Where(e => e.Payload is ICollectiveEvent)], sinkWorkIds);
+    return new CollectiveSinkBatch([.. events.Where(e => e.Payload is ICollectiveEvent)], sinkWorkIds);
   }
 
   /// <summary>
@@ -3428,7 +3621,7 @@ public partial class PerspectiveWorker(
   /// rather than blocking the queue forever. The events are read by id, never after the cursor, so a collective
   /// committed after one with a greater id is still applied, and in its place.
   /// </remarks>
-  private async Task<(List<MessageEnvelope<IEvent>> Envelopes, Guid[] WorkIds)?> _takeCollectiveQueueHeadAsync(
+  private async Task<CollectiveSinkBatch?> _takeCollectiveQueueHeadAsync(
       IReadOnlyList<CollectiveSinkQueueEntry> queue, Guid[] sinkWorkIds, IWorkCoordinator workCoordinator,
       IEventStore eventStore, IEventTypeProvider typeProvider, Guid streamId, CancellationToken cancellationToken) {
     var held = new HashSet<Guid>(sinkWorkIds);
@@ -3455,7 +3648,7 @@ public partial class PerspectiveWorker(
     // Rows this run holds that the queue does not were applied already; completing them is harmless and stops a loop.
     var completed = head.Select(e => e.EventWorkId).Concat(sinkWorkIds.Where(id => !queued.Contains(id))).ToArray();
     if (head.Count == 0) {
-      return ([], completed);
+      return new CollectiveSinkBatch([], completed);
     }
 
     var raw = await workCoordinator.FetchEventsByIdsAsync([.. head.Select(e => e.EventId)], cancellationToken).ConfigureAwait(false);
@@ -3464,13 +3657,27 @@ public partial class PerspectiveWorker(
       byId.TryAdd(envelope.MessageId.Value, envelope);
     }
     var envelopes = new List<MessageEnvelope<IEvent>>(head.Count);
+    var workIdByEventId = new Dictionary<Guid, Guid>(head.Count);
     foreach (var entry in head) {
       if (byId.TryGetValue(entry.EventId, out var envelope)) {
         envelopes.Add(envelope);
+        workIdByEventId[entry.EventId] = entry.EventWorkId;
       }
     }
-    return (envelopes, completed);
+    return new CollectiveSinkBatch(envelopes, completed, workIdByEventId, [.. pending.Select(e => e.EventId)]);
   }
+
+  /// <summary>
+  /// The collectives a sink run applies, in order, and the work rows it completes when they do. From the queue (#963)
+  /// it also maps each collective to its row, so a run that stops part-way completes only the rows of what it applied
+  /// (#1003), and names every collective still queued on the stream, so a collective whose predecessor is queued but
+  /// not in this run waits for it.
+  /// </summary>
+  private sealed record CollectiveSinkBatch(
+      List<MessageEnvelope<IEvent>> Envelopes,
+      Guid[] WorkIds,
+      Dictionary<Guid, Guid>? WorkIdByEventId = null,
+      HashSet<Guid>? QueuedEventIds = null);
 
   /// <summary>
   /// Runs each successfully-applied collective event through the terminal (PostAllPerspectives +
@@ -5125,6 +5332,18 @@ public partial class PerspectiveWorker(
   static partial void LogCollectiveApplyLockBusy(ILogger logger, Guid streamId, Guid eventId, string table, int waitedSeconds);
 
   [LoggerMessage(
+    EventId = 73,
+    Level = LogLevel.Debug,
+    Message = "Collective {EventId} on sink stream {StreamId} is waiting for its predecessor {PredecessorId}, which this receiver handles and has not seen yet")]
+  static partial void LogCollectiveHeldForPredecessor(ILogger logger, Guid streamId, Guid eventId, Guid predecessorId);
+
+  [LoggerMessage(
+    EventId = 74,
+    Level = LogLevel.Warning,
+    Message = "Collective {EventId} on sink stream {StreamId} waited {WaitSeconds}s for its predecessor {PredecessorId}, which has not arrived; applying it without the predecessor")]
+  static partial void LogCollectivePredecessorTimedOut(ILogger logger, Guid streamId, Guid eventId, Guid predecessorId, int waitSeconds);
+
+  [LoggerMessage(
     EventId = 71,
     Level = LogLevel.Debug,
     Message = "Collective sink stream {StreamId} is waiting for collective {HeadEventId}, which is ahead of it in commit order and not held by this run")]
@@ -5273,6 +5492,21 @@ public class PerspectiveWorkerOptions {
   /// <docs>fundamentals/messaging/collective-events</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_BusyApplyLock_IsNotReportedAsAFailure_AndKeepsItsRowAsync</tests>
   public bool CollectiveLockBusyCountsAsFailure { get; set; }
+
+  /// <summary>
+  /// How long a collective waits for its predecessor on its ordering key, in seconds (#1003). Default 30; zero or less
+  /// applies every collective at once, as before the link existed.
+  /// </summary>
+  /// <remarks>
+  /// A publisher links each keyed collective to the one it sent before it on the key. A receiver that handles the
+  /// predecessor's type and has not seen it holds the collective, then applies the two in order when the predecessor
+  /// arrives. When the wait runs out it logs a warning, counts it on <c>whizbang.collectives.predecessor_timed_out</c>,
+  /// and applies the collective without it. Keep the wait well under <see cref="LeaseSeconds"/>: a held collective's
+  /// rows are this instance's only while their lease lasts.
+  /// </remarks>
+  /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_Predecessor_WaitDisabled_AppliesAtOnceAsync</tests>
+  public int CollectivePredecessorWaitSeconds { get; set; } = 30;
 
   /// <summary>
   /// Lease duration in seconds.

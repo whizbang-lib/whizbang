@@ -791,6 +791,25 @@ public class DispatcherCoverageSweepOutboxTests {
     await Assert.That(logs.Any(m => m.Contains("Suppressed re-broadcast", StringComparison.Ordinal))).IsTrue();
   }
 
+  /// <summary>
+  /// A keyed collective cascaded by its runtime type marks its outbox row for a predecessor link, as one published by
+  /// its static type does (#1003); an unkeyed one does not. The store makes the link.
+  /// </summary>
+  [Test]
+  public async Task PublishToOutboxDynamic_KeyedCollective_MarksItsRowForALinkAsync() {
+    var strategy = new SweepWorkStrategy();
+    var dispatcher = new SweepOutboxDispatcher(_buildProvider(strategy: strategy));
+    var keyed = new DispatcherKeyedCollectiveStreamTests.KeyedFlipCollectiveEvent { Scope = new Whizbang.Core.Messaging.TenantCollectiveScope("t-1"), OrderingKey = "family-7" };
+    var unkeyed = new DispatcherKeyedCollectiveStreamTests.KeyedFlipCollectiveEvent { Scope = new Whizbang.Core.Messaging.TenantCollectiveScope("t-1") };
+    unkeyed.StreamId = Guid.CreateVersion7();
+
+    await dispatcher.CallPublishToOutboxDynamicAsync(keyed, keyed.GetType(), MessageId.New());
+    await dispatcher.CallPublishToOutboxDynamicAsync(unkeyed, unkeyed.GetType(), MessageId.New());
+
+    await Assert.That(strategy.Queued[0].CollectiveLinkType).IsEqualTo(TypeNameFormatter.Format(typeof(DispatcherKeyedCollectiveStreamTests.KeyedFlipCollectiveEvent)));
+    await Assert.That(strategy.Queued[1].CollectiveLinkType).IsNull();
+  }
+
   [Test]
   public async Task PublishToOutboxDynamic_RegisteredEvent_QueuesFullyBuiltOutboxMessageAsync() {
     // Arrange - the event type is registered in the generated JsonSerializerContext,

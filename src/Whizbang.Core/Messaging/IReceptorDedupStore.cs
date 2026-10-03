@@ -48,6 +48,29 @@ public interface IReceptorDedupStore {
     CancellationToken cancellationToken);
 
   /// <summary>
+  /// Returns a prior <see cref="ReceptorInvocationRecord"/> for <paramref name="receptorId"/> that
+  /// <paramref name="serviceName"/> wrote, or null if the receptor has not fired for this message in
+  /// that service.
+  /// </summary>
+  /// <remarks>
+  /// A receptor runs once per message in each service, so a record another service wrote does not
+  /// count. Service names compare without regard to case. A <see langword="null"/>
+  /// <paramref name="serviceName"/> asks for a record from any service, as a receptor marked
+  /// <see cref="ReceptorOnceAcrossServicesAttribute"/> does, and a record that names no service counts
+  /// for every service, since it cannot be placed.
+  /// </remarks>
+  /// <docs>fundamentals/receptors/exactly-once-firing#once-per-service</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_RecordFromAnotherService_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_RecordFromThisService_ReturnsItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_NoServiceName_ReturnsARecordFromAnyServiceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EnvelopeReceptorDedupStoreTests.cs:TryGetPriorInvocationForService_RecordNamingNoService_CountsForEveryServiceAsync</tests>
+  ValueTask<ReceptorInvocationRecord?> TryGetPriorInvocationAsync(
+    IMessageEnvelope envelope,
+    string receptorId,
+    string? serviceName,
+    CancellationToken cancellationToken);
+
+  /// <summary>
   /// Records that a receptor has successfully fired for this envelope.
   /// </summary>
   /// <remarks>

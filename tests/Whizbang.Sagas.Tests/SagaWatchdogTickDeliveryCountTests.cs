@@ -5,6 +5,8 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Sagas.Models;
+using Whizbang.Sagas.Services;
 using Whizbang.Sagas.Tests.Generators;
 
 namespace Whizbang.Sagas.Tests;
@@ -141,8 +143,8 @@ public class SagaWatchdogTickDeliveryCountTests {
   /// <summary>Each host that receives a tick handles it once, whether it was published there or not.</summary>
   /// <remarks>
   /// Ticks share one topic, so a second service that declares a saga of the same name receives every
-  /// tick for it and handles it once, as the hand-written router does. Running one saga in two
-  /// differently named services is not a supported topology for the watchdog: each would check it.
+  /// tick for it and handles it once, as the hand-written router does. Each service checks its own saga
+  /// state on it (#1005).
   /// </remarks>
   /// <param name="scheduled">Whether the tick is scheduled or published for now.</param>
   [Test]
@@ -165,5 +167,83 @@ public class SagaWatchdogTickDeliveryCountTests {
 
     await Assert.That(_handlings(publisher, tick)).IsEqualTo(1);
     await Assert.That(_handlings(otherHost, tick)).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Two differently named services that declare the same saga each handle every tick for it, and each checks its
+  /// own saga state (#1005): the service whose saga has completed ends its chain, the one whose saga still runs
+  /// re-arms it. There is no claim across services.
+  /// </summary>
+  [Test]
+  public async Task Tick_TwoServicesDeclaringTheSameSaga_EachChecksItsOwnStateAsync() {
+    var sagaId = Guid.CreateVersion7();
+    var entityId = Guid.CreateVersion7();
+    var completedHere = new BaseSagaModel {
+      Id = sagaId,
+      SagaName = ProbeSaga.SagaName,
+      EntityId = entityId,
+      TotalItems = 2,
+      CompletedItems = 2,
+      CompletionEventDispatched = true,
+    };
+    var runningThere = new BaseSagaModel {
+      Id = sagaId,
+      SagaName = ProbeSaga.SagaName,
+      EntityId = entityId,
+      TotalItems = 2,
+      CompletedItems = 1,
+    };
+    await using var publisher = CapturedOutboxHost.Create(services => services.AddSingleton(_probeSagaState(completedHere)));
+    await using var otherService = CapturedOutboxHost.Create(services => {
+      services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(Guid.CreateVersion7(), "other-service", "host-b", 2));
+      services.AddSingleton(_probeSagaState(runningThere));
+    });
+    var tick = new SagaCompletionWatchdogTickEvent { StreamId = sagaId, SagaName = ProbeSaga.SagaName, EntityId = entityId };
+
+    await publisher.Dispatcher.PublishAsync(tick);
+    var row = _row(publisher, tick);
+    await _runStagesAsync(publisher, row.Rehydrate<SagaCompletionWatchdogTickEvent>(), [.. _stagesAfterTheOutbox, .. _stagesOfTheInbox]);
+    await _runStagesAsync(otherService, row.Rehydrate<SagaCompletionWatchdogTickEvent>(), _stagesOfTheInbox);
+
+    await Assert.That(publisher.Provider.GetRequiredService<PerServiceSagaState>().Outcomes).IsEquivalentTo([WatchdogTickOutcome.AlreadyComplete])
+      .Because("the publishing service's own saga has completed, so its check ends the chain");
+    await Assert.That(otherService.Provider.GetRequiredService<PerServiceSagaState>().Outcomes).IsEquivalentTo([WatchdogTickOutcome.ReArmed])
+      .Because("the other service's saga is still running in its own state, so it checks it and re-arms");
+    await Assert.That(_handlings(publisher, tick)).IsEqualTo(0);
+    await Assert.That(_handlings(otherService, tick)).IsEqualTo(1);
+  }
+
+  /// <summary>A saga state for one service: a hand-written saga service reading that service's own projection.</summary>
+  private static Func<IServiceProvider, PerServiceSagaState> _probeSagaState(BaseSagaModel saga) => sp => {
+    var service = new ProbeSagaService(new DispatcherSagaEventEmitter(sp.GetRequiredService<IDispatcher>()), [new IncompleteSaga(saga, TenantId: null)]);
+    return new PerServiceSagaState(service.TryRecoverViaWatchdogTickAsync);
+  };
+}
+
+/// <summary>One service's saga state for <see cref="ProbeSaga"/>, and what each tick it handled concluded.</summary>
+public sealed class PerServiceSagaState(Func<SagaCompletionWatchdogTickEvent, CancellationToken, Task<WatchdogTickOutcome>> check) {
+  public List<WatchdogTickOutcome> Outcomes { get; } = [];
+
+  public async Task HandleAsync(SagaCompletionWatchdogTickEvent tick, CancellationToken cancellationToken) {
+    var outcome = await check(tick, cancellationToken);
+    lock (Outcomes) {
+      Outcomes.Add(outcome);
+    }
+  }
+}
+
+/// <summary>
+/// A hand-written tick receiver for <see cref="ProbeSaga"/>, declared as the generated one is: at the receiving side,
+/// for its own saga name. It checks the saga state of the service it runs in; a host that registers none ignores it.
+/// </summary>
+[FireAt(LifecycleStage.PreInboxInline)]
+public sealed class PerServiceProbeSagaTickReceptor(IEnumerable<PerServiceSagaState> states) : IReceptor<SagaCompletionWatchdogTickEvent> {
+  public async ValueTask HandleAsync(SagaCompletionWatchdogTickEvent message, CancellationToken cancellationToken = default) {
+    if (message.SagaName != ProbeSaga.SagaName) {
+      return;
+    }
+    foreach (var state in states) {
+      await state.HandleAsync(message, cancellationToken);
+    }
   }
 }
