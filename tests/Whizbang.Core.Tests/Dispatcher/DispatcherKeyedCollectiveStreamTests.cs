@@ -62,44 +62,27 @@ public sealed class DispatcherKeyedCollectiveStreamTests {
   }
 
   /// <summary>
-  /// The second keyed collective published on a key carries the first as its predecessor (#1003), so a receiver can
-  /// apply them in the order they were sent; a host without the tracker stamps nothing.
+  /// A keyed collective's outbox row is marked for a predecessor link with the type it is named by (#1003); the store
+  /// links it to the previous collective on its key in the storing transaction. An unkeyed collective is not marked.
   /// </summary>
-  /// <param name="withTracker">Whether the host registers the predecessor tracker.</param>
   [Test]
-  [Arguments(true)]
-  [Arguments(false)]
-  public async Task PublishAsync_SecondKeyedCollective_CarriesTheFirstAsItsPredecessorAsync(bool withTracker) {
-    var first = new KeyedFlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), OrderingKey = "family-7" };
-    var second = new KeyedFlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), OrderingKey = "family-7" };
-    var serializer = new PayloadCapturingSerializer();
+  public async Task PublishAsync_KeyedCollective_MarksItsOutboxRowForALinkAsync() {
+    var strategy = new CapturingStrategy();
     var dispatcher = _createDispatcher(services => {
-      services.AddSingleton<IEnvelopeSerializer>(serializer);
-      services.AddScoped<IWorkCoordinatorStrategy, DiscardingStrategy>();
-      if (withTracker) {
-        services.AddSingleton(new CollectivePredecessorTracker());
-      }
+      services.AddSingleton<IEnvelopeSerializer>(new PayloadCapturingSerializer());
+      services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     });
 
-    var firstReceipt = await dispatcher.PublishAsync(first);
-    await dispatcher.PublishAsync(second);
+    await dispatcher.PublishAsync(new KeyedFlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), OrderingKey = "family-7" });
+    await dispatcher.PublishAsync(new KeyedFlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1") });
 
-    await Assert.That(serializer.Serialized.Count).IsEqualTo(2)
-      .Because("both collectives went through the outbox, where the link is stamped");
-    await Assert.That(first.PredecessorId).IsNull();
-    if (withTracker) {
-      await Assert.That(second.PredecessorId).IsEqualTo(firstReceipt.MessageId.Value);
-      await Assert.That(second.PredecessorType).IsEqualTo(TypeNameFormatter.Format(typeof(KeyedFlipCollectiveEvent)));
-    } else {
-      await Assert.That(second.PredecessorId).IsNull();
-    }
+    await Assert.That(strategy.Queued.Count).IsEqualTo(2);
+    await Assert.That(strategy.Queued[0].CollectiveLinkType).IsEqualTo(TypeNameFormatter.Format(typeof(KeyedFlipCollectiveEvent)));
+    await Assert.That(strategy.Queued[1].CollectiveLinkType).IsNull();
   }
 
   private sealed class PayloadCapturingSerializer : IEnvelopeSerializer {
-    public List<object?> Serialized { get; } = [];
-
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
-      Serialized.Add(envelope.Payload);
       var json = new MessageEnvelope<System.Text.Json.JsonElement> {
         MessageId = envelope.MessageId,
         Payload = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
@@ -115,8 +98,9 @@ public sealed class DispatcherKeyedCollectiveStreamTests {
       throw new NotSupportedException();
   }
 
-  private sealed class DiscardingStrategy : IWorkCoordinatorStrategy {
-    public void QueueOutboxMessage(OutboxMessage message) { }
+  private sealed class CapturingStrategy : IWorkCoordinatorStrategy {
+    public List<OutboxMessage> Queued { get; } = [];
+    public void QueueOutboxMessage(OutboxMessage message) => Queued.Add(message);
     public void QueueInboxMessage(InboxMessage message) { }
     public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
     public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }

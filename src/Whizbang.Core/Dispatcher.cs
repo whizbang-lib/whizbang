@@ -310,10 +310,6 @@ public abstract partial class Dispatcher(
   // Ephemeral-mode resolver: stamps EventFlags.Ephemeral for [Ephemeral] events so the emit chain
   // offloads their body. Optional — null in minimal hosts, where the IEphemeralEvent marker still works.
   private readonly IEphemeralModeResolver? _ephemeralModeResolver = serviceProvider.GetService<IEphemeralModeResolver>();
-
-  // #1003: links each keyed collective to the one published before it on its key, so a receiver can apply them in the
-  // order they were sent. Absent, nothing is stamped and a collective travels as it always did.
-  private readonly CollectivePredecessorTracker? _collectivePredecessors = serviceProvider.GetService<CollectivePredecessorTracker>();
   // Priority step 1: the producer hooks that declare a message's priority at dispatch. Null when the host never
   // registered the chain, in which case envelopes go out undeclared exactly as before.
   private readonly Whizbang.Core.Priority.PriorityHookChain? _priorityHooks = serviceProvider.GetService<Whizbang.Core.Priority.PriorityHookChain>();
@@ -4110,7 +4106,6 @@ public abstract partial class Dispatcher(
       _propagateStreamIdFromSource(eventData, eventType, sourceEnvelope);
 
       // Serialize and create envelope
-      _collectivePredecessors?.Stamp(eventData, messageId.Value);
       var jsonEnvelope = _serializeToJsonEnvelope(eventData, eventType, messageId, new MessageDispatchContext { Mode = DispatchModes.Both, Source = MessageSource.Local });
       // Priority step 1: a cascade emission is declared like any other send; the ambient parent supplies inheritance,
       // and an explicit number on the options is kept.
@@ -4271,7 +4266,8 @@ public abstract partial class Dispatcher(
             | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(eventData, ephemeralModeResolver),
       Scope = _extractScope(jsonEnvelope),
       MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType),
-      Priority = jsonEnvelope.Priority
+      Priority = jsonEnvelope.Priority,
+      CollectiveLinkType = CollectivePredecessorLink.TypeFor(eventData)
     };
   }
 
@@ -5373,9 +5369,6 @@ public abstract partial class Dispatcher(
     // Extract stream_id: try aggregate ID from first hop, fall back to message ID
     var streamId = _extractStreamId(envelope);
 
-    // #1003: a keyed collective carries the one published before it on its key; stamped before it is serialized.
-    _collectivePredecessors?.Stamp(payload, envelope.MessageId.Value);
-
     // Guard: fail-fast if StreamId is Guid.Empty (indicates missing [GenerateStreamId] or unpopulated StreamId)
     if (payload is IEvent) {
       StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "Dispatcher.Outbox", TypeNameFormatter.DisplayName(payload.GetType()));
@@ -5432,7 +5425,8 @@ public abstract partial class Dispatcher(
       Scope = _extractScope(envelope),
       MessageType = serialized.MessageType,
       ScheduledFor = scheduledFor,
-      Priority = declaredPriority
+      Priority = declaredPriority,
+      CollectiveLinkType = CollectivePredecessorLink.TypeFor(payload)
     };
 
     // FINAL CHECK: Throw if ANY type string contains JsonElement

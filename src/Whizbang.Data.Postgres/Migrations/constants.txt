@@ -25,6 +25,12 @@ __ENVELOPE_FIELD_MESSAGE_ID__ = 'MessageId'
 __ENVELOPE_FIELD_STREAM_ID__ = 'StreamId'
 __ENVELOPE_FIELD_FLAGS__ = 'Flags'
 
+# Where a keyed collective's predecessor link is written in the stored envelope: the payload ('p') fields the
+# payload serializer gives CollectiveEventBase.PredecessorId and .PredecessorType (190). Written as ARRAY[...],
+# not '{p,...}': no constant may hold a brace (MigrationConstants rejects one; the EF Core path cannot carry it).
+__COLLECTIVE_PREDECESSOR_ID_PATH__ = ARRAY['p','predecessorId']
+__COLLECTIVE_PREDECESSOR_TYPE_PATH__ = ARRAY['p','predecessorType']
+
 # Work categories, as the claim and notify functions name them.
 __CATEGORY_INBOX__ = 'inbox'
 __CATEGORY_OUTBOX__ = 'outbox'

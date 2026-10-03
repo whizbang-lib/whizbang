@@ -73,15 +73,19 @@ public abstract record CollectiveEventBase : ICollectiveEvent {
 
   /// <inheritdoc/>
   /// <remarks>
-  /// Stamped by the dispatcher at publish, like <see cref="StreamId"/>, so it is settable; a producer leaves it alone.
-  /// Left out of the serialized event when there is no link, so an unlinked collective is written exactly as before.
+  /// Written by the store into the stored payload (migration 190) and read back on receipt, so it is settable; a
+  /// producer leaves it alone. Left out of the serialized event when there is no link, so an unlinked collective is
+  /// written exactly as before. The wire name is pinned, because the store writes the link under it (migration 190,
+  /// <c>{p,predecessorId}</c>) whatever naming the payload serializer would otherwise use.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorTrackerTests.cs:Stamp_SecondCollectiveOnAKey_CarriesTheFirstAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorLinkTests.cs:Serialization_TheLinkFields_HaveTheNamesTheStoreWritesAsync</tests>
+  [JsonPropertyName("predecessorId")]
   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   public Guid? PredecessorId { get; set; }
 
   /// <inheritdoc/>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorTrackerTests.cs:Stamp_SecondCollectiveOnAKey_CarriesTheFirstAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorLinkTests.cs:Serialization_TheLinkFields_HaveTheNamesTheStoreWritesAsync</tests>
+  [JsonPropertyName("predecessorType")]
   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   public string? PredecessorType { get; set; }
 }

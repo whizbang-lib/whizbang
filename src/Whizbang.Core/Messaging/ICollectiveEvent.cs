@@ -93,12 +93,13 @@ public interface ICollectiveEvent : IEvent {
   /// handle that type, when it has already seen the predecessor, or when the wait runs out.
   /// </para>
   /// <para>
-  /// The dispatcher stamps it on a <see cref="CollectiveEventBase"/> as it publishes; a hand-written collective that
-  /// wants the link derives from that base. It is not set by a producer.
+  /// The store writes it into a <see cref="CollectiveEventBase"/>'s payload in the transaction that stores it, from the
+  /// key's head, which every publisher instance shares (<see cref="CollectivePredecessorLink"/>); a hand-written
+  /// collective that wants the link derives from that base. It is not set by a producer.
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorTrackerTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorLinkTests.cs</tests>
   Guid? PredecessorId => null;
 
   /// <summary>
