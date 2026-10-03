@@ -94,6 +94,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // reflection. Empty when the model has no physical fields.
   #endregion
 
+  #region MEMBER_DEFAULT_REGISTRATION
+  // Generated: a model whose declaration states what a member reads as — a literal initializer, or the CLR
+  // default of a non-nullable value type — registers each one via a [ModuleInitializer], so a collective
+  // predicate filters a document with no key for that member as the value a rebuild would see (#1044).
+  // Empty when every member is nullable, which already agrees in both paths.
+  #endregion
+
   #region STREAM_GROUP_REGISTRATION
   // Generated: each [StreamGroup] membership registers via a [ModuleInitializer] (key + the
   // Announce/Follow/Bridge dials) so the maintenance cascade computes the eviction closure without

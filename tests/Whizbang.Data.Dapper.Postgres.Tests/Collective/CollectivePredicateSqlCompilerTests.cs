@@ -107,11 +107,15 @@ public class CollectivePredicateSqlCompilerTests {
   }
 
   [Test]
-  public async Task Compile_NullComparisonValue_BindsNullParameterAsync() {
+  public async Task Compile_NullComparisonValue_AsksWhetherTheKeyReadsAsNullAsync() {
     Expression<Func<PerspectiveRow<JobModel>, bool>> filter = row => row.Data.Status == null;
     var result = CollectivePredicateSqlCompiler<JobModel>.Compile(filter);
-    await Assert.That(result.SqlFragment).IsEqualTo("data->>'Status' = @where_status");
-    await Assert.That(result.Parameters["where_status"]).IsNull();
+    await Assert.That(result.SqlFragment).IsEqualTo("data->>'Status' IS NULL")
+      .Because("This previously compiled to `data->>'Status' = @where_status` with the parameter bound to null — "
+        + "`x = NULL`, which is NULL for every row, so the predicate could never hold and no collective filter "
+        + "could test for null at all (#1044). The old assertion pinned that shape without noticing it was inert.");
+    await Assert.That(result.Parameters.ContainsKey("where_status")).IsFalse()
+      .Because("A null test binds nothing; there is no value to compare against.");
   }
 
   [Test]
