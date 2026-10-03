@@ -27,6 +27,12 @@ public class CollectivePredicateDefaultSemanticsTests {
     // What the perspective generator emits for a member whose declaration carries an initializer. Members with no
     // declared default are deliberately left unregistered, so the tests below can hold the change to its scope.
     PerspectiveMemberDefaultRegistry.Register(typeof(DefaultedModel), nameof(DefaultedModel.Status), "Draft");
+
+    // A member that is BOTH promoted to a column and carries a default. The column is filled when it is added
+    // (#1021), so the document default must not be layered on top of it.
+    PerspectivePhysicalFieldRegistry.Register(
+      typeof(DefaultedModel), nameof(DefaultedModel.Rank), "rank", FieldStorageMode.Split);
+    PerspectiveMemberDefaultRegistry.Register(typeof(DefaultedModel), nameof(DefaultedModel.Rank), 0L);
   }
 
   [SuppressIndexAdvisory("test fixture; compiled to SQL text, never queried")]
@@ -34,6 +40,7 @@ public class CollectivePredicateDefaultSemanticsTests {
   private sealed class DefaultedModel {
     public string Status { get; init; } = "Draft";
     public string? Note { get; init; }
+    public long Rank { get; init; }
   }
 
   private static CollectivePredicateSqlCompiler<DefaultedModel>.CompiledWhereClause _compile(
@@ -116,5 +123,25 @@ public class CollectivePredicateDefaultSemanticsTests {
       .Because("A member that declares a default has no null to find: the absent key reads as the default, so the "
         + "test is false for every row — which is exactly what the replay reports, since the member cannot be null. "
         + "The two rules compose without either one special-casing the other.");
+  }
+
+  // ── Where the declared default must NOT be applied ───────────────────────────────────────
+
+  [Test]
+  public async Task Compile_AComparisonOnAPromotedColumn_DoesNotLayerTheDocumentDefaultOnItAsync() {
+    var result = _compile(r => r.Data.Rank == 3L);
+
+    await Assert.That(result.SqlFragment).DoesNotContain("COALESCE")
+      .Because("A promoted column is filled from the document when it is added (#1021), so it has a real value "
+        + "rather than an absent key. Coalescing it would describe a state the fill is there to prevent.");
+  }
+
+  [Test]
+  public async Task Compile_AComparisonOnTheRowId_DoesNotCoalesceAsync() {
+    var id = Guid.Parse("0199ffff-0000-7000-8000-00000000beef");
+    var result = _compile(r => r.Id == id);
+
+    await Assert.That(result.SqlFragment).DoesNotContain("COALESCE")
+      .Because("The row id is a real uuid column that every row has; there is no absent key to read as anything.");
   }
 }
