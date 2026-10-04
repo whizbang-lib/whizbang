@@ -110,6 +110,20 @@ public sealed class CanonicalTemporalConvention : IModelFinalizingConvention {
         if (converter is not null && property.GetValueConverter() is null) {
           property.SetValueConverter(converter);
           property.SetJsonValueReaderWriterType(CanonicalTemporalJsonReaderWriters.TypeFor(kind));
+          continue;
+        }
+
+        // A primitive collection holds its element's mapping on the element, so asking the property's
+        // own type answers for the collection and never for what is in it. The writer has no such
+        // restriction and stores each element in the canonical unit, so an element left with the
+        // provider's own reader makes the whole document unreadable the first time it is written.
+        if (property.GetElementType() is { } element) {
+          var elementKind = KindOf(element.ClrType);
+          var elementConverter = _converterFor(elementKind);
+          if (elementConverter is not null && element.GetValueConverter() is null) {
+            element.SetValueConverter(elementConverter);
+            element.SetJsonValueReaderWriterType(CanonicalTemporalJsonReaderWriters.TypeFor(elementKind));
+          }
         }
       }
     }
@@ -155,6 +169,18 @@ public sealed class CanonicalTemporalConvention : IModelFinalizingConvention {
         if (converter is not null) {
           property.Builder.HasConversion(converter, fromDataAnnotation: false);
           property.SetJsonValueReaderWriterType(CanonicalTemporalJsonReaderWriters.TypeFor(kind), fromDataAnnotation: false);
+          continue;
+        }
+
+        // See the element note in _apply: the element carries the mapping for a primitive collection.
+        if (property.GetElementType() is { } element) {
+          var elementKind = KindOf(element.ClrType);
+          var elementConverter = _converterFor(elementKind);
+          if (elementConverter is not null) {
+            element.Builder.HasConversion(elementConverter, fromDataAnnotation: false);
+            element.SetJsonValueReaderWriterType(
+              CanonicalTemporalJsonReaderWriters.TypeFor(elementKind), fromDataAnnotation: false);
+          }
         }
       }
     }
