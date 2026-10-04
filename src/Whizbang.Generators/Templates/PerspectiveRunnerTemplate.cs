@@ -390,23 +390,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // get re-claimed and would re-apply to a populated model — duplicating list-style
     // projection rows.
     //
-    // Idempotency filter — 3-way branch on what ordering info is available.
-    //
-    // Background: UUIDv7 event_ids can invert under concurrent emission (two events
-    // committed close together may have event_ids whose lex order doesn't reflect commit
-    // order). commit_sequence is the monotonic-per-database post-commit stamp that DOES
-    // reflect commit order. The filter compares whichever signal is reliable.
-    //
-    // 1) Both metadata.CommitSequence AND envelope.LocalCommitSequence present →
-    //    compare commit_sequence (authoritative).
-    // 2) Metadata has commit_sequence but envelope's is null (stamper hadn't caught up
-    //    when the drainer fetched this event) → DO NOT FILTER. event_id lex compare is
-    //    unreliable in commit_sequence mode (the UUIDv7 inversion this filter exists to
-    //    avoid), and dropping a never-applied event is silently lossy. Let Apply's
-    //    natural idempotency guards handle real duplicates.
-    // 3) Neither side has commit_sequence (single-source / no stamper world) → event_id
-    //    lex compare is sufficient because monotonic ordering holds without concurrent
-    //    emission.
+    // Idempotency filter. The decision lives in PerspectiveIdempotencyFilter so it is unit-tested
+    // once rather than per generated runner; see its tests for each case. In short: compare
+    // commit_sequence when both sides have one, compare event ids only when both are UUIDv7, and
+    // otherwise defer — an event that cannot be shown to be applied is passed to Apply, because a
+    // double-apply is visible and recoverable while a discarded event is neither.
     var existingMetadata = !modelLoadedFromDb
         ? null
         : rowVersion.IsChecked
@@ -417,17 +405,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     if (!string.IsNullOrEmpty(lastAppliedEventId) && events.Count > 0) {
       var filtered = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>(events.Count);
       foreach (var e in events) {
-        bool isAlreadyApplied;
-        if (lastAppliedCommitSequence.HasValue && e.LocalCommitSequence.HasValue) {
-          isAlreadyApplied = e.LocalCommitSequence.Value <= lastAppliedCommitSequence.Value;
-        } else if (lastAppliedCommitSequence.HasValue || e.LocalCommitSequence.HasValue) {
-          // Either side has cs but not both. The mode is "cs-world but stamper lag
-          // somewhere" — event_id lex compare is the UUIDv7 inversion we exist to avoid,
-          // and dropping a never-applied event is silently lossy. Defer to Apply.
-          isAlreadyApplied = false;
-        } else {
-          isAlreadyApplied = string.Compare(e.MessageId.Value.ToString("D"), lastAppliedEventId, StringComparison.Ordinal) <= 0;
-        }
+        var isAlreadyApplied = global::Whizbang.Core.Perspectives.PerspectiveIdempotencyFilter.IsAlreadyApplied(
+            lastAppliedEventId, lastAppliedCommitSequence, e.MessageId.Value, e.LocalCommitSequence);
         if (!isAlreadyApplied) {
           filtered.Add(e);
         }
@@ -441,14 +420,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // The events ARE done from the perspective-events table standpoint; the runner just
           // had no model work to do because the row already reflects them.
           //
-          // Structured diagnostic at Debug level — keeps the dropped-id list available for
-          // future investigations without flooding production logs. Re-promote to Warning
-          // (or Information) temporarily when investigating a suspected silent-drop incident.
-          // Gated on IsEnabled to skip the string.Join allocations when Debug logging is off.
-          if (_logger.IsEnabled(LogLevel.Debug)) {
+          // Warning, not Debug. Every event in the batch was judged already-applied, so this method is
+          // about to report Completed and have the work rows deleted without touching the model. When
+          // that judgement is right the line is redundant with the cursor; when it is wrong it is the
+          // only trace that a write was dropped, and at Debug nobody sees it. A whole batch filtered is
+          // rare enough in a healthy system to afford the level — the partial case below stays at Debug.
+          if (_logger.IsEnabled(LogLevel.Warning)) {
             var droppedIds = string.Join(",", events.Select(e => e.MessageId.Value.ToString("D")));
             var droppedSeqs = string.Join(",", events.Select(e => e.LocalCommitSequence?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
-            _logger.LogDebug(
+            _logger.LogWarning(
                 "[diag.filter.all-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] returning Completed (events will be deleted from wh_perspective_events)",
                 events.Count - filtered.Count,
                 perspectiveName,
