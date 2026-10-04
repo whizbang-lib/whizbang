@@ -297,6 +297,49 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   }
 
   /// <summary>
+  /// A wake that fires before the run that held the row has released it still applies the row (#1003). Re-offered
+  /// straight away, the row was deduped against that run's own reservation and waited for its lease to lapse; the
+  /// release now offers it. The worker is held inside the second arming, so the wake fires while the run is open.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_Predecessor_WakeFiringBeforeTheRunReleasesTheRow_StillAppliesItAsync() {
+    var clock = new HoldClock { HoldWorkerAtArm = 2 };
+    var streamId = TrackedGuid.New().Value;
+    var waiting = _sinkWork(streamId);
+    var waitingId = Guid.CreateVersion7();
+    var predecessorId = Guid.CreateVersion7();
+    var dispatcher = new FlipDispatcher(expected: 1);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [waiting],
+      eventStore: new EventStore { Deserialized = [_flip(waitingId, "b", predecessorId, _flipType)] },
+      registry: new Registry([typeof(FlipCollectiveEvent)]),
+      dispatcher: dispatcher,
+      timeProvider: clock,
+      predecessorWaitSeconds: 30);
+    coordinator.SinkQueue = [new CollectiveSinkQueueEntry(waiting.WorkId, waitingId, CommitSequence: 1)];
+    coordinator.MissingEventIds.Add(predecessorId);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await clock.HoldArmed(1).WaitAsync(TimeSpan.FromSeconds(10));
+    clock.Advance(TimeSpan.FromSeconds(10));
+    coordinator.OfferWork([waiting]);
+    await clock.HoldArmed(2).WaitAsync(TimeSpan.FromSeconds(10));
+    // The second run is held inside its arming, with the row still reserved, when the wake fires.
+    clock.Advance(TimeSpan.FromSeconds(20));
+    clock.ReleaseArm();
+    await dispatcher.AllDispatched.WaitAsync(TimeSpan.FromSeconds(10));
+    await harness.CompletionCapture.EventWorkIdsCaptured(waiting.WorkId).WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(dispatcher.Applied).IsEquivalentTo(["b"]);
+  }
+
+  /// <summary>
   /// A fake clock that reports each time a collective's predecessor wake is armed, and for how long: the deterministic
   /// signal that a sink run has decided to wait.
   /// </summary>
@@ -309,6 +352,17 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
 
     /// <summary>The wait of every wake armed so far, in order.</summary>
     public List<TimeSpan> ArmedFor { get; } = [];
+
+    /// <summary>
+    /// When set, the arming with this number holds the worker inside it, still inside the run that armed it, until
+    /// <see cref="ReleaseArm"/>: so a test can fire the wake before that run has released its rows.
+    /// </summary>
+    public int HoldWorkerAtArm { get; init; }
+
+    private readonly TaskCompletionSource _armGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Lets a worker held by <see cref="HoldWorkerAtArm"/> finish its run.</summary>
+    public void ReleaseArm() => _armGate.TrySetResult();
 
     /// <summary>Completes once <paramref name="count"/> wakes have been armed.</summary>
     public Task HoldArmed(int count) {
@@ -327,20 +381,22 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
         ? new ArmingTimer(base.CreateTimer(callback, state, dueTime, period), this)
         : base.CreateTimer(callback, state, dueTime, period);
 
-    private void _armed(TimeSpan dueTime) {
+    private int _armed(TimeSpan dueTime) {
       lock (_lock) {
         ArmedFor.Add(dueTime);
         foreach (var (_, signal) in _waiters.Where(w => ArmedFor.Count >= w.Count).ToList()) {
           signal.TrySetResult();
         }
+        return ArmedFor.Count;
       }
     }
 
     private sealed class ArmingTimer(ITimer inner, HoldClock clock) : ITimer {
       public bool Change(TimeSpan dueTime, TimeSpan period) {
         var changed = inner.Change(dueTime, period);
-        if (dueTime != Timeout.InfiniteTimeSpan) {
-          clock._armed(dueTime);
+        if (dueTime != Timeout.InfiniteTimeSpan && clock._armed(dueTime) == clock.HoldWorkerAtArm) {
+          // Blocks on purpose: the worker must stay inside the run that armed the wake.
+          clock._armGate.Task.Wait(TimeSpan.FromSeconds(30));
         }
         return changed;
       }
