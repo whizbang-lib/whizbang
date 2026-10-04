@@ -31,7 +31,8 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     object Message,
     Type MessageType,
     LifecycleStage Stage,
-    IScopeContext? Scope);
+    IScopeContext? Scope,
+    MessageChanges Changes);
 
   private readonly TagOptions _options;
   private readonly Func<Type, object?>? _hookResolver;
@@ -91,11 +92,21 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
   }
 
   /// <inheritdoc />
-  public async ValueTask ProcessTagsAsync(
+  public ValueTask ProcessTagsAsync(
       object message,
       Type messageType,
       LifecycleStage stage,
       IScopeContext? scope = null,
+      CancellationToken ct = default) =>
+    ProcessTagsAsync(message, messageType, stage, scope, changes: null, ct);
+
+  /// <inheritdoc />
+  public async ValueTask ProcessTagsAsync(
+      object message,
+      Type messageType,
+      LifecycleStage stage,
+      IScopeContext? scope,
+      MessageChanges? changes,
       CancellationToken ct = default) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (Logger.IsEnabled(LogLevel.Debug)) {
@@ -128,13 +139,13 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       }
       await using var serviceScope = _scopeFactory.CreateAsyncScope();
       object? scopedResolver(Type type) => serviceScope.ServiceProvider.GetService(type);
-      var tagCtx = new TagProcessingContext(message, messageType, stage, scope);
+      var tagCtx = new TagProcessingContext(message, messageType, stage, scope, changes ?? MessageChanges.For(message, messageType));
       await _processAllTagsAsync(tagCtx, scopedResolver, ct);
     } else {
       if (Logger.IsEnabled(LogLevel.Debug)) {
         Logger.LogDebug("[TAG PROCESSOR] Using direct hook resolver");
       }
-      var tagCtx = new TagProcessingContext(message, messageType, stage, scope);
+      var tagCtx = new TagProcessingContext(message, messageType, stage, scope, changes ?? MessageChanges.For(message, messageType));
       await _processAllTagsAsync(tagCtx, _hookResolver!, ct);
     }
 #pragma warning restore CA1848
@@ -247,6 +258,9 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       }
 
       var hookContext = _createContextForRegistration(registration, attribute, ctx.Message, ctx.MessageType, currentPayload, ctx.Scope, ctx.Stage);
+      if (hookContext is ITagContextChanges withChanges) {
+        withChanges.AssignChanges(ctx.Changes);
+      }
       currentPayload = await _invokeAndUpdatePayloadAsync(hookInstance, hookContext, registration.AttributeType, currentPayload, ct);
     }
 #pragma warning restore CA1848
@@ -398,6 +412,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
 
       // Create context with current payload
       var hookContext = _createHookContext(context, currentPayload, registration.AttributeType);
+      ((ITagContextChanges)hookContext).AssignChanges(context.Changes);
       var result = await _invokeHookAsync(hookInstance, hookContext, registration.AttributeType, ct);
 
       // Update payload if hook returned a modified one

@@ -349,11 +349,13 @@ public class MessageTagProcessorTests {
 
   private sealed class UniversalTrackingHook : IMessageTagHook<MessageTagAttribute> {
     public int InvokedCount { get; private set; }
+    public TagContext<MessageTagAttribute>? LastContext { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<MessageTagAttribute> _,
+        TagContext<MessageTagAttribute> context,
         CancellationToken ct) {
       InvokedCount++;
+      LastContext = context;
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -500,6 +502,73 @@ public class MessageTagProcessorTests {
     // Assert
     await Assert.That(hook.InvokedCount).IsEqualTo(1);
     await Assert.That(hook.LastContext?.Attribute.Tag).IsEqualTo("order-created");
+  }
+
+  /// <summary>
+  /// The changes a stage knows, a collective event's applied specs, reach the hook as they were given (#1045), and a
+  /// universal hook sees the same ones.
+  /// </summary>
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_WithChanges_TheHookReadsThemAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "order-created");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new TrackingHook();
+    var universal = new UniversalTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    options.UseUniversalHook<UniversalTrackingHook>();
+    var hooks = new Dictionary<Type, object> { [typeof(TrackingHook)] = hook, [typeof(UniversalTrackingHook)] = universal };
+    var processor = new MessageTagProcessor(options, hooks.GetValueOrDefault);
+    var changes = MessageChanges.ForCollective(new Dictionary<Type, IReadOnlyList<string>> {
+      [typeof(TaggedTestMessage)] = ["OrderId"],
+    });
+
+    await processor.ProcessTagsAsync(
+      new TaggedTestMessage("1"), typeof(TaggedTestMessage), LifecycleStage.PostAllPerspectivesInline, scope: null, changes);
+
+    await Assert.That(hook.LastContext!.Changes).IsSameReferenceAs(changes);
+    await Assert.That(universal.LastContext!.Changes).IsSameReferenceAs(changes);
+  }
+
+  /// <summary>Without changes from the stage, a per-stream event reports itself: its own properties.</summary>
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_WithoutChanges_TheEventReportsItselfAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "order-created");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new TrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+
+    await processor.ProcessTagsAsync(new TaggedTestMessage("1"), typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(hook.LastContext!.Changes.Kind).IsEqualTo(MessageChangeKind.Event);
+  }
+
+  /// <summary>A context handed to <c>ProcessAsync</c> carries its changes to every hook it reaches.</summary>
+  [Test]
+  public async Task ProcessAsync_CarriesTheContextsChangesToTheHookAsync() {
+    var hook = new TrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+    var changes = MessageChanges.ForCollective(new Dictionary<Type, IReadOnlyList<string>>());
+
+    await processor.ProcessAsync(new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "t" },
+      Message = new TaggedTestMessage("1"),
+      MessageType = typeof(TaggedTestMessage),
+      Payload = JsonDocument.Parse("{}").RootElement,
+      Changes = changes,
+    }, default);
+
+    await Assert.That(hook.LastContext!.Changes).IsSameReferenceAs(changes);
   }
 
   [Test]

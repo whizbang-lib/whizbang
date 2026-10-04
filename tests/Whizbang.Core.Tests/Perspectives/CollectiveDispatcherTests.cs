@@ -84,6 +84,36 @@ public class CollectiveDispatcherTests {
     await Assert.That(profileExecutor.InvokeCount).IsEqualTo(1);
   }
 
+  // ── Changed properties (#1045) ─────────────────────────────────────────
+
+  /// <summary>
+  /// The properties each model's spec assigned come back with the result, read from the spec the executor asked the
+  /// entry for, without calling the handler again; two handlers for one model add theirs together.
+  /// </summary>
+  [Test]
+  public async Task DispatchAsync_ReportsThePropertiesEachModelsSpecAssignedAsync() {
+    var calls = 0;
+    CollectiveApplyEntry entry<TModel>(Type handler, ICollectiveSpec<TModel> spec) where TModel : class =>
+      _entryFor<Archive>(typeof(TModel), handler) with { Invoker = (_, _, _) => { calls++; return spec; } };
+    var dispatcher = _build(
+      entries: [
+        entry(typeof(JobHandler), new Spec<JobModel>(s => s.SetProperty(j => j.Status, "Archived"))),
+        entry(typeof(JobHandler), new Spec<JobModel>(s => s.SetProperty(j => j.Status, "x").SetProperty(j => j.Owner, "y"))),
+        entry(typeof(ProfileHandler), new Spec<ProfileModel>(s => s.SetProperty(p => p.Name, "n"))),
+        _entryFor<Archive>(typeof(ProfileModel), typeof(ProfileHandler)),
+      ],
+      resolvers: [new StubResolver("tenant")],
+      executors: [new SpecExecutor(typeof(JobModel)), new SpecExecutor(typeof(ProfileModel))],
+      handlers: [new JobHandler(), new ProfileHandler()]);
+
+    var result = await dispatcher.DispatchAsync(
+      new Archive(new TenantScope("t-1"), [Guid.NewGuid()]), Guid.NewGuid(), new object(), cancellationToken: default);
+
+    await Assert.That(result.ChangedProperties[typeof(JobModel)]).IsEquivalentTo(["Status", "Owner"]);
+    await Assert.That(result.ChangedProperties[typeof(ProfileModel)]).IsEquivalentTo(["Name"]);
+    await Assert.That(calls).IsEqualTo(3).Because("each handler is asked for its spec once, by the executor");
+  }
+
   // ── No matching entry ─────────────────────────────────────────────────
 
   [Test]
@@ -288,6 +318,22 @@ public class CollectiveDispatcherTests {
 
   private sealed class JobModel {
     public string Status { get; set; } = string.Empty;
+    public string Owner { get; set; } = string.Empty;
+  }
+
+  private sealed record Spec<TModel>(Expression<Action<ICollectiveSetters<TModel>>> Setters) : ICollectiveSpec<TModel>
+    where TModel : class;
+
+  // Asks the entry for its spec once, as the drivers do.
+  private sealed class SpecExecutor(Type modelType) : ICollectiveEventExecutor {
+    public Type ModelType { get; } = modelType;
+    public Task<int> ApplyAsync(
+        CollectiveApplyEntry entry, object handlerInstance, ICollectiveEvent evt,
+        ICollectiveScopeResolver resolver, object dbContextOrSession, Guid collectiveEventId,
+        Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) {
+      _ = entry.Invoker(handlerInstance, evt, null!);
+      return Task.FromResult(1);
+    }
   }
 
   private sealed class ProfileModel {

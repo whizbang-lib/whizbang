@@ -29,7 +29,7 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:ICollectiveSpec_Setters_IsLinqExpressionTreeAsync</tests>
-public interface ICollectiveSpec<TModel> where TModel : class {
+public interface ICollectiveSpec<TModel> : ICollectiveSpecSetters where TModel : class {
   /// <summary>
   /// The LINQ expression tree describing the set of property assignments
   /// the SQL UPDATE should perform. Adapters walk this with
@@ -37,6 +37,9 @@ public interface ICollectiveSpec<TModel> where TModel : class {
   /// runtime reflection, AOT-clean by construction.
   /// </summary>
   Expression<Action<ICollectiveSetters<TModel>>> Setters { get; }
+
+  /// <inheritdoc />
+  LambdaExpression ICollectiveSpecSetters.UntypedSetters => Setters;
 
   /// <summary>
   /// Optional per-model WHERE projection. When non-null, the handler — which knows its own model — shapes
@@ -62,4 +65,16 @@ public interface ICollectiveSpec<TModel> where TModel : class {
   /// <docs>fundamentals/messaging/collective-events</docs>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveWhereComposerTests.cs:Framework_WithHandlerWhere_AndsScopeAndHandlerAsync</tests>
   Expression<Func<PerspectiveRow<TModel>, bool>>? Where => null;
+}
+
+/// <summary>
+/// A collective spec's setters without its model type, for the framework code that reads which properties a spec
+/// assigns (<see cref="CollectiveChangedProperties"/>) while holding the spec as an object. Every
+/// <see cref="ICollectiveSpec{TModel}"/> provides it; nothing implements it directly.
+/// </summary>
+/// <docs>fundamentals/messages/message-tags#changed-properties</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveChangedPropertiesTests.cs:AnySpec_ExposesItsSettersUntypedAsync</tests>
+public interface ICollectiveSpecSetters {
+  /// <summary>The spec's <see cref="ICollectiveSpec{TModel}.Setters"/>.</summary>
+  LambdaExpression UntypedSetters { get; }
 }

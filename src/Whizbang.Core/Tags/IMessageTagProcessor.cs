@@ -49,4 +49,26 @@ public interface IMessageTagProcessor {
       LifecycleStage stage,
       IScopeContext? scope = null,
       CancellationToken ct = default);
+
+  /// <summary>
+  /// Processes all tags for a message at the specified lifecycle stage, with the fields it changed (#1045): a
+  /// collective event's applied specs report them here, and hooks read them from
+  /// <see cref="TagContext{TAttribute}.Changes"/>.
+  /// </summary>
+  /// <param name="message">The processed message.</param>
+  /// <param name="messageType">The message type.</param>
+  /// <param name="stage">The lifecycle stage at which tags are being processed.</param>
+  /// <param name="scope">Optional security scope context.</param>
+  /// <param name="changes">The message's changes, or null for what the message itself describes.</param>
+  /// <param name="ct">Cancellation token.</param>
+  /// <docs>fundamentals/messages/message-tags#changed-properties</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs:ProcessTagsAsync_WithChanges_TheHookReadsThemAsync</tests>
+  ValueTask ProcessTagsAsync(
+      object message,
+      Type messageType,
+      LifecycleStage stage,
+      IScopeContext? scope,
+      MessageChanges? changes,
+      CancellationToken ct = default) =>
+    ProcessTagsAsync(message, messageType, stage, scope, ct);
 }

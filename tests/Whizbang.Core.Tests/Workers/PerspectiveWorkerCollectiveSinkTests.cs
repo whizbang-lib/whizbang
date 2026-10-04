@@ -15,6 +15,7 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -501,6 +502,47 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     await Assert.That(invoker.Invocations.Any(i => i.EventId == eventId && i.Stage == LifecycleStage.PostAllPerspectivesInline)).IsTrue()
       .Because("A successful collective apply must run its event through PostAllPerspectives so the completion " +
         "receptor/tag fires — otherwise the frontend's completion toast waits forever.");
+  }
+
+  /// <summary>
+  /// The properties the apply's specs assigned reach every post-apply stage, so a tag hook there can say what changed
+  /// (#1045).
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_SuccessfulDispatch_CarriesWhatTheSpecsChangedToThePostApplyStagesAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new RecordingDispatcher {
+      ChangedProperties = new Dictionary<Type, IReadOnlyList<string>> { [typeof(string)] = ["Length"] },
+    };
+    var invoker = new CapturingReceptorInvoker();
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [_sinkWork(streamId)],
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
+      dispatcher: dispatcher,
+      receptorInvoker: invoker);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await invoker.FirstPostAllPerspectives.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* teardown */ }
+
+    List<(LifecycleStage Stage, MessageChanges? Changes)> seen;
+    lock (invoker.Invocations) {
+      seen = [.. invoker.Changes];
+    }
+    await Assert.That(seen).IsNotEmpty();
+    foreach (var (stage, changes) in seen) {
+      await Assert.That(changes?.Kind).IsEqualTo(MessageChangeKind.Collective).Because($"stage {stage}");
+      await Assert.That(changes!.ByModel[typeof(string)]).IsEquivalentTo(["Length"]);
+    }
   }
 
   /// <summary>
@@ -1521,8 +1563,12 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
         Calls.Add((evt, collectiveEventId));
       }
       _first.TrySetResult();
-      return Task.FromResult(new CollectiveDispatchResult(1, 1));
+      return Task.FromResult(new CollectiveDispatchResult(1, 1) { ChangedProperties = ChangedProperties });
     }
+
+    /// <summary>What the apply reports its specs assigned.</summary>
+    public IReadOnlyDictionary<Type, IReadOnlyList<string>> ChangedProperties { get; init; } =
+      new Dictionary<Type, IReadOnlyList<string>>();
   }
 
   /// <summary>Dispatcher that reports N apply batches through onBatchApplied — the long-apply shape.</summary>
@@ -1685,12 +1731,14 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   private sealed class CapturingReceptorInvoker : IReceptorInvoker {
     private readonly TaskCompletionSource _firstPostAll = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<(Guid EventId, LifecycleStage Stage)> Invocations { get; } = [];
+    public List<(LifecycleStage Stage, MessageChanges? Changes)> Changes { get; } = [];
     /// <summary>Completes on the first PostAllPerspectives* invocation — deterministic signal for the async path.</summary>
     public Task FirstPostAllPerspectives => _firstPostAll.Task;
 
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
       lock (Invocations) {
         Invocations.Add((envelope.MessageId.Value, stage));
+        Changes.Add((stage, (context as LifecycleExecutionContext)?.Changes));
       }
       if (stage is LifecycleStage.PostAllPerspectivesInline or LifecycleStage.PostAllPerspectivesDetached) {
         _firstPostAll.TrySetResult();
