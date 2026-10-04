@@ -31,7 +31,12 @@ public static class AzuriteFixture {
     await _initLock.WaitAsync(cancellationToken);
     try {
       if (_container is null) {
-        _container = new AzuriteBuilder("mcr.microsoft.com/azure-storage/azurite:latest").Build();
+        // The Azure SDK sends the newest service API version it knows, and it ships those ahead of the emulator:
+        // Azure.Storage.Blobs 12.30.0 sends 2026-10-06, which the latest Azurite still rejects with a 400. The
+        // tests exercise the provider's behavior, not the API version, so the emulator is told not to check it.
+        _container = new AzuriteBuilder("mcr.microsoft.com/azure-storage/azurite:latest")
+          .WithCommand("--skipApiVersionCheck")
+          .Build();
         await _container.StartAsync(cancellationToken);
       }
       return _container.GetConnectionString();
