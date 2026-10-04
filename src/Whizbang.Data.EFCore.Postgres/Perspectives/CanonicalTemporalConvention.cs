@@ -105,26 +105,7 @@ public sealed class CanonicalTemporalConvention : IModelFinalizingConvention {
 
     if (inDocument) {
       foreach (var property in complex.ComplexType.GetProperties()) {
-        var kind = KindOf(property.ClrType);
-        var converter = _converterFor(kind);
-        if (converter is not null && property.GetValueConverter() is null) {
-          property.SetValueConverter(converter);
-          property.SetJsonValueReaderWriterType(CanonicalTemporalJsonReaderWriters.TypeFor(kind));
-          continue;
-        }
-
-        // A primitive collection holds its element's mapping on the element, so asking the property's
-        // own type answers for the collection and never for what is in it. The writer has no such
-        // restriction and stores each element in the canonical unit, so an element left with the
-        // provider's own reader makes the whole document unreadable the first time it is written.
-        if (property.GetElementType() is { } element) {
-          var elementKind = KindOf(element.ClrType);
-          var elementConverter = _converterFor(elementKind);
-          if (elementConverter is not null && element.GetValueConverter() is null) {
-            element.SetValueConverter(elementConverter);
-            element.SetJsonValueReaderWriterType(CanonicalTemporalJsonReaderWriters.TypeFor(elementKind));
-          }
-        }
+        _applyProperty(property);
       }
     }
 
@@ -164,29 +145,66 @@ public sealed class CanonicalTemporalConvention : IModelFinalizingConvention {
 
     if (inDocument) {
       foreach (var property in complex.ComplexType.GetProperties()) {
-        var kind = KindOf(property.ClrType);
-        var converter = _converterFor(kind);
-        if (converter is not null) {
-          property.Builder.HasConversion(converter, fromDataAnnotation: false);
-          property.SetJsonValueReaderWriterType(CanonicalTemporalJsonReaderWriters.TypeFor(kind), fromDataAnnotation: false);
-          continue;
-        }
-
-        // See the element note in _apply: the element carries the mapping for a primitive collection.
-        if (property.GetElementType() is { } element) {
-          var elementKind = KindOf(element.ClrType);
-          var elementConverter = _converterFor(elementKind);
-          if (elementConverter is not null) {
-            element.Builder.HasConversion(elementConverter, fromDataAnnotation: false);
-            element.SetJsonValueReaderWriterType(
-              CanonicalTemporalJsonReaderWriters.TypeFor(elementKind), fromDataAnnotation: false);
-          }
-        }
+        _convertProperty(property);
       }
     }
 
     foreach (var nested in complex.ComplexType.GetComplexProperties()) {
       _convert(nested, inDocument);
+    }
+  }
+
+  /// <summary>Converts one mapped property, or its element when the property is a primitive collection.</summary>
+  /// <remarks>
+  /// A primitive collection holds its element's mapping on the element, so asking the property's own type
+  /// answers for the collection and never for what is in it. The writer has no such restriction and stores
+  /// each element in the canonical unit, so an element left with the provider's own reader makes the whole
+  /// document unreadable the first time it is written.
+  /// </remarks>
+  private static void _applyProperty(IMutableProperty property) {
+    var kind = KindOf(property.ClrType);
+    var converter = _converterFor(kind);
+    if (converter is not null) {
+      if (property.GetValueConverter() is null) {
+        property.SetValueConverter(converter);
+        property.SetJsonValueReaderWriterType(CanonicalTemporalJsonReaderWriters.TypeFor(kind));
+      }
+      return;
+    }
+
+    if (property.GetElementType() is not { } element) {
+      return;
+    }
+
+    var elementKind = KindOf(element.ClrType);
+    var elementConverter = _converterFor(elementKind);
+    if (elementConverter is not null && element.GetValueConverter() is null) {
+      element.SetValueConverter(elementConverter);
+      element.SetJsonValueReaderWriterType(CanonicalTemporalJsonReaderWriters.TypeFor(elementKind));
+    }
+  }
+
+  /// <summary>The same decision on the convention's own metadata; see <see cref="_applyProperty"/>.</summary>
+  private static void _convertProperty(IConventionProperty property) {
+    var kind = KindOf(property.ClrType);
+    var converter = _converterFor(kind);
+    if (converter is not null) {
+      property.Builder.HasConversion(converter, fromDataAnnotation: false);
+      property.SetJsonValueReaderWriterType(
+        CanonicalTemporalJsonReaderWriters.TypeFor(kind), fromDataAnnotation: false);
+      return;
+    }
+
+    if (property.GetElementType() is not { } element) {
+      return;
+    }
+
+    var elementKind = KindOf(element.ClrType);
+    var elementConverter = _converterFor(elementKind);
+    if (elementConverter is not null) {
+      element.Builder.HasConversion(elementConverter, fromDataAnnotation: false);
+      element.SetJsonValueReaderWriterType(
+        CanonicalTemporalJsonReaderWriters.TypeFor(elementKind), fromDataAnnotation: false);
     }
   }
 

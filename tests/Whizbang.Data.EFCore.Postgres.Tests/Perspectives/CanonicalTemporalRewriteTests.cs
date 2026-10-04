@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -64,6 +65,16 @@ public class CanonicalTemporalRewriteTests {
     // document Entity Framework maps kept its renderings while an opaque one was converted.
     public List<DateTimeOffset> AccessedAt { get; set; } = [];
     public List<string> Labels { get; set; } = [];
+
+    // Stored under a different key than it is named. The path has to use the stored key: a rewrite
+    // addressed by the member name would convert a path the document does not have, and report success.
+    //
+    // Renamed on BOTH sides on purpose. The mapping's HasJsonPropertyName is what Entity Framework
+    // writes, and [JsonPropertyName] is what the serializer writes; renaming only one of them makes the
+    // same model store the member under two different keys depending on how its table happens to be
+    // mapped, which the agreement test below catches as a divergence — correctly, because it is one.
+    [JsonPropertyName("renamed_at")]
+    public DateTime RenamedAt { get; set; }
   }
 
   /// <summary>A model with nothing temporal, so no rewrite is named for it.</summary>
@@ -114,11 +125,46 @@ public class CanonicalTemporalRewriteTests {
       + "data:RecordedAt:OffsetInstant\n"
       + "data:Window/Length:Duration\n"
       + "data:Window/Opens:TimeOfDay\n"
+      + "data:renamed_at:Instant\n"
       + "metadata:Timestamp:Instant")
       .Because("the rewrite converts exactly what the mapping reads: inherited, nested, "
         + "collection-element and primitive-collection-element temporals and the framework's own "
         + "metadata included. Labels is a collection of strings and is not a path, because "
         + "unwrapping element types must not turn into claiming every primitive collection");
+  }
+
+  /// <summary>
+  /// Every property Entity Framework maps into a document has a stored name.
+  /// </summary>
+  /// <remarks>
+  /// The rewrite addresses a path by its stored key, so the key has to be knowable. Entity Framework
+  /// types <c>GetJsonPropertyName()</c> as nullable, and the walk relies on it not being null for a
+  /// property inside a document. That reliance is held here rather than defended at the call site: a
+  /// fallback to the member name would be unreachable, and if it ever were reached it would address a key
+  /// the document does not have — which converts nothing and reports success, the failure mode this whole
+  /// area keeps producing.
+  /// </remarks>
+  [Test]
+  public async Task APropertyInADocumentAlwaysHasAStoredNameAsync() {
+    await using var context = _context();
+
+    var unnamed = new List<string>();
+    foreach (var complex in context.Model.FindEntityType(typeof(PerspectiveRow<MappedModel>))!.GetComplexProperties()) {
+      _collectUnnamed(complex, complex.Name, unnamed);
+    }
+
+    await Assert.That(unnamed).IsEmpty()
+      .Because("the walk reads the stored name without a fallback, so a property without one would "
+        + "address the wrong key or throw, and both are worse than this test failing");
+  }
+
+  private static void _collectUnnamed(IComplexProperty complex, string path, List<string> found) {
+    foreach (var property in complex.ComplexType.GetProperties().Where(p => p.GetJsonPropertyName() is null)) {
+      found.Add($"{path}.{property.Name}");
+    }
+    foreach (var nested in complex.ComplexType.GetComplexProperties()) {
+      _collectUnnamed(nested, $"{path}.{nested.Name}", found);
+    }
   }
 
   /// <summary>
@@ -339,7 +385,10 @@ internal sealed class RewriteContext(DbContextOptions<RewriteContext> options) :
       entity.ToTable("wh_per_mapped");
       entity.HasKey(e => e.Id);
       entity.Property(e => e.Id).HasColumnName("id");
-      entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+      entity.ComplexProperty(e => e.Data, d => {
+        d.ToJson("data");
+        d.Property(x => x.RenamedAt).HasJsonPropertyName("renamed_at");
+      });
       entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
       entity.ComplexProperty(e => e.Scope, s => {
         s.ToJson("scope");

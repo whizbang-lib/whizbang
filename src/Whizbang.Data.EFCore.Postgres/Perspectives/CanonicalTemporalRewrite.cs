@@ -238,7 +238,12 @@ public static class CanonicalTemporalRewrite {
     }
 
     foreach (var property in complex.ComplexType.GetProperties()) {
-      var name = property.GetJsonPropertyName() ?? property.Name;
+      // Non-null for every property Entity Framework maps into a document, which is the only place
+      // this walk runs. Asserted rather than defended, because a fallback to the member name would be
+      // unreachable code that silently addressed the wrong key if it ever were reached: the rewrite
+      // converts a path by name, so a wrong name converts nothing and reports success. The invariant is
+      // held by APropertyInADocumentAlwaysHasAStoredNameAsync.
+      var name = property.GetJsonPropertyName()!;
       var kind = CanonicalTemporalConvention.KindOf(property.ClrType);
       if (kind is { } temporal) {
         found.Add(new TemporalPath(column, here.Add(name), temporal));

@@ -294,6 +294,50 @@ public class CanonicalTemporalConventionTests {
   }
 
   /// <summary>
+  /// A temporal collection element is converted on the <c>Apply(ModelBuilder)</c> path too, not only by
+  /// the convention plugin.
+  /// </summary>
+  /// <remarks>
+  /// The convention reaches a model twice by design: the plugin rides the options extension, and the
+  /// generated <c>OnModelCreating</c> calls the same walk itself so a context built by hand from a plain
+  /// connection string is converted as well. Those are two separate walks over two different metadata
+  /// shapes, mutable and conventional, so a fix applied to one is not applied to the other. Every
+  /// generated context in this suite maps a model with no temporal collection, which left the element
+  /// branch of the mutable walk unexercised while the conventional one was covered — the two disagreeing
+  /// in exactly the direction nothing would have reported.
+  /// </remarks>
+  [Test]
+  public async Task ATemporalCollectionElementIsConvertedOnTheModelBuilderPathAsync() {
+    // No functions extension: the plugin is absent, so only Apply(ModelBuilder) runs.
+    await using var context = new ElementApplyContext(new DbContextOptionsBuilder<ElementApplyContext>()
+      .UseNpgsql("Host=localhost;Database=probe;Username=u;Password=p")
+      .Options);
+
+    var data = context.Model.FindEntityType(typeof(PerspectiveRow<ElementModel>))!
+      .FindComplexProperty(nameof(PerspectiveRow<>.Data))!.ComplexType;
+    var accessedAt = data.FindProperty(nameof(ElementModel.AccessedAt))!;
+    var labels = data.FindProperty(nameof(ElementModel.Labels))!;
+
+    await Assert.That(accessedAt.GetElementType()?.GetJsonValueReaderWriter()?.GetType())
+      .IsEqualTo(typeof(CanonicalTemporalJsonReaderWriters.OffsetInstant))
+      .Because("a context that applies the walk itself has to reach a collection element, or the same "
+        + "row reads on one path and not the other");
+    await Assert.That(accessedAt.GetElementType()?.GetValueConverter()?.ProviderClrType)
+      .IsEqualTo(typeof(long))
+      .Because("the element stores in the same eight-byte unit every other temporal does");
+    // Not null: Entity Framework installs its own reader for a string element. The requirement is that
+    // the walk did not claim it, so the assertion is on which reader is there rather than on whether one
+    // is — asserting null passed on the conventional walk only because nothing had run there yet.
+    await Assert.That(labels.GetElementType()?.GetJsonValueReaderWriter()?.GetType())
+      .IsNotEqualTo(typeof(CanonicalTemporalJsonReaderWriters.OffsetInstant))
+      .Because("a collection of strings is not temporal, and a canonical reader would read its elements "
+        + "as epoch microseconds");
+    await Assert.That(labels.GetElementType()?.GetValueConverter()).IsNull()
+      .Because("no canonical conversion belongs on a non-temporal element, whatever reader the provider "
+        + "chose for it");
+  }
+
+  /// <summary>
   /// Each reader/writer names its own instance as its constructor, which is what a compiled model
   /// emits to get it back, and a kind that is none has no reader/writer.
   /// </summary>
@@ -464,5 +508,32 @@ public class CanonicalTemporalConventionTests {
     return (
       JsonDocument.Parse(reader.GetString(0)).RootElement,
       JsonDocument.Parse(reader.GetString(1)).RootElement);
+  }
+}
+
+/// <summary>
+/// Maps a model with a temporal collection and applies the convention itself, the way a generated
+/// <c>OnModelCreating</c> does, so the mutable walk is exercised without the options extension.
+/// </summary>
+internal sealed class ElementApplyContext(DbContextOptions<ElementApplyContext> options) : DbContext(options) {
+  protected override void OnModelCreating(ModelBuilder modelBuilder) {
+    ArgumentNullException.ThrowIfNull(modelBuilder);
+    modelBuilder.Entity<PerspectiveRow<CanonicalTemporalConventionTests.ElementModel>>(entity => {
+      entity.ToTable("wh_per_temporal_element_apply");
+      entity.HasKey(e => e.Id);
+      entity.Property(e => e.Id).HasColumnName("id");
+      entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+      entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
+      entity.ComplexProperty(e => e.Scope, sc => {
+        sc.ToJson("scope");
+        sc.ComplexCollection(p => p.Extensions, ex => ex.HasJsonPropertyName("ex"));
+      });
+      entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+      entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+      entity.Property(e => e.Version).HasColumnName("version");
+    });
+
+    // What the generated OnModelCreating does, after the consumer's own configuration.
+    CanonicalTemporalConvention.Apply(modelBuilder);
   }
 }
