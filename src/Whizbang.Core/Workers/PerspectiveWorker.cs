@@ -1160,7 +1160,7 @@ public partial class PerspectiveWorker(
     // released when the batch scope exits, whatever the outcome (see ClaimWindowScope).
     var claimWindowReservations = new List<Guid>();
     using var claimWindowScope = new ClaimWindowScope(
-      _claimWindowWorkIds, claimWindowReservations, _completionMeter, workBatch.PerspectiveWork.Count);
+      _claimWindowWorkIds, claimWindowReservations, _completionMeter, workBatch.PerspectiveWork.Count, _reofferIfDeferred);
 
     var groupedWork = _reconcileAcknowledgementsAndPrepareWork(
       workBatch, sentCompletionCount: sentCompletionCount, sentFailureCount: sentFailureCount,
@@ -3028,6 +3028,13 @@ public partial class PerspectiveWorker(
   private readonly ConcurrentDictionary<Guid, byte> _claimWindowWorkIds = new();
 
   /// <summary>
+  /// Held sink rows whose predecessor wake fired while the run that held them still had them reserved: re-offered
+  /// then, they would be deduped against that reservation and wait for their lease to lapse. The batch that releases
+  /// the reservation re-offers them instead.
+  /// </summary>
+  private readonly ConcurrentDictionary<Guid, PerspectiveWork> _reofferOnRelease = new();
+
+  /// <summary>
   /// Releases a batch's claim-window reservations when the batch scope exits — on the success
   /// path, on an exception, and on cancellation alike (a <c>using</c> declaration compiles to
   /// try/finally). Releasing unconditionally is deliberate: work that COMPLETED was already
@@ -3040,11 +3047,13 @@ public partial class PerspectiveWorker(
       ConcurrentDictionary<Guid, byte> reservations,
       List<Guid> owned,
       WorkCompletionMeter? completionMeter = null,
-      int workItemCount = 0)
+      int workItemCount = 0,
+      Action<Guid>? onReleased = null)
     : IDisposable {
     public void Dispose() {
       foreach (var workId in owned) {
         reservations.TryRemove(workId, out _);
+        onReleased?.Invoke(workId);
       }
 
       // The batch has stopped occupying this instance, so the claim loop's outstanding budget can
@@ -3512,11 +3521,24 @@ public partial class PerspectiveWorker(
     _collectiveHoldWakes.TryRemove(new KeyValuePair<Guid, CollectiveHoldWake>(wake.StreamId, wake));
     wake.Timer.Dispose();
     foreach (var workId in wake.WorkIds) {
-      _perspectiveChannelWriter.TryWrite(new PerspectiveWork {
+      // Offered through the release hand-off: if the run that held the row has not released it yet, the row would be
+      // deduped against its own reservation, so the release offers it instead (#1003).
+      _reofferOnRelease[workId] = new PerspectiveWork {
         WorkId = workId,
         StreamId = wake.StreamId,
         PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
-      });
+      };
+      _reofferIfDeferred(workId);
+    }
+  }
+
+  /// <summary>
+  /// Offers a held row waiting in <see cref="_reofferOnRelease"/> once nothing reserves it: called by its wake, and by
+  /// every batch release, so whichever comes last offers it. TryRemove makes that exactly once.
+  /// </summary>
+  private void _reofferIfDeferred(Guid workId) {
+    if (!_claimWindowWorkIds.ContainsKey(workId) && _reofferOnRelease.TryRemove(workId, out var work)) {
+      _perspectiveChannelWriter.TryWrite(work);
     }
   }
 
