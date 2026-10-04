@@ -65,4 +65,12 @@ public interface ICollectiveDispatcher {
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_OneEntry_InvokesExecutorOnceAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_TwoEntriesSameEventDifferentModels_FansOutAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_NoMatchingEntry_ReturnsZeroAsync</tests>
-public sealed record CollectiveDispatchResult(int HandlerCount, int AffectedRowCount);
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_ReportsThePropertiesEachModelsSpecAssignedAsync</tests>
+public sealed record CollectiveDispatchResult(int HandlerCount, int AffectedRowCount) {
+  /// <summary>
+  /// The properties each model's specs assigned, by model type, read from the specs' setters as they applied (#1045).
+  /// Empty when no handler matched.
+  /// </summary>
+  public IReadOnlyDictionary<Type, IReadOnlyList<string>> ChangedProperties { get; init; } =
+    new Dictionary<Type, IReadOnlyList<string>>();
+}

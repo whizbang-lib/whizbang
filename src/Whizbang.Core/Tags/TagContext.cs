@@ -46,7 +46,9 @@ namespace Whizbang.Core.Tags;
 /// </example>
 /// <docs>fundamentals/messages/message-tags#tag-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Tags/TagContextTests.cs</tests>
-public sealed record TagContext<TAttribute> where TAttribute : MessageTagAttribute {
+public sealed record TagContext<TAttribute> : ITagContextChanges where TAttribute : MessageTagAttribute {
+  private MessageChanges? _changes;
+
   /// <summary>
   /// Gets the attribute instance from the message type.
   /// Contains all tag-specific configuration like Tag name, Properties, Group, etc.
@@ -109,4 +111,28 @@ public sealed record TagContext<TAttribute> where TAttribute : MessageTagAttribu
   /// Hooks can inspect this to decide whether to act (e.g., only fire at PostPerspectiveInline).
   /// </summary>
   public LifecycleStage Stage { get; init; }
+
+  /// <summary>
+  /// Which fields the message changed (#1045): for a collective event, the properties its specs assigned on each model,
+  /// read from their setters as they applied; for a per-stream event, the event's own properties; for a composite, its
+  /// inner events'. One way to ask, whatever the message.
+  /// </summary>
+  /// <remarks>
+  /// A collective event's changes are filled at the stages after its specs applied (<c>PostAllPerspectives</c> and
+  /// <c>PostLifecycle</c>); before that, <see cref="MessageChanges.ByModel"/> is empty. A setter that points a row at
+  /// another record reports that key, not the referenced record's fields.
+  /// </remarks>
+  /// <docs>fundamentals/messages/message-tags#changed-properties</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageChangesTests.cs</tests>
+  public MessageChanges Changes {
+    get => _changes ??= MessageChanges.For(Message, MessageType);
+    init => _changes = value;
+  }
+
+  void ITagContextChanges.AssignChanges(MessageChanges changes) => _changes = changes;
+}
+
+/// <summary>Lets the tag processor attach a message's changes to a context whatever its attribute type.</summary>
+internal interface ITagContextChanges {
+  void AssignChanges(MessageChanges changes);
 }

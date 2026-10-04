@@ -73,6 +73,11 @@ public sealed partial class PgCommitOrderStamperWorker(
   private readonly ILogger<PgCommitOrderStamperWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotifySignalingGate? _notifySignalingGate = notifySignalingGate;
+  // The size the next stamp asks for. Starts at the steady-state size and grows while calls keep
+  // filling, because each call costs a scan of the whole pending set whatever size it asks for.
+  // Only the loop below reads or writes it, and only one instance holds the role, so it needs no
+  // synchronization of its own.
+  private int _batchSize = stamperOptions?.Value?.BatchSize ?? 1000;
   private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   // Opt-in: register an INotificationDataSource via DI when the DbContext is
   // configured via UseNpgsql(NpgsqlDataSource) — that's the only path that
@@ -303,6 +308,11 @@ public sealed partial class PgCommitOrderStamperWorker(
       _ = Interlocked.Add(ref _totalStamped, stamped);
       OnStampCompleted?.Invoke(stamped);
 
+      // Resized from the count the call returned rather than from a count of what is left: a probe for
+      // the backlog size would be another scan of the set that is already too expensive to scan.
+      _batchSize = CommitOrderStampBatch.Next(
+        _batchSize, stamped, _stamperOptions.BatchSize, _stamperOptions.DrainBatchSize);
+
       if (stamped > 0) {
         // A full batch may have left more behind — drain immediately instead of
         // waiting for another wake.
@@ -485,7 +495,7 @@ public sealed partial class PgCommitOrderStamperWorker(
         await PgRoleElector.AssertEpochAsync(conn, grant, ct);
       }
       await using var cmd = new NpgsqlCommand("SELECT stamp_pending_commit_sequences(@bs, @notify)", conn);
-      cmd.Parameters.AddWithValue("bs", _stamperOptions.BatchSize);
+      cmd.Parameters.AddWithValue("bs", _batchSize);
       cmd.Parameters.AddWithValue("notify", notifyOwners);
       var result = await cmd.ExecuteScalarAsync(ct);
       stamped = Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);

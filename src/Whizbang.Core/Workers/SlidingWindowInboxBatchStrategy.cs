@@ -89,9 +89,17 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
   public async ValueTask AppendAsync(InboxMessage message, CancellationToken cancellationToken = default) {
     ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
     var key = message.StreamId ?? _defaultStreamKey;
-    var buffer = _streams.GetOrAdd(key, k => _createStreamBuffer(k));
-    buffer.LastActivity = _timeProvider.GetUtcNow();
-    await buffer.Writer.WriteAsync(message, cancellationToken).ConfigureAwait(false);
+    while (true) {
+      var buffer = _streams.GetOrAdd(key, k => _createStreamBuffer(k));
+      buffer.LastActivity = _timeProvider.GetUtcNow();
+      try {
+        await buffer.Writer.WriteAsync(message, cancellationToken).ConfigureAwait(false);
+        return;
+      } catch (ChannelClosedException) when (Volatile.Read(ref _disposed) == 0) {
+        // The idle sweep evicted this buffer between the lookup and the write; it is out of the map, so the next
+        // lookup creates the stream's new buffer. Only a shutdown closes a buffer that is still mapped.
+      }
+    }
   }
 
   /// <inheritdoc />
