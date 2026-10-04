@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -333,6 +334,48 @@ public class SlidingWindowInboxBatchStrategyTests {
       await Task.Delay(20);
     }
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// An append caught by the idle sweep, between finding its stream's buffer and writing to it, still lands: the
+  /// sweep closed that buffer, so the append takes the stream's new one. It used to fail with
+  /// <see cref="ChannelClosedException"/>, which the merge queue caught as a flaky test. Deterministic here: the flush
+  /// is held, so the buffer fills and the append waits inside its write while the clock passes the eviction window.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task Append_CaughtByTheIdleSweep_LandsInTheStreamsNewBufferAsync(CancellationToken cancellationToken) {
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 2, 12, 0, 0, TimeSpan.Zero));
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var flushing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var streamId = _idProvider.NewGuid();
+    await using var sut = new SlidingWindowInboxBatchStrategy(
+      flush: async (_, _) => { flushing.TrySetResult(); await release.Task; },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromHours(1),
+        MaxWait = TimeSpan.FromHours(1),
+        MaxSize = 1,
+        IdleEvictionWindow = TimeSpan.FromSeconds(30),
+        IdleSweepInterval = TimeSpan.FromSeconds(5),
+      },
+      timeProvider: clock);
+
+    // One message is being flushed and held; the channel (four times MaxSize) fills behind it.
+    await sut.AppendAsync(_makeMessage(streamId), cancellationToken);
+    await flushing.Task.WaitAsync(cancellationToken);
+    for (var i = 0; i < 4; i++) {
+      await sut.AppendAsync(_makeMessage(streamId), cancellationToken);
+    }
+    var waiting = sut.AppendAsync(_makeMessage(streamId), cancellationToken).AsTask();
+    await Assert.That(waiting.IsCompleted).IsFalse().Because("the buffer is full, so the append waits inside its write");
+
+    clock.Advance(TimeSpan.FromSeconds(60));
+
+    await waiting.WaitAsync(cancellationToken);
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("the sweep closed the stream's old buffer, and the append created its new one");
+    release.TrySetResult();
   }
 
   // ===== helpers =====
