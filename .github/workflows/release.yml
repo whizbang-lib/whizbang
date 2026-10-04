@@ -424,14 +424,16 @@ jobs:
           VERSION="$RELEASE_VERSION"
           TAG="v$VERSION"
 
-          # Check if tag already exists
-          if git tag -l "$TAG" | grep -q "$TAG"; then
+          # Check if tag already exists. Exact matches only: a prerelease of the same version
+          # (v0.2607.0-beta.1) contains this tag's name, and a substring match took it for the
+          # release itself, so the stable publish refused and the version was never tagged.
+          if git tag -l "$TAG" | grep -qxF "$TAG"; then
             echo "::error::Tag $TAG already exists locally"
             exit 1
           fi
 
           # Check if tag exists on remote
-          if git ls-remote --tags origin | grep -q "refs/tags/$TAG"; then
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -qE "[[:space:]]refs/tags/${TAG//./\\.}$"; then
             echo "::error::Tag $TAG already exists on remote. Version $VERSION has already been released."
             echo ""
             echo "To release a new version, ensure your changes include commits that would bump the version:"
