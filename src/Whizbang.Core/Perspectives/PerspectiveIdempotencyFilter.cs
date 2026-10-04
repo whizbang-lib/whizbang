@@ -75,8 +75,8 @@ public static class PerspectiveIdempotencyFilter {
       return false;
     }
 
-    // Both canonical, so the comparison cannot turn on how the stored id happened to be cased.
-    return string.Compare(
-        incomingEventId.ToString("D"), lastApplied.ToString("D"), StringComparison.Ordinal) <= 0;
+    // Both canonical, so the comparison cannot turn on how the stored id happened to be cased. Ordinal
+    // because this is a byte-order comparison of two UUIDv7s, not a linguistic one.
+    return string.CompareOrdinal(incomingEventId.ToString("D"), lastApplied.ToString("D")) <= 0;
   }
 }
