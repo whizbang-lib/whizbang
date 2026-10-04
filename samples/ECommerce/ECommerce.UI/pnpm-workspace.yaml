@@ -3,8 +3,12 @@ allowBuilds:
   esbuild: set this to true or false
   lmdb: set this to true or false
   msgpackr-extract: set this to true or false
+minimumReleaseAgeExclude:
+  - http-cache-semantics@4.3.0
 # Transitive build-tool dependencies held at their patched versions until the Angular toolchain
 # pulls them in on its own. Remove an entry once `pnpm audit` stays clean without it.
 overrides:
   browserslist: '>=4.28.7'
   baseline-browser-mapping: '>=2.11.0'
+  piscina: '>=5.3.2'
+  http-cache-semantics: '>=4.2.1'
