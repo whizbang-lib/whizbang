@@ -238,9 +238,28 @@ public static class CanonicalTemporalRewrite {
     }
 
     foreach (var property in complex.ComplexType.GetProperties()) {
+      // Non-null for every property Entity Framework maps into a document, which is the only place
+      // this walk runs. Asserted rather than defended, because a fallback to the member name would be
+      // unreachable code that silently addressed the wrong key if it ever were reached: the rewrite
+      // converts a path by name, so a wrong name converts nothing and reports success. The invariant is
+      // held by APropertyInADocumentAlwaysHasAStoredNameAsync.
+      var name = property.GetJsonPropertyName()!;
       var kind = CanonicalTemporalConvention.KindOf(property.ClrType);
       if (kind is { } temporal) {
-        found.Add(new TemporalPath(column, here.Add(property.GetJsonPropertyName() ?? property.Name), temporal));
+        found.Add(new TemporalPath(column, here.Add(name), temporal));
+        continue;
+      }
+
+      // A primitive collection: the element is the temporal, so the property's own type answers for
+      // the collection and the path has to name every element under this key. _walkSerialized reaches
+      // these through the serializer's element type, so without this the two walks disagree and a
+      // document the serializer would have rewritten is left in the old form when Entity Framework
+      // maps it. The reader accepts a rendering either way, which is what makes the disagreement
+      // invisible: nothing fails, the elements simply never become numbers and so never sort or index
+      // as numbers.
+      if (property.GetElementType() is { } element
+          && CanonicalTemporalConvention.KindOf(element.ClrType) is { } elementKind) {
+        found.Add(new TemporalPath(column, here.Add(name).Add(TemporalPath.COLLECTION), elementKind));
       }
     }
 

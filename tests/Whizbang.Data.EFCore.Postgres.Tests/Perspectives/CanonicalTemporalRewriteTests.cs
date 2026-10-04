@@ -1,12 +1,14 @@
 using System.Collections.Immutable;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Serialization;
 using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
 
@@ -57,6 +59,22 @@ public class CanonicalTemporalRewriteTests {
     public string Label { get; set; } = string.Empty;
     public Window Window { get; set; } = new();
     public List<Occurrence> Occurrences { get; set; } = [];
+
+    // A primitive temporal collection: the element is the temporal, with no object to recurse into.
+    // The serializer's walk reaches these through its element type; the mapped walk did not, so a
+    // document Entity Framework maps kept its renderings while an opaque one was converted.
+    public List<DateTimeOffset> AccessedAt { get; set; } = [];
+    public List<string> Labels { get; set; } = [];
+
+    // Stored under a different key than it is named. The path has to use the stored key: a rewrite
+    // addressed by the member name would convert a path the document does not have, and report success.
+    //
+    // Renamed on BOTH sides on purpose. The mapping's HasJsonPropertyName is what Entity Framework
+    // writes, and [JsonPropertyName] is what the serializer writes; renaming only one of them makes the
+    // same model store the member under two different keys depending on how its table happens to be
+    // mapped, which the agreement test below catches as a divergence — correctly, because it is one.
+    [JsonPropertyName("renamed_at")]
+    public DateTime RenamedAt { get; set; }
   }
 
   /// <summary>A model with nothing temporal, so no rewrite is named for it.</summary>
@@ -77,6 +95,17 @@ public class CanonicalTemporalRewriteTests {
   private static string _render(TemporalPath path) =>
     $"{path.Column}:{string.Join("/", path.Segments)}:{path.Kind}";
 
+  /// <summary>The rendered paths of the document column alone, sorted.</summary>
+  private static string _dataPaths(ImmutableArray<TemporalPath> paths) =>
+    string.Join("\n", paths.Where(p => p.Column == "data").Select(_render).OrderBy(s => s, StringComparer.Ordinal));
+
+  private static OpaqueMappedContext _opaqueMappedContext() {
+    JsonContextRegistry.RegisterContext(MappedModelJsonContext.Default);
+    return new OpaqueMappedContext(new DbContextOptionsBuilder<OpaqueMappedContext>()
+      .UseNpgsql("Host=localhost;Database=probe;Username=u;Password=p", npgsql => npgsql.UseWhizbangFunctions())
+      .Options);
+  }
+
   private static string _rendered(ImmutableArray<TemporalPath> paths) =>
     string.Join("\n", paths.Select(_render).OrderBy(s => s, StringComparer.Ordinal));
 
@@ -89,15 +118,94 @@ public class CanonicalTemporalRewriteTests {
     var paths = CanonicalTemporalRewrite.PathsOf(row, PerspectiveDocumentSerialization.Options);
 
     await Assert.That(_rendered(paths)).IsEqualTo(
-      "data:OccurredAt:Instant\n"
+      "data:AccessedAt/[]:OffsetInstant\n"
+      + "data:OccurredAt:Instant\n"
       + "data:Occurrences/[]/Day:Day\n"
       + "data:Occurrences/[]/MaybeAt:Instant\n"
       + "data:RecordedAt:OffsetInstant\n"
       + "data:Window/Length:Duration\n"
       + "data:Window/Opens:TimeOfDay\n"
+      + "data:renamed_at:Instant\n"
       + "metadata:Timestamp:Instant")
-      .Because("the rewrite converts exactly what the mapping reads: inherited, nested and "
-        + "collection-element temporals and the framework's own metadata included");
+      .Because("the rewrite converts exactly what the mapping reads: inherited, nested, "
+        + "collection-element and primitive-collection-element temporals and the framework's own "
+        + "metadata included. Labels is a collection of strings and is not a path, because "
+        + "unwrapping element types must not turn into claiming every primitive collection");
+  }
+
+  /// <summary>
+  /// Every property Entity Framework maps into a document has a stored name.
+  /// </summary>
+  /// <remarks>
+  /// The rewrite addresses a path by its stored key, so the key has to be knowable. Entity Framework
+  /// types <c>GetJsonPropertyName()</c> as nullable, and the walk relies on it not being null for a
+  /// property inside a document. That reliance is held here rather than defended at the call site: a
+  /// fallback to the member name would be unreachable, and if it ever were reached it would address a key
+  /// the document does not have — which converts nothing and reports success, the failure mode this whole
+  /// area keeps producing.
+  /// </remarks>
+  [Test]
+  public async Task APropertyInADocumentAlwaysHasAStoredNameAsync() {
+    await using var context = _context();
+
+    var unnamed = new List<string>();
+    foreach (var complex in context.Model.FindEntityType(typeof(PerspectiveRow<MappedModel>))!.GetComplexProperties()) {
+      _collectUnnamed(complex, complex.Name, unnamed);
+    }
+
+    await Assert.That(unnamed).IsEmpty()
+      .Because("the walk reads the stored name without a fallback, so a property without one would "
+        + "address the wrong key or throw, and both are worse than this test failing");
+  }
+
+  private static void _collectUnnamed(IComplexProperty complex, string path, List<string> found) {
+    foreach (var property in complex.ComplexType.GetProperties().Where(p => p.GetJsonPropertyName() is null)) {
+      found.Add($"{path}.{property.Name}");
+    }
+    foreach (var nested in complex.ComplexType.GetComplexProperties()) {
+      _collectUnnamed(nested, $"{path}.{nested.Name}", found);
+    }
+  }
+
+  /// <summary>
+  /// The two walks name the same paths for the same model, whichever way its document is stored.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the test that was missing. The rewrite has two discoveries — Entity Framework's model for a
+  /// mapped document, and the serializer's metadata for one stored as a value — and the type's own remarks
+  /// say they agree "by construction rather than by two discoveries staying in step". Nothing checked that.
+  /// They had diverged: the serializer's walk reached a primitive temporal collection through its element
+  /// type and the mapped walk did not, so the same model was rewritten one way and not the other.
+  /// </para>
+  /// <para>
+  /// Comparing them directly is what makes a future divergence a build failure rather than a silent
+  /// difference in stored form. It fails in either direction, so it also catches a placement the
+  /// serializer's walk misses and the mapped one finds.
+  /// </para>
+  /// <para>
+  /// Only the document column is compared. How a context maps the framework's own metadata and scope is a
+  /// property of the mapping rather than of the model, and the two contexts here spell those differently
+  /// on purpose, to be the two shapes a consumer actually uses.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task TheTwoWalksNameTheSamePathsForOneModelAsync() {
+    await using var mappedContext = _context();
+    await using var opaqueContext = _opaqueMappedContext();
+
+    var mapped = _dataPaths(CanonicalTemporalRewrite.PathsOf(
+      mappedContext.Model.FindEntityType(typeof(PerspectiveRow<MappedModel>))!,
+      PerspectiveDocumentSerialization.Options));
+    var opaque = _dataPaths(CanonicalTemporalRewrite.PathsOf(
+      opaqueContext.Model.FindEntityType(typeof(PerspectiveRow<MappedModel>))!,
+      PerspectiveDocumentSerialization.Options));
+
+    await Assert.That(mapped).IsEqualTo(opaque)
+      .Because("one model has one set of temporals, so the rewrite has to name the same paths whether "
+        + "Entity Framework maps the document or the serializer writes it whole. A path only one walk "
+        + "finds is a stored form that differs by how the table happens to be mapped, which nothing "
+        + "downstream expects and nothing reports");
   }
 
   /// <summary>
@@ -277,7 +385,10 @@ internal sealed class RewriteContext(DbContextOptions<RewriteContext> options) :
       entity.ToTable("wh_per_mapped");
       entity.HasKey(e => e.Id);
       entity.Property(e => e.Id).HasColumnName("id");
-      entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+      entity.ComplexProperty(e => e.Data, d => {
+        d.ToJson("data");
+        d.Property(x => x.RenamedAt).HasJsonPropertyName("renamed_at");
+      });
       entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
       entity.ComplexProperty(e => e.Scope, s => {
         s.ToJson("scope");
@@ -321,6 +432,37 @@ internal sealed class RewriteContext(DbContextOptions<RewriteContext> options) :
       entity.Property(e => e.Id).HasColumnName("id");
       entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb")
         .HasConversion(PerspectiveDocumentSerialization.ConverterFor<OpaqueNode>());
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb")
+        .HasConversion(PerspectiveDocumentSerialization.ConverterFor<PerspectiveMetadata>());
+      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb")
+        .HasConversion(PerspectiveDocumentSerialization.ConverterFor<PerspectiveScope>());
+      entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+      entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+      entity.Property(e => e.Version).HasColumnName("version");
+    });
+  }
+}
+
+/// <summary>
+/// Source-generated metadata for the mapped model, so the same type can also be stored opaquely.
+/// </summary>
+/// <remarks>
+/// Top level, because the serializer's generator emits nothing for a context nested in a type that is not
+/// itself partial, and the emitted members are abstract on the base.
+/// </remarks>
+[JsonSerializable(typeof(CanonicalTemporalRewriteTests.MappedModel))]
+internal sealed partial class MappedModelJsonContext : JsonSerializerContext;
+
+/// <summary>The same model as <see cref="RewriteContext"/> maps, stored instead as one serialized value.</summary>
+internal sealed class OpaqueMappedContext(DbContextOptions<OpaqueMappedContext> options) : DbContext(options) {
+  protected override void OnModelCreating(ModelBuilder modelBuilder) {
+    ArgumentNullException.ThrowIfNull(modelBuilder);
+    modelBuilder.Entity<PerspectiveRow<CanonicalTemporalRewriteTests.MappedModel>>(entity => {
+      entity.ToTable("wh_per_mapped_opaque");
+      entity.HasKey(e => e.Id);
+      entity.Property(e => e.Id).HasColumnName("id");
+      entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb")
+        .HasConversion(PerspectiveDocumentSerialization.ConverterFor<CanonicalTemporalRewriteTests.MappedModel>());
       entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb")
         .HasConversion(PerspectiveDocumentSerialization.ConverterFor<PerspectiveMetadata>());
       entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb")
