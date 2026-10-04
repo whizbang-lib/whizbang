@@ -53,6 +53,16 @@ public class PhysicalJsonbContainmentIntegrationTests {
     }
   }
 
+  // A context over a data source the test built: the shape of a consumer that registers its own.
+  private static JsonbColumnsDbContext Context(NpgsqlDataSource dataSource) {
+    ModelRegistrationRegistry.InvokeRegistration(new ServiceCollection(), typeof(JsonbColumnsDbContext), new PostgresUpsertStrategy());
+    return new JsonbColumnsDbContext(new DbContextOptionsBuilder<JsonbColumnsDbContext>()
+      .UseNpgsql(dataSource)
+      .UseWhizbangPhysicalFields()
+      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+      .Options);
+  }
+
   internal static JsonbColumnsDbContext Context(string connectionString, DbCommandInterceptor? interceptor = null) {
     // The generated registration an application's AddWhizbang runs: it fills the query and hydrator
     // registries for this context's models. Once per collection, so calling it per context is harmless.
@@ -195,6 +205,33 @@ public class PhysicalJsonbContainmentIntegrationTests {
     await Assert.That(read!.GridFilter["region"]).IsEquivalentTo(_west);
     await Assert.That(read.Labels).IsEquivalentTo(labels);
     await Assert.That(await _scalarAsync($"SELECT data ? 'GridFilter' FROM {SPLIT_TABLE} WHERE id = '{id}'")).IsEqualTo("False");
+  }
+
+  /// <summary>
+  /// A consumer's own data source, built without Npgsql's dynamic JSON, reads and writes a Split model's jsonb
+  /// collection columns (#1037). The generated mapping converts each one to and from its JSON text under the
+  /// persistence profile, so Npgsql only ever sees a string and never needs <c>EnableDynamicJson</c>.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task SplitModel_UnderADataSourceWithoutDynamicJson_RoundTripsAsync(bool atomic) {
+    var id = Guid.NewGuid();
+    var filter = new Dictionary<string, string[]> { ["region"] = ["west"] };
+    List<JsonbLabel> labels = [new("k", "v")];
+    var physical = new Dictionary<string, object?> { ["grid_filter"] = filter, ["labels"] = labels };
+    await using var dataSource = new NpgsqlDataSourceBuilder(_connectionString).Build();
+
+    await using (var context = Context(dataSource)) {
+      var store = new EFCorePostgresPerspectiveStore<JsonbSplitItem.Model>(context, SPLIT_TABLE, UpsertWritePath.Strategy(atomic));
+      await store.UpsertWithPhysicalFieldsAsync(id, new JsonbSplitItem.Model { Id = id, Title = "t", GridFilter = null! }, physical);
+    }
+
+    await using var reading = Context(dataSource);
+    var read = await new EFCorePostgresPerspectiveStore<JsonbSplitItem.Model>(reading, SPLIT_TABLE).GetByStreamIdAsync(id);
+
+    await Assert.That(read!.GridFilter["region"]).IsEquivalentTo(_west);
+    await Assert.That(read.Labels).IsEquivalentTo(labels);
   }
 
   /// <summary>A null object column is written as SQL NULL and read back as null.</summary>

@@ -111,6 +111,35 @@ public class ReceptorInvokerTagProcessorScopeTests {
     await Assert.That(capturedScope.Scope?.UserId).IsEqualTo(expectedUserId);
   }
 
+  /// <summary>
+  /// The changes a stage knows (a collective event's applied specs, #1045) travel on the lifecycle context to the tag
+  /// processor, whether or not a receptor is registered at the stage.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task InvokeAsync_PassesTheContextsChangesToTheTagProcessorAsync(bool withReceptor) {
+    MessageChanges? captured = null;
+    var tagProcessor = new ChangesCapturingTagProcessor(changes => captured = changes);
+    var services = new ServiceCollection();
+    services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    services.AddSingleton<IMessageTagProcessor>(tagProcessor);
+    var provider = services.BuildServiceProvider();
+    using var scope = provider.CreateScope();
+    var registry = new TestReceptorRegistry(new InvocationTracker());
+    if (withReceptor) {
+      registry.RegisterReceptor<TestCommand>("TestReceptor", LifecycleStage.PostAllPerspectivesInline);
+    }
+    var invoker = new ReceptorInvoker(registry, scope.ServiceProvider, null);
+    var changes = MessageChanges.ForCollective(new Dictionary<Type, IReadOnlyList<string>>());
+
+    await invoker.InvokeAsync(_createEnvelope(new TestCommand("test")), LifecycleStage.PostAllPerspectivesInline,
+      new LifecycleExecutionContext { CurrentStage = LifecycleStage.PostAllPerspectivesInline, Changes = changes });
+
+    await Assert.That(captured).IsSameReferenceAs(changes);
+  }
+
   #region Test Helpers
 
   private static MessageEnvelope<T> _createEnvelope<T>(T message) where T : notnull {
@@ -202,6 +231,19 @@ public class ReceptorInvokerTagProcessorScopeTests {
         IScopeContext? scope = null,
         CancellationToken ct = default) {
       _onProcessTags?.Invoke(scope);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  private sealed class ChangesCapturingTagProcessor(System.Action<MessageChanges?> onProcessTags) : IMessageTagProcessor {
+    public ValueTask ProcessTagsAsync(
+        object message, Type messageType, LifecycleStage stage, IScopeContext? scope = null, CancellationToken ct = default) =>
+      throw new InvalidOperationException("the invoker passes the changes it holds");
+
+    public ValueTask ProcessTagsAsync(
+        object message, Type messageType, LifecycleStage stage, IScopeContext? scope, MessageChanges? changes,
+        CancellationToken ct = default) {
+      onProcessTags(changes);
       return ValueTask.CompletedTask;
     }
   }

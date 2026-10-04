@@ -3331,14 +3331,16 @@ public partial class PerspectiveWorker(
     var session = sessionAccessor.GetSession(scope.ServiceProvider);
     var lastEventId = lastProcessedEventId ?? Guid.Empty;
     var applied = new List<MessageEnvelope<IEvent>>(collectiveEnvelopes.Count);
+    var changes = new Dictionary<Guid, MessageChanges>(collectiveEnvelopes.Count);
 
     foreach (var envelope in holdAt < 0 ? collectiveEnvelopes : collectiveEnvelopes.GetRange(0, holdAt)) {
       var collectiveEvent = (ICollectiveEvent)envelope.Payload;
       try {
-        await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session,
+        var dispatched = await dispatcher.DispatchAsync(collectiveEvent, envelope.MessageId.Value, session,
           onBatchApplied: ct => _renewSinkLeasesAsync(sinkWorkIds, ct),
           cancellationToken: cancellationToken)
           .ConfigureAwait(false);
+        changes[envelope.MessageId.Value] = MessageChanges.ForCollective(dispatched.ChangedProperties);
       } catch (CollectiveApplyLockBusyException busy) when (!_options.CollectiveLockBusyCountsAsFailure) {
         // Busy, not failed (#964): another batch holds the apply lock for the same table and scope, and this one
         // waited out every renewal of its bounded wait. Nothing is wrong with the event, so no failure is reported
@@ -3347,7 +3349,7 @@ public partial class PerspectiveWorker(
         // retry starts at this one.
         LogCollectiveApplyLockBusy(_logger, streamId, envelope.MessageId.Value, busy.Table, busy.WaitedSeconds);
         await _completeAppliedCollectivesAsync(
-          scope, workCoordinator, streamId, applied, _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
+          scope, workCoordinator, streamId, new AppliedCollectives(applied, changes), _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
           reportCursor: true, cancellationToken).ConfigureAwait(false);
         return;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -3368,7 +3370,7 @@ public partial class PerspectiveWorker(
         };
         await _completionStrategy.ReportFailureAsync(failure, workCoordinator, cancellationToken).ConfigureAwait(false);
         await _completeAppliedCollectivesAsync(
-          scope, workCoordinator, streamId, applied, _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
+          scope, workCoordinator, streamId, new AppliedCollectives(applied, changes), _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
           reportCursor: false, cancellationToken).ConfigureAwait(false);
         return;
       }
@@ -3383,7 +3385,7 @@ public partial class PerspectiveWorker(
       // next run on the stream, which the predecessor's arrival starts, or the wake when the wait runs out.
       var appliedWorkIds = _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count);
       await _completeAppliedCollectivesAsync(
-        scope, workCoordinator, streamId, applied, appliedWorkIds, reportCursor: true, cancellationToken)
+        scope, workCoordinator, streamId, new AppliedCollectives(applied, changes), appliedWorkIds, reportCursor: true, cancellationToken)
         .ConfigureAwait(false);
       var waiting = sinkWorkIds.Except(appliedWorkIds).ToArray();
       _settleHeldBackSinkRows(streamId, sinkWorkIds, waiting);
@@ -3396,7 +3398,7 @@ public partial class PerspectiveWorker(
       pendingWake.Timer.Dispose();
     }
     await _completeAppliedCollectivesAsync(
-      scope, workCoordinator, streamId, applied, completedWorkIds, reportCursor: true, cancellationToken)
+      scope, workCoordinator, streamId, new AppliedCollectives(applied, changes), completedWorkIds, reportCursor: true, cancellationToken)
       .ConfigureAwait(false);
   }
 
@@ -3552,8 +3554,8 @@ public partial class PerspectiveWorker(
   /// </summary>
   private async Task _completeAppliedCollectivesAsync(
       AsyncServiceScope scope, IWorkCoordinator workCoordinator, Guid streamId,
-      List<MessageEnvelope<IEvent>> applied, Guid[] workIds, bool reportCursor,
-      CancellationToken cancellationToken) {
+      AppliedCollectives run, Guid[] workIds, bool reportCursor, CancellationToken cancellationToken) {
+    var (applied, changes) = run;
     if (applied.Count == 0) {
       return;
     }
@@ -3585,7 +3587,7 @@ public partial class PerspectiveWorker(
     // on the collective event is processed. Without this, a UI waiting on a completion tag never learns the
     // set-based apply finished (the "Template Activating" toast hang). Only applied collectives get here, so we
     // never signal completion for an apply that did not happen.
-    await _fireCollectivePostApplyLifecycleAsync(scope, streamId, applied, cancellationToken)
+    await _fireCollectivePostApplyLifecycleAsync(scope, streamId, applied, changes, cancellationToken)
       .ConfigureAwait(false);
   }
 
@@ -3679,6 +3681,11 @@ public partial class PerspectiveWorker(
     return new CollectiveSinkBatch(envelopes, completed, workIdByEventId, [.. pending.Select(e => e.EventId)]);
   }
 
+  /// <summary>The collectives a sink run applied, in order, and what each one's specs changed (#1045).</summary>
+  private readonly record struct AppliedCollectives(
+      List<MessageEnvelope<IEvent>> Envelopes,
+      IReadOnlyDictionary<Guid, MessageChanges> Changes);
+
   /// <summary>
   /// The collectives a sink run applies, in order, and the work rows it completes when they do. From the queue (#963)
   /// it also maps each collective to its row, so a run that stops part-way completes only the rows of what it applied
@@ -3704,6 +3711,7 @@ public partial class PerspectiveWorker(
       AsyncServiceScope scope,
       Guid streamId,
       List<MessageEnvelope<IEvent>> collectiveEnvelopes,
+      IReadOnlyDictionary<Guid, MessageChanges> changes,
       CancellationToken cancellationToken) {
     var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
     if (receptorInvoker is null) {
@@ -3719,6 +3727,7 @@ public partial class PerspectiveWorker(
           MessageSource = MessageSource.Local,
           AttemptNumber = 1,
           IsNewEvent = true,
+          Changes = changes.GetValueOrDefault(envelope.MessageId.Value),
         };
         await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostAllPerspectivesDetached,
           context, cancellationToken).ConfigureAwait(false);

@@ -212,7 +212,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
 
     if (receptors.Count == 0) {
-      await _handleNoReceptorsRegisteredAsync(message, messageType, stage, envelope, scopeForTags, cancellationToken).ConfigureAwait(false);
+      await _handleNoReceptorsRegisteredAsync(message, messageType, stage, envelope, scopeForTags, (context as LifecycleExecutionContext)?.Changes, cancellationToken).ConfigureAwait(false);
       return;
     }
 
@@ -236,7 +236,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
 
     // Process message tags after all receptors complete at the current lifecycle stage
-    await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
+    await _processTagsAsync(message, messageType, stage, scopeForTags, (context as LifecycleExecutionContext)?.Changes, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -323,12 +323,13 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       LifecycleStage stage,
       IMessageEnvelope envelope,
       IScopeContext? scopeForTags,
+      Tags.MessageChanges? changes,
       CancellationToken cancellationToken) {
     _ensureLogger();
     if (_logger is not null) {
       Log.NoReceptorsRegistered(_logger, stage, messageType.Name, envelope.MessageId.Value);
     }
-    await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
+    await _processTagsAsync(message, messageType, stage, scopeForTags, changes, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -883,13 +884,14 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       Type messageType,
       LifecycleStage stage,
       IScopeContext? scope,
+      Tags.MessageChanges? changes,
       CancellationToken cancellationToken) {
     var tagProcessor = _scopedProvider.GetService<IMessageTagProcessor>();
     if (tagProcessor is null) {
       return ValueTask.CompletedTask;
     }
 
-    var task = tagProcessor.ProcessTagsAsync(message, messageType, stage, scope, cancellationToken);
+    var task = tagProcessor.ProcessTagsAsync(message, messageType, stage, scope, changes, cancellationToken);
 
     // Fast-path: if ProcessTagsAsync completed synchronously (common case: no tags
     // registered for this message type), no background observation is needed.

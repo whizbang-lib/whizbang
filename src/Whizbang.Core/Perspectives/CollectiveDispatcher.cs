@@ -129,6 +129,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
       new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.SCOPE_KIND, evt.Scope.ScopeKind));
 
     var totalAffectedRows = 0;
+    var changed = new Dictionary<Type, IReadOnlyList<string>>();
     try {
       foreach (var entry in matchingEntries) {
         ICollectiveEventExecutor executor;
@@ -145,7 +146,8 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
 
         var handler = _services.GetRequiredService(entry.HandlerType);
         var affected = await executor.ApplyAsync(
-          entry, handler, evt, resolver, dbContextOrSession, collectiveEventId, onBatchApplied, cancellationToken)
+          _recordingChanges(entry, changed), handler, evt, resolver, dbContextOrSession, collectiveEventId, onBatchApplied,
+          cancellationToken)
           .ConfigureAwait(false);
         totalAffectedRows += affected;
 
@@ -180,8 +182,28 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
 
     return new CollectiveDispatchResult(
       HandlerCount: matchingEntries.Count,
-      AffectedRowCount: totalAffectedRows);
+      AffectedRowCount: totalAffectedRows) {
+      ChangedProperties = changed,
+    };
   }
+
+  // The executor asks the entry for its spec exactly once, so the spec's setters are read as it hands it over, without
+  // calling the handler a second time and without any driver knowing about it (#1045). Two handlers for one model add
+  // their properties together.
+  private static CollectiveApplyEntry _recordingChanges(
+      CollectiveApplyEntry entry, Dictionary<Type, IReadOnlyList<string>> changed) =>
+    entry with {
+      Invoker = (handler, evt, query) => {
+        var spec = entry.Invoker(handler, evt, query);
+        if (spec is ICollectiveSpecSetters setters) {
+          var properties = CollectiveChangedProperties.Of(setters.UntypedSetters);
+          changed[entry.ModelType] = changed.TryGetValue(entry.ModelType, out var earlier)
+            ? [.. earlier.Union(properties, StringComparer.Ordinal)]
+            : properties;
+        }
+        return spec;
+      },
+    };
 
   // Span tag keys — mirror the EventCategoryMetrics dimensions so trace + metric views line up.
   private const string TAG_EVENT_TYPE = "whizbang.collective.event_type";
