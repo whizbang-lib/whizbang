@@ -66,10 +66,40 @@ public sealed class CommitOrderStamperOptions {
   public TimeSpan FencedRetryInterval { get; set; } = TimeSpan.FromMilliseconds(250);
 
   /// <summary>
-  /// Maximum rows stamped per <c>stamp_pending_commit_sequences</c> call. Larger values
+  /// Rows stamped per <c>stamp_pending_commit_sequences</c> call in steady state. Larger values
   /// reduce per-call overhead under heavy load but increase per-call latency. Default 1000.
   /// </summary>
+  /// <remarks>
+  /// This is the size a drained database uses. While a backlog remains the worker grows the request
+  /// toward <see cref="DrainBatchSize"/>; see <see cref="CommitOrderStampBatch"/> for why.
+  /// </remarks>
   public int BatchSize { get; set; } = 1000;
+
+  /// <summary>
+  /// The largest number of rows to ask for while a backlog is draining. Default 25,000.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Each stamp call costs a scan and a sort of the whole unstamped set, because the column that orders
+  /// it is a system column no index can cover. The cost is per call, so a backlog of N rows drained in
+  /// steps of B costs about N/B scans: four million rows at a thousand a call is four thousand of them,
+  /// which is hours. Growing the request while calls keep filling cuts the number of scans without
+  /// changing what any of them does.
+  /// </para>
+  /// <para>
+  /// The ceiling exists because a batch holds its rows locked and the sequence advanced for the length
+  /// of its call. Raising it shortens a drain and lengthens the longest single stamp; lowering it does
+  /// the reverse. Setting it at or below <see cref="BatchSize"/> disables the growth, which is the way
+  /// to opt out.
+  /// </para>
+  /// <para>
+  /// This bounds the number of scans rather than making the drain proportional to the work. The
+  /// proportional fix needs an ordering key an index can cover, which changes what the stamp treats as
+  /// order and is tracked separately.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public int DrainBatchSize { get; set; } = 25_000;
 
   /// <summary>
   /// Killswitch. When true, the worker exits early and never acquires the lock.
