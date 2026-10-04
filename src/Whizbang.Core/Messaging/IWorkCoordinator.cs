@@ -2940,6 +2940,16 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <tests>tests/Whizbang.Core.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_BoundTag_StampsGroupAndMaxDelayFloorAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CoalesceMintStampingTests.cs:AddOutboxMessage_BoundTag_StampsGroupAndFloorAsync</tests>
   public string? CoalesceGroup { get; init; }
+
+  /// <summary>
+  /// Set on a collective with an ordering key (#1003): the type it is named by when it becomes a predecessor
+  /// (<see cref="CollectivePredecessorLink.TypeFor"/>). The store links it to the collective stored before it on its
+  /// key, writing that one's id and type into its payload, and makes it the key's head, in the storing transaction.
+  /// Null for every other message, which is stored as before.
+  /// </summary>
+  /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherKeyedCollectiveStreamTests.cs:PublishAsync_KeyedCollective_MarksItsOutboxRowForALinkAsync</tests>
+  public string? CollectiveLinkType { get; init; }
 }
 /// <summary>
 /// Per-group view over coalesce-pending outbox rows, returned by

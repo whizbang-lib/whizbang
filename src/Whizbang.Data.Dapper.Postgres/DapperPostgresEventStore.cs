@@ -131,6 +131,13 @@ public class DapperPostgresEventStore(
   /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
   /// Uses the event_type column to determine which concrete type to deserialize to.
   /// </summary>
+  /// <remarks>
+  /// The stream is read in commit order (#1003): <c>commit_sequence</c> ascending, an unstamped row last,
+  /// <c>event_id</c> breaking ties, as the EF Core store reads it. An event id is minted before commit, so two
+  /// producers can commit in the opposite order to their ids; reading by id would replay them backward.
+  /// </remarks>
+  /// <docs>fundamentals/events/event-store#read-order</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:ReadPolymorphicAsync_IdsRunBackwardToCommits_ReadsInCommitOrderAsync</tests>
   public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
     Guid streamId,
     Guid? fromEventId,
@@ -141,7 +148,7 @@ public class DapperPostgresEventStore(
     EnsureConnectionOpen(connection);
 
     var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
-    var sql = _getReadByEventIdSql(fromEventId);
+    var sql = _getReadInCommitOrderSql(fromEventId);
 
     var rows = await Executor.QueryAsync<EventRow>(
       connection,
@@ -408,6 +415,29 @@ public class DapperPostgresEventStore(
           WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
           ORDER BY es.event_id";
   }
+
+  /// <summary>
+  /// The SQL that reads a stream in commit order (<c>commit_sequence</c> ascending, unstamped last, then
+  /// <c>event_id</c>), after a starting event ID when one is given: the order a replay applies the stream in.
+  /// </summary>
+  private static string _getReadInCommitOrderSql(Guid? fromEventId) =>
+    fromEventId is null
+      ? @"SELECT es.event_type AS EventType,
+                 eb.event_data::text AS EventData,
+                 eb.metadata::text AS Metadata,
+                 es.scope::text AS Scope
+          FROM wh_event_store es
+          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+          WHERE es.stream_id = @StreamId
+          ORDER BY es.commit_sequence ASC NULLS LAST, es.event_id"
+      : @"SELECT es.event_type AS EventType,
+                 eb.event_data::text AS EventData,
+                 eb.metadata::text AS Metadata,
+                 es.scope::text AS Scope
+          FROM wh_event_store es
+          LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
+          WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
+          ORDER BY es.commit_sequence ASC NULLS LAST, es.event_id";
 
   /// <summary>
   /// Deserializes an EventRow into a typed MessageEnvelope using the JSONB adapter.

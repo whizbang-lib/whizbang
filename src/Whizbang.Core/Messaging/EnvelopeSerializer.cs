@@ -73,7 +73,15 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
       // State-only delivery survives the conversion too — losing it would re-fire triggers on
       // backfilled history (stream-integrity Phase S).
       StateOnly = envelope.StateOnly,
-      Priority = envelope.Priority   // priority step 1: the storage form carries the declaration
+      Priority = envelope.Priority,   // priority step 1: the storage form carries the declaration
+      Version = envelope.Version,
+      // The producer's origin and the causality pair survive the conversion (#1029). A received typed
+      // envelope is converted here before its inbox row is stored; dropping SourceServiceId stores the
+      // row with the consumer's own id, and the event as locally originated.
+      SourceServiceId = envelope.SourceServiceId,
+      SourceCommitSequence = envelope.SourceCommitSequence,
+      CausedByServiceId = envelope.CausedByServiceId,
+      CausedByCommitSequence = envelope.CausedByCommitSequence,
     };
 
     return new SerializedEnvelope(

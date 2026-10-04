@@ -27,4 +27,35 @@ public class DutyGrantContractTests {
 
     await Assert.That(grant.Epoch).IsNull();
   }
+
+  [Test]
+  public async Task DrainRequested_OfAGrantThatCannotBeAsked_IsFalseAsync() {
+    IDutyGrant grant = new SessionLockStyleGrant();
+
+    await Assert.That(grant.DrainRequested).IsFalse();
+  }
+
+  private sealed class OneAtATimeElector : IDutyElector {
+    public List<string> Asked { get; } = [];
+
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
+      Asked.Add(duty);
+      return Task.FromResult(duty == "maintainer"
+        ? DutyAttempt.Granted(new SessionLockStyleGrant())
+        : DutyAttempt.Lost(DutyRefusal.Contended, "held elsewhere"));
+    }
+  }
+
+  [Test]
+  public async Task TryAcquireManyAsync_ByDefault_AsksOneAtATime_InOrderAsync() {
+    var elector = new OneAtATimeElector();
+
+    var attempts = await ((IDutyElector)elector).TryAcquireManyAsync(["maintainer", "commit-stamper"], CancellationToken.None);
+
+    await Assert.That(elector.Asked).IsEquivalentTo(["maintainer", "commit-stamper"]);
+    await Assert.That(attempts[0].Grant).IsNotNull();
+    await Assert.That(attempts[1].Refusal).IsEqualTo(DutyRefusal.Contended);
+    await Assert.That(async () => await ((IDutyElector)elector).TryAcquireManyAsync(null!, CancellationToken.None))
+      .Throws<ArgumentNullException>();
+  }
 }

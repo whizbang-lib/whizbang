@@ -161,7 +161,7 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
           location,
           subject,
           model.Name,
-          "; a request can name any of these fields, so the index is only replaced by indexing each of them"));
+          "; a request can name any of these fields, so the only other answer is to mark each of them [Indexed]"));
   }
 
   private static int _exposureOf(ISymbol symbol, SymbolAnalysisContext context) {

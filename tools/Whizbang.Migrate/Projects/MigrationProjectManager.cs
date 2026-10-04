@@ -134,10 +134,9 @@ public sealed class MigrationProjectManager {
 
     if (keepDecisions) {
       // Delete everything except decisions.json
-      foreach (var file in Directory.GetFiles(projectDir)) {
-        if (!file.EndsWith("decisions.json", StringComparison.OrdinalIgnoreCase)) {
-          File.Delete(file);
-        }
+      foreach (var file in Directory.GetFiles(projectDir)
+          .Where(f => !f.EndsWith("decisions.json", StringComparison.OrdinalIgnoreCase))) {
+        File.Delete(file);
       }
     } else {
       Directory.Delete(projectDir, recursive: true);

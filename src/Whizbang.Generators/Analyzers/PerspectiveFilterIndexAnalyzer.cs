@@ -38,8 +38,8 @@ namespace Whizbang.Generators.Analyzers;
 /// that compiles to a whole-document match is answered only by the index over the whole document,
 /// and <c>[PerspectiveQueries]</c> on the model decides whether the schema builds it: WHIZ307 warns
 /// when the declaration leaves the match without one (including any match on the row's metadata,
-/// whose index is off unless declared), and WHIZ308 notes a match that relies on the index only
-/// because the model has not declared either way.
+/// whose index is off unless declared), and WHIZ308 warns at a match on a model that has not
+/// declared either way, which does not get the index either, because the default is off.
 /// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz302</docs>
@@ -170,7 +170,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    if (_isIndexBacked(field) || !_decidesWhichRowsAreRead(node)) {
+    if (IsIndexBacked(field) || !_decidesWhichRowsAreRead(node)) {
       return;
     }
 
@@ -185,7 +185,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    if (_isSuppressed(field, model, context.Compilation.Assembly)) {
+    if (IsSuppressed(field, model, context.Compilation.Assembly)) {
       return;
     }
 
@@ -331,7 +331,8 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
 
   /// <summary>
   /// A whole-document match on the model's document: reported when the model declared its queries
-  /// never match that way, and noted when it declared nothing.
+  /// never match that way (WHIZ307), and when it declared nothing (WHIZ308), since an undeclared
+  /// model does not get the index either.
   /// </summary>
   /// <remarks>
   /// <para>
@@ -351,7 +352,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
     if (declared == DocumentMatchDeclaration.On
         || _declaredIndexServes(node, field)
         || MappedPathDiscovery.MustStoreOpaquely(model)
-        || _isSuppressed(field, model, context.Compilation.Assembly)) {
+        || IsSuppressed(field, model, context.Compilation.Assembly)) {
       return;
     }
 
@@ -369,7 +370,8 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
           node.Name.GetLocation(),
           $"This filter on '{name}.{field.Name}'",
           name,
-          ", or mark the field [Indexed] so the filter no longer needs it");
+          ", mark the field [Indexed] for an index of its own, or record the decision with "
+            + "[SuppressIndexAdvisory(\"reason\")]");
 
     context.ReportDiagnostic(diagnostic);
   }
@@ -457,7 +459,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
     if (!_decidesWhichRowsAreRead(node)
         || !_containmentCanServe(node, field)
         || PerspectiveQueriesDiscovery.From(model).BuildsMetadataIndex
-        || _isSuppressed(field, model, context.Compilation.Assembly)) {
+        || IsSuppressed(field, model, context.Compilation.Assembly)) {
       return;
     }
 
@@ -691,7 +693,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// a physical field asks for one outright or gets one from its unique constraint, and a vector
   /// field is indexed unless its declaration turns the index off.
   /// </summary>
-  private static bool _isIndexBacked(IPropertySymbol property) {
+  internal static bool IsIndexBacked(IPropertySymbol property) {
     foreach (var attribute in property.GetAttributes()) {
       var name = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
 
@@ -736,8 +738,8 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// or an assembly in play carries a reasoned opt-out. A blank reason is not a decision, so it
   /// does not count.
   /// </summary>
-  private static bool _isSuppressed(IPropertySymbol field, INamedTypeSymbol model, IAssemblySymbol compiling) {
-    if (_hasReasonedSuppression(field.GetAttributes())) {
+  internal static bool IsSuppressed(IPropertySymbol field, INamedTypeSymbol model, IAssemblySymbol compiling) {
+    if (HasReasonedSuppression(field.GetAttributes())) {
       return true;
     }
 
@@ -748,24 +750,25 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
     // way it differs from the model is inheritance, and a property reached through a composed type is
     // refused earlier than this by the walk that identifies the model.
     for (var type = model; type is not null; type = type.BaseType) {
-      if (_hasReasonedSuppression(type.GetAttributes())) {
+      if (HasReasonedSuppression(type.GetAttributes())) {
         return true;
       }
     }
 
     // The assembly-wide opt-out is honored from either side: the assembly being compiled, which is
     // where a team writes it, and the model's own assembly, for a model that arrives as a package.
-    if (_hasReasonedSuppression(compiling.GetAttributes())) {
+    if (HasReasonedSuppression(compiling.GetAttributes())) {
       return true;
     }
 
     var owning = model.ContainingAssembly;
     return owning is not null &&
            !SymbolEqualityComparer.Default.Equals(owning, compiling) &&
-           _hasReasonedSuppression(owning.GetAttributes());
+           HasReasonedSuppression(owning.GetAttributes());
   }
 
-  private static bool _hasReasonedSuppression(ImmutableArray<AttributeData> attributes) {
+  /// <summary>Whether these attributes include a <c>[SuppressIndexAdvisory]</c> with a non-blank reason.</summary>
+  internal static bool HasReasonedSuppression(ImmutableArray<AttributeData> attributes) {
     foreach (var attribute in attributes) {
       if (attribute.AttributeClass is null ||
           !string.Equals(TypeNameUtilities.Display(attribute.AttributeClass), SUPPRESS_ATTRIBUTE, StringComparison.Ordinal)) {

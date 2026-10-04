@@ -24,8 +24,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [NotInParallel("ModelRegistrationRegistry tests share static state")]
 [Category("Shard1")]
 public class ModelRegistrationRegistryCoverageTests {
+  private IDisposable? _restore;
+
   [Before(Test)]
-  public void ResetStaticState() => ModelRegistrationRegistry.ResetForTesting();
+  public void ResetStaticState() => _restore = ModelRegistrationRegistry.ResetForTesting();
+
+  // Puts back the generated registrars this class cleared: later tests in the same process rely on them.
+  [After(Test)]
+  public void RestoreStaticState() => _restore?.Dispose();
 
   // If no assembly ever registered a model callback, InvokeRegistration must gracefully do
   // nothing rather than throw — schema-only / diagnostic hosts (a migration CLI, a health-check

@@ -1,4 +1,6 @@
 using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.Postgres.Collective;
@@ -58,7 +60,8 @@ public static class CollectivePhysicalColumns {
     if (!field.IsJsonbColumn) {
       throw new NotSupportedException(
         $"UpsertElement on {modelType.Name}.{field.PropertyName} targets a physical column that is not jsonb. Keyed " +
-        "elements need a jsonb column: declare it with [PhysicalField(ColumnType = \"jsonb\")], or keep the array in the document.");
+        "elements need a jsonb column, which a promoted list is unless another ColumnType is declared; drop the " +
+        "declared type, or keep the array in the document.");
     }
   }
 
@@ -85,6 +88,55 @@ public static class CollectivePhysicalColumns {
     vector is null
       ? null
       : "[" + string.Join(",", vector.Select(v => v.ToString(System.Globalization.CultureInfo.InvariantCulture))) + "]";
+
+  /// <summary>
+  /// The key inside a jsonb physical column that a nested selector such as <c>m =&gt; m.Settings.Theme</c> targets,
+  /// or null when the selector is a top-level property, which the caller handles as before.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// One level only: the selector reads a property of a <c>[PhysicalField(ColumnType = "jsonb")]</c> property of the
+  /// model, and the setter writes that one key of the stored object in the same UPDATE, keeping every other key.
+  /// Anything else nested (a document property, a column of another type, a deeper path, or a key with no setter
+  /// for the replay to write through) is refused, so the live apply and the replay can never disagree about it.
+  /// </para>
+  /// </remarks>
+  /// <param name="modelType">The model the selector reads.</param>
+  /// <param name="selector">The setter's selector.</param>
+  /// <exception cref="NotSupportedException">The selector is nested in a shape a collective cannot set.</exception>
+  public static CollectiveJsonbKey? TryJsonbKey(Type modelType, LambdaExpression selector) {
+    ArgumentNullException.ThrowIfNull(modelType);
+    ArgumentNullException.ThrowIfNull(selector);
+    var body = selector.Body;
+    while (body is UnaryExpression { NodeType: ExpressionType.Convert } convert) {
+      body = convert.Operand;
+    }
+    if (body is not MemberExpression { Member: PropertyInfo key, Expression: MemberExpression { Member: PropertyInfo root } parent }) {
+      return null;
+    }
+    if (parent.Expression is not ParameterExpression || Resolve(modelType, root.Name) is not { IsJsonbColumn: true } field) {
+      throw new NotSupportedException(
+        $"A collective setter on {modelType.Name}.{root.Name}.{key.Name} sets a key inside a property. That is supported only " +
+        "one level down, inside a [PhysicalField(ColumnType = \"jsonb\")] property; set the whole value instead, or use " +
+        "[CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)].");
+    }
+    if (key.SetMethod is null) {
+      throw new NotSupportedException(
+        $"{root.PropertyType.Name}.{key.Name} has no setter, so a replay could not apply the collective that sets it.");
+    }
+    return new CollectiveJsonbKey(root, key, field);
+  }
+
+  /// <summary>
+  /// The new value of a jsonb column after one key of it is set: <c>jsonb_set</c> over the column's current value
+  /// (or this statement's earlier assignment to it). A column holding no object changes nothing: SQL <c>NULL</c> stays
+  /// null, and a JSON <c>null</c> reads as one, which is what the replay does with a null property.
+  /// </summary>
+  /// <param name="sourceSql">The column's value so far: the quoted column, or an earlier assignment's expression.</param>
+  /// <param name="pathSql">The <c>text[]</c> path holding the one key.</param>
+  /// <param name="valueSql">The key's new value, as jsonb.</param>
+  public static string JsonbKeySetSql(string sourceSql, string pathSql, string valueSql) =>
+    "jsonb_set(NULLIF(" + sourceSql + ", 'null'::jsonb), " + pathSql + ", " + valueSql + ")";
 
   /// <summary>A column name as a quoted Postgres identifier.</summary>
   public static string Quote(string column) {
@@ -126,3 +178,12 @@ public static class CollectivePhysicalColumns {
     return parts.Count == 0 ? "data = data" : string.Join(", ", parts);
   }
 }
+
+/// <summary>
+/// One key inside a jsonb physical column that a collective setter writes (see
+/// <see cref="CollectivePhysicalColumns.TryJsonbKey"/>).
+/// </summary>
+/// <param name="Root">The model property stored in the jsonb column.</param>
+/// <param name="Key">The property of the stored object that is set.</param>
+/// <param name="Field">The physical field of <paramref name="Root"/>.</param>
+public readonly record struct CollectiveJsonbKey(PropertyInfo Root, PropertyInfo Key, PerspectivePhysicalField Field);

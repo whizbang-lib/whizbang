@@ -99,6 +99,9 @@ public partial class MigrationConstantsTests {
     await Assert.That(() => MigrationConstants.Parse("no separator")).Throws<InvalidDataException>();
     await Assert.That(() => MigrationConstants.Parse("__A__ = 'x'\n__A__B__ = 'y'")).Throws<InvalidDataException>()
       .Because("substituting __A__ first would eat __A__B__");
+    await Assert.That(() => MigrationConstants.Parse("__PATH__ = '{p,x}'")).Throws<InvalidDataException>()
+      .Because("the EF Core schema path escapes braces for ExecuteSqlRawAsync before constants are substituted, so a brace in a value reaches the format parser unescaped");
+    await Assert.That(() => MigrationConstants.Parse("__PATH__ = 'x}'")).Throws<InvalidDataException>();
   }
 
   [GeneratedRegex("__[A-Z][A-Z0-9_]*__")]

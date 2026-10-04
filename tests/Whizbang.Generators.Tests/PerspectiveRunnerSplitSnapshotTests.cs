@@ -8,8 +8,9 @@ namespace Whizbang.Generators.Tests;
 /// <summary>
 /// Issue #983: the generated runner strips a Split class model's promoted fields in place before the write,
 /// so a snapshot of the same instance taken after the write lacks them. For that model the runner serializes
-/// the snapshot before the write, when snapshots are on; for every other model (a record is stripped as a
-/// copy, and nothing else is stripped) the snapshot after the write is the model it applied.
+/// the snapshot before the write, and (issue #1002) only on a run whose snapshot is due, decided before the
+/// write; for every other model (a record is stripped as a copy, and nothing else is stripped) the snapshot
+/// after the write is the model it applied.
 /// </summary>
 /// <tests>src/Whizbang.Generators/PerspectiveRunnerGenerator.cs</tests>
 /// <tests>src/Whizbang.Generators/Templates/PerspectiveRunnerTemplate.cs</tests>
@@ -77,8 +78,7 @@ public class PerspectiveRunnerSplitSnapshotTests {
     }
     """;
 
-  private const string SNAPSHOTS_BEFORE_WRITE =
-      "_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true ? ToSnapshotJson(model) : null;";
+  private const string SNAPSHOTS_BEFORE_WRITE = "SnapshotBeforeWrite(global::TestNamespace.SplitClassModel model) => ToSnapshotJson(model);";
 
   private static string _runner(string perspective) {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(SOURCE);
@@ -104,7 +104,7 @@ public class PerspectiveRunnerSplitSnapshotTests {
       var runner = _runner(perspective);
 
       await Assert.That(runner).IsNotEmpty();
-      await Assert.That(runner).DoesNotContain(SNAPSHOTS_BEFORE_WRITE)
+      await Assert.That(runner).DoesNotContain("=> ToSnapshotJson(model);")
         .Because($"{perspective} is not stripped in place, so its snapshot after the write is the model it applied");
       await Assert.That(_compact(runner)).Contains("privatestaticJsonDocument?SnapshotBeforeWrite(")
         .Because("the call sites are the same for every model; this one never has a snapshot to hand them");
@@ -118,7 +118,27 @@ public class PerspectiveRunnerSplitSnapshotTests {
 
     // The end of a run, and the end of a rewind: each captures the snapshot before it writes and hands
     // it to the store in place of one taken afterwards.
-    await Assert.That(runner.Split("snapshotBeforeWrite=SnapshotBeforeWrite(updatedModel);").Length - 1).IsEqualTo(2);
+    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?SnapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(2);
     await Assert.That(runner.Split("snapshotBeforeWrite??ToSnapshotJson(updatedModel)").Length - 1).IsEqualTo(2);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_DecidesWhetherASnapshotIsDueBeforeTheWrite_AndSnapshotsOnThatDecisionAsync() {
+    var runner = _compact(_runner("SplitClassPerspective"));
+
+    // Issue #1002: the end of a run serializes before the write only when the snapshot after it is due.
+    const string RUN_DUE = "varsnapshotDue=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true"
+      + "&&!pendingPurge&&updatedModelisnotnull&&hasWrittenUpdate&&lastSuccessfulEventId.HasValue"
+      + "&&_eventsSinceLastSnapshot+eventsProcessed>=_snapshotCadence().Threshold;";
+    await Assert.That(runner).Contains(RUN_DUE);
+    await Assert.That(runner.IndexOf(RUN_DUE, StringComparison.Ordinal))
+      .IsLessThan(runner.IndexOf("awaitSaveModelAndCheckpointAsync(", StringComparison.Ordinal));
+    await Assert.That(runner).Contains("_eventsSinceLastSnapshot+=eventsProcessed;if(snapshotDue){")
+      .Because("the snapshot after the write is taken on the same decision, so the two cannot disagree");
+    // The end of a rewind snapshots whenever snapshots are on.
+    await Assert.That(runner).Contains(
+      "varsnapshotDue=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true&&lastSuccessfulEventId.HasValue;");
+    await Assert.That(runner).Contains("private(intThreshold,intRetention)_snapshotCadence(){");
   }
 }

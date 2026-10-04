@@ -10,8 +10,8 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// </summary>
 /// <remarks>
 /// The generator and the analyzer read this attribute from source symbols, where "not written" is
-/// distinguishable from <c>false</c>; an instance cannot tell those apart, which is why an undeclared
-/// <c>MatchOnAnyField</c> keeps the whole-document index even though the property reads false here.
+/// distinguishable from <c>false</c>; an instance cannot tell those apart. Both build no index, and
+/// the difference only decides which diagnostic a filter that needs one gets (WHIZ308 or WHIZ307).
 /// These cases cover what a consuming application touches: each option reads back as written, and
 /// the attribute may be inherited but not repeated.
 /// </remarks>
@@ -30,7 +30,8 @@ public class PerspectiveQueriesAttributeTests {
   public async Task WithoutOptions_NothingIsSwitchedOnAsync() {
     var declaration = new PerspectiveQueriesAttribute();
 
-    await Assert.That(declaration.MatchOnAnyField).IsFalse();
+    await Assert.That(declaration.MatchOnAnyField).IsFalse()
+      .Because("the whole-document index is off unless a model asks for it.");
     await Assert.That(declaration.MatchOnMetadata).IsFalse()
       .Because("the metadata index is off unless a model asks for it.");
   }

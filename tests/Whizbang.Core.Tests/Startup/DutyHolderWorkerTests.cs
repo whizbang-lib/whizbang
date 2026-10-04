@@ -28,6 +28,7 @@ public class DutyHolderWorkerTests {
     public string Duty => ROLE;
     public DateTimeOffset AcquiredAt => DateTimeOffset.UnixEpoch;
     public long? Epoch => epoch;
+    public bool DrainRequested { get; set; }
     public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) =>
       Task.FromResult(!Disposed && (Verifications.Count == 0 || Verifications.Dequeue()));
     public ValueTask DisposeAsync() {
@@ -123,7 +124,7 @@ public class DutyHolderWorkerTests {
       [first, second, new Handler("Migrate", _ => ValueTask.FromResult(DutyWorkResult.Done()), StartupDuties.MIGRATOR)]);
 
     await Assert.That(worker.Roles).IsEquivalentTo([ROLE])
-      .Because("the migrator is never held by assignment, so its handler is ignored");
+      .Because("the migrator is held for one migration at a time, never by the standing holder loop, so its handler is ignored");
 
     var elector = new Elector();
     var grant = new Grant();
@@ -426,5 +427,120 @@ public class DutyHolderWorkerTests {
     await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), null!, options, logger, null)).Throws<ArgumentNullException>();
     await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), [], null!, logger, null)).Throws<ArgumentNullException>();
     await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), [], options, null!, null)).Throws<ArgumentNullException>();
+  }
+
+  private sealed class BatchElector : IDutyElector {
+    public List<IReadOnlyList<string>> Batches { get; } = [];
+    public Func<string, DutyAttempt> Answer { get; set; } = _ => DutyAttempt.Granted(new Grant());
+
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) =>
+      throw new InvalidOperationException("the pass votes for every role it does not hold in one call");
+
+    public Task<IReadOnlyList<DutyAttempt>> TryAcquireManyAsync(IReadOnlyList<string> duties, CancellationToken cancellationToken) {
+      Batches.Add([.. duties]);
+      return Task.FromResult<IReadOnlyList<DutyAttempt>>([.. duties.Select(Answer)]);
+    }
+  }
+
+  [Test]
+  public async Task APass_VotesForEveryRoleItDoesNotHold_InOneCallAsync() {
+    var elector = new BatchElector();
+    var stamper = new Handler("Stamp", _ => ValueTask.FromResult(DutyWorkResult.Done()), "commit-stamper");
+    var options = new RoleAssignmentOptions();
+    options.Roles.Add("commit-stamper");
+    var worker = new DutyHolderWorker(elector, new Store(), [_done("Rewrite"), stamper], Options.Create(options),
+      NullLogger<DutyHolderWorker>.Instance, null);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(elector.Batches.Count).IsEqualTo(1).Because("held roles are verified, not voted for again");
+    await Assert.That(elector.Batches[0]).IsEquivalentTo(["commit-stamper", ROLE]);
+    await Assert.That(worker.Holds("commit-stamper")).IsTrue();
+    await Assert.That(worker.Holds(ROLE)).IsTrue();
+  }
+
+  [Test]
+  public async Task ADrainRequest_FinishesTheStepInHand_ThenReleasesTheRoleAsync() {
+    // Decision 2 of #968: a newer-version instance asked for the role. The holder finishes the piece of
+    // work it is on, does not start the next, and releases the role so the newer instance wins it.
+    using var factory = new TestMeterFactory();
+    var metrics = new RoleAssignmentMetrics(new WhizbangMetrics(factory));
+    var grant = new Grant();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(grant));
+    var store = new Store();
+    store.Owed.AddRange([_owed("First"), _owed("Second")]);
+    var first = new Handler("First", _ => {
+      grant.DrainRequested = true;   // learned on a renewal while this step ran
+      return ValueTask.FromResult(DutyWorkResult.Done());
+    });
+    var second = _done("Second");
+    var worker = _worker(elector, store, [first, second], metrics: metrics);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(store.Completed).IsEquivalentTo(["First"]).Because("the step in hand is finished and recorded");
+    await Assert.That(second.Runs).IsEqualTo(0).Because("no new step starts once a drain is asked for");
+    await Assert.That(grant.Disposed).IsTrue();
+    await Assert.That(worker.Holds(ROLE)).IsFalse();
+    var drains = ProbeMeterReader.ReadSeries(factory.CreatedMeters[0], "whizbang.roles.drains").Single(r => r.Tags.Count > 0);
+    await Assert.That(drains.Tags[RoleAssignmentMetrics.ROLE_TAG]).IsEqualTo(ROLE);
+  }
+
+  [Test]
+  public async Task ADrainRequest_WithNothingOwed_ReleasesOnTheNextPassAsync() {
+    var grant = new Grant();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(grant));
+    var worker = _worker(elector, new Store(), [_done("Rewrite")]);
+    await worker.RunOnceAsync(CancellationToken.None);
+    await Assert.That(worker.Holds(ROLE)).IsTrue();
+
+    grant.DrainRequested = true;
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(grant.Disposed).IsTrue();
+    await Assert.That(worker.Holds(ROLE)).IsFalse();
+  }
+
+  [Test]
+  public async Task ADrainRequest_WithCancellationAlreadyRequested_PropagatesAsync() {
+    var grant = new Grant();
+    using var cts = new CancellationTokenSource();
+    var worker = new DutyHolderWorker(new BlockingVerifyElector(grant, cts), new Store(), [_done("Rewrite")],
+      Options.Create(new RoleAssignmentOptions()), NullLogger<DutyHolderWorker>.Instance, null);
+    await worker.RunOnceAsync(CancellationToken.None);
+    grant.DrainRequested = true;
+
+    await Assert.That(async () => await worker.RunOnceAsync(cts.Token)).Throws<OperationCanceledException>();
+    await Assert.That(worker.Holds(ROLE)).IsTrue().Because("a canceled pass releases nothing; the host's stop does");
+  }
+
+  /// <summary>Grants once; the token is canceled by the time the pass reaches the drain.</summary>
+  private sealed class BlockingVerifyElector(Grant grant, CancellationTokenSource cts) : IDutyElector {
+    private bool _granted;
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
+      if (_granted) {
+        return Task.FromResult(DutyAttempt.Lost(DutyRefusal.Contended, "held"));
+      }
+      _granted = true;
+      return Task.FromResult(DutyAttempt.Granted(new CancelOnVerifyGrant(grant, cts)));
+    }
+  }
+
+  private sealed class CancelOnVerifyGrant(Grant inner, CancellationTokenSource cts) : IDutyGrant {
+    private int _verifies;
+    public string Duty => inner.Duty;
+    public DateTimeOffset AcquiredAt => inner.AcquiredAt;
+    public long? Epoch => inner.Epoch;
+    public bool DrainRequested => inner.DrainRequested;
+    public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) {
+      if (++_verifies == 1) {
+        cts.Cancel();   // the keep step passes; by the drain check the token is canceled
+      }
+      return Task.FromResult(true);
+    }
+    public ValueTask DisposeAsync() => inner.DisposeAsync();
   }
 }

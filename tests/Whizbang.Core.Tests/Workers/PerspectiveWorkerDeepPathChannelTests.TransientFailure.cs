@@ -33,13 +33,19 @@ namespace Whizbang.Core.Tests.Workers;
 /// in the middle of a load.
 /// </remarks>
 public partial class PerspectiveWorkerDeepPathChannelTests {
-  [Test]
-  public async Task Worker_TransientDatabaseFailureInAChannelBatch_IsReportedOnceAndTheLoopTakesTheNextBatchAsync() {
-    // Arrange — the cursor read of the first batch deadlocks; every later read succeeds.
-    var deadlockedStreamId = Guid.CreateVersion7();
-    var nextStreamId = Guid.CreateVersion7();
-    const string perspectiveName = "Deep.DeadlockedPerspective";
+  private sealed record DeadlockingBatchWorker(
+    PerspectiveWorker Worker,
+    PerspectiveWorkerTestHarness Harness,
+    RecordingWorkCoordinator Coordinator,
+    RecordingRunner Runner,
+    EventIdSignalingLogger<PerspectiveWorker> Logger,
+    FakeTimeProvider Time);
 
+  /// <summary>
+  /// A worker with one consumer loop whose first cursor read deadlocks and whose later reads succeed,
+  /// on a fake clock, so the loop's backoff after the failure lasts until the test steps the clock.
+  /// </summary>
+  private static DeadlockingBatchWorker _createDeadlockingBatchWorker(string perspectiveName) {
     var coordinator = new RecordingWorkCoordinator();
     coordinator.SetNextCursorException(FakeDbException.WithSqlState("40P01", message: "deadlock detected"));
     var instanceProvider = new FakeInstanceProvider();
@@ -99,6 +105,18 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       })).Value),
       timeProvider: time);
 
+    return new DeadlockingBatchWorker(worker, harness, coordinator, runner, logger, time);
+  }
+
+  [Test]
+  public async Task Worker_TransientDatabaseFailureInAChannelBatch_IsReportedOnceAndTheLoopTakesTheNextBatchAsync() {
+    // Arrange — the cursor read of the first batch deadlocks; every later read succeeds.
+    var deadlockedStreamId = Guid.CreateVersion7();
+    var nextStreamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.DeadlockedPerspective";
+
+    var (worker, harness, coordinator, runner, logger, time) = _createDeadlockingBatchWorker(perspectiveName);
+
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
@@ -148,5 +166,43 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+  }
+
+  /// <summary>
+  /// A host stopping while the loop waits out the backoff after a failed batch is a shutdown, not a
+  /// failure: the wait is canceled and the loop ends cleanly, without another report and without the
+  /// cancellation escaping as the worker's outcome.
+  /// </summary>
+  [Test]
+  public async Task Worker_StoppedWhileBackingOffAfterAFailedBatch_EndsTheLoopCleanlyAsync() {
+    var failedStreamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.StoppedInBackoffPerspective";
+    var (worker, harness, _, runner, logger, _) = _createDeadlockingBatchWorker(perspectiveName);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueWorkAsync(new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = failedStreamId,
+      PerspectiveName = perspectiveName,
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    }, cts.Token);
+    // The report is written as the backoff begins, and the fake clock is never stepped, so from here
+    // the loop can only leave the wait by being stopped.
+    await logger.WhenLoggedAsync(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID, TimeSpan.FromSeconds(10));
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
+      .Because("the loop is waiting out its backoff, not stopped");
+
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("a stop during the backoff ends the loop the way any other stop does; a canceled or "
+             + "faulted outcome would read to the host as the worker having failed");
+    await Assert.That(logger.LinesWith(PerspectiveWorker.TRANSIENT_BATCH_FAILURE_EVENT_ID)).Count().IsEqualTo(1)
+      .Because("the stop is not a second failure to report");
+    await Assert.That(logger.LinesWith(PerspectiveWorker.UNEXPECTED_BATCH_FAILURE_EVENT_ID)).IsEmpty();
+    await Assert.That(runner.RunCallCount).IsEqualTo(0)
+      .Because("nothing after the failed batch ran");
   }
 }

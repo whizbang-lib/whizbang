@@ -129,10 +129,8 @@ public sealed class DomainOwnershipPrompt {
   /// <param name="domains">Domain names to set.</param>
   public void SetCustomDomains(IEnumerable<string> domains) {
     _selectedDomains.Clear();
-    foreach (var domain in domains) {
-      if (!string.IsNullOrWhiteSpace(domain)) {
-        _selectedDomains.Add(domain.Trim().ToLowerInvariant());
-      }
+    foreach (var domain in domains.Where(d => !string.IsNullOrWhiteSpace(d))) {
+      _selectedDomains.Add(domain.Trim().ToLowerInvariant());
     }
   }
 

@@ -35,6 +35,8 @@ public class DapperCollectivePhysicalColumnIntegrationTests : PostgresTestBase {
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Embedding), "embedding", FieldStorageMode.Split, isVector: true);
     PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Tags), "tags", FieldStorageMode.Split, columnType: "jsonb");
     PerspectivePhysicalFieldRegistry.Register(typeof(OrderModel), nameof(OrderModel.Priority), "priority", FieldStorageMode.Extracted);
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Settings), "settings", FieldStorageMode.Split, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(TicketModel), nameof(TicketModel.Counters), "counters", FieldStorageMode.Split, columnType: "jsonb");
   }
 
   private static readonly System.Text.Json.JsonSerializerOptions _storeJson = new() {
@@ -226,6 +228,90 @@ public class DapperCollectivePhysicalColumnIntegrationTests : PostgresTestBase {
     await Assert.That(same).IsTrue();
   }
 
+  // ── jsonb columns: one key, or the whole value (#1024) ──────────────────────────────────────
+
+  [Test]
+  public async Task Store_ObjectAndDictionaryInJsonbColumns_AreWrittenAsTheirJsonAsync() {
+    await _createTablesAsync();
+    var id = Guid.NewGuid();
+
+    await _runnerWriteAsync(id, "t-A", new TicketModel {
+      Settings = new TicketSettings { Theme = "dark", Size = 2 },
+      Counters = new Dictionary<string, int> { ["a"] = 1 },
+    });
+
+    await Assert.That(await _jsonbColumnsAsync(id)).IsEqualTo(("{\"Size\": 2, \"Theme\": \"dark\"}", "{\"a\": 1}"))
+      .Because("An object in a jsonb column used to be sent as its type name, which no jsonb column parses.");
+  }
+
+  [Test]
+  public async Task Apply_KeyInsideAJsonbColumn_SetsThatKey_AndKeepsTheRestAsync() {
+    await _createTablesAsync();
+    var id = Guid.NewGuid();
+    await _runnerWriteAsync(id, "t-A", new TicketModel { Settings = new TicketSettings { Theme = "dark", Size = 2 }, Title = "t" });
+    var before = await _documentAsync(SPLIT_TABLE, id);
+
+    await _applyAsync(new TicketSpec(s => s.SetProperty(t => t.Settings!.Theme, "light")), "t-A");
+
+    await Assert.That((await _jsonbColumnsAsync(id)).Settings).IsEqualTo("{\"Size\": 2, \"Theme\": \"light\"}");
+    await Assert.That(await _documentAsync(SPLIT_TABLE, id)).IsEqualTo(before);
+  }
+
+  [Test]
+  public async Task Apply_KeyInsideANullJsonbColumn_ChangesNothingAsync() {
+    await _createTablesAsync();
+    var id = Guid.NewGuid();
+    await _runnerWriteAsync(id, "t-A", new TicketModel { Title = "t" });
+
+    var affected = await _applyAsync(new TicketSpec(s => s.SetProperty(t => t.Settings!.Theme, "light")), "t-A");
+
+    await Assert.That(affected).IsEqualTo(1);
+    await Assert.That((await _jsonbColumnsAsync(id)).Settings).IsNull()
+      .Because("A key is set on an object the column holds; with no object there is no key to set, as in the replay.");
+  }
+
+  [Test]
+  public async Task Apply_WholeJsonbValues_ForAnObjectADictionaryAndNullAsync() {
+    await _createTablesAsync();
+    var id = Guid.NewGuid();
+    await _runnerWriteAsync(id, "t-A", new TicketModel { Settings = new TicketSettings { Theme = "dark" }, Title = "t" });
+    var settings = new TicketSettings { Theme = "blue", Size = 5 };
+    var counters = new Dictionary<string, int> { ["b"] = 2 };
+
+    await _applyAsync(new TicketSpec(s => s.SetProperty(t => t.Settings, settings).SetProperty(t => t.Counters, counters)), "t-A");
+    var set = await _jsonbColumnsAsync(id);
+    await _applyAsync(new TicketSpec(s => s.SetProperty(t => t.Settings, (TicketSettings?)null)), "t-A");
+
+    await Assert.That(set).IsEqualTo(("{\"Size\": 5, \"Theme\": \"blue\"}", "{\"b\": 2}"));
+    await Assert.That((await _jsonbColumnsAsync(id)).Settings).IsNull();
+  }
+
+  [Test]
+  public async Task Replay_MatchesLive_ForJsonbKeysAndWholeValuesAsync() {
+    await _createTablesAsync();
+    var live = Guid.NewGuid();
+    var replayed = Guid.NewGuid();
+    var counters = new Dictionary<string, int> { ["c"] = 3 };
+    TicketModel PreState() => new() { Settings = new TicketSettings { Theme = "dark", Size = 1 }, Title = "t" };
+    await _runnerWriteAsync(live, "t-A", PreState());
+    await _runnerWriteAsync(replayed, "t-B", PreState());
+    var spec = new TicketSpec(s => s
+      .SetProperty(t => t.Settings!.Theme, "light")
+      .SetProperty(t => t.Settings!.Size, 7)
+      .SetProperty(t => t.Counters, counters));
+
+    await _applyAsync(spec, "t-A");
+    var model = (TicketModel)new CollectiveInMemoryExecutor<TicketModel>().ApplyToRow(spec, PreState(), replayed);
+    await _runnerWriteAsync(replayed, "t-B", model);
+
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    var same = await conn.QuerySingleAsync<bool>($"""
+      SELECT (SELECT (settings, counters, data) FROM {SPLIT_TABLE} WHERE id = @live)
+           = (SELECT (settings, counters, data) FROM {SPLIT_TABLE} WHERE id = @replayed)
+      """, new { live, replayed });
+    await Assert.That(same).IsTrue();
+  }
+
   // ── Fixtures ──────────────────────────────────────────────────────────────────────────────────
 
   [PerspectiveStorage(FieldStorageMode.Split)]
@@ -238,8 +324,15 @@ public class DapperCollectivePhysicalColumnIntegrationTests : PostgresTestBase {
     // runner would.
     public float[]? Embedding { get; set; }
     [PhysicalField(ColumnType = "jsonb")] public List<TicketTag>? Tags { get; set; }
+    [PhysicalField(ColumnType = "jsonb")] public TicketSettings? Settings { get; set; }
+    [PhysicalField(ColumnType = "jsonb")] public Dictionary<string, int>? Counters { get; set; }
     public string Title { get; set; } = "";
     public bool IsHot { get; set; }
+  }
+
+  internal sealed class TicketSettings {
+    public string? Theme { get; set; }
+    public int Size { get; set; }
   }
 
   internal enum TicketKind { Task, Bug }
@@ -287,7 +380,7 @@ public class DapperCollectivePhysicalColumnIntegrationTests : PostgresTestBase {
         id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb, scope jsonb NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
         version bigint NOT NULL DEFAULT 1, lane text, prio integer NOT NULL DEFAULT 0,
-        kind integer NOT NULL DEFAULT 0, embedding vector(3), tags jsonb);
+        kind integer NOT NULL DEFAULT 0, embedding vector(3), tags jsonb, settings jsonb, counters jsonb);
       CREATE TABLE {EXTRACTED_TABLE} (
         id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb, scope jsonb NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
@@ -304,6 +397,7 @@ public class DapperCollectivePhysicalColumnIntegrationTests : PostgresTestBase {
   private async Task _runnerWriteAsync(Guid id, string tenant, TicketModel model) {
     var physicalFieldValues = new Dictionary<string, object?> {
       { "lane", model.Lane }, { "prio", model.Priority }, { "kind", model.Kind }, { "embedding", model.Embedding }, { "tags", model.Tags },
+      { "settings", model.Settings }, { "counters", model.Counters },
     };
     var document = new TicketModel {
       Title = model.Title,
@@ -320,6 +414,12 @@ public class DapperCollectivePhysicalColumnIntegrationTests : PostgresTestBase {
     await conn.ExecuteAsync(
       $"INSERT INTO {EXTRACTED_TABLE} (id, data, scope, priority) VALUES (@id, @data::jsonb, @scope::jsonb, @priority)",
       new { id, data, scope = $"{{\"t\": \"{tenant}\"}}", priority });
+  }
+
+  private async Task<(string? Settings, string? Counters)> _jsonbColumnsAsync(Guid id) {
+    using var conn = await ConnectionFactory.CreateConnectionAsync();
+    return await conn.QuerySingleAsync<(string?, string?)>(
+      $"SELECT settings::text, counters::text FROM {SPLIT_TABLE} WHERE id = @id", new { id });
   }
 
   private async Task<(string? Lane, int Priority)> _ticketColumnsAsync(Guid id) {

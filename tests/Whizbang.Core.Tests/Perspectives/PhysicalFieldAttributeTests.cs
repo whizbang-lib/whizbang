@@ -34,6 +34,38 @@ public class PhysicalFieldAttributeTests {
     await Assert.That(attribute.MaxLength).IsEqualTo(200);
   }
 
+  /// <summary>The storage options default to the server's, and can each be declared.</summary>
+  [Test]
+  public async Task PhysicalFieldAttribute_StorageOptions_DefaultToTheServersAndCanBeSetAsync() {
+    var plain = new PhysicalFieldAttribute();
+    var declared = new PhysicalFieldAttribute {
+      Storage = ColumnStorage.Main,
+      Compression = ColumnCompression.Lz4,
+      MaxBytes = 1024,
+    };
+
+    await Assert.That(plain.Storage).IsEqualTo(ColumnStorage.Default);
+    await Assert.That(plain.Compression).IsEqualTo(ColumnCompression.Default);
+    await Assert.That(plain.MaxBytes).IsEqualTo(-1);
+    await Assert.That(declared.Storage).IsEqualTo(ColumnStorage.Main);
+    await Assert.That(declared.Compression).IsEqualTo(ColumnCompression.Lz4);
+    await Assert.That(declared.MaxBytes).IsEqualTo(1024);
+  }
+
+  /// <summary>A table's storage options default to the server's, and can each be declared.</summary>
+  [Test]
+  public async Task PerspectiveTableStorageAttribute_DefaultsToTheServersAndCanBeSetAsync() {
+    var plain = new PerspectiveTableStorageAttribute();
+    var declared = new PerspectiveTableStorageAttribute { DataCompression = ColumnCompression.Lz4, ToastTupleTarget = 512 };
+    var usage = AttributeTestHelpers.GetAttributeUsage<PerspectiveTableStorageAttribute>();
+
+    await Assert.That(plain.DataCompression).IsEqualTo(ColumnCompression.Default);
+    await Assert.That(plain.ToastTupleTarget).IsEqualTo(-1);
+    await Assert.That(declared.DataCompression).IsEqualTo(ColumnCompression.Lz4);
+    await Assert.That(declared.ToastTupleTarget).IsEqualTo(512);
+    await Assert.That(usage!.ValidOn).IsEqualTo(AttributeTargets.Class | AttributeTargets.Struct);
+  }
+
   [Test]
   public async Task PhysicalFieldAttribute_AttributeUsage_PropertyOnly_AllowsMultiple_IsInheritedAsync() {
     var attributeUsage = AttributeTestHelpers.GetAttributeUsage<PhysicalFieldAttribute>();

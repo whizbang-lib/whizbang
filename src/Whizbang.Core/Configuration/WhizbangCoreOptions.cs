@@ -182,9 +182,9 @@ public sealed class WhizbangCoreOptions {
   /// Default: true.
   /// </summary>
   /// <docs>operations/configuration/whizbang-options#banner</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Observability/WhizbangStartupLoggerTests.cs:StartAsync_ConfigShowBannerOverridesCodeOption_TrueAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Observability/WhizbangStartupLoggerTests.cs:StartAsync_ConfigShowBannerOverridesCodeOption_FalseAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Observability/WhizbangStartupLoggerTests.cs:StartAsync_NullConfiguration_UsesCodeOptionAsync</tests>
+  /// <remarks>The configuration key is <c>Whizbang:ShowBanner</c>, which binds over this value (#1014).</remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/ProcessWideOptionsBindingTests.cs:WhizbangCoreOptions_ShowBanner_ConfigurationOverridesCodeWhenReadableAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/ProcessWideOptionsBindingTests.cs:WhizbangCoreOptions_ShowBannerHasOneKey_NotASecondUnderCoreAsync</tests>
   public bool ShowBanner { get; set; } = true;
 
   /// <summary>

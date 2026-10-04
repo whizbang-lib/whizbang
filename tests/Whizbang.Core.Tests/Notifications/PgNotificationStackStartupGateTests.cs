@@ -151,6 +151,7 @@ public class PgNotificationStackStartupGateTests {
       config,
       new FakeSharedConnection(),
       NullLogger<PgCommitOrderStamperWorker>.Instance,
+      dutyElector: null,
       schemaReadyGate: gate);
 
     using var cts = new CancellationTokenSource();

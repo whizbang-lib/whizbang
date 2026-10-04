@@ -2334,6 +2334,43 @@ public class PerspectiveWorkerCoverageTests {
       .Because("an eviction pass carrying nothing must not disturb a gate the next batch needs");
   }
 
+  // The cursor cache and the gate dictionary forget a stream together: when the cache evicts a stream,
+  // every perspective's gate for it goes too (several perspectives share a stream id), and the gates of
+  // streams the cache kept stay resident for the next apply.
+  [Test]
+  public async Task OnCursorCacheStreamsEvicted_DropsEveryGateOfTheEvictedStream_AndKeepsTheRestAsync() {
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var serviceProvider = _buildServiceProvider(coordinator, instanceProvider);
+    var harness = new PerspectiveWorkerTestHarness();
+    var worker = _buildWorker(harness, serviceProvider, instanceProvider);
+    var evicted = Guid.NewGuid();
+    var kept = Guid.NewGuid();
+    const string first = "Test.EvictedFirstPerspective";
+    const string second = "Test.EvictedSecondPerspective";
+
+    // Each completed apply leaves its gate resident and free, which is the state the cache evicts.
+    await worker.WithStreamAffinityGateAsync(evicted, first, () => Task.CompletedTask, CancellationToken.None);
+    await worker.WithStreamAffinityGateAsync(evicted, second, () => Task.CompletedTask, CancellationToken.None);
+    await worker.WithStreamAffinityGateAsync(kept, first, () => Task.CompletedTask, CancellationToken.None);
+    await Assert.That(worker.HasStreamAffinityGate(evicted, first)).IsTrue();
+    await Assert.That(worker.HasStreamAffinityGate(evicted, second)).IsTrue();
+
+    worker.OnCursorCacheStreamsEvicted([evicted]);
+
+    await Assert.That(worker.HasStreamAffinityGate(evicted, first)).IsFalse()
+      .Because("the cache evicted the stream, so its gate for every perspective goes with it");
+    await Assert.That(worker.HasStreamAffinityGate(evicted, second)).IsFalse()
+      .Because("one eviction clears every perspective's gate for the stream, not just the first match");
+    await Assert.That(worker.HasStreamAffinityGate(kept, first)).IsTrue()
+      .Because("a stream the cache kept keeps its gate");
+
+    // The evicted stream is still usable: the next apply takes a fresh gate rather than the disposed one.
+    await worker.WithStreamAffinityGateAsync(evicted, first, () => Task.CompletedTask, CancellationToken.None);
+    await Assert.That(worker.HasStreamAffinityGate(evicted, first)).IsTrue()
+      .Because("an apply after the eviction recreates the gate it needs");
+  }
+
   // The only call site checks the batch first, so an empty batch cannot reach this through the
   // worker loop. The guard still matters: a batch that processed no events has nothing to advance,
   // and firing the stage anyway would register a when-all gate nothing will ever complete.

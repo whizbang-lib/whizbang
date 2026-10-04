@@ -96,4 +96,80 @@ public class CollectiveInMemoryEvaluatorTests {
     var spec = new Spec(Setters: s => s.SetProperty(o => o.Name, "x"));
     await Assert.That(CollectiveInMemoryEvaluator<Model>.Matches(spec, Guid.NewGuid(), new Model())).IsTrue();
   }
+
+  // ── One key inside a jsonb column (#1024) ─────────────────────────────────────────────────────
+
+  static CollectiveInMemoryEvaluatorTests() {
+    PerspectivePhysicalFieldRegistry.Register(typeof(JsonbModel), nameof(JsonbModel.Settings), "settings", FieldStorageMode.Split, columnType: "jsonb");
+    PerspectivePhysicalFieldRegistry.Register(typeof(JsonbModel), nameof(JsonbModel.Point), "point", FieldStorageMode.Split, columnType: "jsonb");
+  }
+
+  private sealed class Settings {
+    public string? Theme { get; set; }
+    public int Size { get; set; }
+  }
+
+  private struct Point {
+    public int X { get; set; }
+    public int Y { get; set; }
+  }
+
+  private sealed class JsonbModel {
+    public Settings? Settings { get; set; }
+    public Point Point { get; set; }
+    public int Priority { get; }
+  }
+
+  private sealed record JsonbSpec(
+    Expression<Action<ICollectiveSetters<JsonbModel>>> Setters,
+    Expression<Func<PerspectiveRow<JsonbModel>, bool>>? Where = null) : ICollectiveSpec<JsonbModel>;
+
+  [Test]
+  public async Task Apply_KeyInsideAJsonbColumn_SetsThatMember_AndKeepsTheRestAsync() {
+    var model = new JsonbModel { Settings = new Settings { Theme = "dark", Size = 2 } };
+
+    CollectiveInMemoryEvaluator<JsonbModel>.Apply(new JsonbSpec(s => s.SetProperty(m => m.Settings!.Theme, "light")), model);
+
+    await Assert.That(model.Settings!.Theme).IsEqualTo("light");
+    await Assert.That(model.Settings.Size).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task Apply_KeyInsideANullJsonbColumn_LeavesItNull_AsTheLiveApplyDoesAsync() {
+    var model = new JsonbModel();
+
+    CollectiveInMemoryEvaluator<JsonbModel>.Apply(new JsonbSpec(s => s.SetProperty(m => m.Settings!.Theme, "light")), model);
+
+    await Assert.That(model.Settings).IsNull();
+  }
+
+  [Test]
+  public async Task Apply_WholeValueThenAKey_SetsTheKeyOnTheNewValueAsync() {
+    var replacement = new Settings { Theme = "blue" };
+    var model = new JsonbModel();
+
+    CollectiveInMemoryEvaluator<JsonbModel>.Apply(
+      new JsonbSpec(s => s.SetProperty(m => m.Settings, replacement).SetProperty(m => m.Settings!.Size, 9)), model);
+
+    await Assert.That(model.Settings!.Theme).IsEqualTo("blue");
+    await Assert.That(model.Settings.Size).IsEqualTo(9);
+  }
+
+  [Test]
+  public async Task Apply_KeyInsideAStructValue_WritesTheChangedCopyBackAsync() {
+    var model = new JsonbModel { Point = new Point { X = 1, Y = 2 } };
+
+    CollectiveInMemoryEvaluator<JsonbModel>.Apply(new JsonbSpec(s => s.SetProperty(m => m.Point.X, 5)), model);
+
+    await Assert.That(model.Point.X).IsEqualTo(5);
+    await Assert.That(model.Point.Y).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task Apply_ComputedKeyInsideAJsonbColumn_ThrowsNotSupportedAsync() {
+    var model = new JsonbModel { Settings = new Settings() };
+
+    await Assert.That(() => CollectiveInMemoryEvaluator<JsonbModel>.Apply(
+      new JsonbSpec(s => s.SetProperty(m => m.Settings!.Size, m => m.Priority)), model)).ThrowsExactly<NotSupportedException>();
+  }
 }

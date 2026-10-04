@@ -17,6 +17,19 @@ public interface IStoredFormMigration {
   string Name { get; }
 
   /// <summary>
+  /// Where the migration runs among the custom migrations of its table: a lower order runs first. Optional: a
+  /// migration that does not state one has order 0. Custom migrations run after the generated migrations of the same
+  /// table, and migrations with the same order run in the order of their classes' full names. The build reports
+  /// WHIZ833 when two migrations of one table state the same order explicitly.
+  /// </summary>
+  /// <remarks>
+  /// The build reads the order to place the migration, so a stated order must be a compile-time constant: a literal
+  /// or a <see langword="const"/>, returned by an expression body, a getter that only returns it, or an initializer.
+  /// A migration whose stated order the build cannot read is reported as WHIZ831 and does not run.
+  /// </remarks>
+  int Order => 0;
+
+  /// <summary>
   /// The SQL to run against the perspective's table. It runs once, inside the stored-format rewrite phase's
   /// transaction under a savepoint of its own. To stop startup on data it cannot convert, raise
   /// <see cref="StoredFormMigrationTarget.BLOCKED_SQL_STATE"/> with a message naming what is wrong.
@@ -29,7 +42,8 @@ public interface IStoredFormMigration {
 /// <summary>
 /// A stored-form migration of <typeparamref name="TModel"/>'s perspective table, written as raw SQL. The generator
 /// finds implementations at build time (they need a parameterless constructor) and runs each once, journaled by its
-/// <see cref="IStoredFormMigration.Name"/>, after the generated migrations of the same table.
+/// <see cref="IStoredFormMigration.Name"/>, after the generated migrations of the same table, in its
+/// <see cref="IStoredFormMigration.Order"/> and then by class name.
 /// </summary>
 /// <typeparam name="TModel">The perspective model whose stored documents the migration changes.</typeparam>
 /// <docs>fundamentals/perspectives/stored-form-migrations#custom</docs>

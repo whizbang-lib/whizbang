@@ -17,6 +17,7 @@ namespace Whizbang.Generators;
 /// <param name="EventValidationErrors">Array of validation errors for event types (event name, error type)</param>
 /// <param name="MustExistEventTypes">Array of event type names (fully qualified) whose Apply methods have [MustExist] attribute</param>
 /// <param name="InheritScopeOnCreate">ScopeFields flag set declared via [InheritScope(OnCreate = ...)] on the perspective model. Default 63 = ScopeFields.All preserves legacy copy-everything behavior when the attribute is absent.</param>
+/// <param name="ModelCopy">For a Split class model with an <c>init</c>-only promoted field, how the runner copies it to strip and load those fields (issue #1002); null for every other model</param>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs</tests>
@@ -44,7 +45,9 @@ internal sealed record PerspectiveInfo(
     bool IsFullHistory = false,
     int RowCapPerScope = -1,
     string? RowCapScopeKey = null,
-    string? StreamGroupSpec = null
+    string? StreamGroupSpec = null,
+    Whizbang.Generators.Shared.Models.ModelCopyInfo? ModelCopy = null,
+    string[]? MemberDefaults = null
 );
 
 /// <summary>
@@ -57,13 +60,15 @@ internal sealed record PerspectiveInfo(
 /// <param name="EnumScalarType">For an enumeration, the CLR name of the scalar its column holds; null otherwise.</param>
 /// <param name="ColumnType">The column type declared with <c>[PhysicalField(ColumnType = …)]</c>, if any.</param>
 /// <param name="TypeName">The property's fully qualified type, which a Split load reads its column as</param>
+/// <param name="IsInitOnly">True when the property's setter is <c>init</c>, which a class model sets only through a copy (issue #1002)</param>
 internal sealed record PhysicalFieldInfoCompact(
     string PropertyName,
     string ColumnName,
     bool IsVectorField = false,
     string? EnumScalarType = null,
     string? ColumnType = null,
-    string TypeName = "object"
+    string TypeName = "object",
+    bool IsInitOnly = false
 );
 
 /// <summary>

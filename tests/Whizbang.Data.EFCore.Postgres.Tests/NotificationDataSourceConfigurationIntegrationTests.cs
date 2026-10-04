@@ -170,6 +170,10 @@ public class NotificationDataSourceConfigurationIntegrationTests : EFCoreTestBas
       o.LeaderElectionRetry = TimeSpan.FromMilliseconds(100);
     });
 
+    // This test is about connection discovery, not roles: hold the stamper's leadership on its own
+    // lock, so the role vote's cadence does not stand between discovery and leadership.
+    services.AddOptions<Whizbang.Core.Startup.RoleAssignmentOptions>().Configure(o => o.Enabled = false);
+
     await using var sp = services.BuildServiceProvider();
 
     // Same pre-condition: open DbContext, strip credentials.

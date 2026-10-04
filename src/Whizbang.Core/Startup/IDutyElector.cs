@@ -48,6 +48,17 @@ public interface IDutyGrant : IAsyncDisposable {
   /// <docs>proposals/duty-role-assignment</docs>
   /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
   long? Epoch => null;
+
+  /// <summary>
+  /// Whether a newer-version instance has asked this holder to drain: finish the current step,
+  /// then release, so the role hands over to the newer release without waiting for a lapse. Learned
+  /// on a renewal, so it turns true only after a <see cref="VerifyStillHeldAsync"/>. A holder that
+  /// sees it releases after the step it is on; it never abandons work mid-step.
+  /// </summary>
+  /// <remarks>A default member: a grant that cannot be asked to drain is never asked.</remarks>
+  /// <docs>proposals/duty-role-assignment</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  bool DrainRequested => false;
 }
 
 /// <summary>
@@ -77,6 +88,24 @@ public interface IDutyElector {
   /// forever (issue #494). Never blocks waiting for the holder.
   /// </summary>
   Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken);
+
+  /// <summary>
+  /// Attempts several duties at once, one attempt per duty, in the order given. An implementation
+  /// that can vote for several roles in one round trip does; the default asks one at a time.
+  /// </summary>
+  /// <param name="duties">The duties to attempt.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One attempt per duty, in the order of <paramref name="duties"/>.</returns>
+  /// <docs>proposals/duty-role-assignment</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  async Task<IReadOnlyList<DutyAttempt>> TryAcquireManyAsync(IReadOnlyList<string> duties, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(duties);
+    var attempts = new List<DutyAttempt>(duties.Count);
+    foreach (var duty in duties) {
+      attempts.Add(await TryAcquireAsync(duty, cancellationToken).ConfigureAwait(false));
+    }
+    return attempts;
+  }
 }
 
 /// <summary>

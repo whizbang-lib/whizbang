@@ -246,16 +246,17 @@ public class PerspectiveSchemaGeneratorCoverageTests {
     var schemaInfoType = typeof(PerspectiveSchemaGenerator).Assembly.GetType("Whizbang.Generators.PerspectiveSchemaInfo")
       ?? throw new InvalidOperationException("Whizbang.Generators.PerspectiveSchemaInfo not found — check the type's namespace/name.");
 
-    var instance = Activator.CreateInstance(
-      schemaInfoType,
-      "OrderSummary",
-      "global::MyApp.Perspectives.OrderSummary",
-      "OrderSummaryModel",
-      "order_summary",
-      3,
-      140,
-      GeneratorFieldStorageMode.JsonOnly,
-      _emptyPhysicalFields(schemaInfoType))
+    var named = new Dictionary<string, object?>(StringComparer.Ordinal) {
+      ["ClassName"] = "OrderSummary",
+      ["FullyQualifiedClassName"] = "global::MyApp.Perspectives.OrderSummary",
+      ["ModelClassName"] = "OrderSummaryModel",
+      ["TableName"] = "order_summary",
+      ["PropertyCount"] = 3,
+      ["EstimatedSizeBytes"] = 140,
+      ["StorageMode"] = GeneratorFieldStorageMode.JsonOnly,
+      ["BuildsMetadataIndex"] = false,
+    };
+    var instance = Activator.CreateInstance(schemaInfoType, _arguments(schemaInfoType, named))
       ?? throw new InvalidOperationException("Failed to construct PerspectiveSchemaInfo via reflection.");
 
     var fullyQualifiedClassName = (string)schemaInfoType.GetProperty("FullyQualifiedClassName")!.GetValue(instance)!;
@@ -266,9 +267,10 @@ public class PerspectiveSchemaGeneratorCoverageTests {
   }
 
   /// <summary>
-  /// The empty physical-field collection for <c>PerspectiveSchemaInfo</c>'s last constructor
-  /// parameter, built from the constructor's own parameter type rather than by naming
-  /// <c>PhysicalFieldInfo</c> here.
+  /// The arguments for <c>PerspectiveSchemaInfo</c>'s constructor, by parameter name: each named value, an
+  /// empty array for an array parameter (the physical fields, the document properties), and otherwise the
+  /// parameter's default. Activator.CreateInstance matches arity exactly, so a member added to the record
+  /// is supplied here without the test naming it.
   /// </summary>
   /// <remarks>
   /// <c>Whizbang.Generators.Shared</c> is referenced with <c>&lt;Aliases&gt;shared&lt;/Aliases&gt;</c> to keep
@@ -276,15 +278,24 @@ public class PerspectiveSchemaGeneratorCoverageTests {
   /// normal build resolves a bare <c>PhysicalFieldInfo</c> against the merged assembly, but
   /// <c>dotnet format</c> loads the pre-merge one through MSBuildWorkspace and fails with CS0246 —
   /// which is a CI formatting failure with no local build error to explain it. Since the whole call
-  /// is reflective anyway, deriving the element type sidesteps the alias question entirely.
+  /// is reflective anyway, deriving each array's element type from the constructor sidesteps the alias
+  /// question entirely.
   /// </remarks>
-  private static Array _emptyPhysicalFields(Type schemaInfoType) {
+  private static object?[] _arguments(Type schemaInfoType, Dictionary<string, object?> named) {
     var ctor = schemaInfoType.GetConstructors()
       .OrderByDescending(static c => c.GetParameters().Length)
       .First();
-    var last = ctor.GetParameters()[^1].ParameterType;
-    var element = last.IsArray ? last.GetElementType()! : last.GetGenericArguments()[0];
-    return Array.CreateInstance(element, 0);
+    return [.. ctor.GetParameters().Select(p => _argument(p, named))];
+  }
+
+  private static object? _argument(System.Reflection.ParameterInfo parameter, Dictionary<string, object?> named) {
+    if (named.TryGetValue(parameter.Name!, out var value)) {
+      return value;
+    }
+    if (parameter.ParameterType.IsArray) {
+      return Array.CreateInstance(parameter.ParameterType.GetElementType()!, 0);
+    }
+    return parameter.HasDefaultValue ? parameter.DefaultValue : null;
   }
 
 

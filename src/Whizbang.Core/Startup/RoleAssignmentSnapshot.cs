@@ -46,7 +46,13 @@ public sealed record RoleAssignmentSnapshot(
   Guid? LastHolderInstanceId,
   DateTimeOffset? LastVacatedAt,
   string? LastVacatedReason,
-  long PendingWork);
+  long PendingWork) {
+  /// <summary>When a newer-version instance asked the holder to drain, if one has.</summary>
+  public DateTimeOffset? DrainRequestedAt { get; init; }
+
+  /// <summary>Whether the backend the holder marked for its duty is running a statement now (the lease backstop).</summary>
+  public bool DutyBackendActive { get; init; }
+}
 
 /// <summary>Reads every role's assignment, for health, metrics and operators.</summary>
 /// <docs>proposals/duty-role-assignment</docs>

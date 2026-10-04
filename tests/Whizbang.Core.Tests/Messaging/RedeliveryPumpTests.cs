@@ -69,6 +69,23 @@ public class RedeliveryPumpTests {
     await Assert.That(compositeB.InnerCommitSequences).IsEquivalentTo([(long?)1]);
   }
 
+  /// <summary>A pump answering an operator's request marks every bundle, so a report-only receiver applies it (#1028).</summary>
+  [Test]
+  public async Task Publish_ForAnOperatorRequest_MarksEveryBundleOperatorRequestedAsync() {
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory()) {
+      OperatorRequested = true,
+    };
+
+    await pump.PublishAsync([_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1), _evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1)],
+      topic: "repair-topic", target: "svc-x");
+
+    await Assert.That(serializer.Captured.Select(c => c.Payload.OperatorRequested)).IsEquivalentTo([true, true]);
+    await Assert.That(new RedeliveryComposite().OperatorRequested).IsFalse()
+      .Because("A bundle the integrity ledger drove is automatic repair, which report-only declines.");
+  }
+
   [Test]
   public async Task Publish_ChunksStreamsByMaxInnerEventsAsync() {
     var stream = TrackedGuid.New().Value;

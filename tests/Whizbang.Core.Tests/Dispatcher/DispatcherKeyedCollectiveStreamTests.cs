@@ -61,12 +61,63 @@ public sealed class DispatcherKeyedCollectiveStreamTests {
         + "the stream the event is stored on.");
   }
 
-  private static IDispatcher _createDispatcher() {
+  /// <summary>
+  /// A keyed collective's outbox row is marked for a predecessor link with the type it is named by (#1003); the store
+  /// links it to the previous collective on its key in the storing transaction. An unkeyed collective is not marked.
+  /// </summary>
+  [Test]
+  public async Task PublishAsync_KeyedCollective_MarksItsOutboxRowForALinkAsync() {
+    var strategy = new CapturingStrategy();
+    var dispatcher = _createDispatcher(services => {
+      services.AddSingleton<IEnvelopeSerializer>(new PayloadCapturingSerializer());
+      services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
+    });
+
+    await dispatcher.PublishAsync(new KeyedFlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1"), OrderingKey = "family-7" });
+    await dispatcher.PublishAsync(new KeyedFlipCollectiveEvent { Scope = new TenantCollectiveScope("t-1") });
+
+    await Assert.That(strategy.Queued.Count).IsEqualTo(2);
+    await Assert.That(strategy.Queued[0].CollectiveLinkType).IsEqualTo(TypeNameFormatter.Format(typeof(KeyedFlipCollectiveEvent)));
+    await Assert.That(strategy.Queued[1].CollectiveLinkType).IsNull();
+  }
+
+  private sealed class PayloadCapturingSerializer : IEnvelopeSerializer {
+    public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
+      var json = new MessageEnvelope<System.Text.Json.JsonElement> {
+        MessageId = envelope.MessageId,
+        Payload = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
+        Hops = [],
+        DispatchContext = envelope.DispatchContext,
+      };
+      return new SerializedEnvelope(json,
+        typeof(MessageEnvelope<>).MakeGenericType(typeof(TMessage)).AssemblyQualifiedName!,
+        typeof(TMessage).AssemblyQualifiedName!);
+    }
+
+    public object DeserializeMessage(MessageEnvelope<System.Text.Json.JsonElement> jsonEnvelope, string messageTypeName) =>
+      throw new NotSupportedException();
+  }
+
+  private sealed class CapturingStrategy : IWorkCoordinatorStrategy {
+    public List<OutboxMessage> Queued { get; } = [];
+    public void QueueOutboxMessage(OutboxMessage message) => Queued.Add(message);
+    public void QueueInboxMessage(InboxMessage message) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) =>
+      Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+  }
+
+  private static IDispatcher _createDispatcher(Action<IServiceCollection>? configure = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
       new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
+    configure?.Invoke(services);
     return services.BuildServiceProvider().GetRequiredService<IDispatcher>();
   }
 }

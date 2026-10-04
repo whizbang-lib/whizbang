@@ -296,6 +296,37 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// The statements written before the table's CREATE TABLE run against the table as the previous release left
+  /// it, before the swap (#1010): here they add and fill the new column on the old table, and the column copy
+  /// carries the filled value across. Skipping them would leave the swapped-in column empty.
+  /// </summary>
+  [Test]
+  public async Task InitializeSchemaAsync_ColumnCopyWithPreTableDdl_RunsItAgainstTheOldTableBeforeTheSwapAsync() {
+    await new PostgresSchemaInitializer(_testConnectionString, [
+      new KeyValuePair<string, string>("CovPreTablePerspective",
+        "CREATE TABLE IF NOT EXISTS wh_per_covpretable (id UUID PRIMARY KEY, data JSONB NOT NULL);")
+    ]).InitializeSchemaAsync();
+    await using (var seed = new NpgsqlConnection(_testConnectionString)) {
+      await seed.ExecuteAsync("""
+        INSERT INTO wh_per_covpretable (id, data) VALUES ('00000000-0000-0000-0000-000000000001', '{"Lane":"hot"}')
+        """);
+    }
+
+    await new PostgresSchemaInitializer(_testConnectionString, [
+      new KeyValuePair<string, string>("CovPreTablePerspective", """
+        ALTER TABLE wh_per_covpretable ADD COLUMN IF NOT EXISTS lane TEXT;
+        UPDATE wh_per_covpretable SET lane = data ->> 'Lane' WHERE lane IS NULL;
+        CREATE TABLE IF NOT EXISTS wh_per_covpretable (id UUID PRIMARY KEY, data JSONB NOT NULL, lane TEXT, rank INT);
+        """)
+    ]).InitializeSchemaAsync();
+
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    var lane = await connection.ExecuteScalarAsync<string?>("SELECT lane FROM wh_per_covpretable");
+    await Assert.That(lane).IsEqualTo("hot")
+      .Because("the pre-table statements filled the column on the old table, and the swap copied it across");
+  }
+
+  /// <summary>
   /// A physical column added to a perspective that already has rows is filled from each row's document, so a
   /// query or index that reads the column sees the value rather than NULL. The backfill statements are the
   /// ones the schema generator emits after the table; the column-copy swap runs them against the new table.

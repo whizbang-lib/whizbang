@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
@@ -52,7 +53,7 @@ public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
     var byRole = snapshots.ToDictionary(s => s.Role, StringComparer.Ordinal);
     var managed = _options.Roles.Where(_options.Manages).Order(StringComparer.Ordinal).ToList();
     var unassigned = managed
-      .Where(role => !byRole.TryGetValue(role, out var s) || s.State != RoleAssignmentState.Held)
+      .Where(role => _isUnassigned(role, byRole))
       .Select(role => byRole.TryGetValue(role, out var s) ? _describeUnassigned(s) : $"'{role}' unassigned (never elected)")
       .ToList();
     if (unassigned.Count > 0) {
@@ -60,9 +61,27 @@ public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
         "role unassigned: " + string.Join("; ", unassigned) + " — its duty work waits until an instance holds it");
     }
 
-    var held = managed.Select(role => byRole[role]).Select(s => string.Create(CultureInfo.InvariantCulture,
-      $"'{s.Role}' held by {s.HolderInstanceId} at epoch {s.Epoch}, {s.PendingWork} owed"));
+    var held = managed.Select(role => byRole.TryGetValue(role, out var s) && s.State == RoleAssignmentState.Held
+      ? _describeHeld(s)
+      : $"'{role}' idle (held only while it runs)");
     return new ComponentHealth(ComponentState.Operational, string.Join("; ", held));
+  }
+
+  private static string _describeHeld(RoleAssignmentSnapshot s) {
+    var held = string.Create(CultureInfo.InvariantCulture, $"'{s.Role}' held by {s.HolderInstanceId} at epoch {s.Epoch}, {s.PendingWork} owed");
+    return s.DrainRequestedAt is null ? held : held + ", draining";
+  }
+
+  /// <summary>
+  /// A standing role is unassigned unless it is held. An episodic role (the migrator) is vacant
+  /// between runs by design, so only a lapsed holder, one that stopped mid-run, counts.
+  /// </summary>
+  private static bool _isUnassigned(string role, Dictionary<string, RoleAssignmentSnapshot> byRole) {
+    var found = byRole.TryGetValue(role, out var snapshot);
+    if (RoleAssignmentOptions.IsEpisodic(role)) {
+      return found && snapshot!.State == RoleAssignmentState.Lapsed;
+    }
+    return !found || snapshot!.State != RoleAssignmentState.Held;
   }
 
   private static string _describeUnassigned(RoleAssignmentSnapshot s) => s.State == RoleAssignmentState.Lapsed

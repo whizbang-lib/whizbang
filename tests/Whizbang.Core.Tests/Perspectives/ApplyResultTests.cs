@@ -51,6 +51,19 @@ public class ApplyResultTests {
   }
 
   [Test]
+  public async Task ApplyResult_Resurrect_ReturnsModelWithResurrectActionAsync() {
+    // Arrange
+    var model = new TestModel { Name = "Reopened" };
+
+    // Act
+    var result = ApplyResult<TestModel>.Resurrect(model);
+
+    // Assert
+    await Assert.That(result.Model).IsSameReferenceAs(model);
+    await Assert.That(result.Action).IsEqualTo(ModelAction.Resurrect);
+  }
+
+  [Test]
   public async Task ApplyResult_None_ReturnsNullModelWithNoneActionAsync() {
     // Act
     var result = ApplyResult<TestModel>.None();

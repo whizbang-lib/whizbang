@@ -21,6 +21,7 @@ public class WhizbangOptions {
   /// When true, the Whizbang ASCII art banner is displayed on service startup.
   /// Default: true
   /// </summary>
+  [Obsolete("Read by nothing. The banner follows WhizbangCoreOptions.ShowBanner, which the Whizbang:ShowBanner key binds over.")]
   public bool ShowBanner { get; set; } = true;
 
   /// <summary>

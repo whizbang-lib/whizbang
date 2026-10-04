@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PerspectiveSqlShapeTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/JsonbContainmentSqlMatrixTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PhysicalJsonbContainmentSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:Where_PhysicalField_SqlUsesColumn_NotJsonbAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:Sql_Where_GuidField_UsesPhysicalColumnAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:GroupBy_PhysicalField_SqlNotClientEvalAsync</tests>
@@ -53,10 +54,16 @@ public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
     // cannot do this itself, since by then the refusal has already been raised.
     rewritten = _ordinalEquals.Visit(rewritten);
 
+    // Then compile filters on promoted jsonb columns into containment tests. These have no other
+    // translation, so this runs whatever the containment switch says, and it runs before the document
+    // pass below, which never claims a promoted column anyway.
+    var model = eventData.Context?.Model;
+    rewritten = new PhysicalJsonbContainmentRewriter(model).Visit(rewritten);
+
     // Then compile what is left, which is genuinely JSON, into a containment test where that is
     // equivalent. Order matters twice over: a promoted property is already an EF.Property call by
     // now, so the containment pass cannot claim it, and an ordinal Equals is already an equality, so
     // the containment pass needs no knowledge of StringComparison.
-    return new JsonbContainmentRewriter(eventData.Context?.Model).Visit(rewritten);
+    return new JsonbContainmentRewriter(model).Visit(rewritten);
   }
 }

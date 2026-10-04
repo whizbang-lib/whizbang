@@ -57,10 +57,11 @@ public sealed record ReferencedJsonPath(string Table, string ColumnExpression);
 /// text and text orders <c>'10'</c> before <c>'9'</c>. A temporal member is stored as its microsecond count
 /// (<see cref="CanonicalTemporalFormat"/>), so the value is bound as the same count and the comparison is exact to the
 /// microsecond; a key still holding a rendering makes Postgres refuse the statement rather than answer it wrongly. A
-/// missing key, or a JSON null, reads as SQL <c>NULL</c> and compares as null: the comparison is false, as a lifted
-/// comparison with a null operand is in C#, and under <c>!</c> it is made false before the negation
-/// (<c>NOT (COALESCE(a &lt; b, FALSE))</c>) so that <c>!(null &lt; 5)</c> is true in SQL exactly as in the in-memory
-/// replay. To have a missing key count as a value, declare the member nullable and coalesce it:
+/// member that declares a default reads a missing key as that default, so the comparison answers what the in-memory
+/// replay answers (#1044); a nullable member's missing key, or a JSON null, reads as SQL <c>NULL</c> and compares as
+/// null — the comparison is false, as a lifted comparison with a null operand is in C# — and under <c>!</c> it is made
+/// false before the negation (<c>NOT (COALESCE(a &lt; b, FALSE))</c>) so that <c>!(null &lt; 5)</c> is true in SQL
+/// exactly as in the replay. To have a nullable member's missing key count as a value, coalesce it explicitly:
 /// <c>(r.Data.X ?? 0) &lt; e.Y</c> becomes <c>COALESCE((data-&gt;&gt;'X')::numeric, @p) &lt; @q</c>. The row id cannot be
 /// ordered: Postgres orders a uuid by its bytes and .NET orders a Guid by its fields, so the two paths would disagree.
 /// </para>
@@ -205,9 +206,19 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       in ResolvedColumn column, string op, Expression valueExpr, string prefix,
       StringBuilder sql, Dictionary<string, object?> parameters) {
     var value = _evaluateValue(valueExpr);
+    var columnSql = _withDeclaredDefault(column, prefix, parameters);
+
+    // A null comparand is a null test, not a bound value. Binding it gives `x = NULL`, which is NULL for every row,
+    // so no collective filter could test for null at all. Through ->> an absent key and an explicit JSON null both
+    // read as SQL NULL — the same collapse deserialization makes — so IS NULL asks what the replay asks.
+    if (value is null && (op == "=" || op == "<>")) {
+      sql.Append(columnSql).Append(op == "=" ? " IS NULL" : " IS NOT NULL");
+      return;
+    }
+
     var paramName = _uniqueName(parameters, $"{prefix}_{column.PropName.ToLowerInvariant()}");
     parameters[paramName] = _bind(value, column);
-    sql.Append(column.Sql).Append(' ').Append(op).Append(" @").Append(paramName);
+    sql.Append(columnSql).Append(' ').Append(op).Append(" @").Append(paramName);
   }
 
   // An ordering comparison: each side is an ordered column (optionally coalesced) or a value; at least one is a
@@ -305,7 +316,24 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     if (temporal) {
       scale = column.Kind == ColumnKind.Physical ? OrderingScale.ColumnTemporal : OrderingScale.StoredMicroseconds;
     }
-    return new OrderedColumn(column.Sql, column, scale);
+    return _withOrderedDeclaredDefault(new OrderedColumn(column.Sql, column, scale), prefix, parameters);
+  }
+
+  /// <summary>
+  /// An ordered operand that reads an absent key as the member's declared default (#1044). Without it one member
+  /// answers two ways about the same absent row — equality selects it and <c>&lt;</c> does not — and <c>&gt;</c>
+  /// and <c>&gt;=</c> only appear to agree because a zero default excludes the row either way, which stops being
+  /// true for any other default.
+  /// </summary>
+  private static OrderedColumn _withOrderedDeclaredDefault(
+      OrderedColumn ordered, string prefix, Dictionary<string, object?> parameters) {
+    if (ordered.Column.Kind != ColumnKind.JsonText || ordered.Column.Physical is not null
+        || !PerspectiveMemberDefaultRegistry.TryResolve(typeof(TModel), ordered.Column.PropName, out var declared)) {
+      return ordered;
+    }
+
+    var fallback = _bindOrderedConstant(ordered, declared, "_else", prefix, parameters);
+    return ordered with { Sql = "COALESCE(" + ordered.Sql + ", " + fallback + ")" };
   }
 
   private static void _ensureSameScale(in OrderedColumn left, in OrderedColumn right) {
@@ -319,8 +347,13 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
 
   // Binds the value an ordered column is compared with (or coalesced to) and returns its placeholder.
   private static string _bindOrderedValue(
-      in OrderedColumn column, Expression valueExpr, string suffix, string prefix, Dictionary<string, object?> parameters) {
-    var value = _evaluateValue(valueExpr);
+      in OrderedColumn column, Expression valueExpr, string suffix, string prefix, Dictionary<string, object?> parameters) =>
+    _bindOrderedConstant(column, _evaluateValue(valueExpr), suffix, prefix, parameters);
+
+  // The same binding for a value already in hand rather than still inside an expression tree — a member's declared
+  // default arrives from the registry, not from the predicate.
+  private static string _bindOrderedConstant(
+      in OrderedColumn column, object? value, string suffix, string prefix, Dictionary<string, object?> parameters) {
     var name = _uniqueName(parameters, $"{prefix}_{column.Column.PropName.ToLowerInvariant()}{suffix}");
     parameters[name] = column.Column.Physical is { } field
       ? _toColumnInstant(CollectivePhysicalColumns.ColumnValue(field, value))
@@ -395,6 +428,27 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   // column is a real uuid: Postgres refuses `uuid = text` outright (42883), so the guid goes through as itself
   // and the driver types the parameter. A guid arriving as text is parsed rather than passed along, because a
   // caller comparing an id to a string means the id.
+  /// <summary>
+  /// The column's SQL, reading an absent document key as the member's declared default so that equality and
+  /// <c>IN</c> select the same rows the in-memory replay does (#1044). A document written before the member existed
+  /// has no key for it: deserialization gives the replay the default, while the raw document gives SQL
+  /// <c>NULL</c>, and <c>NULL &lt;&gt; 'x'</c>, <c>NULL = 'x'</c> and <c>NULL IN (…)</c> are all <c>NULL</c>, so
+  /// every such row silently drops out of the cohort. Left alone where there is nothing to disagree about: a
+  /// physical column is filled when it is added (#1021), the row id always exists, and a member with no declared
+  /// default already reads as null in both places.
+  /// </summary>
+  private static string _withDeclaredDefault(
+      in ResolvedColumn column, string prefix, Dictionary<string, object?> parameters) {
+    if (column.Kind != ColumnKind.JsonText || column.Physical is not null
+        || !PerspectiveMemberDefaultRegistry.TryResolve(typeof(TModel), column.PropName, out var declared)) {
+      return column.Sql;
+    }
+
+    var paramName = _uniqueName(parameters, $"{prefix}_{column.PropName.ToLowerInvariant()}_else");
+    parameters[paramName] = _bind(declared, column);
+    return $"COALESCE({column.Sql}, @{paramName})";
+  }
+
   private static object? _bind(object? value, in ResolvedColumn column) => column switch {
     { Physical: { } field } => CollectivePhysicalColumns.ColumnValue(field, value),
     { Kind: ColumnKind.Uuid } => value switch {
@@ -470,7 +524,8 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       i++;
     }
 
-    sql.Append(item.Sql).Append(" IN (").Append(names.Count == 0 ? "NULL" : string.Join(", ", names)).Append(')');
+    sql.Append(_withDeclaredDefault(item, prefix, parameters))
+      .Append(" IN (").Append(names.Count == 0 ? "NULL" : string.Join(", ", names)).Append(')');
   }
 
   // q.Of<TOther>().Any(s => s.Id == r.Id && …) → EXISTS (SELECT 1 FROM <TOther table> s WHERE …).

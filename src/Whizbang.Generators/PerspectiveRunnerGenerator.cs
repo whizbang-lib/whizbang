@@ -17,6 +17,13 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class PerspectiveRunnerGenerator : IIncrementalGenerator {
+  /// <summary>
+  /// Separates a member's name from its default expression inside one <c>MemberDefaults</c> entry. A control
+  /// character, because the expression can be a string literal containing any printable separator; C# escaping
+  /// renders a real control character as <c>\uXXXX</c>, so it can never appear in the literal text itself.
+  /// </summary>
+  private const char MEMBER_DEFAULT_SEPARATOR = '\u0001';
+
   private const string PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
   private const string PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
@@ -68,6 +75,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
               .Where(r => r!.Info is not null)
               .Select(r => r!.Info!)
               .ToImmutableArray();
+
+          // A Split class whose init-only promoted field can only be stripped through a copy, which it cannot make.
+          foreach (var (Model, Problem) in validPerspectives
+              .Where(p => p.ModelCopy?.Problem is not null)
+              .Select(p => (Model: p.InterfaceTypeArguments[0].Replace("global::", ""), p.ModelCopy!.Problem))
+              .Distinct()) {
+            ctx.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.SplitClassModelCannotBeCopied, Location.None, Model, Problem));
+          }
 
           _generatePerspectiveRunners(ctx, compilation, validPerspectives);
         }
@@ -187,11 +203,20 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Discover physical fields (including vector fields) on model properties
     var physicalFields = _discoverPhysicalFields(modelType);
 
+    // Discover what each member reads as when the document has no key for it (#1044)
+    var memberDefaults = _discoverMemberDefaults(modelType);
+
     // Extract storage mode from [PerspectiveStorage] attribute on model type
     var storageMode = _extractStorageMode(modelType);
 
     // Check if model is a record type (supports 'with {}' expressions for immutable copies)
     var isModelRecord = modelType is INamedTypeSymbol namedModel && namedModel.IsRecord;
+
+    // Issue #1002: a Split class with an init-only promoted field is stripped and loaded through a copy, because a
+    // class can set an init-only property only while an instance is being created.
+    var modelCopy = storageMode == 2 && !isModelRecord && physicalFields.Any(f => f.IsInitOnly)
+        ? ModelCopy.For((INamedTypeSymbol)modelType, semanticModel.Compilation.Assembly)
+        : null;
 
     // Check if perspective implements IPerspectiveScopeFor<TModel> for IScopeEvent handling
     var hasScopeInterface = _hasScopeForInterface(classSymbol);
@@ -225,7 +250,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 ,
             RowCapPerScope: rowCapPerScope,
             RowCapScopeKey: rowCapScopeKey,
-            StreamGroupSpec: streamGroupSpec),
+            StreamGroupSpec: streamGroupSpec,
+            ModelCopy: modelCopy,
+            MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null),
         Warning: null
     );
   }
@@ -535,6 +562,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // to send a setter or a condition on a physical property to its column (no reflection at run time).
     result = TemplateUtilities.ReplaceRegion(result, "PHYSICAL_FIELD_REGISTRATION",
         _buildPhysicalFieldRegistration(perspective, modelTypeName));
+    // Member defaults register the same turnkey way: the collective predicate compiler reads them so a document
+    // with no key for a member is filtered as the value a rebuild sees, rather than as SQL NULL (#1044).
+    result = TemplateUtilities.ReplaceRegion(result, "MEMBER_DEFAULT_REGISTRATION",
+        perspective.MemberDefaults is { Length: > 0 } ? _buildMemberDefaultRegistration(perspective, modelTypeName) : "");
     // Issue #977: a Split model's promoted fields live only in their columns, so the store has to read them
     // back into the model the next event is applied to. The copy is generated here, where the fields are known.
     result = TemplateUtilities.ReplaceRegion(result, "SPLIT_PHYSICAL_FIELD_REGISTRATION",
@@ -679,16 +710,30 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// nullable takes an empty array for a null column, as the strip does.
   /// </remarks>
   private static string _buildSplitPhysicalFieldRegistration(PerspectiveInfo perspective, string modelTypeName) {
-    if (perspective.StorageMode != 2 || perspective.PhysicalFields is not { Length: > 0 } fields) {
+    // A Split model reads every promoted field back from its column. Any other model reads back its jsonb
+    // columns: the EF Core model keeps them out of the mapped document, so the column is where they are.
+    PhysicalFieldInfoCompact[] promoted = perspective.PhysicalFields ?? [];
+    var fields = perspective.StorageMode == 2
+      ? promoted
+      : [.. promoted.Where(f => PhysicalFieldScalar.IsJsonb(f.ColumnType))];
+    if (fields.Length == 0) {
       return "";
     }
 
     var columns = string.Join(", ", fields.Select(f =>
         $"new global::Whizbang.Core.Perspectives.SplitPhysicalColumn(\"{f.ColumnName}\", {_csharpBool(f.IsVectorField)})"));
     var reads = fields.Select(f => (f.PropertyName, Read: _splitColumnRead(f))).ToArray();
-    var hydrate = perspective.IsModelRecord
-        ? $"static (model, read) => model with {{ {string.Join(", ", reads.Select(r => $"{r.PropertyName} = {r.Read}"))} }}"
-        : $"static (model, read) => {{ {string.Concat(reads.Select(r => $"model.{r.PropertyName} = {r.Read}; "))}return model; }}";
+    string hydrate;
+    if (perspective.IsModelRecord) {
+      hydrate = $"static (model, read) => model with {{ {string.Join(", ", reads.Select(r => $"{r.PropertyName} = {r.Read}"))} }}";
+    } else if (perspective.ModelCopy is { Problem: null } copy) {
+      hydrate = "static (model, read) => "
+          + ModelCopy.Render(modelTypeName, copy, "model", reads.ToDictionary(r => r.PropertyName, r => r.Read, StringComparer.Ordinal));
+    } else {
+      // An init-only field of a class that cannot be copied is reported (WHIZ808) rather than assigned.
+      var assigned = reads.Where(r => !fields.Any(f => f.PropertyName == r.PropertyName && f.IsInitOnly));
+      hydrate = $"static (model, read) => {{ {string.Concat(assigned.Select(r => $"model.{r.PropertyName} = {r.Read}; "))}return model; }}";
+    }
 
     return "[global::System.Runtime.CompilerServices.ModuleInitializer]\n" +
         "  internal static void _registerSplitPhysicalFields() =>\n" +
@@ -711,11 +756,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string _buildSnapshotBeforeWrite(PerspectiveInfo perspective, string modelTypeName) {
     var strippedInPlace = perspective.StorageMode == 2
         && perspective.PhysicalFields is { Length: > 0 }
-        && !perspective.IsModelRecord;
+        && !perspective.IsModelRecord
+        && perspective.ModelCopy is not { Problem: null };
     return strippedInPlace
-        ? "// The write strips this model's promoted fields in place, so its snapshot is taken first (issue #983).\n" +
-          $"private JsonDocument? SnapshotBeforeWrite({modelTypeName} model) =>\n" +
-          "    _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true ? ToSnapshotJson(model) : null;"
+        ? "// The write strips this model's promoted fields in place, so its snapshot is taken first (issue #983),\n" +
+          "// and only on a run whose snapshot is due (issue #1002).\n" +
+          $"private static JsonDocument? SnapshotBeforeWrite({modelTypeName} model) => ToSnapshotJson(model);"
         : "// The write does not strip this model in place, so its snapshot is taken after the write.\n" +
           $"private static JsonDocument? SnapshotBeforeWrite({modelTypeName} model) => null;";
   }
@@ -882,7 +928,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Split mode (StorageMode == 2): strips physical fields from the model before JSONB
   /// serialization so the JSONB payload only contains non-physical fields. Physical field
   /// values are already captured in the <c>physicalFieldValues</c> dictionary for column
-  /// storage. Records use <c>with { ... }</c> for an immutable copy; classes mutate in place.
+  /// storage. Records use <c>with { ... }</c> for an immutable copy; a class with an <c>init</c>-only promoted field is
+  /// copied with an object initializer (issue #1002); other classes mutate in place.
   /// Vector fields get <c>System.Array.Empty&lt;float&gt;()</c> because EF Core's
   /// JsonCollectionOfStructsReaderWriter crashes on a null JSON token.
   /// </summary>
@@ -892,8 +939,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       var withProps = string.Join(", ", perspective.PhysicalFields!.Select(f =>
         f.IsVectorField ? $"{f.PropertyName} = System.Array.Empty<float>()" : $"{f.PropertyName} = default!"));
       sb.AppendLine($"    model = model with {{ {withProps} }};");
+    } else if (perspective.ModelCopy is { Problem: null } copy) {
+      // An init-only field cannot be assigned once the instance exists, so the document is written from a copy, and
+      // the instance the runner applied keeps its fields for the snapshot taken after the write (issue #1002).
+      var stripped = perspective.PhysicalFields!.ToDictionary(
+          f => f.PropertyName, f => f.IsVectorField ? "System.Array.Empty<float>()" : "default!", StringComparer.Ordinal);
+      sb.AppendLine($"    model = {ModelCopy.Render(perspective.InterfaceTypeArguments[0], copy, "model", stripped)};");
     } else {
-      foreach (var field in perspective.PhysicalFields!) {
+      // An init-only field of a class that cannot be copied is reported (WHIZ808) rather than assigned.
+      foreach (var field in perspective.PhysicalFields!.Where(f => !f.IsInitOnly)) {
         if (field.IsVectorField) {
           sb.AppendLine($"    model.{field.PropertyName} = System.Array.Empty<float>();");
         } else {
@@ -1281,6 +1335,84 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// <remarks>A model that is not a named type — an array satisfies the interface's <c>class</c>
   /// constraint — declares no properties, so the loop never runs and the result is the same empty
   /// set.</remarks>
+  /// <summary>
+  /// Emits the <c>[ModuleInitializer]</c> that registers what each member reads as when the document has no key
+  /// for it, in <c>PerspectiveMemberDefaultRegistry</c>. Empty when the model declares none.
+  /// </summary>
+  private static string _buildMemberDefaultRegistration(PerspectiveInfo perspective, string modelTypeName) {
+    var defaults = perspective.MemberDefaults!;
+    var sb = new StringBuilder();
+    sb.Append("[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerMemberDefaults() {");
+    foreach (var entry in defaults) {
+      var parts = entry.Split(MEMBER_DEFAULT_SEPARATOR);
+      if (parts.Length != 2) {
+        continue;
+      }
+      sb.Append("\n    global::Whizbang.Core.Perspectives.PerspectiveMemberDefaultRegistry.Register(typeof(")
+        .Append(modelTypeName).Append("), \"").Append(parts[0]).Append("\", ").Append(parts[1]).Append(");");
+    }
+    sb.Append("\n  }");
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// What each of the model's members reads as when the stored document has no key for it, as
+  /// <c>Name\u0001&lt;C# expression&gt;</c> entries. A document lacks a key whenever the member was added after
+  /// those rows were written; a rebuild deserializes them and the member holds this value, so a collective
+  /// predicate has to filter on it rather than on SQL NULL (#1044).
+  /// </summary>
+  private static string[] _discoverMemberDefaults(ITypeSymbol modelType) {
+    var defaults = new List<string>();
+
+    foreach (var property in (modelType as INamedTypeSymbol)?.GetAllProperties() ?? []) {
+      var declared = _tryDeclaredDefault(property);
+      if (declared is not null) {
+        defaults.Add(property.Name + MEMBER_DEFAULT_SEPARATOR + declared);
+      }
+    }
+
+    return [.. defaults];
+  }
+
+  /// <summary>
+  /// The C# expression for what one member reads as, or null when the declaration does not say.
+  /// </summary>
+  /// <remarks>
+  /// Nullable members are skipped: an absent key already reads as null on both paths, so they agree, and
+  /// coalescing would change a predicate that is correct today. Only a literal initializer is read — an
+  /// arbitrary expression could evaluate to anything, and registering a guess that differs from what a rebuild
+  /// produces is worse than registering nothing. A member whose declaration is not in this compilation is
+  /// skipped for the same reason: whether it has an initializer cannot be known from metadata.
+  /// </remarks>
+  private static string? _tryDeclaredDefault(IPropertySymbol property) {
+    if (property.Type.NullableAnnotation == NullableAnnotation.Annotated
+        || property.Type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T) {
+      return null;
+    }
+
+    // A member declared outside this compilation has no syntax to read, so whether it carries an initializer cannot
+    // be known from metadata — the same reason a non-literal initializer is skipped.
+    var declaration = property.DeclaringSyntaxReferences
+      .Select(reference => reference.GetSyntax())
+      .OfType<PropertyDeclarationSyntax>()
+      .FirstOrDefault();
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
+
+    if (declaration is null) {
+      return null;
+    }
+
+    return declaration.Initializer?.Value switch {
+      // A value type's literal is cast to the member's own type so the registered value boxes as that type —
+      // `= 5` on a long must arrive as a long, not an int, or it binds against the column as the wrong type.
+      LiteralExpressionSyntax literal => property.Type.IsValueType
+          ? $"({typeName}){literal.Token.Text}"
+          : literal.Token.Text,
+      null => property.Type.IsValueType ? $"default({typeName})" : null,
+      _ => null,
+    };
+  }
+
   private static PhysicalFieldInfoCompact[] _discoverPhysicalFields(ITypeSymbol modelType) {
     var physicalFields = new List<PhysicalFieldInfoCompact>();
 
@@ -1329,8 +1461,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           ColumnName: columnName,
           IsVectorField: isVectorField,
           EnumScalarType: PhysicalFieldScalar.EnumColumnScalar(property.Type),
-          ColumnType: columnType,
-          TypeName: TypeNameUtilities.FullyQualifiedWithNullability(property.Type)
+          // An object, a collection or a dictionary is a jsonb column unless the author declared otherwise.
+          ColumnType: columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type),
+          TypeName: TypeNameUtilities.FullyQualifiedWithNullability(property.Type),
+          IsInitOnly: property.SetMethod?.IsInitOnly == true
       );
     }
 

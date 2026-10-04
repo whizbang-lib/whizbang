@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Models;
 using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
@@ -58,16 +59,18 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
         continue;
       }
 
-      // Check model for Dictionary properties (recursive with cycle detection)
+      // Check model for Dictionary properties (recursive with cycle detection). A field promoted to a
+      // jsonb column is left out: it is stored and read as that column, not mapped in the document.
       var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-      _checkForDictionary(context, modelType, visited);
+      _checkForDictionary(context, modelType, visited, promotedToJsonbSkipped: true);
     }
   }
 
   private static void _checkForDictionary(
       SymbolAnalysisContext context,
       INamedTypeSymbol type,
-      HashSet<INamedTypeSymbol> visited) {
+      HashSet<INamedTypeSymbol> visited,
+      bool promotedToJsonbSkipped = false) {
 
     // Cycle detection - prevent infinite loops in self-referencing types
     if (!visited.Add(type)) {
@@ -80,6 +83,10 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
     }
 
     foreach (var member in type.GetMembers().OfType<IPropertySymbol>()) {
+      if (promotedToJsonbSkipped && _isPromotedToJsonb(member)) {
+        continue;
+      }
+
       _checkPropertyForDictionary(context, member, type, visited);
     }
   }
@@ -130,6 +137,23 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// Checks if a type is a System namespace type that is NOT a collections type.
   /// </summary>
+  /// <summary>
+  /// Whether a model property is a <c>[PhysicalField]</c> stored in a jsonb column, declared or defaulted:
+  /// the generated configuration keeps such a field out of the mapped document.
+  /// </summary>
+  private static bool _isPromotedToJsonb(IPropertySymbol member) {
+    var attribute = member.GetAttributes().FirstOrDefault(a =>
+      a.AttributeClass is { } attributeClass
+      && TypeNameUtilities.Display(attributeClass) == "Whizbang.Core.Perspectives.PhysicalFieldAttribute");
+    if (attribute is null) {
+      return false;
+    }
+
+    var declared = attribute.NamedArguments.FirstOrDefault(a => a.Key == "ColumnType").Value.Value as string;
+    var columnType = declared ?? PhysicalFieldScalar.DefaultColumnType(member.Type);
+    return PhysicalFieldScalar.IsJsonb(columnType);
+  }
+
   private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
     return type.ContainingNamespace is { } ns &&
            TypeNameUtilities.Display(ns).StartsWith("System", StringComparison.Ordinal) &&

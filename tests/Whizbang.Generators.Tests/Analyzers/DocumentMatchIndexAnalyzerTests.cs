@@ -17,8 +17,9 @@ namespace Whizbang.Generators.Tests.Analyzers;
 /// silent sequential scan a build-time warning exists to prevent (WHIZ307).
 /// </para>
 /// <para>
-/// A model that declares nothing still gets the index for now. Each filter relying on it is noted
-/// (WHIZ308) so the list of queries that would lose it is visible before anyone opts out.
+/// A model that declares nothing does not get the index either: the default is off. A filter that
+/// needs it is reported (WHIZ308) with the opt-in that builds it, because the difference from
+/// WHIZ307 is the fix: nothing was decided, so declaring the lookup is as good an answer as an index.
 /// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz307</docs>
@@ -221,39 +222,44 @@ public class DocumentMatchIndexAnalyzerTests {
   }
 
   // ========================================
-  // WHIZ308: relying on the transitional default
+  // WHIZ308: the undeclared default builds no index
   // ========================================
 
   /// <summary>
-  /// A whole-document match on a model that declares nothing is noted, as information, because the
-  /// index it relies on is kept by a default rather than a decision.
+  /// A whole-document match on a model that declares nothing has no index to use, because the
+  /// default is off, and the warning says how to opt in.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task WholeDocumentMatch_OnAnUndeclaredModel_IsNotedAsync() {
+  public async Task WholeDocumentMatch_OnAnUndeclaredModel_WarnsWithTheOptInAsync() {
     var reported = await _diagnosticsAsync("", "r.Data.Carrier == \"x\"", "WHIZ308");
 
     await Assert.That(reported).Count().IsEqualTo(1);
-    await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Info);
-    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("ShipmentModel.Carrier");
+    await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
+    var message = reported[0].GetMessage(CultureInfo.InvariantCulture);
+    await Assert.That(message).Contains("ShipmentModel.Carrier");
+    await Assert.That(message).Contains("is not built");
+    await Assert.That(message).Contains("[PerspectiveQueries(MatchOnAnyField = true)]")
+      .Because("the opt-in is the fix that keeps every such filter answered without naming each field");
+    await Assert.That(message).Contains("[Indexed]");
   }
 
   /// <summary>
-  /// A declaration either way ends the note: true is the decision to keep the index, and false is
-  /// answered by WHIZ307 instead.
+  /// A declaration either way ends the warning: true builds the index, and false is answered by
+  /// WHIZ307 instead.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
   [Arguments("[PerspectiveQueries(MatchOnAnyField = true)]")]
   [Arguments("[PerspectiveQueries(MatchOnAnyField = false)]")]
-  public async Task WholeDocumentMatch_OnADeclaredModel_IsNotNotedAsync(string modelAttribute) {
+  public async Task WholeDocumentMatch_OnADeclaredModel_IsNotReportedAsync(string modelAttribute) {
     await Assert.That(await _diagnosticsAsync(modelAttribute, "r.Data.Carrier == \"x\"", "WHIZ308")).IsEmpty();
   }
 
-  /// <summary>A filter a declared field index answers relies on nothing else.</summary>
+  /// <summary>A filter a declared field index answers needs nothing else.</summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task AFilterOnADeclaredIndex_IsNotNotedAsync() {
+  public async Task AFilterOnADeclaredIndex_IsNotReportedAsync() {
     await Assert.That(await _diagnosticsAsync("", "r.Data.Status == \"x\"", "WHIZ308")).IsEmpty();
   }
 
@@ -298,10 +304,10 @@ public class DocumentMatchIndexAnalyzerTests {
     await Assert.That(await _diagnosticsAsync("[PerspectiveQueries(MatchOnAnyField = false)]", predicate, "WHIZ307")).IsEmpty();
   }
 
-  /// <summary>A set filter on an undeclared model relies on the default index and is noted.</summary>
+  /// <summary>A set filter on an undeclared model has no index either, and warns.</summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task ASetFilter_OnAnUndeclaredModel_IsNotedAsync() {
+  public async Task ASetFilter_OnAnUndeclaredModel_WarnsAsync() {
     await Assert.That(await _diagnosticsAsync("", "new[] { \"a\" }.Contains(r.Data.Carrier)", "WHIZ308")).Count().IsEqualTo(1);
   }
 }

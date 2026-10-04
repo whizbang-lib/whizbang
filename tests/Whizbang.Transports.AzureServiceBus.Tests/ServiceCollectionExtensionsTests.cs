@@ -300,6 +300,24 @@ public class ServiceCollectionExtensionsTests {
   }
 
   [Test]
+  public async Task AddAzureServiceBusTransport_RegistersItsSection_AndBindsConsumerSubscriptionsAsync() {
+    // #1012: registering the transport is what makes its section count for the transport
+    // consumer, and ServiceBusConsumerWorker's subscriptions bind from Consumer:Subscriptions.
+    var services = new ServiceCollection();
+    services.AddSingleton(_configWith(
+      ("Consumer:Subscriptions:0:TopicName", "orders"),
+      ("Consumer:Subscriptions:0:SubscriptionName", "orders-sub")));
+
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING);
+    await using var provider = services.BuildServiceProvider();
+
+    var sections = provider.GetServices<TransportConfigurationSection>().Select(s => s.Name).ToList();
+    var consumer = provider.GetRequiredService<ServiceBusConsumerOptions>();
+    await Assert.That(sections).IsEquivalentTo(["AzureServiceBus"]);
+    await Assert.That(consumer.Subscriptions).IsEquivalentTo([new TopicSubscription("orders", "orders-sub")]);
+  }
+
+  [Test]
   public async Task AddAzureServiceBusTransport_BindsEveryRuntimeKnobFromConfigurationAsync() {
     // Arrange — every configuration-bindable property set to a non-default value
     var services = new ServiceCollection();
@@ -573,6 +591,22 @@ public class ServiceCollectionExtensionsTests {
     // Assert - the SharedTopicOutboxStrategy branch must propagate the configured inbox topic
     await Assert.That(strategy).IsTypeOf<TransportPublishStrategy>();
     await Assert.That(_getInboxTopic(strategy)).IsEqualTo("custom-inbox");
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_PublishStrategy_ReadsTheBoundThrottleRetryOptionsAsync() {
+    // #1014: Whizbang:ThrottleRetry binds into IOptions<ThrottleRetryOptions>; the strategy used to be
+    // handed null, so neither configuration nor services.Configure ever reached it.
+    var services = new ServiceCollection();
+    services.AddSingleton(new ServiceBusClient(EMULATOR_CONNECTION_STRING));
+    services.AddLogging();
+    services.Configure<ThrottleRetryOptions>(o => o.MaxAttempts = 9);
+    services.AddAzureServiceBusTransport(EMULATOR_CONNECTION_STRING);
+    var provider = services.BuildServiceProvider();
+
+    var strategy = provider.GetRequiredService<IMessagePublishStrategy>();
+
+    await Assert.That(((TransportPublishStrategy)strategy).ThrottleRetry.MaxAttempts).IsEqualTo(9);
   }
 
   [Test]

@@ -65,8 +65,10 @@ namespace TestNamespace {
     await Assert.That(runner).Contains(
       REGISTER + "typeof(global::TestNamespace.TicketModel), \"Embedding\", \"embedding\", global::Whizbang.Core.Perspectives.FieldStorageMode.Split, isVector: true);")
       .Because("A vector field is registered and flagged, so the collective path can refuse it with a clear message.");
-    await Assert.That(runner).DoesNotContain("\"Title\"")
-      .Because("A document-only property has no column and is not registered.");
+    await Assert.That(runner).DoesNotContain(REGISTER + "typeof(global::TestNamespace.TicketModel), \"Title\"")
+      .Because("A document-only property has no column, so the physical-field registry never names it. Asserted "
+        + "against that registry's own call rather than the whole file: the member-default registry (#1044) names "
+        + "every member whose declaration states what an absent key reads as, Title among them.");
   }
 
   [Test]

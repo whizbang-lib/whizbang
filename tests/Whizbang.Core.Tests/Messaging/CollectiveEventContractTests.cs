@@ -78,19 +78,25 @@ public class CollectiveEventContractTests {
   }
 
   [Test]
-  public async Task ICollectiveEvent_ContractIsMinimal_ScopeAndAnOptionalOrderingKeyAsync() {
-    // Document the deliberate constraint: ICollectiveEvent carries its Scope and, since #963, an optional
-    // OrderingKey. No MatchedStreamIds, no MaxExpandedInnersAllowed, no audit pointer. The event IS the
-    // descriptor; the key only says which collectives are ordered against each other, and it has a default
-    // so an implementer need not declare it. Adding properties here is a substantial design decision (and a
+  public async Task ICollectiveEvent_ContractIsMinimal_ScopeAnOptionalOrderingKeyAndItsPredecessorLinkAsync() {
+    // Document the deliberate constraint: ICollectiveEvent carries its Scope; since #963 an optional
+    // OrderingKey; and since #1003 the predecessor link on that key (PredecessorId, PredecessorType), which
+    // the store writes and a producer never sets. No MatchedStreamIds, no MaxExpandedInnersAllowed, no audit
+    // pointer. The event IS the descriptor; the key only says which collectives are ordered against each
+    // other and the link lets a receiver restore that order. Every member past Scope has a default so an
+    // implementer need not declare it. Adding properties here is a substantial design decision (and a
     // wire-format change).
     var props = typeof(ICollectiveEvent).GetProperties().OrderBy(p => p.Name, StringComparer.Ordinal).ToList();
 
-    await Assert.That(props.Select(p => p.Name)).IsEquivalentTo(
-      [nameof(ICollectiveEvent.OrderingKey), nameof(ICollectiveEvent.Scope)])
+    await Assert.That(props.Select(p => p.Name)).IsEquivalentTo([
+      nameof(ICollectiveEvent.OrderingKey),
+      nameof(ICollectiveEvent.PredecessorId),
+      nameof(ICollectiveEvent.PredecessorType),
+      nameof(ICollectiveEvent.Scope)])
       .Because("The whole point of the scope-level-determinism design is that the event carries only its scope payload. Adding properties to this contract reopens questions we've already settled.");
-    await Assert.That(props[0].GetMethod!.IsAbstract).IsFalse()
-      .Because("The ordering key is opt-in: an existing collective compiles unchanged and is unordered.");
+    await Assert.That(props.Where(p => p.Name != nameof(ICollectiveEvent.Scope)).Select(p => p.GetMethod!.IsAbstract))
+      .DoesNotContain(true)
+      .Because("The ordering key and the predecessor link are opt-in: an existing collective compiles unchanged and is unordered.");
   }
 
   /// <summary>
