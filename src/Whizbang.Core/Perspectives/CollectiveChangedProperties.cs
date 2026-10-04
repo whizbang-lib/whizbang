@@ -35,7 +35,7 @@ public static class CollectiveChangedProperties {
     }
 
     protected override Expression VisitMethodCall(MethodCallExpression node) {
-      if (node.Method.Name is nameof(ICollectiveSetters<object>.SetProperty) or nameof(ICollectiveSetters<object>.UpsertElement)
+      if (node.Method.Name is nameof(ICollectiveSetters<>.SetProperty) or nameof(ICollectiveSetters<>.UpsertElement)
           && node.Arguments.Count > 0
           && _path(node.Arguments[0]) is { } path) {
         _found.Add((_depth, path));

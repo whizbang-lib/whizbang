@@ -3349,7 +3349,7 @@ public partial class PerspectiveWorker(
         // retry starts at this one.
         LogCollectiveApplyLockBusy(_logger, streamId, envelope.MessageId.Value, busy.Table, busy.WaitedSeconds);
         await _completeAppliedCollectivesAsync(
-          scope, workCoordinator, streamId, applied, changes, _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
+          scope, workCoordinator, streamId, new AppliedCollectives(applied, changes), _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
           reportCursor: true, cancellationToken).ConfigureAwait(false);
         return;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -3370,7 +3370,7 @@ public partial class PerspectiveWorker(
         };
         await _completionStrategy.ReportFailureAsync(failure, workCoordinator, cancellationToken).ConfigureAwait(false);
         await _completeAppliedCollectivesAsync(
-          scope, workCoordinator, streamId, applied, changes, _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
+          scope, workCoordinator, streamId, new AppliedCollectives(applied, changes), _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count),
           reportCursor: false, cancellationToken).ConfigureAwait(false);
         return;
       }
@@ -3385,7 +3385,7 @@ public partial class PerspectiveWorker(
       // next run on the stream, which the predecessor's arrival starts, or the wake when the wait runs out.
       var appliedWorkIds = _workIdsOfApplied(completedWorkIds, workIdByEventId, collectiveEnvelopes, applied.Count);
       await _completeAppliedCollectivesAsync(
-        scope, workCoordinator, streamId, applied, changes, appliedWorkIds, reportCursor: true, cancellationToken)
+        scope, workCoordinator, streamId, new AppliedCollectives(applied, changes), appliedWorkIds, reportCursor: true, cancellationToken)
         .ConfigureAwait(false);
       var waiting = sinkWorkIds.Except(appliedWorkIds).ToArray();
       _settleHeldBackSinkRows(streamId, sinkWorkIds, waiting);
@@ -3398,7 +3398,7 @@ public partial class PerspectiveWorker(
       pendingWake.Timer.Dispose();
     }
     await _completeAppliedCollectivesAsync(
-      scope, workCoordinator, streamId, applied, changes, completedWorkIds, reportCursor: true, cancellationToken)
+      scope, workCoordinator, streamId, new AppliedCollectives(applied, changes), completedWorkIds, reportCursor: true, cancellationToken)
       .ConfigureAwait(false);
   }
 
@@ -3554,8 +3554,8 @@ public partial class PerspectiveWorker(
   /// </summary>
   private async Task _completeAppliedCollectivesAsync(
       AsyncServiceScope scope, IWorkCoordinator workCoordinator, Guid streamId,
-      List<MessageEnvelope<IEvent>> applied, IReadOnlyDictionary<Guid, MessageChanges> changes, Guid[] workIds,
-      bool reportCursor, CancellationToken cancellationToken) {
+      AppliedCollectives run, Guid[] workIds, bool reportCursor, CancellationToken cancellationToken) {
+    var (applied, changes) = run;
     if (applied.Count == 0) {
       return;
     }
@@ -3680,6 +3680,11 @@ public partial class PerspectiveWorker(
     }
     return new CollectiveSinkBatch(envelopes, completed, workIdByEventId, [.. pending.Select(e => e.EventId)]);
   }
+
+  /// <summary>The collectives a sink run applied, in order, and what each one's specs changed (#1045).</summary>
+  private readonly record struct AppliedCollectives(
+      List<MessageEnvelope<IEvent>> Envelopes,
+      IReadOnlyDictionary<Guid, MessageChanges> Changes);
 
   /// <summary>
   /// The collectives a sink run applies, in order, and the work rows it completes when they do. From the queue (#963)

@@ -132,12 +132,12 @@ public class ClrTypeNameNormalizerParityTests : IAsyncDisposable {
       "SELECT table_name, column_name, rows, distinct_spellings, logical_types, sample FROM wh_find_qualified_type_names()"))
       .ToList();
 
-    var settings = found.Single(f => f.Table == "consumer_items");
-    await Assert.That(settings.Column).IsEqualTo("settings");
-    await Assert.That(settings.Rows).IsEqualTo(2L);
-    await Assert.That(settings.Spellings).IsEqualTo(2L);
-    await Assert.That(settings.Types).IsEqualTo(1L);
-    await Assert.That(settings.Sample).Contains("Ns.Handler, Some.Assembly, Version=");
+    var (_, column, rows, spellings, types, sample) = found.Single(f => f.Table == "consumer_items");
+    await Assert.That(column).IsEqualTo("settings");
+    await Assert.That(rows).IsEqualTo(2L);
+    await Assert.That(spellings).IsEqualTo(2L);
+    await Assert.That(types).IsEqualTo(1L);
+    await Assert.That(sample).Contains("Ns.Handler, Some.Assembly, Version=");
   }
 
   /// <summary>
