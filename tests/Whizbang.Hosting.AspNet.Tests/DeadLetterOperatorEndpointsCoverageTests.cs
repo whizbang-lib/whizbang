@@ -150,6 +150,28 @@ public class DeadLetterOperatorEndpointsCoverageTests {
       .RequestDelegate!;
 
   /// <summary>
+  /// The cohort-release handler invoked with no fingerprint route value at all, the shape a remapped
+  /// group or route-rewriting middleware could hand it: the blank guard treats a missing value like a
+  /// blank one and nothing is released.
+  /// </summary>
+  [Test]
+  public async Task CohortRelease_WithNoFingerprintRouteValue_ReturnsBadRequestWithoutReleasingAsync() {
+    var svc = new FakeRecoveryService();
+    var (host, routes) = await _buildRoutedHostAsync(svc);
+    using (host) {
+      var http = new DefaultHttpContext { RequestServices = host.Services };
+
+      await _handlerFor(routes, "/cohorts/{fingerprint}/release")(http);
+
+      await Assert.That(http.Response.StatusCode).IsEqualTo(StatusCodes.Status400BadRequest)
+        .Because("a missing fingerprint identifies no cohort");
+      await Assert.That(svc.CohortReleases).IsEmpty()
+        .Because("the guard has to short-circuit before any release is attempted");
+      await host.StopAsync();
+    }
+  }
+
+  /// <summary>
   /// Three id shapes the route constraint would have rejected, one per id-taking endpoint: no id
   /// at all, an id that is not a guid, and an id that is not even a string. Each is a distinct
   /// arm of the handler's guard.

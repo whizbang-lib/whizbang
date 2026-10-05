@@ -27,9 +27,11 @@ public class WhizbangAvailabilityStartupFilterTests {
       Task.Delay(Timeout.Infinite, cancellationToken);
   }
 
-  private static async Task<int> _statusAsync(WhizbangAvailabilityOptions options, bool gateRegistered, string method, string path) {
+  private static async Task<int> _statusAsync(WhizbangAvailabilityOptions? options, bool gateRegistered, string method, string path) {
     var services = new ServiceCollection();
-    services.AddSingleton<IOptions<WhizbangAvailabilityOptions>>(Options.Create(options));
+    if (options is not null) {
+      services.AddSingleton<IOptions<WhizbangAvailabilityOptions>>(Options.Create(options));
+    }
     if (gateRegistered) {
       services.AddSingleton<ISchemaReadyGate>(new FakeGate());
     }
@@ -67,4 +69,15 @@ public class WhizbangAvailabilityStartupFilterTests {
   public async Task NoGateRegistered_SkippedAsync()
     => await Assert.That(await _statusAsync(new WhizbangAvailabilityOptions(), gateRegistered: false, "POST", "/api/jobs"))
       .IsEqualTo(StatusCodes.Status200OK);
+
+  /// <summary>
+  /// A host that registered a schema-ready gate but no availability options (the options system was
+  /// never added) still gets the turnkey default, gate on in MutationsOnly, rather than no gate.
+  /// </summary>
+  [Test]
+  [Arguments("POST", StatusCodes.Status503ServiceUnavailable)]
+  [Arguments("GET", StatusCodes.Status200OK)]
+  public async Task NoOptionsRegistered_GatesOnTheDefaultsAsync(string method, int expected)
+    => await Assert.That(await _statusAsync(options: null, gateRegistered: true, method, "/api/jobs"))
+      .IsEqualTo(expected);
 }
