@@ -359,10 +359,7 @@ project has today (see below).
 |---|---|---|---|
 | `achieve_silver` | MUST | Silver's last MUST, `access_continuity`. | owner |
 | `bus_factor`, `contributors_unassociated`, `two_person_review` | MUST | At least two significant contributors from different organizations, and a second person reviewing at least half of all changes before release. Structural: not reachable by documentation or tooling. | needs a second regular contributor |
-| `copyright_per_file`, `license_per_file` | MUST | A header (`Copyright (c) whizbang-lib contributors` and `SPDX-License-Identifier: MIT`) in each of the 1,781 source files, enforced by `.editorconfig`'s `file_header_template` and rule IDE0073 so `dotnet format` adds it to new files. Mechanical. | repo change |
-| `test_branch_coverage80` | MUST | Branch coverage is not measured: the coverage collector records no branch data (`branch-rate="1"` with no conditions), so SonarCloud reports line coverage only. Collect branch coverage and bring it to at least 80%. | repo change |
-| `small_tasks` | MUST | Label beginner-sized issues `good first issue` (the label exists; no open issue has it) and point new contributors to it from CONTRIBUTING. | repo change |
-| `code_review_standards` | MUST | Document how review is conducted, what is checked and what is required to merge, in one place. | repo change |
+| `test_branch_coverage80` | MUST | CI instruments assemblies at build time (static instrumentation), which records lines only; the test platform's runtime collector records branches. Switching CI to it and measuring the result is in progress on a separate branch; then bring branch coverage to at least 80% (the project's own standard is 100%). | repo change |
 | `security_review` | MUST | A security review within the last five years that considers the security requirements and boundaries. The assurance case is the basis; the review itself must be carried out and recorded by a project member. | owner |
 
 ## Basics
@@ -372,15 +369,15 @@ project has today (see below).
 | `achieve_silver` | Unmet | Silver is in progress; one criterion (continuity of access) remains. <https://www.bestpractices.dev/projects/15090> |
 | `bus_factor` | Unmet | One maintainer does most of the work today, so the bus factor is 1. <https://github.com/whizbang-lib/whizbang/graphs/contributors> |
 | `contributors_unassociated` | Unmet | The project has one significant contributor today; other contributions have been occasional. <https://github.com/whizbang-lib/whizbang/graphs/contributors> |
-| `copyright_per_file` | Unmet | Source files do not yet carry a copyright header; the repository-level `LICENSE` states the copyright. |
-| `license_per_file` | Unmet | Source files do not yet carry an SPDX license header; the repository-level `LICENSE` (MIT) applies to all of them. |
+| `copyright_per_file` | Met | Every C# source file starts with `Copyright (c) whizbang-lib contributors.`, and the build fails on a file without it (`.editorconfig` `file_header_template`, rule IDE0073). Generated code, code-generation templates (copied into consumers' generated code) and SQL migrations (fingerprinted at startup) are exempt. <https://github.com/whizbang-lib/whizbang/blob/develop/.editorconfig> |
+| `license_per_file` | Met | Every C# source file carries `SPDX-License-Identifier: MIT` in its header, enforced the same way. <https://github.com/whizbang-lib/whizbang/blob/develop/.editorconfig> |
 
 ## Change Control
 
 | Criterion | Answer | Justification |
 |---|---|---|
 | `repo_distributed` | Met | Git, hosted on GitHub. |
-| `small_tasks` | Unmet | A `good first issue` label exists, but no open issue currently carries it. |
+| `small_tasks` | Met | Small, self-contained tasks are labeled `good first issue`, each with the steps to do it, and CONTRIBUTING points new contributors to them. <https://github.com/whizbang-lib/whizbang/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22> |
 | `require_2FA` | Met | The GitHub organization requires two-factor authentication for every member and outside collaborator, so no one can change the repository or read private vulnerability reports without it. <https://github.com/whizbang-lib> |
 | `secure_2FA` | Met | The governance document requires everyone with write access to use an authenticator app, passkey or security key rather than SMS. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#how-decisions-are-made> |
 
@@ -388,7 +385,7 @@ project has today (see below).
 
 | Criterion | Answer | Justification |
 |---|---|---|
-| `code_review_standards` | Unmet | Review is enforced by required automated checks (tests, coverage of new lines, static analysis, formatting, sign-off), but the review requirements are not yet documented in one place. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#code-review-process> |
+| `code_review_standards` | Met | CONTRIBUTING documents how review is conducted, what the required checks verify, what the reviewer checks (correctness and fit, tests, security, performance, documentation, writing) and what is required to merge. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#code-review> |
 | `two_person_review` | Unmet | There is one active maintainer, and a pull request author cannot approve their own pull request; changes are gated by automated checks, which do not count as review by another person. |
 | `build_reproducible` | Met | Builds are deterministic, and the release path rebuilds the tested commit and fails unless the binaries' hashes match the tested build. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
 | `test_invocation` | Met | Tests run with the standard `dotnet test`. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/TEST-FILTERING.md> |
