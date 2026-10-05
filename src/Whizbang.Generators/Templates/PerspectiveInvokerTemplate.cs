@@ -26,7 +26,8 @@ internal sealed class GeneratedPerspectiveInvoker : IPerspectiveInvoker {
   private bool _disposed = false;
 
   public GeneratedPerspectiveInvoker(IServiceProvider serviceProvider) {
-    _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+    ArgumentNullException.ThrowIfNull(serviceProvider);
+    _serviceProvider = serviceProvider;
   }
 
   public void QueueEvent(IEvent eventData) {

@@ -142,11 +142,16 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       IOptions<PerspectiveSnapshotOptions>? snapshotOptions = null,
       global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator? applyCoordinator = null,
       global::Whizbang.Core.Perspectives.ICollectiveReplayApplier? collectiveReplayApplier = null) {
-    _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
-    _perspectiveStore = perspectiveStore ?? throw new ArgumentNullException(nameof(perspectiveStore));
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+    ArgumentNullException.ThrowIfNull(serviceProvider);
+    _serviceProvider = serviceProvider;
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
+    ArgumentNullException.ThrowIfNull(eventStore);
+    _eventStore = eventStore;
+    ArgumentNullException.ThrowIfNull(perspectiveStore);
+    _perspectiveStore = perspectiveStore;
+    ArgumentNullException.ThrowIfNull(scopeFactory);
+    _scopeFactory = scopeFactory;
     _tracingOptions = tracingOptions;
     _snapshotStore = snapshotStore;
     _snapshotOptions = snapshotOptions;

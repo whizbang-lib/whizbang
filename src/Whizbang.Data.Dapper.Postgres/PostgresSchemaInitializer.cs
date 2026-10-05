@@ -62,7 +62,8 @@ public sealed class PostgresSchemaInitializer {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
     _connectionString = connectionString;
     _perspectiveSchemaSql = perspectiveSchemaSql;
-    _migrationProvider = migrationProvider ?? throw new ArgumentNullException(nameof(migrationProvider));
+    ArgumentNullException.ThrowIfNull(migrationProvider);
+    _migrationProvider = migrationProvider;
   }
 
   /// <summary>
@@ -80,7 +81,8 @@ public sealed class PostgresSchemaInitializer {
       string? applicationVersion = null,
       IApplicationSchemaObjects? applicationObjects = null)
     : this(connectionString, perspectiveSchemaSql: null, migrationProvider ?? new PostgresMigrationProvider()) {
-    _perspectiveEntries = perspectiveEntries ?? throw new ArgumentNullException(nameof(perspectiveEntries));
+    ArgumentNullException.ThrowIfNull(perspectiveEntries);
+    _perspectiveEntries = perspectiveEntries;
     _applicationVersion = applicationVersion;
     _applicationObjects = applicationObjects;
   }

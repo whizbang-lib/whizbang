@@ -34,8 +34,10 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
     ConcurrentDictionary<string, byte> completedPerspectives,
     int expectedCount) {
 
-    _completionSource = completionSource ?? throw new ArgumentNullException(nameof(completionSource));
-    _completedPerspectives = completedPerspectives ?? throw new ArgumentNullException(nameof(completedPerspectives));
+    ArgumentNullException.ThrowIfNull(completionSource);
+    _completionSource = completionSource;
+    ArgumentNullException.ThrowIfNull(completedPerspectives);
+    _completedPerspectives = completedPerspectives;
     _expectedCount = expectedCount;
 
     Console.WriteLine($"[CountingReceptor.ctor] Created receptor expecting {expectedCount} perspective completions");

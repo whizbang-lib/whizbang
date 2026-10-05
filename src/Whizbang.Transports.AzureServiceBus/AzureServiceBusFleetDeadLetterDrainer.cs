@@ -59,8 +59,10 @@ public sealed class AzureServiceBusFleetDeadLetterDrainer : ITransportDeadLetter
   internal AzureServiceBusFleetDeadLetterDrainer(
       Func<IReadOnlyCollection<(string TopicName, string SubscriptionName)>> activeSubscriptions,
       Func<(string TopicName, string SubscriptionName), ITransportDeadLetterDrainer> drainerFactory) {
-    _activeSubscriptions = activeSubscriptions ?? throw new ArgumentNullException(nameof(activeSubscriptions));
-    _drainerFactory = drainerFactory ?? throw new ArgumentNullException(nameof(drainerFactory));
+    ArgumentNullException.ThrowIfNull(activeSubscriptions);
+    _activeSubscriptions = activeSubscriptions;
+    ArgumentNullException.ThrowIfNull(drainerFactory);
+    _drainerFactory = drainerFactory;
   }
 
   /// <inheritdoc />

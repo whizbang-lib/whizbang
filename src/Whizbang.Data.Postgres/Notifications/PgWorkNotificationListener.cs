@@ -48,9 +48,12 @@ public sealed partial class PgWorkNotificationListener : IWorkNotificationListen
     INotifySignalingGate gate,
     IServiceInstanceProvider instanceProvider,
     ILogger<PgWorkNotificationListener>? logger = null) {
-    _sharedConnection = sharedConnection ?? throw new ArgumentNullException(nameof(sharedConnection));
-    _gate = gate ?? throw new ArgumentNullException(nameof(gate));
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+    ArgumentNullException.ThrowIfNull(sharedConnection);
+    _sharedConnection = sharedConnection;
+    ArgumentNullException.ThrowIfNull(gate);
+    _gate = gate;
+    ArgumentNullException.ThrowIfNull(instanceProvider);
+    _instanceProvider = instanceProvider;
     _logger = logger ?? NullLogger<PgWorkNotificationListener>.Instance;
     _gate.OnAvailabilityChanged += _forwardAvailability;
   }
