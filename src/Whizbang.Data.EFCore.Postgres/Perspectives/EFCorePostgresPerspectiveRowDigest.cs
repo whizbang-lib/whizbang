@@ -25,11 +25,13 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 /// which is the question a cursor already answers. Excluding it makes a moved digest mean the row's content moved.
 /// </para>
 /// <para>
-/// Ordered by id so the digest does not depend on the order rows come back in, and computed in one statement so it
-/// does not depend on reading them into memory either.
+/// Ordered so the digest does not depend on the order rows come back in, and computed in one statement so it does
+/// not depend on reading them into memory either. The connection is opened once for both the table lookup and the
+/// digest: EF's <c>OpenConnectionAsync</c> is reference counted, so this nests safely inside a caller that already
+/// has one open and leaves that caller's connection as it found it.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
+/// <docs>fundamentals/perspectives/rebuild#rebuild-row-digest</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowDigestIntegrationTests.cs</tests>
 public sealed class EFCorePostgresPerspectiveRowDigest(
     DbContext dbContext,
@@ -42,12 +44,6 @@ public sealed class EFCorePostgresPerspectiveRowDigest(
       new("^[a-z_][a-z0-9_]{0,62}$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
   /// <inheritdoc/>
-  [SuppressMessage("Security", "S2077:Use a parameterized query instead of string formatting",
-      Justification =
-        "A table identifier cannot be a SQL parameter. The name is not caller-supplied: it is read from the " +
-        "framework's own wh_perspective_registry by the model type that the runner registry reports for this " +
-        "perspective. It is then matched against _safeIdentifier and double-quoted. A name failing either step " +
-        "returns null instead of running a query. The row ids, which ARE caller-supplied, go through a parameter.")]
   public async Task<string?> ComputeAsync(
       string perspectiveName, IReadOnlyCollection<Guid> streamIds, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
@@ -56,79 +52,75 @@ public sealed class EFCorePostgresPerspectiveRowDigest(
     // digest of the empty set and read as "the rebuild changed nothing", which is a claim this cannot make.
     if (streamIds.Count == 0) { return null; }
 
-    var tableName = await _resolveTableNameAsync(perspectiveName, ct);
-    if (tableName is null) { return null; }
-
-    // Belt and braces. The name came from the framework's own registry, but it is about to be interpolated into
-    // SQL because an identifier cannot be a parameter, so it is checked against the shape a generated table name
-    // actually has. Anything else yields null rather than a query.
-    if (!_safeIdentifier.IsMatch(tableName)) { return null; }
-
-    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
-    var opened = false;
-    if (connection.State != System.Data.ConnectionState.Open) {
-      await connection.OpenAsync(ct);
-      opened = true;
-    }
-
-    try {
-      await using var command = connection.CreateCommand();
-      command.CommandText = string.Format(
-          CultureInfo.InvariantCulture,
-          """
-          SELECT md5(string_agg(line, E'\n' ORDER BY line))
-            FROM (SELECT r.id::text || '|' || coalesce(r.version::text, '')
-                         || '|' || coalesce(r.data::text, '') AS line
-                    FROM {0} r
-                   WHERE r.id = ANY(@ids)) rows
-          """,
-          _quote(tableName));
-      command.Parameters.AddWithValue("ids", streamIds.ToArray());
-
-      var result = await command.ExecuteScalarAsync(ct);
-      // Null when no targeted row exists yet. That is a real state, distinct from "could not compute", so it gets
-      // a stable marker rather than null.
-      return result is null or DBNull ? "empty" : (string)result;
-    } finally {
-      if (opened) { await connection.CloseAsync(); }
-    }
-  }
-
-  /// <summary>
-  /// perspective name -> its model type (runner registry) -> the table that model is stored in (the perspective
-  /// registry table). Both hops come from the framework's own bookkeeping; a name that does not resolve yields
-  /// null rather than a guess.
-  /// </summary>
-  /// <remarks>
-  /// Scoped to this service. A model type is registered once per service that hosts it — the registry's identity
-  /// is the (clr_type_name, service_name) pair, which is what <c>uq_perspective_registry_type_service</c> enforces
-  /// and what the reconcile function matches on. Looking the table up by type name alone would be a read over a
-  /// non-unique key, and could return a table belonging to a different service.
-  /// </remarks>
-  private async Task<string?> _resolveTableNameAsync(string perspectiveName, CancellationToken ct) {
     var modelType = registry.GetRegisteredPerspectives()
         .FirstOrDefault(p => string.Equals(p.ClrTypeName, perspectiveName, StringComparison.Ordinal))
         ?.ModelType;
     if (string.IsNullOrWhiteSpace(modelType)) { return null; }
 
-    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
-    var opened = false;
-    if (connection.State != System.Data.ConnectionState.Open) {
-      await connection.OpenAsync(ct);
-      opened = true;
-    }
-
+    await dbContext.Database.OpenConnectionAsync(ct);
     try {
-      await using var command = connection.CreateCommand();
-      command.CommandText =
-          "SELECT table_name FROM wh_perspective_registry WHERE clr_type_name = @model AND service_name = @service";
-      command.Parameters.AddWithValue("model", modelType);
-      command.Parameters.AddWithValue("service", serviceInstance.ServiceName);
-      var table = await command.ExecuteScalarAsync(ct);
-      return table is null or DBNull ? null : (string)table;
+      var tableName = await _resolveTableNameAsync(modelType, ct);
+      if (tableName is null) { return null; }
+
+      // Belt and braces. The name came from the framework's own registry, but it is about to be interpolated
+      // into SQL because an identifier cannot be a parameter, so it is checked against the shape a generated
+      // table name actually has.
+      if (!_safeIdentifier.IsMatch(tableName)) { return null; }
+
+      return await _digestRowsAsync(tableName, streamIds, ct);
     } finally {
-      if (opened) { await connection.CloseAsync(); }
+      await dbContext.Database.CloseConnectionAsync();
     }
+  }
+
+  /// <summary>
+  /// The model type's table, scoped to this service.
+  /// </summary>
+  /// <remarks>
+  /// A model type is registered once per service that hosts it — the registry's identity is the
+  /// (clr_type_name, service_name) pair, which is what <c>uq_perspective_registry_type_service</c> enforces and
+  /// what the reconcile function matches on. Looking the table up by type name alone would be a read over a
+  /// non-unique key, and could return a table belonging to a different service.
+  /// </remarks>
+  private async Task<string?> _resolveTableNameAsync(string modelType, CancellationToken ct) {
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    await using var command = connection.CreateCommand();
+    command.CommandText =
+        "SELECT table_name FROM wh_perspective_registry WHERE clr_type_name = @model AND service_name = @service";
+    command.Parameters.AddWithValue("model", modelType);
+    command.Parameters.AddWithValue("service", serviceInstance.ServiceName);
+
+    var table = await command.ExecuteScalarAsync(ct);
+    return table is null or DBNull ? null : (string)table;
+  }
+
+  [SuppressMessage("Security", "S2077:Use a parameterized query instead of string formatting",
+      Justification =
+        "A table identifier cannot be a SQL parameter. The name is not caller-supplied: it is read from the " +
+        "framework's own wh_perspective_registry by the model type that the runner registry reports for this " +
+        "perspective, scoped to this service. ComputeAsync matches it against _safeIdentifier and this method double-quotes it. A " +
+        "name failing either step never reaches here. The row ids, which ARE caller-" +
+        "supplied, go through a parameter.")]
+  private async Task<string> _digestRowsAsync(
+      string tableName, IReadOnlyCollection<Guid> streamIds, CancellationToken ct) {
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    await using var command = connection.CreateCommand();
+    command.CommandText = string.Format(
+        CultureInfo.InvariantCulture,
+        """
+        SELECT md5(string_agg(line, E'\n' ORDER BY line))
+          FROM (SELECT r.id::text || '|' || coalesce(r.version::text, '')
+                       || '|' || coalesce(r.data::text, '') AS line
+                  FROM {0} r
+                 WHERE r.id = ANY(@ids)) rows
+        """,
+        _quote(tableName));
+    command.Parameters.AddWithValue("ids", streamIds.ToArray());
+
+    var result = await command.ExecuteScalarAsync(ct);
+    // Null when no targeted row exists yet. That is a real state, distinct from "could not compute", so it gets
+    // a stable marker rather than null.
+    return result is null or DBNull ? "empty" : (string)result;
   }
 
   private static string _quote(string identifier) =>

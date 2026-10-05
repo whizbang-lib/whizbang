@@ -140,7 +140,7 @@ public sealed partial class PerspectiveRebuilder(
       // rebuild end-state. Optional dependency — when no driver registers a completer, the
       // rebuilder still updates projections and just skips cursor persistence.
       var completer = sp.GetService<IPerspectiveCheckpointCompleter>();
-      run = new RebuildRun(runner, perspectiveName, mode, completer);
+      run = new RebuildRun(runner, perspectiveName, mode, completer, rebuildStreamId, origin);
 
       // When the caller didn't supply an explicit list, narrow to streams that actually contain
       // events this perspective handles — otherwise we'd iterate every stream for every
@@ -462,6 +462,11 @@ public sealed partial class PerspectiveRebuilder(
         _activeRebuilds[run.PerspectiveName] = status with { ProcessedStreams = processed };
         LogRebuildProgress(logger, run.PerspectiveName, processed, status.TotalStreams,
             run.Elapsed.ElapsedMilliseconds);
+        // Documented as emitted "periodically during rebuild", so it is emitted on the same bounded cadence the
+        // log uses rather than per stream. A long rebuild reports progress; a short one reports once at the end.
+        await _emitAsync(new PerspectiveRebuildProgress(
+            run.RebuildStreamId, run.PerspectiveName, run.Mode, processed, status.TotalStreams,
+            run.EventsReplayed, run.StartedAt, run.Origin));
       }
     } catch (Exception ex) {
       streamSw.Stop();
@@ -487,10 +492,15 @@ public sealed partial class PerspectiveRebuilder(
 
   /// <summary>One rebuild's fixed inputs and running totals, threaded through its phases.</summary>
   private sealed class RebuildRun(
-      IPerspectiveRunner runner, string perspectiveName, RebuildMode mode, IPerspectiveCheckpointCompleter? completer) {
+      IPerspectiveRunner runner, string perspectiveName, RebuildMode mode, IPerspectiveCheckpointCompleter? completer,
+      Guid rebuildStreamId, RebuildOrigin? origin) {
     public IPerspectiveRunner Runner { get; } = runner;
     public string PerspectiveName { get; } = perspectiveName;
     public RebuildMode Mode { get; } = mode;
+    /// <summary>The id shared by this run's Started/Progress/Completed events.</summary>
+    public Guid RebuildStreamId { get; } = rebuildStreamId;
+    /// <summary>Who asked, carried onto the progress events as well so a reader need not join back to Started.</summary>
+    public RebuildOrigin? Origin { get; } = origin;
     public IPerspectiveCheckpointCompleter? Completer { get; } = completer;
     public List<PerspectiveCursorCompletion>? PendingCompletions { get; } = completer is null ? null : new(64);
     public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;

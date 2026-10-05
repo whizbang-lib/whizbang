@@ -49,10 +49,10 @@ public class PerspectiveRowDigestIntegrationTests : EFCoreTestBase {
                                      metadata = excluded.metadata,
                                      version = excluded.version;
       """;
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("data", dataJson);
     cmd.Parameters.AddWithValue("metadata", metadataJson);
-    cmd.Parameters.AddWithValue("version", version);
+    cmd.Parameters.AddWithValue(nameof(version), version);
     await cmd.ExecuteNonQueryAsync();
   }
 

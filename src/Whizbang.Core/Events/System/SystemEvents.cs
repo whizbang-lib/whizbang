@@ -47,7 +47,8 @@ public record PerspectiveRebuildProgress(
     int ProcessedStreams,
     int TotalStreams,
     int EventsReplayed,
-    DateTimeOffset StartedAt
+    DateTimeOffset StartedAt,
+    Whizbang.Core.Perspectives.RebuildOrigin? Origin = null
 ) : IEvent;
 
 /// <summary>

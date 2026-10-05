@@ -9,7 +9,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <summary>Thread-safe record of what the rebuilder published, in the order it published it.</summary>
 internal sealed class PublishedEventLog {
   private readonly List<object> _events = [];
-  private readonly object _gate = new();
+  private readonly System.Threading.Lock _gate = new();
 
   public void Add(object e) { lock (_gate) { _events.Add(e); } }
 

@@ -7,6 +7,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Events.System;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 
@@ -243,4 +244,133 @@ public class PerspectiveRebuilderCoverageTests {
       .Because("the legacy-only stream must be included once the upcaster's declared source type widens the " +
                "scope — without widening, the filter excludes it and StreamsProcessed would stay 0");
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // Rebuild outcome records (#1135): the events, the digest, and what happens when either fails.
+  // ---------------------------------------------------------------------------------------------
+
+  /// <summary>Hands back a different digest each call, so before and after are distinguishable.</summary>
+  private sealed class SequencedRowDigest : IPerspectiveRowDigest {
+    public int Calls { get; private set; }
+
+    public Task<string?> ComputeAsync(
+        string perspectiveName, IReadOnlyCollection<Guid> streamIds, CancellationToken ct = default) {
+      Calls++;
+      return Task.FromResult<string?>($"digest-{Calls}");
+    }
+  }
+
+  private sealed class ThrowingRowDigest : IPerspectiveRowDigest {
+    public Task<string?> ComputeAsync(
+        string perspectiveName, IReadOnlyCollection<Guid> streamIds, CancellationToken ct = default) =>
+      throw new InvalidOperationException("digest refused by the test double");
+  }
+
+  private static (PerspectiveRebuilder Rebuilder, RebuildEventDispatcherDouble Dispatcher) _buildWith(
+      IPerspectiveRunnerRegistry registry, IPerspectiveRowDigest? digest, bool throwOnPublish = false) {
+    var dispatcher = new RebuildEventDispatcherDouble(throwOnPublish);
+    var services = new ServiceCollection();
+    services.AddSingleton(registry);
+    services.AddSingleton<IDispatcher>(dispatcher);
+    if (digest is not null) { services.AddSingleton(digest); }
+    var sp = services.BuildServiceProvider();
+    return (new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<PerspectiveRebuilder>.Instance), dispatcher);
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WithARowDigest_RecordsBeforeAndAfterOnCompletedAsync() {
+    var registry = new FakePerspectiveRunnerRegistry(new FakePerspectiveRunner());
+    var digest = new SequencedRowDigest();
+    var (rebuilder, dispatcher) = _buildWith(registry, digest);
+
+    var result = await rebuilder.RebuildStreamsAsync("TestPerspective", [Guid.NewGuid()]);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(digest.Calls).IsEqualTo(2).Because("once before the replay and once after");
+
+    var completed = dispatcher.Published.OfType<PerspectiveRebuildCompleted>().ToList();
+    await Assert.That(completed.Count).IsEqualTo(1);
+    await Assert.That(completed[0].RowDigestBefore).IsEqualTo("digest-1");
+    await Assert.That(completed[0].RowDigestAfter).IsEqualTo("digest-2");
+  }
+
+  // A digest is evidence ABOUT a rebuild, not part of it. If it cannot be computed the rebuild still succeeded,
+  // and the fields stay absent, which reads as "not known" rather than as "nothing changed".
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheDigestThrows_SucceedsAndRecordsNoDigestAsync() {
+    var registry = new FakePerspectiveRunnerRegistry(new FakePerspectiveRunner());
+    var (rebuilder, dispatcher) = _buildWith(registry, new ThrowingRowDigest());
+
+    var result = await rebuilder.RebuildStreamsAsync("TestPerspective", [Guid.NewGuid()]);
+
+    await Assert.That(result.Success).IsTrue().Because("a digest failure must not fail the rebuild");
+
+    var completed = dispatcher.Published.OfType<PerspectiveRebuildCompleted>().ToList();
+    await Assert.That(completed.Count).IsEqualTo(1);
+    await Assert.That(completed[0].RowDigestBefore).IsNull();
+    await Assert.That(completed[0].RowDigestAfter).IsNull();
+  }
+
+  // Same principle one level up: a rebuild that did its work must not be reported as failed because the record of
+  // it could not be written. The caller already holds the RebuildResult.
+  [Test]
+  public async Task RebuildStreamsAsync_WhenPublishingTheRecordFails_StillSucceedsAsync() {
+    var registry = new FakePerspectiveRunnerRegistry(new FakePerspectiveRunner());
+    var (rebuilder, dispatcher) = _buildWith(registry, digest: null, throwOnPublish: true);
+
+    var result = await rebuilder.RebuildStreamsAsync("TestPerspective", [Guid.NewGuid()]);
+
+    await Assert.That(result.Success).IsTrue().Because("the rebuild itself succeeded; only its record failed");
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+    await Assert.That(dispatcher.Published.Count).IsEqualTo(0).Because("every publish was refused");
+  }
+
+  /// <summary>Implements only the pre-provenance members, so the interface's default bodies are what run.</summary>
+  private sealed class OriginUnawareRebuilder : IPerspectiveRebuilder {
+    public List<string> Calls { get; } = [];
+
+    public Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct = default) {
+      Calls.Add($"bluegreen:{perspectiveName}");
+      return Task.FromResult(new RebuildResult(perspectiveName, 0, 0, TimeSpan.Zero, Success: true, Error: null));
+    }
+
+    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) {
+      Calls.Add($"inplace:{perspectiveName}");
+      return Task.FromResult(new RebuildResult(perspectiveName, 0, 0, TimeSpan.Zero, Success: true, Error: null));
+    }
+
+    public Task<RebuildResult> RebuildStreamsAsync(
+        string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct = default) {
+      Calls.Add($"streams:{perspectiveName}:{streamIds.Count()}");
+      return Task.FromResult(new RebuildResult(perspectiveName, 0, 0, TimeSpan.Zero, Success: true, Error: null));
+    }
+
+    public Task<RebuildStatus?> GetRebuildStatusAsync(string perspectiveName, CancellationToken ct = default) =>
+      Task.FromResult<RebuildStatus?>(null);
+  }
+
+  // The origin overloads carry default bodies so an implementation written before provenance keeps compiling.
+  // This fixes that forwarding: if a default body were changed to throw, or to drop the call, an older
+  // implementation would break at runtime with nothing to catch it.
+  [Test]
+  public async Task OriginOverloads_WithoutAnOverride_ForwardToTheOriginLessMethodsAsync() {
+    IPerspectiveRebuilder rebuilder = new OriginUnawareRebuilder();
+    var origin = new RebuildOrigin(Guid.NewGuid(), RebuildTrigger.Requested, "an operator");
+    var streams = new[] { Guid.NewGuid(), Guid.NewGuid() };
+
+    var blueGreen = await rebuilder.RebuildBlueGreenAsync("P", origin);
+    var inPlace = await rebuilder.RebuildInPlaceAsync("P", origin);
+    var selected = await rebuilder.RebuildStreamsAsync("P", streams, origin);
+
+    await Assert.That(blueGreen.Success).IsTrue();
+    await Assert.That(inPlace.Success).IsTrue();
+    await Assert.That(selected.Success).IsTrue();
+
+    var calls = ((OriginUnawareRebuilder)rebuilder).Calls;
+    await Assert.That(calls).Contains("bluegreen:P");
+    await Assert.That(calls).Contains("inplace:P");
+    await Assert.That(calls).Contains("streams:P:2");
+  }
+
 }
