@@ -344,6 +344,8 @@ jobs:
           # Parse coverage from TextSummary report
           COVERAGE=$(grep "Line coverage:" coverage/summary/Summary.txt | grep -oP '\d+(\.\d+)?(?=%)' | head -1)
           echo "Line coverage: ${COVERAGE}%"
+          # Reported, not gated: the threshold below is on lines only.
+          grep -E "Branch coverage:|Covered branches:|Total branches:" coverage/summary/Summary.txt || true
 
           # Fail if coverage could not be parsed
           if [ -z "$COVERAGE" ]; then

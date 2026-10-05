@@ -140,6 +140,11 @@
     Runs tests with code coverage collection (outputs Cobertura XML)
 
 .EXAMPLE
+    ./Run-Tests.ps1 -Mode Unit -Configuration Release -NoBuild -ModuleCoverage
+    CI form: the normal dotnet test run, with every test module writing its own line and branch
+    coverage (bin/Release/net10.0/TestResults/<guid>.cobertura.xml); no report is generated
+
+.EXAMPLE
     ./Run-Tests.ps1 -TestFilter "Lifecycle"
     Runs all tests with "Lifecycle" in the class or test name
     Pattern: /*/*/*/*Lifecycle*
@@ -255,6 +260,9 @@ param(
                           # in zsh because $false expands to empty).
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
     [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
+    [switch]$ModuleCoverage,  # CI: each test module collects its own line AND branch coverage
+                              # (MTP --coverage, cobertura) inside the normal `dotnet test` run.
+                              # No report is generated; the CI quality job merges the files.
 
     [switch]$ReportTrx,  # Emit TRX result files (TestResults/*.trx) for CI test-status publishing
 
@@ -376,7 +384,14 @@ if ($useAiOutput) {
 if ($NoFailFast) {
     $FailFast = $false
 } elseif ($useAiOutput -and -not $PSBoundParameters.ContainsKey('FailFast')) {
-    $FailFast = -not $Coverage
+    $FailFast = -not ($Coverage -or $ModuleCoverage)
+}
+
+# -Coverage runs each project through its own `dotnet run` and writes a report; -ModuleCoverage
+# adds collection to the single `dotnet test` run. Combined, the second would silently not apply.
+if ($Coverage -and $ModuleCoverage) {
+    Write-Error "-Coverage and -ModuleCoverage are alternatives; pass one."
+    exit 1
 }
 
 # Initialize tee logging if -LogFile is specified
@@ -976,6 +991,22 @@ try {
     # Emit TRX result files (used by CI to publish live test status to the docs site)
     if ($ReportTrx) {
         $testArgs += "--report-trx"
+    }
+
+    # Per-module coverage inside the normal run (CI). `dotnet test` forwards these to every test
+    # module, and each one collects with MTP's dynamic collector, which records conditions as well
+    # as lines; the statically instrumented assemblies CI used before recorded lines only, so every
+    # report claimed branch-rate 1 with nothing behind it. Each module writes <guid>.cobertura.xml
+    # to its own bin/<config>/net10.0/TestResults, which is the path the CI upload globs. The
+    # collector instruments in memory, inside the test process: nothing on disk is rewritten.
+    # Every test project must reference Microsoft.Testing.Extensions.CodeCoverage, or its module
+    # rejects --coverage as an unknown option.
+    if ($ModuleCoverage) {
+        $testArgs += "--coverage"
+        $testArgs += "--coverage-output-format"
+        $testArgs += "cobertura"
+        $testArgs += "--coverage-settings"
+        $testArgs += (Join-Path $repoRoot "codecoverage.config")
     }
 
     # Coverage mode: Run projects in parallel with unique output paths per project

@@ -733,7 +733,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/reusable-test-unit.yml
     with:
-      # Use pre-built artifacts with in-job instrumentation for coverage
+      # Run the pre-built output; each test module collects its own line and branch coverage
       artifact-name: build-${{ github.run_id }}
 
   postgres-integration:
