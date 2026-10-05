@@ -366,4 +366,16 @@ public class MessageDiscardPolicyTests {
     await Assert.That(decision.ShouldDiscard).IsTrue();
     await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.NoLocalConsumer);
   }
+
+  [Test]
+  public async Task RecordDiscard_DecisionToKeep_LogsNothingAsync() {
+    // Callers may hand every decision to RecordDiscard; a keep decision is not a discard and must
+    // leave no log line an operator would read as a dropped message.
+    var (policy, _, logger, _) = _newPolicy();
+    var keep = new MessageDiscardDecision(ShouldDiscard: false, Reason: MessageDiscardReason.None, Detail: null);
+
+    policy.RecordDiscard(MessageDiscardGate.Receive, keep, CONSUMED_TYPE);
+
+    await Assert.That(logger.Entries).IsEmpty();
+  }
 }
