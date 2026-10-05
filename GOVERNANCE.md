@@ -21,7 +21,9 @@ responsibilities; any change to it is made by a pull request to this file.
 | A security vulnerability | Privately, through the process in [SECURITY.md](SECURITY.md) | The maintainer |
 | A Code of Conduct report | Privately, by email to [conduct@extravaganza.software](mailto:conduct@extravaganza.software) ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)) | The maintainer |
 
-Every change, including the maintainer's own, goes through a pull request and the same required
+Everyone with write access must use two-factor authentication (required by the GitHub organization), with an
+authenticator app, passkey or security key rather than SMS. Every change, including the maintainer's own, goes
+through a pull request and the same required
 automated checks: the full test matrix, formatting, 100% coverage of new lines, zero SonarCloud
 findings, CodeQL, and a Developer Certificate of Origin sign-off on every commit.
 
