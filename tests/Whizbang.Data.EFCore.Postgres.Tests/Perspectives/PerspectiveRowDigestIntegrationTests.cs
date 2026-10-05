@@ -198,6 +198,41 @@ public class PerspectiveRowDigestIntegrationTests : EFCoreTestBase {
     await Assert.That(result).IsEqualTo("empty");
   }
 
+
+  // The generated runner registry reports ModelType with a global:: prefix; wh_perspective_registry stores it
+  // without one, because migration 034 stripped it and the generator writing that column was fixed. Joining the
+  // two without normalizing matches nothing, and the digest's contract is to return null when it cannot resolve
+  // a table -- so the mismatch presented as "no digest recorded", on every perspective, with nothing to explain
+  // it. Production proved it: two canary rebuilds, both with RowDigestBefore/After absent.
+  [Test]
+  public async Task ModelTypeCarryingTheGlobalPrefix_StillResolvesTheTableAsync() {
+    await _createProbeTableAsync();
+    await _registerAsync("Model.Probe");
+    var id = Guid.NewGuid();
+    await _upsertRowAsync(id, """{"a":1}""", """{"EventId":"x"}""", 1);
+
+    // The registry stub reports the prefixed form, exactly as the generator emits it.
+    var digest = _digest("Probe.Projection", "global::Model.Probe");
+
+    var result = await digest.ComputeAsync("Probe.Projection", [id], CancellationToken.None);
+
+    await Assert.That(result).IsNotNull()
+      .Because("a prefixed ModelType must still find the unprefixed row in wh_perspective_registry");
+    await Assert.That(result).IsNotEqualTo("empty");
+  }
+
+  [Test]
+  public async Task UnprefixedModelType_StillResolvesAsync() {
+    await _createProbeTableAsync();
+    await _registerAsync("Model.Probe");
+    var id = Guid.NewGuid();
+    await _upsertRowAsync(id, """{"a":1}""", """{"EventId":"x"}""", 1);
+
+    var digest = _digest("Probe.Projection", "Model.Probe");
+
+    await Assert.That(await digest.ComputeAsync("Probe.Projection", [id], CancellationToken.None)).IsNotNull();
+  }
+
   /// <summary>Reports a fixed service name, so the registry lookup's service scoping is under test control.</summary>
   private sealed class FixedServiceInstance(string serviceName) : Whizbang.Core.Observability.IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
