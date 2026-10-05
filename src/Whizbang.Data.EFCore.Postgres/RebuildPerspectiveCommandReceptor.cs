@@ -75,10 +75,15 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
           message.IncludeStreamIds is { Length: > 0 } ? "Include" : "Exclude");
     }
 
+    // The caller's id when it supplied one, so it can find its own rebuild across every service that answered.
+    // Otherwise one per service, which still answers "did anything run here" but cannot be correlated across them.
+    var origin = new RebuildOrigin(
+        message.RequestId ?? (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), RebuildTrigger.Requested, message.RequestedBy);
+
     foreach (var perspectiveName in perspectiveNames) {
       cancellationToken.ThrowIfCancellationRequested();
       LogPerspectiveRebuildStarting(logger, perspectiveName, message.Mode, streamFilter?.Count);
-      var result = await _dispatchRebuildAsync(rebuilder, perspectiveName, message.Mode, streamFilter, cancellationToken);
+      var result = await _dispatchRebuildAsync(rebuilder, perspectiveName, message.Mode, streamFilter, origin, cancellationToken);
       _logRebuildResult(perspectiveName, result);
     }
   }
@@ -136,14 +141,15 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
       string perspectiveName,
       RebuildMode mode,
       IReadOnlyList<Guid>? streamFilter,
+      RebuildOrigin origin,
       CancellationToken cancellationToken) {
     if (streamFilter is not null) {
-      return rebuilder.RebuildStreamsAsync(perspectiveName, streamFilter, cancellationToken);
+      return rebuilder.RebuildStreamsAsync(perspectiveName, streamFilter, origin, cancellationToken);
     }
     if (mode == RebuildMode.InPlace) {
-      return rebuilder.RebuildInPlaceAsync(perspectiveName, cancellationToken);
+      return rebuilder.RebuildInPlaceAsync(perspectiveName, origin, cancellationToken);
     }
-    return rebuilder.RebuildBlueGreenAsync(perspectiveName, cancellationToken);
+    return rebuilder.RebuildBlueGreenAsync(perspectiveName, origin, cancellationToken);
   }
 
   /// <summary>Paired success/failure log from the rebuild loop body.</summary>

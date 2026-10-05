@@ -65,7 +65,9 @@ public sealed partial class PerspectiveMigrationWorker(
         try {
           LogRebuildStarting(logger, pending.PerspectiveName, pending.MigrationKey);
 
-          var result = await rebuilder.RebuildBlueGreenAsync(pending.PerspectiveName, stoppingToken);
+          var result = await rebuilder.RebuildBlueGreenAsync(pending.PerspectiveName,
+              new Perspectives.RebuildOrigin(ValueObjects.TrackedGuid.New(), Perspectives.RebuildTrigger.Migration),
+              stoppingToken);
 
           if (result.Success) {
             var desc = $"Updated (rebuild completed: {result.StreamsProcessed} streams in {result.Duration})";
