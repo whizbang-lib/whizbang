@@ -31,8 +31,8 @@ Base URLs used below:
 | CPE name | none |
 | Other comments | Pre-1.0. Stable releases ship as 0.x.0 on nuget.org under the SoftwareExtravaganza.Whizbang.* package IDs, with alpha builds from develop in between. |
 
-Where the site auto-filled a criterion's justification and the auto-filled text was kept, the row
-below says so and records that text.
+Every Justification cell below is the text entered on the site, word for word (for
+`repo_public`, `repo_track` and `repo_distributed`, the site's own auto-filled text was kept).
 
 ## Fixed before submitting
 
@@ -101,10 +101,10 @@ human review.
 
 | Criterion | Answer | Justification |
 |---|---|---|
-| `repo_public` | Met | Auto-filled text kept: "Repository on GitHub, which provides public git repositories with URLs." |
-| `repo_track` | Met | Auto-filled text kept: "Repository on GitHub, which uses git. git can track the changes, who made them, and when they were made." |
+| `repo_public` | Met | Repository on GitHub, which provides public git repositories with URLs. |
+| `repo_track` | Met | Repository on GitHub, which uses git. git can track the changes, who made them, and when they were made. |
 | `repo_interim` | Met | Interim work is public: `develop` carries every change between releases, and each merge publishes an alpha package. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/RELEASING.md> |
-| `repo_distributed` | Met | Auto-filled text kept: "Repository on GitHub, which uses git. git is distributed." |
+| `repo_distributed` | Met | Repository on GitHub, which uses git. git is distributed. |
 
 ### Unique version numbering
 
@@ -267,8 +267,8 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 | `governance` | Met | A maintainer-led model; the governance document says where each kind of decision is made and who makes it. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md> |
 | `code_of_conduct` | Met | The Contributor Covenant 2.1 in the standard location, with a private reporting address. <https://github.com/whizbang-lib/whizbang/blob/develop/CODE_OF_CONDUCT.md> |
 | `roles_responsibilities` | Met | The governance document lists each role (maintainer, release manager, security contact, conduct enforcement, contributor), its responsibilities and who holds it. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#roles> |
-| `access_continuity` | **Gap** | One person holds every key; the governance document's Continuity section says what a backup maintainer needs. See "Silver: what is left". |
-| `bus_factor` | Unmet (SHOULD) | One active maintainer. The continuity plan covers the loss of that person; a second regular contributor would raise the bus factor. |
+| `access_continuity` | Unmet | Unmet for now. One maintainer currently holds the GitHub organization, the nuget.org packages and the docs domain. The governance document defines what a backup maintainer must hold to keep the project running (owner access to the GitHub organization, co-owner access on nuget.org, and the docs domain) and will name them once designated. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#continuity> |
+| `bus_factor` | Unmet | One maintainer does most of the work today, so the bus factor is 1. The governance document describes how a regular contributor takes on maintainer responsibilities. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#roles> |
 | `documentation_roadmap` | Met | The roadmap covers the next twelve months: what is planned toward 1.0 and after it, and what is not planned. <https://github.com/whizbang-lib/whizbang/blob/develop/ROADMAP.md> |
 | `documentation_architecture` | Met | The introduction describes the architecture (dispatcher, receptors, perspectives, lenses, and how the packages fit together), and each fundamentals page documents its part. <https://whizba.ng/docs/getting-started/introduction> |
 | `documentation_security` | Met | The security assurance case ends with what an application can and cannot expect from the library. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md#what-you-can-and-cannot-expect> |
@@ -330,7 +330,7 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 | `crypto_certificate_verification` | Met | Certificate verification is the .NET default and no shipped package overrides it. |
 | `crypto_verification_private` | Met | Same: verification happens before any data is sent, and nothing disables it. |
 | `signed_releases` | Met | Every stable release is signed keylessly with Sigstore by the release workflow (no private key exists on any distribution site), and SECURITY.md explains how to verify a GitHub release asset and a nuget.org package. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md#verifying-a-release> |
-| `version_tags_signed` | Unmet (SUGGESTED) | Tags are created by the release workflow and are not signed. See "Silver: what is left". |
+| `version_tags_signed` | Unmet | Release tags are created by the automated release workflow and are not signed. The releases themselves are signed: every stable release carries a Sigstore-signed provenance statement covering each package. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md#verifying-a-release> |
 | `input_validation` | Met | Incoming messages deserialize only through JSON metadata registered at compile time (an allowlist); a type with no registered metadata is never deserialized, payload size is limited, and public APIs validate their arguments. |
 | `hardening` | Met | Native AOT and trimming (no reflection), nullable reference types, warnings as errors, authenticated encryption, and payload size limits. |
 | `assurance_case` | Met | Threat model, trust boundaries, secure design principles applied, and the common weaknesses countered. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md> |
