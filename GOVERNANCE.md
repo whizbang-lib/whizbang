@@ -19,7 +19,7 @@ responsibilities; any change to it is made by a pull request to this file.
 | An open design question | A GitHub issue labeled [`question`](https://github.com/whizbang-lib/whizbang/issues?q=label%3Aquestion), so the reasoning stays on record | The maintainer, recorded on the issue when settled |
 | What ships in a release, and when | The [roadmap](ROADMAP.md) and the release pull request | The maintainer |
 | A security vulnerability | Privately, through the process in [SECURITY.md](SECURITY.md) | The maintainer |
-| A Code of Conduct report | Privately, as described in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | The maintainer |
+| A Code of Conduct report | Privately, by email to [conduct@whizba.ng](mailto:conduct@whizba.ng) ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)) | The maintainer |
 
 Every change, including the maintainer's own, goes through a pull request and the same required
 automated checks: the full test matrix, formatting, 100% coverage of new lines, zero SonarCloud
