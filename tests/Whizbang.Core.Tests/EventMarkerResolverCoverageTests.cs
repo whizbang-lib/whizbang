@@ -53,4 +53,15 @@ public class EventMarkerResolverCoverageTests {
     await Assert.That(flags).IsNull()
       .Because("a type absent from the catalog must resolve to null (unknown here), not EventFlags.None — a miss means callers fall back to runtime type checks rather than assuming no markers apply.");
   }
+
+  /// <summary>
+  /// The wire-name to catalog-name reduction: an assembly-qualified name loses its assembly part, and
+  /// a name that reduces to nothing (no type before the comma) yields null so the caller falls back
+  /// to the typed path instead of looking up an empty catalog key.
+  /// </summary>
+  [Test]
+  public async Task ToClrTypeName_ReducesTheWireNameAndRejectsOneWithNoTypePartAsync() {
+    await Assert.That(EventFlagsDeriver.ToClrTypeName("Ns.Outer+Nested, Some.Assembly, Version=1.0.0.0")).IsEqualTo("Ns.Outer+Nested");
+    await Assert.That(EventFlagsDeriver.ToClrTypeName(", Some.Assembly")).IsNull();
+  }
 }

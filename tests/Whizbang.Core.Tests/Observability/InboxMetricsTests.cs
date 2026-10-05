@@ -127,4 +127,17 @@ public class InboxMetricsTests {
     await Assert.That(tag).IsEqualTo("<unknown>")
       .Because("Empty/null message_type signals a mis-instrumented call site — surface it explicitly rather than silently dropping the observation.");
   }
+
+  /// <summary>
+  /// A malformed type name whose last segment is empty (nothing before the assembly comma, or a
+  /// trailing separator) is tagged with the sentinel, never with an empty string an operator cannot
+  /// see or group on.
+  /// </summary>
+  [Test]
+  [Arguments(", Some.Assembly")]
+  [Arguments("Some.Namespace.")]
+  [Arguments("Some.Namespace.Outer+")]
+  public async Task ShortenMessageType_EmptyLastSegment_UsesTheSentinelAsync(string messageType) {
+    await Assert.That(InboxMetrics._shortenMessageType(messageType)).IsEqualTo("<unknown>");
+  }
 }

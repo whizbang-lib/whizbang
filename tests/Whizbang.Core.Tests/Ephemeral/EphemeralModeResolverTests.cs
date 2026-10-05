@@ -127,4 +127,13 @@ public class EphemeralModeResolverTests {
   private sealed class FakeCatalog(IReadOnlyList<MessageTypeCatalogEntry> entries) : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => entries;
   }
+
+  /// <summary>A null type is answered, not thrown on: it is never ephemeral and resolves to nothing.</summary>
+  [Test]
+  public async Task IsEphemeralAndResolve_NullType_AnswerNoAsync() {
+    var resolver = _resolver(_ephemeral("Ns.Presence", Destruction.WhenConsumed, TransientStorage.InMemory));
+
+    await Assert.That(resolver.IsEphemeral((Type)null!)).IsFalse();
+    await Assert.That(resolver.Resolve((Type)null!)).IsNull();
+  }
 }
