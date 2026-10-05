@@ -341,3 +341,77 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 |---|---|---|
 | `static_analysis_common_vulnerabilities` | Met | CodeQL's C# security queries and SonarCloud's vulnerability rules run on every pull request. |
 | `dynamic_analysis_unsafe` | N/A | The software is written in C#, a memory-safe language. |
+
+---
+
+# Gold level
+
+The gold criteria (<https://www.bestpractices.dev/criteria/2>), in the order of the gold form (project
+15090, level 2). Gold needs silver plus every gold MUST. Assessed against the repository on 2026-10-05.
+As in the sections above, every Justification cell is the text to enter on the site.
+
+**Status**: not started. Gold requires silver first, and three gold MUSTs need more people than the
+project has today (see below).
+
+## Gold: what is left
+
+| Criterion | Kind | What closes it | Who |
+|---|---|---|---|
+| `achieve_silver` | MUST | Silver's last MUST, `access_continuity`. | owner |
+| `bus_factor`, `contributors_unassociated`, `two_person_review` | MUST | At least two significant contributors from different organizations, and a second person reviewing at least half of all changes before release. Structural: not reachable by documentation or tooling. | needs a second regular contributor |
+| `require_2FA` | MUST | Turn on **Require two-factor authentication** in the GitHub organization's settings (free). | owner |
+| `secure_2FA` | SHOULD | Use an authenticator app, passkey or security key rather than SMS for GitHub, nuget.org and the domain registrar. | owner |
+| `hardened_site` | MUST | The docs site sends HSTS but not a Content-Security-Policy, `X-Content-Type-Options` or `X-Frame-Options`. It is served through Cloudflare, where a free response-header rule can add them. | owner (Cloudflare) |
+| `copyright_per_file`, `license_per_file` | MUST | A header (`Copyright (c) whizbang-lib contributors` and `SPDX-License-Identifier: MIT`) in each of the 1,781 source files, enforced by `.editorconfig`'s `file_header_template` and rule IDE0073 so `dotnet format` adds it to new files. Mechanical. | repo change |
+| `test_branch_coverage80` | MUST | Branch coverage is not measured: the coverage collector records no branch data (`branch-rate="1"` with no conditions), so SonarCloud reports line coverage only. Collect branch coverage and bring it to at least 80%. | repo change |
+| `small_tasks` | MUST | Label beginner-sized issues `good first issue` (the label exists; no open issue has it) and point new contributors to it from CONTRIBUTING. | repo change |
+| `code_review_standards` | MUST | Document how review is conducted, what is checked and what is required to merge, in one place. | repo change |
+| `security_review` | MUST | A security review within the last five years that considers the security requirements and boundaries. The assurance case is the basis; the review itself must be carried out and recorded by a project member. | owner |
+
+## Basics
+
+| Criterion | Answer | Justification |
+|---|---|---|
+| `achieve_silver` | Unmet | Silver is in progress; one criterion (continuity of access) remains. <https://www.bestpractices.dev/projects/15090> |
+| `bus_factor` | Unmet | One maintainer does most of the work today, so the bus factor is 1. <https://github.com/whizbang-lib/whizbang/graphs/contributors> |
+| `contributors_unassociated` | Unmet | The project has one significant contributor today; other contributions have been occasional. <https://github.com/whizbang-lib/whizbang/graphs/contributors> |
+| `copyright_per_file` | Unmet | Source files do not yet carry a copyright header; the repository-level `LICENSE` states the copyright. |
+| `license_per_file` | Unmet | Source files do not yet carry an SPDX license header; the repository-level `LICENSE` (MIT) applies to all of them. |
+
+## Change Control
+
+| Criterion | Answer | Justification |
+|---|---|---|
+| `repo_distributed` | Met | Git, hosted on GitHub. |
+| `small_tasks` | Unmet | A `good first issue` label exists, but no open issue currently carries it. |
+| `require_2FA` | Unmet | Two-factor authentication is used by the maintainer but not yet required by the GitHub organization. |
+| `secure_2FA` | Unmet | Not yet documented or required for everyone with write access. |
+
+## Quality
+
+| Criterion | Answer | Justification |
+|---|---|---|
+| `code_review_standards` | Unmet | Review is enforced by required automated checks (tests, coverage of new lines, static analysis, formatting, sign-off), but the review requirements are not yet documented in one place. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#code-review-process> |
+| `two_person_review` | Unmet | There is one active maintainer, and a pull request author cannot approve their own pull request; changes are gated by automated checks, which do not count as review by another person. |
+| `build_reproducible` | Met | Builds are deterministic, and the release path rebuilds the tested commit and fails unless the binaries' hashes match the tested build. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
+| `test_invocation` | Met | Tests run with the standard `dotnet test`. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/TEST-FILTERING.md> |
+| `test_continuous_integration` | Met | Every pull request is built and tested by the full matrix, and the merge queue re-tests each change on the latest `develop` before it lands. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
+| `test_statement_coverage90` | Met | Line coverage is 100% on SonarCloud. <https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang> |
+| `test_branch_coverage80` | Unmet | Branch coverage is not measured yet; the coverage collector reports line coverage only. |
+
+## Security
+
+| Criterion | Answer | Justification |
+|---|---|---|
+| `crypto_used_network` | Met | The library has no network protocol of its own and no default endpoint; every connection uses the scheme and TLS settings in the application's connection string, and Azure Service Bus is TLS only. |
+| `crypto_tls12` | Met | TLS comes from the .NET runtime, which negotiates TLS 1.2 or later. |
+| `hardened_site` | Unmet | GitHub and nuget.org send the hardening headers; the docs site sends HSTS but not yet a Content-Security-Policy, `X-Content-Type-Options` or `X-Frame-Options`. |
+| `security_review` | Unmet | The security assurance case documents the requirements and boundaries; a review against it has not yet been carried out and recorded. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md> |
+| `hardening` | Met | Native AOT and trimming (no reflection), nullable reference types, warnings as errors, authenticated encryption, and payload size limits. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md> |
+
+## Analysis
+
+| Criterion | Answer | Justification |
+|---|---|---|
+| `dynamic_analysis` | Met | Property-based tests (FsCheck) run on every pull request and in the merge queue, so every commit a release is cut from has passed them; Stryker.NET mutation testing checks the tests catch injected faults. <https://github.com/whizbang-lib/whizbang/blob/develop/ai-docs/testing-tunit.md#property-tests-with-fscheck> |
+| `dynamic_analysis_enable_assertions` | Met | Argument guards and invariant checks are always on, not compiled out, and the property tests assert invariants directly on generated inputs. |
