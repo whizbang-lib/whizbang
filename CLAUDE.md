@@ -69,6 +69,13 @@ public async Task MessageEnvelope_AddHop_AddsHopToList() { }
 
 **ALL async methods and test methods must end with "Async" suffix.**
 
+### Commits are signed off (DCO)
+
+Every commit is made with **`git commit -s`**, so it ends with `Signed-off-by: <the configured user.name> <user.email>`
+after the other trailers. The required **Gate · DCO sign-off** check fails any pull request commit
+without it (merges and bots excepted); see CONTRIBUTING.md, "Developer Certificate of Origin". A branch
+that missed it is fixed with `git rebase --signoff origin/develop` and a force-push.
+
 ### Language — en-US
 
 Write **American English** everywhere: code, comments, XML docs, commit messages, PR titles

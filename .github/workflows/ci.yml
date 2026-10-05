@@ -994,6 +994,30 @@ jobs:
           $c.Output.Verbosity = 'Detailed'
           Invoke-Pester -Configuration $c
 
+  dco:
+    name: Gate · DCO sign-off
+    # Every commit a pull request adds carries a Developer Certificate of Origin sign-off from its author
+    # (CONTRIBUTING.md, "Developer Certificate of Origin"). Merges, bots and commits authored before the
+    # DCO was adopted are skipped; the rules live in .github/scripts/Test-DcoSignoff.ps1, tested by
+    # script-tests. Pull requests only: the queue and the push after it carry no commit a pull request did
+    # not already check. In ci-result's needs, so a missing sign-off blocks the merge.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # The full history: the check reads base..head with git log, which the API would cap at 250 commits.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Every commit is signed off by its author
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: pwsh -NoProfile -File .github/scripts/Test-DcoSignoff.ps1 -Base "$BASE_SHA" -Head "$HEAD_SHA"
+
   ci-result:
     name: Gate · CI result
     # The one required check on develop AND main. It passes only when every suite ran green in this
@@ -1003,7 +1027,7 @@ jobs:
     # no such proof fails, which is what a release PR once got through with no suite results (#905).
     # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
     # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
-    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests]
+    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco]
     if: always()
     runs-on: ubuntu-latest
     # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has
