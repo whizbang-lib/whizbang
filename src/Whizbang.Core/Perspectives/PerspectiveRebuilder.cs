@@ -4,7 +4,10 @@ using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Events.System;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.ValueObjects;
 using static Whizbang.Core.Messaging.ProcessingModeAccessor;
 
 namespace Whizbang.Core.Perspectives;
@@ -29,19 +32,39 @@ public sealed partial class PerspectiveRebuilder(
 
   /// <inheritdoc/>
   public async Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct = default) {
-    return await _rebuildCoreAsync(perspectiveName, RebuildMode.BlueGreen, streamIds: null, ct);
+    return await _rebuildCoreAsync(perspectiveName, RebuildMode.BlueGreen, streamIds: null, ct, origin: null);
+  }
+
+  /// <inheritdoc/>
+  public async Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, RebuildOrigin origin,
+      CancellationToken ct = default) {
+    return await _rebuildCoreAsync(perspectiveName, RebuildMode.BlueGreen, streamIds: null, ct, origin);
   }
 
   /// <inheritdoc/>
   public async Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) {
-    return await _rebuildCoreAsync(perspectiveName, RebuildMode.InPlace, streamIds: null, ct);
+    return await _rebuildCoreAsync(perspectiveName, RebuildMode.InPlace, streamIds: null, ct, origin: null);
+  }
+
+  /// <inheritdoc/>
+  public async Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, RebuildOrigin origin,
+      CancellationToken ct = default) {
+    return await _rebuildCoreAsync(perspectiveName, RebuildMode.InPlace, streamIds: null, ct, origin);
   }
 
   /// <inheritdoc/>
   public async Task<RebuildResult> RebuildStreamsAsync(
       string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct = default) {
     var ids = streamIds.ToList();
-    return await _rebuildCoreAsync(perspectiveName, RebuildMode.SelectedStreams, ids, ct);
+    return await _rebuildCoreAsync(perspectiveName, RebuildMode.SelectedStreams, ids, ct, origin: null);
+  }
+
+  /// <inheritdoc/>
+  public async Task<RebuildResult> RebuildStreamsAsync(
+      string perspectiveName, IEnumerable<Guid> streamIds, RebuildOrigin origin,
+      CancellationToken ct = default) {
+    var ids = streamIds.ToList();
+    return await _rebuildCoreAsync(perspectiveName, RebuildMode.SelectedStreams, ids, ct, origin);
   }
 
   /// <inheritdoc/>
@@ -50,11 +73,52 @@ public sealed partial class PerspectiveRebuilder(
     return Task.FromResult(status);
   }
 
+  /// <summary>
+  /// Digests the targeted rows, or returns null. Never lets a digest failure fail the rebuild: the digest is
+  /// evidence about the rebuild, not part of it, and "not known" is an honest value where a wrong one is not.
+  /// </summary>
+  private async Task<string?> _digestOrNullAsync(
+      IPerspectiveRowDigest digester, string perspectiveName, IReadOnlyCollection<Guid> streamIds,
+      CancellationToken ct) {
+    try {
+      return await digester.ComputeAsync(perspectiveName, streamIds, ct);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogRowDigestNotComputed(logger, ex, perspectiveName);
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Publishes one rebuild lifecycle event. Best effort on purpose: a rebuild that did its work must not be
+  /// reported as failed because the record of it could not be written, and the caller already has the
+  /// <see cref="RebuildResult"/>. The failure is logged at Debug exactly as the rewind path does it.
+  /// </summary>
+  /// <remarks>
+  /// Takes its own scope. The catch in <c>_rebuildCoreAsync</c> runs after that method's scope is disposed, and
+  /// the failure event has to go out from there too.
+  /// </remarks>
+  private async Task _emitAsync<TEvent>(TEvent rebuildEvent) where TEvent : IEvent {
+    try {
+      await using var scope = scopeFactory.CreateAsyncScope();
+      var dispatcher = scope.ServiceProvider.GetService<IDispatcher>();
+      if (dispatcher is null) { return; }
+      // Generic on purpose: PublishAsync routes on TEvent, so passing this as IEvent would publish under the
+      // interface and the concrete type's registration would never be consulted.
+      await dispatcher.AsSystem().ForAllTenants().PublishAsync(rebuildEvent);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogRebuildEventNotPublished(logger, ex, typeof(TEvent).Name);
+    }
+  }
+
   private async Task<RebuildResult> _rebuildCoreAsync(
-      string perspectiveName, RebuildMode mode, List<Guid>? streamIds, CancellationToken ct) {
+      string perspectiveName, RebuildMode mode, List<Guid>? streamIds, CancellationToken ct,
+      RebuildOrigin? origin = null) {
 
     var sw = Stopwatch.StartNew();
     RebuildRun? run = null;
+    // One id per rebuild, so the Started/Completed pair for this run can be found together. Time-ordered so a
+    // reader can sort rebuilds without joining anything.
+    Guid rebuildStreamId = TrackedGuid.New();
 
     try {
       await using var scope = scopeFactory.CreateAsyncScope();
@@ -65,8 +129,10 @@ public sealed partial class PerspectiveRebuilder(
 
       if (runner == null) {
         var registered = string.Join(", ", registry.GetRegisteredPerspectives().Select(p => p.ClrTypeName));
-        return new RebuildResult(perspectiveName, 0, 0, sw.Elapsed, false,
-            $"No runner found for perspective '{perspectiveName}'. Registered: {registered}");
+        var noRunner = $"No runner found for perspective '{perspectiveName}'. Registered: {registered}";
+        await _emitAsync(new PerspectiveRebuildFailed(
+            rebuildStreamId, perspectiveName, mode, noRunner, 0, sw.Elapsed, origin));
+        return new RebuildResult(perspectiveName, 0, 0, sw.Elapsed, false, noRunner);
       }
 
       // Cursor persistence: rebuild captures each runner.RunAsync return value and flushes
@@ -74,7 +140,7 @@ public sealed partial class PerspectiveRebuilder(
       // rebuild end-state. Optional dependency — when no driver registers a completer, the
       // rebuilder still updates projections and just skips cursor persistence.
       var completer = sp.GetService<IPerspectiveCheckpointCompleter>();
-      run = new RebuildRun(runner, perspectiveName, mode, completer);
+      run = new RebuildRun(runner, perspectiveName, mode, completer, rebuildStreamId, origin);
 
       // When the caller didn't supply an explicit list, narrow to streams that actually contain
       // events this perspective handles — otherwise we'd iterate every stream for every
@@ -91,6 +157,17 @@ public sealed partial class PerspectiveRebuilder(
       }
 
       LogRebuildStarting(logger, mode, perspectiveName, streamIds.Count, completer != null);
+      await _emitAsync(new PerspectiveRebuildStarted(
+          rebuildStreamId, perspectiveName, mode, streamIds.Count, DateTimeOffset.UtcNow, origin));
+
+      // Only for a rebuild of named streams. The targeted set is known and small there, so the digest costs in
+      // proportion to the repair; a whole-perspective rebuild would have to hash the table it is about to
+      // replace. Taken after the state-based guard has filtered the list, so it describes the rows actually
+      // replayed rather than the rows asked for.
+      var digester = mode == RebuildMode.SelectedStreams ? sp.GetService<IPerspectiveRowDigest>() : null;
+      var digestBefore = digester is null
+          ? null
+          : await _digestOrNullAsync(digester, perspectiveName, streamIds, ct);
 
       // Set ambient processing mode so lifecycle receptors are suppressed during rebuild
       // unless they opt in with [FireDuringReplay]
@@ -118,12 +195,20 @@ public sealed partial class PerspectiveRebuilder(
 
       sw.Stop();
       LogRebuildCompleted(logger, mode, perspectiveName, run.StreamsProcessed, sw.ElapsedMilliseconds);
+      var digestAfter = digester is null
+          ? null
+          : await _digestOrNullAsync(digester, perspectiveName, streamIds, ct);
+      await _emitAsync(new PerspectiveRebuildCompleted(
+          rebuildStreamId, perspectiveName, mode, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, origin,
+          digestBefore, digestAfter));
 
       return new RebuildResult(perspectiveName, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, true, null);
     } catch (Exception ex) {
       sw.Stop();
       var streamsProcessed = run?.StreamsProcessed ?? 0;
       LogRebuildFailed(logger, ex, mode, perspectiveName, streamsProcessed, sw.ElapsedMilliseconds);
+      await _emitAsync(new PerspectiveRebuildFailed(
+          rebuildStreamId, perspectiveName, mode, ex.Message, streamsProcessed, sw.Elapsed, origin));
       return new RebuildResult(perspectiveName, streamsProcessed, run?.EventsReplayed ?? 0, sw.Elapsed, false, ex.Message);
     } finally {
       _activeRebuilds.TryRemove(perspectiveName, out _);
@@ -377,6 +462,11 @@ public sealed partial class PerspectiveRebuilder(
         _activeRebuilds[run.PerspectiveName] = status with { ProcessedStreams = processed };
         LogRebuildProgress(logger, run.PerspectiveName, processed, status.TotalStreams,
             run.Elapsed.ElapsedMilliseconds);
+        // Documented as emitted "periodically during rebuild", so it is emitted on the same bounded cadence the
+        // log uses rather than per stream. A long rebuild reports progress; a short one reports once at the end.
+        await _emitAsync(new PerspectiveRebuildProgress(
+            run.RebuildStreamId, run.PerspectiveName, run.Mode, processed, status.TotalStreams,
+            run.EventsReplayed, run.StartedAt, run.Origin));
       }
     } catch (Exception ex) {
       streamSw.Stop();
@@ -402,10 +492,15 @@ public sealed partial class PerspectiveRebuilder(
 
   /// <summary>One rebuild's fixed inputs and running totals, threaded through its phases.</summary>
   private sealed class RebuildRun(
-      IPerspectiveRunner runner, string perspectiveName, RebuildMode mode, IPerspectiveCheckpointCompleter? completer) {
+      IPerspectiveRunner runner, string perspectiveName, RebuildMode mode, IPerspectiveCheckpointCompleter? completer,
+      Guid rebuildStreamId, RebuildOrigin? origin) {
     public IPerspectiveRunner Runner { get; } = runner;
     public string PerspectiveName { get; } = perspectiveName;
     public RebuildMode Mode { get; } = mode;
+    /// <summary>The id shared by this run's Started/Progress/Completed events.</summary>
+    public Guid RebuildStreamId { get; } = rebuildStreamId;
+    /// <summary>Who asked, carried onto the progress events as well so a reader need not join back to Started.</summary>
+    public RebuildOrigin? Origin { get; } = origin;
     public IPerspectiveCheckpointCompleter? Completer { get; } = completer;
     public List<PerspectiveCursorCompletion>? PendingCompletions { get; } = completer is null ? null : new(64);
     public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
@@ -479,6 +574,14 @@ public sealed partial class PerspectiveRebuilder(
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Starting {Mode} rebuild of perspective {Perspective} — {StreamCount} streams; cursor persistence enabled={CursorPersistence}")]
   private static partial void LogRebuildStarting(ILogger logger, RebuildMode mode, string perspective, int streamCount, bool cursorPersistence);
+
+  [LoggerMessage(Level = LogLevel.Debug,
+      Message = "Could not publish rebuild event {EventType}; the rebuild itself is unaffected")]
+  private static partial void LogRebuildEventNotPublished(ILogger logger, Exception ex, string eventType);
+
+  [LoggerMessage(Level = LogLevel.Debug,
+      Message = "Could not digest the rebuilt rows for {Perspective}; the rebuild itself is unaffected")]
+  private static partial void LogRowDigestNotComputed(ILogger logger, Exception ex, string perspective);
 
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Completed {Mode} rebuild of perspective {Perspective} — {Streams} streams in {ElapsedMs}ms")]

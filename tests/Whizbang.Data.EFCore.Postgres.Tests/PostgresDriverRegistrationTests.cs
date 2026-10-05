@@ -169,4 +169,36 @@ public class PostgresDriverRegistrationTests {
       .IsSameReferenceAs(fleet)
       .Because("the fleet source opens its own scope per call, so one instance serves the whole host");
   }
+
+  // The digest is what lets a rebuild of named streams say whether it CHANGED anything, as opposed to merely
+  // having run (#1135). It is resolved from the consumer's own DbContext and service identity, so a registration
+  // that cannot be constructed would leave every rebuild reporting "not known" with nothing to explain why. The
+  // sweep above resolves what the driver registers generically; this names the service, so the failure message
+  // points at the digest rather than at a list.
+  [Test]
+  public async Task Postgres_RegistersTheRowDigestSoARebuildCanSayWhatItChangedAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+    services.AddWhizbang();
+
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddSingleton(dataSource);
+    services.AddDbContext<DriverSelectorTestDbContext>(o => o.UseNpgsql(dataSource));
+
+    _ = new WhizbangPerspectiveBuilder(services)
+      .WithEFCore<DriverSelectorTestDbContext>()
+      .WithDriver.Postgres;
+
+    await using var provider = services.BuildServiceProvider();
+    using var scope = provider.CreateScope();
+
+    var digest = scope.ServiceProvider.GetService<IPerspectiveRowDigest>();
+
+    await Assert.That(digest).IsNotNull()
+      .Because("without it every selected-streams rebuild records no digest and cannot report whether it changed anything");
+    await Assert.That(digest!.GetType().Name)
+      .IsEqualTo("EFCorePostgresPerspectiveRowDigest");
+  }
+
 }

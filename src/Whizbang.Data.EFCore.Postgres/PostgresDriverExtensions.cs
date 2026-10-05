@@ -104,6 +104,16 @@ public static class PostgresDriverExtensions {
                 (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
                 sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
 
+        // TURNKEY: Register IPerspectiveRowDigest so a rebuild of named streams can record what those rows
+        // looked like before and after it ran. Without this the rebuild still happens and still reports its
+        // outcome; the Completed event simply carries no digests, which reads as "not known" rather than as
+        // "nothing changed".
+        selector.Services.TryAddScoped<Whizbang.Core.Perspectives.IPerspectiveRowDigest>(sp =>
+            new Perspectives.EFCorePostgresPerspectiveRowDigest(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetRequiredService<Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry>(),
+                sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>()));
+
         // TURNKEY: the apply-stack query surface — on-demand path-signature aggregation over
         // event-store pointers. The serving surfaces (minimal API / FastEndpoints / HotChocolate)
         // are opt-in; registering the query merely makes them answerable when a host mounts one.

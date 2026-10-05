@@ -7,6 +7,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Events.System;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -23,6 +24,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 [Category("Integration")]
 [Category("Shard2")]
 public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
+
+  // What the rebuilder published during a test. One per test instance, so tests do not see each other's events.
+  private readonly PublishedEventLog _publishedEvents = new();
 
   private const string RebuildBalancePerspectiveName =
       "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildBalancePerspective";
@@ -170,6 +174,12 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     // IPerspectiveRebuilder — normally registered by AddWhizbang, re-added here because
     // the hand-built DI container skips AddWhizbang.
     services.AddSingleton<IPerspectiveRebuilder, PerspectiveRebuilder>();
+
+    // The rebuilder publishes its lifecycle events through IDispatcher. Registered here so those events can be
+    // asserted on; without it the rebuilder skips publishing, which is also a case worth testing (see
+    // Rebuild_WithNoDispatcherRegistered_StillReportsSuccessAsync).
+    services.AddSingleton(_publishedEvents);
+    services.AddScoped<IDispatcher>(sp => new RecordingRebuildDispatcher(sp.GetRequiredService<PublishedEventLog>()));
 
     return services.BuildServiceProvider();
   }
@@ -1464,4 +1474,132 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       }
     }
   }
+
+
+  #region Rebuild lifecycle events (#1135)
+
+  // A rebuild request is acknowledged as accepted, not as done, and the command is broadcast to every service so
+  // each rebuilds only what it hosts. Before this, the only trace a rebuild left was the service's own log, so an
+  // operator could not tell a rebuild that ran from a request that matched nothing anywhere. These events are the
+  // durable answer. They already existed, fully pinned and documented, and nothing ever published one.
+  [Test]
+  public async Task RebuildStreamsAsync_PublishesStartedAndCompleted_CarryingTheOriginAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+
+    var requestId = Guid.NewGuid();
+    var origin = new RebuildOrigin(requestId, RebuildTrigger.Requested, "an operator");
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+
+    var result = await rebuilder.RebuildStreamsAsync(
+        RebuildBalancePerspectiveName, [streamId], origin, CancellationToken.None);
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "rebuild should succeed");
+
+    var started = _publishedEvents.OfKind<PerspectiveRebuildStarted>();
+    var completed = _publishedEvents.OfKind<PerspectiveRebuildCompleted>();
+
+    await Assert.That(started.Count).IsEqualTo(1);
+    await Assert.That(completed.Count).IsEqualTo(1);
+
+    await Assert.That(started[0].PerspectiveName).IsEqualTo(RebuildBalancePerspectiveName);
+    await Assert.That(started[0].Mode).IsEqualTo(RebuildMode.SelectedStreams);
+    await Assert.That(started[0].TotalStreams).IsEqualTo(1);
+    await Assert.That(started[0].Origin!.RequestId).IsEqualTo(requestId);
+    await Assert.That(started[0].Origin!.Trigger).IsEqualTo(RebuildTrigger.Requested);
+    await Assert.That(started[0].Origin!.RequestedBy).IsEqualTo("an operator");
+
+    await Assert.That(completed[0].Origin!.RequestId).IsEqualTo(requestId);
+    await Assert.That(completed[0].StreamsProcessed).IsEqualTo(1);
+
+    // Both halves of one run carry the same rebuild id, or a reader cannot pair them up when a single request
+    // rebuilds several perspectives.
+    await Assert.That(started[0].StreamId).IsEqualTo(completed[0].StreamId);
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WithoutAnOrigin_StillPublishesThePairAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 50m });
+    }
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    var result = await rebuilder.RebuildStreamsAsync(
+        RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "rebuild should succeed");
+    await Assert.That(_publishedEvents.OfKind<PerspectiveRebuildStarted>().Count).IsEqualTo(1);
+    await Assert.That(_publishedEvents.OfKind<PerspectiveRebuildStarted>()[0].Origin).IsNull();
+    await Assert.That(_publishedEvents.OfKind<PerspectiveRebuildCompleted>().Count).IsEqualTo(1);
+  }
+
+  // The case that started all of this: a name the service does not host. The rebuilder already produced a good
+  // error for it and returned; nothing recorded it, so the caller saw only its own acknowledgement.
+  [Test]
+  public async Task Rebuild_WhenThePerspectiveHasNoRunner_PublishesFailedWithTheReasonAsync() {
+    await using var sp = _buildRebuildServices();
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+
+    var origin = new RebuildOrigin(Guid.NewGuid(), RebuildTrigger.Requested);
+    var result = await rebuilder.RebuildInPlaceAsync("Not.A.Registered.Perspective", origin, CancellationToken.None);
+
+    await Assert.That(result.Success).IsFalse();
+
+    var failed = _publishedEvents.OfKind<PerspectiveRebuildFailed>();
+    await Assert.That(failed.Count).IsEqualTo(1);
+    await Assert.That(failed[0].PerspectiveName).IsEqualTo("Not.A.Registered.Perspective");
+    await Assert.That(failed[0].Error).Contains("No runner found");
+    await Assert.That(failed[0].Origin!.RequestId).IsEqualTo(origin.RequestId);
+    await Assert.That(failed[0].StreamsProcessedBeforeFailure).IsEqualTo(0);
+
+    // A rebuild that never started must not claim it did.
+    await Assert.That(_publishedEvents.OfKind<PerspectiveRebuildStarted>().Count).IsEqualTo(0);
+    await Assert.That(_publishedEvents.OfKind<PerspectiveRebuildCompleted>().Count).IsEqualTo(0);
+  }
+
+  // The docs have always said the rebuild system emits PerspectiveRebuildProgress "periodically during rebuild".
+  // Nothing emitted it, so the documentation described a capability that did not exist. It is emitted on the same
+  // bounded cadence the progress log uses: every hundredth stream, and once when the last one is done -- so a
+  // single-stream rebuild produces exactly one.
+  [Test]
+  public async Task RebuildStreamsAsync_PublishesProgressOnceForASingleStreamAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 10m });
+    }
+
+    var origin = new RebuildOrigin(Guid.NewGuid(), RebuildTrigger.Requested);
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    var result = await rebuilder.RebuildStreamsAsync(
+        RebuildBalancePerspectiveName, [streamId], origin, CancellationToken.None);
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "rebuild should succeed");
+
+    var progress = _publishedEvents.OfKind<PerspectiveRebuildProgress>();
+    await Assert.That(progress.Count).IsEqualTo(1);
+    await Assert.That(progress[0].ProcessedStreams).IsEqualTo(1);
+    await Assert.That(progress[0].TotalStreams).IsEqualTo(1);
+    await Assert.That(progress[0].Origin!.RequestId).IsEqualTo(origin.RequestId);
+
+    // Shares the run id with the pair that brackets it, so a reader can group one rebuild's events.
+    var started = _publishedEvents.OfKind<PerspectiveRebuildStarted>();
+    await Assert.That(progress[0].StreamId).IsEqualTo(started[0].StreamId);
+  }
+
+  #endregion
+
 }

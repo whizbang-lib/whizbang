@@ -28,6 +28,11 @@ namespace Whizbang.Core.Commands.System;
 /// <param name="IncludeStreamIds">Optional: only rebuild these specific streams. Null = all streams.</param>
 /// <param name="ExcludeStreamIds">Optional: exclude these streams from rebuild. Null = no exclusions.</param>
 /// <param name="FromEventId">Optional: start replaying from this event ID. Null = from beginning.</param>
+/// <param name="RequestId">Optional: a caller-chosen id stamped onto the rebuild's events. Supply one and the
+/// rebuild becomes answerable: this command is broadcast to every service and each rebuilds only what it hosts,
+/// so the acknowledgement cannot tell you whether any service owned the name. Finding no
+/// <c>PerspectiveRebuildStarted</c> carrying this id means nothing ran. Null = each service stamps its own.</param>
+/// <param name="RequestedBy">Optional: who asked, recorded on the rebuild's events.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
 /// <tests>tests/Whizbang.Core.Tests/Commands/System/SystemCommandsTests.cs:RebuildPerspectiveCommand_SerializesCorrectlyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Commands/System/SystemCommandsTests.cs:RebuildPerspectiveCommand_WithPerspectiveNames_CreatesCorrectlyAsync</tests>
@@ -38,7 +43,9 @@ public record RebuildPerspectiveCommand(
     Perspectives.RebuildMode Mode = Perspectives.RebuildMode.BlueGreen,
     Guid[]? IncludeStreamIds = null,
     Guid[]? ExcludeStreamIds = null,
-    long? FromEventId = null
+    long? FromEventId = null,
+    Guid? RequestId = null,
+    string? RequestedBy = null
 ) : ICommand, Messaging.IControlPlaneMessage;
 
 /// <summary>
