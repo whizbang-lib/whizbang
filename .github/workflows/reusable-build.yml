@@ -122,6 +122,13 @@ jobs:
           # Level 1, measured: level 6 spent ~190s compressing 1.9 GB; level 0 uploaded 5.5 GB
           # in 60s but up to 2 minutes slower downloads in the 11 test jobs that fetch it.
           compression-level: 1
+          # Each test project's output holds a hidden .msCoverageExtensionSourceRootsMapping_<name>
+          # file that maps the deterministic /_/ source paths in its pdbs back to the checkout.
+          # Without it the coverage collector finds none of an assembly's sources, skips the
+          # assembly, and writes an empty report while every test still passes; upload-artifact
+          # drops hidden files unless told otherwise. The only other hidden files under these
+          # paths are obj/'s generated AssemblyAttributes sources.
+          include-hidden-files: true
 
       # Guard: every packable output must still match the hash taken right after the build, so no
       # step in this job (today none does) rewrote what pack ships. A future step that instruments

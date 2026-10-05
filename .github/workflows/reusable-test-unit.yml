@@ -69,6 +69,25 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+      # An empty report (`<packages />`) is what the collector writes when it skipped every assembly,
+      # and the tests still pass, so the upload alone cannot tell it from real coverage. Warn per
+      # empty report (a project may legitimately load no library assembly) and fail when the whole
+      # leg measured nothing.
+      - name: Verify coverage was collected
+        if: success()
+        run: |
+          set -euo pipefail
+          mapfile -t REPORTS < <(find tests samples -path "*/TestResults/*.cobertura.xml" -not -path "*/TestResults/*/*" 2>/dev/null)
+          MEASURED=0
+          for r in "${REPORTS[@]}"; do
+            if grep -q "<package " "$r"; then MEASURED=$((MEASURED+1)); else echo "::warning::empty coverage report: $r"; fi
+          done
+          echo "${MEASURED} of ${#REPORTS[@]} coverage reports measured library code"
+          if [ "$MEASURED" -eq 0 ]; then
+            echo "::error::No coverage report measured any library assembly. The collector skipped them all (see the source-roots mapping note in reusable-build.yml)."
+            exit 1
+          fi
+
       # Coverage: each test module collects its own with Microsoft.Testing.Platform's dynamic
       # collector (Run-Tests.ps1 -ModuleCoverage), which records branches as well as lines.
       # The statically instrumented assemblies this job used to overlay recorded lines only, so
