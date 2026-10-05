@@ -359,7 +359,6 @@ project has today (see below).
 |---|---|---|---|
 | `achieve_silver` | MUST | Silver's last MUST, `access_continuity`. | owner |
 | `bus_factor`, `contributors_unassociated`, `two_person_review` | MUST | At least two significant contributors from different organizations, and a second person reviewing at least half of all changes before release. Structural: not reachable by documentation or tooling. | needs a second regular contributor |
-| `hardened_site` | MUST | The docs site sends HSTS but not a Content-Security-Policy, `X-Content-Type-Options` or `X-Frame-Options`. It is served through Cloudflare, where a free response-header rule can add them. | owner (Cloudflare) |
 | `copyright_per_file`, `license_per_file` | MUST | A header (`Copyright (c) whizbang-lib contributors` and `SPDX-License-Identifier: MIT`) in each of the 1,781 source files, enforced by `.editorconfig`'s `file_header_template` and rule IDE0073 so `dotnet format` adds it to new files. Mechanical. | repo change |
 | `test_branch_coverage80` | MUST | Branch coverage is not measured: the coverage collector records no branch data (`branch-rate="1"` with no conditions), so SonarCloud reports line coverage only. Collect branch coverage and bring it to at least 80%. | repo change |
 | `small_tasks` | MUST | Label beginner-sized issues `good first issue` (the label exists; no open issue has it) and point new contributors to it from CONTRIBUTING. | repo change |
@@ -403,7 +402,7 @@ project has today (see below).
 |---|---|---|
 | `crypto_used_network` | Met | The library has no network protocol of its own and no default endpoint; every connection uses the scheme and TLS settings in the application's connection string, and Azure Service Bus is TLS only. |
 | `crypto_tls12` | Met | TLS comes from the .NET runtime, which negotiates TLS 1.2 or later. |
-| `hardened_site` | Unmet | GitHub and nuget.org send the hardening headers; the docs site sends HSTS but not yet a Content-Security-Policy, `X-Content-Type-Options` or `X-Frame-Options`. |
+| `hardened_site` | Met | The repository (GitHub), the package site (nuget.org) and the docs site all send the hardening headers. The docs site sends Strict-Transport-Security, a Content-Security-Policy that allows only its own scripts, its fonts and its search model's hosts, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a Referrer-Policy and a Permissions-Policy. <https://securityheaders.com/?q=https%3A%2F%2Fwhizba.ng> |
 | `security_review` | Unmet | The security assurance case documents the requirements and boundaries; a review against it has not yet been carried out and recorded. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md> |
 | `hardening` | Met | Native AOT and trimming (no reflection), nullable reference types, warnings as errors, authenticated encryption, and payload size limits. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md> |
 
