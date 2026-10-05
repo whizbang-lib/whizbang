@@ -264,8 +264,12 @@ Dispatch is designed to stay allocation-free on the in-process path; the benchma
 ## Contributing and support
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test and send changes.
-- [SECURITY.md](SECURITY.md) to report a vulnerability privately.
-- [Issues](https://github.com/whizbang-lib/whizbang/issues) for bugs and questions.
+- [SECURITY.md](SECURITY.md) to report a vulnerability privately, and to verify a release.
+- [Discussions](https://github.com/whizbang-lib/whizbang/discussions) for questions and ideas;
+  [Issues](https://github.com/whizbang-lib/whizbang/issues) for bugs.
+- [ROADMAP.md](ROADMAP.md) for what is planned, and not planned, over the next year.
+- [GOVERNANCE.md](GOVERNANCE.md) for how decisions are made and who does what, and the
+  [Code of Conduct](CODE_OF_CONDUCT.md) that applies to everyone taking part.
 
 ## License
 
