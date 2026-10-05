@@ -353,4 +353,17 @@ public class MessageDiscardPolicyTests {
       .Because("the log is throttled, the MEASUREMENT never is — otherwise quieting the flood "
              + "would also blind the dashboard that proves it is happening");
   }
+
+  [Test]
+  public async Task EvaluateReceive_UnconsumedTypeWithNoNamespace_IsNotAbsorbedAndDiscardsAsync() {
+    // A type name with no namespace cannot be in an absorbed namespace, so absorb settings never
+    // keep it: it drops like any other unconsumed type.
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.Absorb3");
+    var policy = _newPolicyWithAbsorb(meter, "Test.Contracts");
+
+    var decision = policy.EvaluateReceive("NamespacelessUnconsumedEvent, Some.Assembly", topic: "svc-inbox", subscription: "sub-1");
+
+    await Assert.That(decision.ShouldDiscard).IsTrue();
+    await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.NoLocalConsumer);
+  }
 }

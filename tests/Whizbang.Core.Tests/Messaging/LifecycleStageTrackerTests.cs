@@ -85,4 +85,24 @@ public class LifecycleStageTrackerTests {
     await Assert.That(result).IsTrue()
       .Because("Purged entries should be reclaimable");
   }
+
+  /// <summary>
+  /// A non-positive ceiling is not "retain nothing": it falls back to the default, so claims are
+  /// kept and a second claim of the same stage is still refused.
+  /// </summary>
+  [Test]
+  [Arguments(0)]
+  [Arguments(-5)]
+  public async Task Ctor_NonPositiveCeiling_FallsBackToTheDefaultAndKeepsClaimsAsync(int ceiling) {
+    var tracker = new LifecycleStageTracker(maxTrackedClaims: ceiling);
+    var first = Guid.CreateVersion7();
+
+    await Assert.That(tracker.TryClaim(first, LifecycleStage.PostInboxDetached)).IsTrue();
+    await Assert.That(tracker.TryClaim(Guid.CreateVersion7(), LifecycleStage.PostInboxDetached)).IsTrue();
+    await Assert.That(tracker.TryClaim(Guid.CreateVersion7(), LifecycleStage.PostInboxDetached)).IsTrue();
+
+    await Assert.That(tracker.TrackedClaims).IsEqualTo(3);
+    await Assert.That(tracker.TryClaim(first, LifecycleStage.PostInboxDetached)).IsFalse()
+      .Because("an evicted claim would fire the stage twice");
+  }
 }
