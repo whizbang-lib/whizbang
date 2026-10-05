@@ -120,6 +120,20 @@ public class PerspectiveSchemaTests {
 
   [Test]
   [Category("Schema")]
+  public async Task CreateTableWithId_WithIndexes_KeepsThemAndDefaultsToNoneAsync() {
+    var columns = ImmutableArray.Create(new ColumnDefinition(Name: "status", DataType: WhizbangDataType.STRING, Nullable: false));
+    var indexes = ImmutableArray.Create(new IndexDefinition(Name: "idx_order_status", Columns: ["status"], Unique: true));
+
+    var indexed = PerspectiveSchema.CreateTableWithId("order_dto", columns, indexes);
+    var plain = PerspectiveSchema.CreateTableWithId("order_dto", columns);
+
+    await Assert.That(indexed.Indexes).IsEquivalentTo(indexes);
+    await Assert.That(indexed.Columns[0].Name).IsEqualTo("id");
+    await Assert.That(plain.Indexes).IsEmpty();
+  }
+
+  [Test]
+  [Category("Schema")]
   public async Task CommonColumns_Id_HasCorrectDefinitionAsync() {
     // Arrange & Act
     var idColumn = PerspectiveSchema.CommonColumns.Id;
