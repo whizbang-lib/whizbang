@@ -106,7 +106,11 @@ public static class TestConstants {
   ///     (SharedHandlerProbeReceptor and OnceOverallProbeReceptor — a receptor shared by two services,
   ///     and one marked to run once across services)</para>
   ///
-  /// <para>Total: 128 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>- 2 receptors from Dispatcher/DispatcherObservabilityTests.cs
+  ///     (ObservedReceptor and ObservedFailingReceptor — the dispatch spans and dispatcher metrics of a
+  ///     succeeding and a failing receptor)</para>
+  ///
+  /// <para>Total: 130 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 128;
+  public const int EXPECTED_RECEPTOR_COUNT = 130;
 }
