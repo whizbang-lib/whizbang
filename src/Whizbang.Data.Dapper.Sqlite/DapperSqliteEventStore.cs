@@ -56,7 +56,7 @@ public class DapperSqliteEventStore(
 
         // Serialize envelope (AOT-compatible via WhizbangJsonContext in resolver chain)
         var envelopeType = typeof(MessageEnvelope<TMessage>);
-        var typeInfo = JsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+        var typeInfo = JsonOptions.GetTypeInfo(envelopeType);
         var json = JsonSerializer.Serialize(envelope, typeInfo);
 
         // Try to insert with sequence number
@@ -135,7 +135,7 @@ public class DapperSqliteEventStore(
     foreach (var row in rows) {
       // Deserialize with concrete message type (AOT-compatible)
       var envelopeType = typeof(MessageEnvelope<TMessage>);
-      var typeInfo = JsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+      var typeInfo = JsonOptions.GetTypeInfo(envelopeType);
       if (JsonSerializer.Deserialize(row.Envelope, typeInfo) is MessageEnvelope<TMessage> envelope) {
         yield return envelope;
       }
@@ -171,7 +171,7 @@ public class DapperSqliteEventStore(
 
     foreach (var row in rows) {
       var envelopeType = typeof(MessageEnvelope<TMessage>);
-      var typeInfo = JsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+      var typeInfo = JsonOptions.GetTypeInfo(envelopeType);
       // If fromEventId specified, filter in C# (SQLite doesn't support UUID comparison)
       if (JsonSerializer.Deserialize(row.Envelope, typeInfo) is MessageEnvelope<TMessage> envelope &&
           (fromEventId == null || envelope.MessageId.Value.CompareTo(fromEventId.Value) > 0)) {

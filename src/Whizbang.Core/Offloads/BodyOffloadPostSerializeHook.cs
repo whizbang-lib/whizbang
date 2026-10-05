@@ -137,10 +137,7 @@ public sealed partial class BodyOffloadPostSerializeHook(
     var claimEnvelope = _buildClaimEnvelope(context.Envelope, claimPayload);
     var claimEnvelopeType = TypeNameFormatter.AssemblyQualifiedName(claimEnvelope.GetType());
 
-    var typeInfo = context.JsonOptions.GetTypeInfo(claimEnvelope.GetType())
-      ?? throw new InvalidOperationException(
-        $"No JsonTypeInfo found for claim envelope type {TypeNameFormatter.DisplayName(claimEnvelope.GetType())}. " +
-        "Ensure MessageEnvelope<BodyClaimEnvelopePayload> is registered via JsonContextRegistry.");
+    var typeInfo = context.JsonOptions.GetTypeInfo(claimEnvelope.GetType());
 
     var claimJson = JsonSerializer.Serialize(claimEnvelope, typeInfo);
     var claimBytes = Encoding.UTF8.GetBytes(claimJson);

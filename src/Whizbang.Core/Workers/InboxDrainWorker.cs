@@ -543,8 +543,7 @@ public sealed partial class InboxDrainWorker(
   }
 
   private InboxWork _toInboxWork(InboxBatchRow row) {
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
-      ?? throw new InvalidOperationException("No JsonTypeInfo for MessageEnvelope<JsonElement>.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var envelope = JsonSerializer.Deserialize(row.EventData, typeInfo) as IMessageEnvelope<JsonElement>
       ?? throw new InvalidOperationException($"Failed to deserialize envelope for inbox message {row.MessageId}.");
     // Priority step 1 on the wire: the row's number is the consumer's classification, and the envelope the handler

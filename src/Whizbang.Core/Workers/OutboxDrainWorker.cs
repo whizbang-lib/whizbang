@@ -1336,8 +1336,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   }
 
   private OutboxWork _toOutboxWork(OutboxBatchRow row) {
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
-      ?? throw new InvalidOperationException("No JsonTypeInfo for MessageEnvelope<JsonElement>.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var envelope = JsonSerializer.Deserialize(row.EventData, typeInfo) as IMessageEnvelope<JsonElement>
       ?? throw new InvalidOperationException($"Failed to deserialize envelope for message {row.MessageId}.");
 
