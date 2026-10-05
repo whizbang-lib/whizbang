@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 // Test namespaces for routing tests (must be in separate namespace structure)
 namespace TestNamespaces.MyApp.Orders.Events {
   public sealed record OrderCreated;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Dapper;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Whizbang.Core.Data;

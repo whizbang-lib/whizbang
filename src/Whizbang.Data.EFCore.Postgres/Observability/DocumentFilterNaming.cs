@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Text.RegularExpressions;
 
 namespace Whizbang.Data.EFCore.Postgres.Observability;

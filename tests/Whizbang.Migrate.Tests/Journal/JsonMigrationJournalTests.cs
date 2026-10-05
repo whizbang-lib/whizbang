@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Globalization;
 using Whizbang.Migrate.Core;
 using Whizbang.Migrate.Journal;

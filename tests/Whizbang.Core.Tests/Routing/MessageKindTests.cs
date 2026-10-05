@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma warning disable TUnitAssertions0005
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;

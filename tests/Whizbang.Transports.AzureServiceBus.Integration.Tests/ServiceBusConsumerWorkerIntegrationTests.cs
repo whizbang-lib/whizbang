@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma warning disable CA1707 // Test method naming uses underscores by convention
 
 using System.Text.Json;

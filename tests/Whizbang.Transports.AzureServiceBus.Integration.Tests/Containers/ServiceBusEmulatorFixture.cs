@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Diagnostics;
 using Azure.Messaging.ServiceBus;
 using Whizbang.Testing.Containers;

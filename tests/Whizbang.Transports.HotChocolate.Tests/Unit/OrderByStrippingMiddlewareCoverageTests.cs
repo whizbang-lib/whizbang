@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using HotChocolate.Execution;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Transports.HotChocolate.Middleware;

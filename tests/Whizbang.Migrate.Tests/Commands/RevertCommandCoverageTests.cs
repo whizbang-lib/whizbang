@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 // CA1416: these tests deliberately use Unix file modes to make a write fail, which is the only
 // way to drive the revert command's "reset succeeded but cleanup/save did not" branches without
 // mocking the file system. CI runs on ubuntu-latest and development here is macOS, so the calls

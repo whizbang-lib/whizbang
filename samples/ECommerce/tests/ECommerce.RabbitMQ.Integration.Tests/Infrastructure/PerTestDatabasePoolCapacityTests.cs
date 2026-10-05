@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using ECommerce.RabbitMQ.Integration.Tests.Fixtures;
 using Npgsql;
 using TUnit.Assertions.Extensions;

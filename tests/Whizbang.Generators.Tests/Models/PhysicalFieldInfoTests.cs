@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 extern alias shared;
 using GeneratorVectorDistanceMetric = shared::Whizbang.Generators.Shared.Models.GeneratorVectorDistanceMetric;
 using GeneratorVectorIndexType = shared::Whizbang.Generators.Shared.Models.GeneratorVectorIndexType;

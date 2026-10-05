@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Azure.Messaging.ServiceBus.Administration;
 
 namespace Whizbang.Transports.AzureServiceBus;

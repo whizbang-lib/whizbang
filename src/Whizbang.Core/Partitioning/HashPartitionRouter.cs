@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Buffers;
 using System.Text;
 using Whizbang.Core.Policies;

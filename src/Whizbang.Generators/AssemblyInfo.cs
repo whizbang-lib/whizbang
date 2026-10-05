@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Runtime.CompilerServices;
 
 // Testing Support - InternalsVisibleTo causes PolySharp polyfill conflicts with .NET 10 test project (CS0433)

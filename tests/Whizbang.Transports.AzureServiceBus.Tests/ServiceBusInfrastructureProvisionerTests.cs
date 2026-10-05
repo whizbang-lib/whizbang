@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Azure;
 using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 namespace Whizbang.Core.Messaging;
 
 /// <summary>Where the limit applied to a message came from.</summary>

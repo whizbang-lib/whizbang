@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;

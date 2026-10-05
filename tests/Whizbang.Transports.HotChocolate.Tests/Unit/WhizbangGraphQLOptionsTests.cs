@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Transports.HotChocolate;
 
 namespace Whizbang.Transports.HotChocolate.Tests.Unit;

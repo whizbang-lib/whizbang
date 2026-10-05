@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Globalization;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Data.Dapper.Sqlite.Schema;

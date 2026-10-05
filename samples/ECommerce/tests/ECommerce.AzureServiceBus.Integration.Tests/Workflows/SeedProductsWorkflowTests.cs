@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.BFF.API.GraphQL;
 using ECommerce.Integration.Tests.Fixtures;

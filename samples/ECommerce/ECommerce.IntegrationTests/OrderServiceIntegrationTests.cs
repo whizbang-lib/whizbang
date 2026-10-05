@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using ECommerce.Contracts.Commands;
 using TUnit.Assertions;
 using TUnit.Core;

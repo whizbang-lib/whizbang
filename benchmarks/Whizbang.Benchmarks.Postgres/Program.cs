@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using BenchmarkDotNet.Running;
 
 namespace Whizbang.Benchmarks.Postgres;

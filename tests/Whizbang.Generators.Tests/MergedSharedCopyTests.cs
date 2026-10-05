@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 extern alias core_generators;
 extern alias fastendpoints_generators;
 extern alias hotchocolate_generators;

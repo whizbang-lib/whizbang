@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.Integration.TestUtilities.Fixtures;
 using Microsoft.Extensions.DependencyInjection;

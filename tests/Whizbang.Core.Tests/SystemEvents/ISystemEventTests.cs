@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.SystemEvents;

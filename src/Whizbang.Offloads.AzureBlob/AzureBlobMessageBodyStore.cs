@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Security.Cryptography;
 using Azure;
 using Azure.Storage.Blobs;

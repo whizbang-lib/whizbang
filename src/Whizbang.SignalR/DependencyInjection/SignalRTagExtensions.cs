@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Microsoft.AspNetCore.SignalR;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Tags;

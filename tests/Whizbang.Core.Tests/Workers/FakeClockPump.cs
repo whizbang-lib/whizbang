@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Microsoft.Extensions.Time.Testing;
 
 namespace Whizbang.Core.Tests.Workers;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 // Test message types for TransportAutoDiscoveryTests
 // These simulate different namespace patterns for pattern matching tests
 

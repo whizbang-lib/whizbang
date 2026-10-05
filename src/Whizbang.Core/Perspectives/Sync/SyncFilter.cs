@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma warning disable S2436 // Fluent API with intentional generic type parameter overloads
 
 namespace Whizbang.Core.Perspectives.Sync;

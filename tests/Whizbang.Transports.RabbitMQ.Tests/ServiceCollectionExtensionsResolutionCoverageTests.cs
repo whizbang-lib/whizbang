@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
 using Microsoft.Extensions.DependencyInjection;

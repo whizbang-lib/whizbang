@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Whizbang.Generators.Shared.Models;

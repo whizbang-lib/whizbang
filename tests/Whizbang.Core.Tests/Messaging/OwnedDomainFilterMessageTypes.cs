@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Core;
 
 // Message contracts for ReceptorInvokerOwnedDomainFilterTests. They live in their own file, and

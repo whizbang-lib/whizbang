@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 // OpenSSF Scorecard's Fuzzing check detects FsCheck by a literal match on this using, and FsCheck.Fluent
 // alone does not match. Config, Replay and Check below come from this namespace, which is what keeps
 // dotnet format from removing it as unused.

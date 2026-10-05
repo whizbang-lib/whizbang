@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using TUnit.Assertions.Extensions;
 
 namespace Whizbang.Generators.Tests;

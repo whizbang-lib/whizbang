@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using RabbitMQ.Client;

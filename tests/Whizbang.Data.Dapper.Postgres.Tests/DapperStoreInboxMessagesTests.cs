@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;

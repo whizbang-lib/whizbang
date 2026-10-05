@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Data.Dapper.Sqlite.Schema;
 
 namespace Whizbang.Data.Schema.Tests;

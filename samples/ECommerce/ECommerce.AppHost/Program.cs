@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #if AZURESERVICEBUS
 using Whizbang.Hosting.Azure.ServiceBus;
 #elif RABBITMQ

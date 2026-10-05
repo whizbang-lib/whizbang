@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Collections.Immutable;
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions.Extensions;
