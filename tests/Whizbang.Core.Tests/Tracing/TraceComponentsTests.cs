@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Tracing;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 namespace Whizbang.Core.Priority;
 
 /// <summary>The four scheduling buckets a priority number falls in, plus the control plane outside them.</summary>

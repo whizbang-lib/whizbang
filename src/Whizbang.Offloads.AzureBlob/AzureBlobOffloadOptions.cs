@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Azure.Storage.Blobs.Models;
 
 namespace Whizbang.Offloads.AzureBlob;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 var builder = DistributedApplication.CreateBuilder(args);
 
 // PostgreSQL for Whizbang (shared by both services)

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Npgsql;
 
 namespace Whizbang.Data.EFCore.Postgres;

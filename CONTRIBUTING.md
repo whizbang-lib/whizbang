@@ -9,7 +9,7 @@ Thank you for your interest in contributing to Whizbang! This document provides 
 - [Development Workflow](#development-workflow)
 - [Standards and Guidelines](#standards-and-guidelines)
 - [Submitting Changes](#submitting-changes)
-- [Community](#community)
+- [Community](#community) (including [Finding Something to Work On](#finding-something-to-work-on))
 
 ## Code of Conduct
 
@@ -240,14 +240,52 @@ git push origin feature/my-feature
 - ✅ Commit messages follow Conventional Commits
 - ✅ Every commit is signed off ([DCO](#developer-certificate-of-origin))
 
-### Code Review Process
+### Code Review
 
-1. Automated checks run via GitHub Actions: the full test matrix, formatting, 100% coverage of new
-   lines, zero SonarCloud findings, CodeQL and secret scanning. A pull request cannot merge until
-   every required check passes.
-2. The maintainer reviews pull requests from other contributors and may ask for changes.
-3. Address feedback and update the PR.
-4. The maintainer merges it through the merge queue.
+Every change, including the maintainer's own, reaches `develop` (or a release branch) only through a
+pull request, and every pull request is reviewed against the same standard.
+
+**How review is conducted**
+
+1. The required checks run automatically on every push to the pull request, and again in the merge
+   queue against the latest `develop` before it lands.
+2. The maintainer reviews pull requests from other contributors, comments on the pull request, and
+   either approves, asks for changes, or explains why a change will not be accepted.
+3. The author addresses each comment with a change or a reply. Resolved comments are marked resolved.
+4. When the checks are green and the review is approved, the maintainer adds the pull request to the
+   merge queue.
+
+**What the automated checks verify** (all required; none may be skipped or overridden):
+
+- the solution builds in Release with every analyzer warning treated as an error;
+- the full test matrix passes (unit, generator, PostgreSQL, RabbitMQ, Azure Service Bus, Azure Blob,
+  in-memory);
+- every added library line is executed by a test (100% of new lines), and SonarCloud reports zero
+  open findings on new code;
+- CodeQL, secret scanning and the dependency vulnerability scan find nothing new;
+- `dotnet format` makes no changes, and every source file carries the copyright and license header;
+- every commit is signed off ([DCO](#developer-certificate-of-origin)), and lock files match the
+  package versions.
+
+**What the reviewer checks**
+
+- **Correctness and fit**: the change does what its description says, handles failure paths, and fits
+  the design (no reflection at runtime, AOT compatible, no breaking public API change without a
+  deprecation).
+- **Tests**: the tests would fail without the change (they pin the behavior, not the implementation),
+  cover the failure and edge cases, and contain no timing waits or polling.
+- **Security**: input from messages, HTTP requests and configuration is treated as untrusted; SQL takes
+  values as parameters; no secret, credential or consumer name appears anywhere (see the
+  [security assurance case](docs/security-assurance-case.md)).
+- **Performance**: changes to hot paths (claiming work, the work-coordination SQL, serialization) come
+  with a measurement or a reason.
+- **Documentation**: public APIs have XML docs with `<docs>` and `<tests>` links, and user-visible
+  behavior is documented on the docs site.
+- **Writing**: US English, Conventional Commit messages, and a pull request description that says what
+  changed and why.
+
+**What is required to merge**: every required check green, every review comment addressed, and, for a
+contribution from someone other than the maintainer, the maintainer's approval.
 
 ## Release Process
 
@@ -258,6 +296,16 @@ flow and how to recover when one goes wrong. AI sessions follow the same rules t
 skill (`.claude/skills/release/SKILL.md`).
 
 ## Community
+
+### Finding Something to Work On
+
+New here? Issues labeled
+[**good first issue**](https://github.com/whizbang-lib/whizbang/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+are small and self-contained, with the steps to do them in the issue. Issues labeled
+[**help wanted**](https://github.com/whizbang-lib/whizbang/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+are larger pieces of work where help is welcome. Comment on an issue before starting so two people
+do not pick the same one, and ask in [Discussions](https://github.com/whizbang-lib/whizbang/discussions)
+if anything is unclear.
 
 ### Getting Help
 

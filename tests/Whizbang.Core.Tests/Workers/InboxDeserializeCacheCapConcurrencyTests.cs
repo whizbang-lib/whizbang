@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Collections;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;

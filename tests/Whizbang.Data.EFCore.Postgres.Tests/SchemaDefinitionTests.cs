@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Npgsql;
 using TUnit.Core;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;

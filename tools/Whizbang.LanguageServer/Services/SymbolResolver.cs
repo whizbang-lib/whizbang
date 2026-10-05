@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.LanguageServer.Protocol;
 
 namespace Whizbang.LanguageServer.Services;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using ECommerce.Contracts.Generated;
 using ECommerce.NotificationWorker;
 using ECommerce.NotificationWorker.Generated;

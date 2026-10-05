@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Core.Scoping;
 
 namespace Whizbang.Core.Tests.Scoping;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Data;
 using Microsoft.Data.Sqlite;
 using TUnit.Core;

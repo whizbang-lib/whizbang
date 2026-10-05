@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Testcontainers.Azurite;
 
 namespace Whizbang.Offloads.AzureBlob.Integration.Tests;

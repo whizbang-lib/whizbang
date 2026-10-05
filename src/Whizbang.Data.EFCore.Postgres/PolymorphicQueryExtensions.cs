@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Linq.Expressions;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;

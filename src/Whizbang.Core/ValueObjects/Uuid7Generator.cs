@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 namespace Whizbang.Core.ValueObjects;
 
 /// <summary>Fills a span with cryptographically strong random bytes.</summary>

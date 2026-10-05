@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 namespace ECommerce.BFF.API.Hubs;
 
 /// <summary>

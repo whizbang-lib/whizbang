@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Generators.Shared.Limits;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators.Limits;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Text.Json;
 using Azure.Messaging.ServiceBus.Administration;
 using TUnit.Assertions;

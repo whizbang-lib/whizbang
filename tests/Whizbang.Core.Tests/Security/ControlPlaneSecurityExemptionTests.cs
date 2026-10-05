@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Linq;
 using TUnit.Core;
 using Whizbang.Core.Commands.System;

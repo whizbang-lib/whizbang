@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using TUnit.Assertions;

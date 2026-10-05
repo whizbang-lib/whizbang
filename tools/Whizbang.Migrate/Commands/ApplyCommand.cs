@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Microsoft.Extensions.FileSystemGlobbing;
 using Whizbang.Migrate.Analysis;
 using Whizbang.Migrate.PackageManagement;

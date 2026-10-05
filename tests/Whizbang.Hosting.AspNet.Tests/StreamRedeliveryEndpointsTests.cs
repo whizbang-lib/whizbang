@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Builder;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Sagas.Helpers;
 using Whizbang.Sagas.Models;

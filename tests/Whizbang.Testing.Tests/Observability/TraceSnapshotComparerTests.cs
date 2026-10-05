@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Diagnostics;
 using Whizbang.Testing.Observability;
 using Whizbang.Testing.Tests.TestSupport;

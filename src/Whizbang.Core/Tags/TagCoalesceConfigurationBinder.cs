@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Microsoft.Extensions.Configuration;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Minting;

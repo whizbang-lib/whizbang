@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #nullable disable
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using OpenTelemetry.Metrics;
 using Whizbang.Core.Observability;
 

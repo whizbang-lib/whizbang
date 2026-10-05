@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Whizbang.Core.Workers;
 

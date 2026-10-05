@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;

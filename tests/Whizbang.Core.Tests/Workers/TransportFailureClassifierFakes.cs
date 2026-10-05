@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 // Lightweight fakes for the production transport-exception namespaces. The
 // TransportFailureClassifier matches by FullName so the namespace MUST be the production
 // one. Keeping these in a brace-scoped namespace lets the test assembly avoid taking

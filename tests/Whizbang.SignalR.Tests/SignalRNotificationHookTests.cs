@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
 using TUnit.Assertions;
