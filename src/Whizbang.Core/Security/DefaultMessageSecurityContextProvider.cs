@@ -38,7 +38,7 @@ public sealed class DefaultMessageSecurityContextProvider(
   Action<ScopeContextEstablished>? onAuditEvent = null) : IMessageSecurityContextProvider {
   private readonly IReadOnlyList<ISecurityContextExtractor> _extractors = [.. extractors.OrderBy(e => e.Priority)];
   private readonly IReadOnlyList<ISecurityContextCallback> _callbacks = [.. callbacks];
-  private readonly MessageSecurityOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly MessageSecurityOptions _options = ArgumentGuard.NotNull(options);
   private readonly Action<ScopeContextEstablished>? _onAuditEvent = onAuditEvent;
 
   /// <inheritdoc />

@@ -20,7 +20,8 @@ public sealed class TagDeclaredPriorityProducerHook : IPriorityProducerHook {
 
   /// <summary>Creates the hook over the host's tag options.</summary>
   public TagDeclaredPriorityProducerHook(TagOptions tagOptions) {
-    _tagOptions = tagOptions ?? throw new ArgumentNullException(nameof(tagOptions));
+    ArgumentNullException.ThrowIfNull(tagOptions);
+    _tagOptions = tagOptions;
     // Lazy and thread-safe: built on first use, after module initializers have populated the tag registries and
     // the host has finished composing its declarations.
     _byTypeName = new(_buildIndex, LazyThreadSafetyMode.ExecutionAndPublication);
@@ -64,7 +65,7 @@ public sealed class TagDeclaredPriorityProducerHook : IPriorityProducerHook {
 /// <docs>fundamentals/messaging/message-priority#declaring-with-tags</docs>
 /// <tests>tests/Whizbang.Core.Tests/Priority/PriorityTagSurfaceTests.cs</tests>
 public sealed class PriorityClassificationReceiveHook(PriorityOptions options) : IPriorityReceiveHook {
-  private readonly PriorityOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly PriorityOptions _options = ArgumentGuard.NotNull(options);
 
   /// <inheritdoc />
   public int Order => 500;

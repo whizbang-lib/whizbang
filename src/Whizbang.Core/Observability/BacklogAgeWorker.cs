@@ -98,9 +98,12 @@ public sealed partial class BacklogAgeWorker : BackgroundService {
     _peeks = [.. peeks];
     _opsRateSources = [.. opsRateSources];
     _options = options.Value;
-    _state = state ?? throw new ArgumentNullException(nameof(state));
-    _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(state);
+    _state = state;
+    ArgumentNullException.ThrowIfNull(metrics);
+    _metrics = metrics;
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     _probeMetrics = probeMetrics;
     _time = timeProvider ?? TimeProvider.System;
     var floor = _options.Interval > TimeSpan.Zero ? _options.Interval : TimeSpan.FromMinutes(1);

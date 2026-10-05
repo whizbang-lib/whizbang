@@ -53,7 +53,8 @@ public sealed class CoalesceGroupResolver {
       TagOptions tagOptions,
       TimeProvider? timeProvider = null,
       Func<IEnumerable<MessageTagRegistration>>? registrationSource = null) {
-    _tagOptions = tagOptions ?? throw new ArgumentNullException(nameof(tagOptions));
+    ArgumentNullException.ThrowIfNull(tagOptions);
+    _tagOptions = tagOptions;
     _timeProvider = timeProvider ?? TimeProvider.System;
     _registrationSource = registrationSource ?? MessageTagRegistry.GetAllTags;
     // Lazy + thread-safe: built on first mint, after module initializers have populated the

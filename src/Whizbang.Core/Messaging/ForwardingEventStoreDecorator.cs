@@ -34,7 +34,7 @@ namespace Whizbang.Core.Messaging;
 /// <param name="inner">The wrapped event store.</param>
 public abstract class ForwardingEventStoreDecorator(IEventStore inner) : IEventStore {
   /// <summary>The wrapped store every non-intercepted member forwards to.</summary>
-  protected IEventStore Inner { get; } = inner ?? throw new ArgumentNullException(nameof(inner));
+  protected IEventStore Inner { get; } = ArgumentGuard.NotNull(inner);
 
   /// <inheritdoc />
   public virtual Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) =>

@@ -22,5 +22,5 @@ public class TopicFilterAttribute(string filter) : Attribute {
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithStringFilter_GeneratesRegistryAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMultipleStringFilters_GeneratesAllMappingsAsync</tests>
-  public string Filter { get; } = filter ?? throw new ArgumentNullException(nameof(filter));
+  public string Filter { get; } = ArgumentGuard.NotNull(filter);
 }

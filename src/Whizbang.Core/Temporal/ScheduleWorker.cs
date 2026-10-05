@@ -37,9 +37,11 @@ public sealed partial class ScheduleWorker : BackgroundService {
     ILoggerFactory loggerFactory,
     ISignalBus signalBus,
     TimeProvider? timeProvider = null) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+    ArgumentNullException.ThrowIfNull(scopeFactory);
+    _scopeFactory = scopeFactory;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     _schemaReadyGate = schemaReadyGate;
     _signalBus = signalBus;
 

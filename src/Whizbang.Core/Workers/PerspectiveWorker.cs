@@ -108,8 +108,8 @@ public partial class PerspectiveWorker(
   private readonly Whizbang.Core.Observability.CompositeMetrics? _compositeMetrics = compositeMetrics;
   private readonly Whizbang.Core.Perspectives.StoredFormFailureRegistry _storedFormFailures =
     storedFormFailures ?? new Whizbang.Core.Perspectives.StoredFormFailureRegistry(timeProvider);
-  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly WorkCompletionMeter? _completionMeter = completionMeter;
   private readonly Whizbang.Core.Messaging.WorkCoordinatorGate? _gate = gate;
   private int _widthClampLogged;
@@ -129,7 +129,7 @@ public partial class PerspectiveWorker(
   /// </summary>
   public Task StartupScanComplete => _startupScanTcs.Task;
   private readonly PerspectiveMetrics? _metrics = metrics;
-  private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
+  private readonly PerspectiveWorkerOptions _options = ArgumentGuard.NotNull(options).Value;
   private readonly Whizbang.Core.Execution.IConcurrencyGovernor _governor =
     governor;
   /// <summary>
@@ -347,7 +347,7 @@ public partial class PerspectiveWorker(
 
   // Two-phase TTL cache to prevent duplicate Apply when SQL re-delivers events during batched completion window
   private readonly ProcessedEventCache _processedEventCache = new(
-    TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.LeaseSeconds),
+    TimeSpan.FromSeconds(ArgumentGuard.NotNull(options).Value.LeaseSeconds),
     observer: processedEventCacheObserver,
     timeProvider: timeProvider
   );

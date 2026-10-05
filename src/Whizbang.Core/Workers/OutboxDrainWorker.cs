@@ -182,12 +182,18 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     [FromKeyedServices(GOVERNOR_KEY)] Whizbang.Core.Execution.IConcurrencyGovernor governor,
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
     Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-    _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
-    _completionChannel = completionChannel ?? throw new ArgumentNullException(nameof(completionChannel));
-    _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
-    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+    ArgumentNullException.ThrowIfNull(scopeFactory);
+    _scopeFactory = scopeFactory;
+    ArgumentNullException.ThrowIfNull(instanceProvider);
+    _instanceProvider = instanceProvider;
+    ArgumentNullException.ThrowIfNull(drainChannel);
+    _drainChannel = drainChannel;
+    ArgumentNullException.ThrowIfNull(completionChannel);
+    _completionChannel = completionChannel;
+    ArgumentNullException.ThrowIfNull(failureChannel);
+    _failureChannel = failureChannel;
+    ArgumentNullException.ThrowIfNull(schemaReadyGate);
+    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     // Turn-key observability: whatever governor is in play — the keyed adaptive default or a host
     // supplied strategy under the same key — is wrapped so its decisions and their inputs reach OpenTelemetry with no
@@ -195,8 +201,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _governor = governorMetrics is null
       ? governor
       : new Whizbang.Core.Execution.ObservedConcurrencyGovernor("outbox-drain", governor, governorMetrics);
-    _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(jsonOptions);
+    _jsonOptions = jsonOptions;
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     _publishStrategy = publishStrategy;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _receptorRegistry = receptorRegistry;

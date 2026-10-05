@@ -17,8 +17,8 @@ namespace Whizbang.Core.Validation;
 /// <param name="options">Whizbang configuration options.</param>
 /// <param name="logger">Logger for reporting violations.</param>
 public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logger) {
-  private readonly WhizbangOptions _options = options ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly WhizbangOptions _options = ArgumentGuard.NotNull(options);
+  private readonly ILogger _logger = ArgumentGuard.NotNull(logger);
 
   /// <summary>
   /// Validates that a TrackedGuid is appropriate for time-sensitive ordering.

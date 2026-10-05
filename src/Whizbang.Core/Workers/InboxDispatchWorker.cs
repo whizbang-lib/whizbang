@@ -120,22 +120,29 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null,
     WorkCompletionMeter? completionMeter = null,
     Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null) {
-    _integrityOptions = (integrityOptions ?? throw new ArgumentNullException(nameof(integrityOptions))).Value;
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-    _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
+    _integrityOptions = ArgumentGuard.NotNull(integrityOptions).Value;
+    ArgumentNullException.ThrowIfNull(scopeFactory);
+    _scopeFactory = scopeFactory;
+    ArgumentNullException.ThrowIfNull(instanceProvider);
+    _instanceProvider = instanceProvider;
+    ArgumentNullException.ThrowIfNull(inboxChannelWriter);
+    _inboxChannelWriter = inboxChannelWriter;
     _completionMeter = completionMeter;
     _compositeMetrics = compositeMetrics;
-    _handlerCommitChannel = handlerCommitChannel ?? throw new ArgumentNullException(nameof(handlerCommitChannel));
-    _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
-    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+    ArgumentNullException.ThrowIfNull(handlerCommitChannel);
+    _handlerCommitChannel = handlerCommitChannel;
+    ArgumentNullException.ThrowIfNull(failureChannel);
+    _failureChannel = failureChannel;
+    ArgumentNullException.ThrowIfNull(schemaReadyGate);
+    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     _leaseHandleOptions = leaseHandleOptions.Value;
     _leaseRenewalOptions = leaseRenewalOptions.Value;
     _leaseRegistry = leaseRegistry;
     _timeProvider = timeProvider ?? TimeProvider.System;
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _receptorRegistry = receptorRegistry;
     _deserializeCache = deserializeCache;

@@ -36,7 +36,7 @@ namespace Whizbang.Core.Perspectives;
 public sealed partial class PerspectiveApplyCoordinator(
     ILogger<PerspectiveApplyCoordinator> logger) : IPerspectiveApplyCoordinator {
   private readonly ILogger<PerspectiveApplyCoordinator> _logger =
-    logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentGuard.NotNull(logger);
   private readonly ConcurrentDictionary<(Guid streamId, string perspectiveName), SemaphoreSlim> _byKey = new();
 
   /// <summary>

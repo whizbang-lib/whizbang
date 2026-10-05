@@ -60,11 +60,11 @@ public partial class ScopedWorkCoordinatorStrategy(
 #pragma warning restore S107
   private const string STRATEGY_NAME = "scoped";
 
-  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+  private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
+  private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly IWorkChannelWriter? _workChannelWriter = workChannelWriter;
   private readonly IInboxChannelWriter _inboxChannelWriter = inboxChannelWriter;
-  private readonly WorkCoordinatorOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly WorkCoordinatorOptions _options = ArgumentGuard.NotNull(options);
   private readonly ILogger<ScopedWorkCoordinatorStrategy> _logger = logger;
   private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
   private readonly WorkCoordinatorMetrics? _metrics = metrics;

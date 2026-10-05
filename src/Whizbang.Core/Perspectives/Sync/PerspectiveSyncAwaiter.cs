@@ -60,10 +60,10 @@ public sealed partial class PerspectiveSyncAwaiter(
   public Guid AwaiterId { get; } = TrackedGuid.New();
 
   private readonly IScopedEventTracker _tracker = tracker;
-  private readonly ISyncEventTracker _syncEventTracker = syncEventTracker ?? throw new ArgumentNullException(nameof(syncEventTracker));
-  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-  private readonly IDebuggerAwareClock _clock = clock ?? throw new ArgumentNullException(nameof(clock));
-  private readonly ILogger<PerspectiveSyncAwaiter> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ISyncEventTracker _syncEventTracker = ArgumentGuard.NotNull(syncEventTracker);
+  private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
+  private readonly IDebuggerAwareClock _clock = ArgumentGuard.NotNull(clock);
+  private readonly ILogger<PerspectiveSyncAwaiter> _logger = ArgumentGuard.NotNull(logger);
   private readonly ILifecycleContextAccessor _lifecycleContextAccessor = lifecycleContextAccessor;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 

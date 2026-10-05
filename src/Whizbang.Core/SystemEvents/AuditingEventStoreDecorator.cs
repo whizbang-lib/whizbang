@@ -56,7 +56,7 @@ public sealed class AuditingEventStoreDecorator(
   public const string AUDIT_TOPIC_DESTINATION = "whizbang.core.auditevents";
 #pragma warning restore CA1707
 
-  private readonly IDeferredOutboxChannel _outboxChannel = outboxChannel ?? throw new ArgumentNullException(nameof(outboxChannel));
+  private readonly IDeferredOutboxChannel _outboxChannel = ArgumentGuard.NotNull(outboxChannel);
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
   private readonly ILogger<AuditingEventStoreDecorator> _logger = logger ?? NullLogger<AuditingEventStoreDecorator>.Instance;

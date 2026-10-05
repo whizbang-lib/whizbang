@@ -68,15 +68,15 @@ public sealed partial class OutboxPublishWorker(
   private const string LIFECYCLE_POST_OUTBOX_ASYNC = "Lifecycle PostOutboxDetached";
   private const string LIFECYCLE_POST_OUTBOX_INLINE = "Lifecycle PostOutboxInline";
 
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly IMessagePublishStrategy _publishStrategy = publishStrategy;
-  private readonly IWorkChannelWriter _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
-  private readonly IOutboxCompletionChannel _outboxCompletionChannel = outboxCompletionChannel ?? throw new ArgumentNullException(nameof(outboxCompletionChannel));
-  private readonly IFailureChannel _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
-  private readonly ILeaseRenewalChannel _leaseRenewalChannel = leaseRenewalChannel ?? throw new ArgumentNullException(nameof(leaseRenewalChannel));
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+  private readonly IWorkChannelWriter _workChannelWriter = ArgumentGuard.NotNull(workChannelWriter);
+  private readonly IOutboxCompletionChannel _outboxCompletionChannel = ArgumentGuard.NotNull(outboxCompletionChannel);
+  private readonly IFailureChannel _failureChannel = ArgumentGuard.NotNull(failureChannel);
+  private readonly ILeaseRenewalChannel _leaseRenewalChannel = ArgumentGuard.NotNull(leaseRenewalChannel);
+  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly OutboxPublishWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<OutboxPublishWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILogger<OutboxPublishWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions> _tracingOptions = tracingOptions;
   private readonly LeaseHandleOptions _leaseHandleOptions = leaseHandleOptions.Value;

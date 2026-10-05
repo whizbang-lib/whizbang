@@ -44,9 +44,9 @@ public partial class ImmediateWorkCoordinatorStrategy(
   Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher {
 #pragma warning restore S107
-  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-  private readonly WorkCoordinatorOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
+  private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
+  private readonly WorkCoordinatorOptions _options = ArgumentGuard.NotNull(options);
   private readonly ILogger<ImmediateWorkCoordinatorStrategy> _logger = logger;
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer = lifecycleMessageDeserializer;

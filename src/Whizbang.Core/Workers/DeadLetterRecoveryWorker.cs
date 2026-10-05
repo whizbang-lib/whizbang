@@ -51,8 +51,8 @@ public partial class DeadLetterRecoveryWorker(
   TimeProvider? timeProvider = null
 ) : BackgroundService {
 #pragma warning restore S107
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
+  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly DeadLetterRecoveryOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   // #684: the disabled-subsystem discard must run in THIS worker too — quarantine policies
   // like PoisonRedeliveryLoop (MaxAttempts=0) hold before any dispatch, so the inbox-gate
@@ -60,9 +60,9 @@ public partial class DeadLetterRecoveryWorker(
   // param would be silently null at hand-construction sites and the discard absent in
   // production while every unit test passes.
   private readonly Whizbang.Core.Messaging.StreamIntegrityOptions _integrityOptions =
-    (integrityOptions ?? throw new ArgumentNullException(nameof(integrityOptions))).Value;
-  private readonly IGenerationProvider _generationProvider = generationProvider ?? throw new ArgumentNullException(nameof(generationProvider));
-  private readonly ILogger<DeadLetterRecoveryWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentGuard.NotNull(integrityOptions).Value;
+  private readonly IGenerationProvider _generationProvider = ArgumentGuard.NotNull(generationProvider);
+  private readonly ILogger<DeadLetterRecoveryWorker> _logger = ArgumentGuard.NotNull(logger);
   // Optional: an unwired host keeps the pre-arbitration behavior rather than losing recovery.
   private readonly HousekeepingCoordinator? _housekeeping = housekeeping;
   private readonly Whizbang.Core.Observability.HousekeepingMetrics? _metricsRollup = metricsRollup;

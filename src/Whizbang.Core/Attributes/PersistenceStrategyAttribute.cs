@@ -90,6 +90,7 @@ public sealed class PersistenceStrategyAttribute : Attribute {
   /// </code>
   /// </example>
   public PersistenceStrategyAttribute(string strategyName) {
-    StrategyName = strategyName ?? throw new ArgumentNullException(nameof(strategyName));
+    ArgumentNullException.ThrowIfNull(strategyName);
+    StrategyName = strategyName;
   }
 }

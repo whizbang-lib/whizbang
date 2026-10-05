@@ -51,7 +51,7 @@ public partial class ServiceBusConsumerWorker(
   ServiceBusConsumerOptions? options = null,
   MessageProcessingOptions? messageProcessingOptions = null) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
 #pragma warning restore S107
-  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly ITransport _transport = ArgumentGuard.NotNull(transport);
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
   private readonly TaskCompletionSource _subscriptionsReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -70,10 +70,10 @@ public partial class ServiceBusConsumerWorker(
     => SubscriptionsReady.WaitAsync(cancellationToken);
   private readonly IEventMarkerResolver _eventMarkerResolver = eventMarkerResolver;
   private readonly IEphemeralModeResolver _ephemeralModeResolver = ephemeralModeResolver;
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly ConcurrentBag<Task> _detachedTasks = [];
-  private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
+  private readonly ILogger<ServiceBusConsumerWorker> _logger = ArgumentGuard.NotNull(logger);
+  private readonly OrderedStreamProcessor _orderedProcessor = ArgumentGuard.NotNull(orderedProcessor);
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IEnvelopeSerializer _envelopeSerializer = envelopeSerializer;
   private readonly IReceptorRegistryQuery _receptorRegistry = receptorRegistry;

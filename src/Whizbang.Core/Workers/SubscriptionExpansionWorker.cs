@@ -31,10 +31,10 @@ public sealed partial class SubscriptionExpansionWorker(
   ISchemaReadyGate schemaReadyGate,
   IOptions<StreamIntegrityOptions> options,
   ILogger<SubscriptionExpansionWorker> logger) : BackgroundService {
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
+  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<SubscriptionExpansionWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILogger<SubscriptionExpansionWorker> _logger = ArgumentGuard.NotNull(logger);
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {

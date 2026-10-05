@@ -43,10 +43,10 @@ public sealed class SyncAwareLensQuery<TModel>(
     IPerspectiveSyncAwaiter awaiter,
     Type perspectiveType,
     PerspectiveSyncOptions options) : ISyncAwareLensQuery<TModel> where TModel : class {
-  private readonly ILensQuery<TModel> _innerQuery = innerQuery ?? throw new ArgumentNullException(nameof(innerQuery));
-  private readonly IPerspectiveSyncAwaiter _awaiter = awaiter ?? throw new ArgumentNullException(nameof(awaiter));
-  private readonly Type _perspectiveType = perspectiveType ?? throw new ArgumentNullException(nameof(perspectiveType));
-  private readonly PerspectiveSyncOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly ILensQuery<TModel> _innerQuery = ArgumentGuard.NotNull(innerQuery);
+  private readonly IPerspectiveSyncAwaiter _awaiter = ArgumentGuard.NotNull(awaiter);
+  private readonly Type _perspectiveType = ArgumentGuard.NotNull(perspectiveType);
+  private readonly PerspectiveSyncOptions _options = ArgumentGuard.NotNull(options);
 
   /// <inheritdoc />
   public IQueryable<PerspectiveRow<TModel>> Query => _innerQuery.DefaultScope.Query;

@@ -17,7 +17,7 @@ namespace Whizbang.Core.Observability;
 /// </summary>
 /// <remarks>Constructor — taking the diagnostics dependency triggers its construction.</remarks>
 public sealed class UnobservedExceptionDiagnosticsWarmUp(UnobservedExceptionDiagnostics diagnostics) : IHostedService {
-  private readonly UnobservedExceptionDiagnostics _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
+  private readonly UnobservedExceptionDiagnostics _diagnostics = ArgumentGuard.NotNull(diagnostics);
 
   /// <inheritdoc/>
   public Task StartAsync(CancellationToken cancellationToken) {
@@ -71,7 +71,8 @@ public sealed class UnobservedExceptionDiagnostics : IDisposable {
   public UnobservedExceptionDiagnostics(
       ILogger<UnobservedExceptionDiagnostics> logger,
       IOptions<UnobservedExceptionDiagnosticsOptions> options) {
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
     _unobservedHandler = (sender, args) => _onUnobservedTaskException(args);

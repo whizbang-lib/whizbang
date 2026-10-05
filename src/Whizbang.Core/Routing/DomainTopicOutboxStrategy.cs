@@ -26,7 +26,7 @@ namespace Whizbang.Core.Routing;
 /// </remarks>
 /// <param name="topicResolver">Strategy for resolving topic from message type.</param>
 public sealed class DomainTopicOutboxStrategy(ITopicRoutingStrategy topicResolver) : IOutboxRoutingStrategy {
-  private readonly ITopicRoutingStrategy _topicResolver = topicResolver ?? throw new ArgumentNullException(nameof(topicResolver));
+  private readonly ITopicRoutingStrategy _topicResolver = ArgumentGuard.NotNull(topicResolver);
 
   /// <summary>
   /// Creates a domain topic outbox strategy with default namespace routing.

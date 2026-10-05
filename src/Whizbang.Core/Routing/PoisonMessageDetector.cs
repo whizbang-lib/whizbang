@@ -196,7 +196,8 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
     ArgumentNullException.ThrowIfNull(meter);
     _options = options.Value ?? throw new ArgumentNullException(nameof(options));
     _ageThreshold = _options.EffectiveAgeThreshold;
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     _capabilityState = capabilityState;
     _quarantinedCounter = meter.CreatePassiveCounter<long>(
       COUNTER_NAME,

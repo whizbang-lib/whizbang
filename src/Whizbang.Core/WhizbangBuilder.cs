@@ -29,5 +29,5 @@ public sealed class WhizbangBuilder(IServiceCollection services) {
   /// <summary>
   /// Gets the service collection for registering services.
   /// </summary>
-  public IServiceCollection Services { get; } = services ?? throw new ArgumentNullException(nameof(services));
+  public IServiceCollection Services { get; } = ArgumentGuard.NotNull(services);
 }

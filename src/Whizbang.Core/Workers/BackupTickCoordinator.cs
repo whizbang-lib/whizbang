@@ -49,10 +49,10 @@ public sealed partial class BackupTickCoordinator(
 ) : BackgroundService {
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
 
-  private readonly IIdleActivityTracker _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
-  private readonly IBackupTickRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+  private readonly IIdleActivityTracker _tracker = ArgumentGuard.NotNull(tracker);
+  private readonly IBackupTickRegistry _registry = ArgumentGuard.NotNull(registry);
   private readonly BackupTickCoordinatorOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<BackupTickCoordinator> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILogger<BackupTickCoordinator> _logger = ArgumentGuard.NotNull(logger);
   private readonly INotifySignalingGate _gate = gate;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
