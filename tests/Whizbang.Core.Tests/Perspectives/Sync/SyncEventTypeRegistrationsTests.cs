@@ -8,7 +8,13 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// Tests for SyncEventTypeRegistrations static registration system.
 /// These tests must run sequentially because they modify shared static state.
 /// </summary>
-[NotInParallel("SyncEventTypeRegistrations")]
+/// <remarks>
+/// The key must be "SyncTests", the one every test class that clears or registers into
+/// <see cref="SyncEventTypeRegistrations"/> uses. TUnit only serializes tests that share a key: under a key
+/// of its own this class ran alongside those, and their Clear() emptied this class's registrations
+/// between two Register calls.
+/// </remarks>
+[NotInParallel("SyncTests")]
 public class SyncEventTypeRegistrationsTests {
   [Before(Test)]
   public void Setup() {
