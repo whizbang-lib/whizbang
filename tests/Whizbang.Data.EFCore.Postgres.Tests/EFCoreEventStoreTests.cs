@@ -39,7 +39,7 @@ public record OrderShippedEvent : IEvent {
 /// Uses PostgreSQL Testcontainers for real database testing with JsonDocument support.
 /// Target: 100% branch coverage.
 /// </summary>
-[Category("Shard3")]
+[Category("Shard5")]
 public class EFCoreEventStoreTests : EFCoreTestBase {
   [Test]
   public async Task AppendAsync_WithValidEnvelope_AppendsEventToStreamAsync() {

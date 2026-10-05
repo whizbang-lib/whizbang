@@ -30,7 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// <docs>operations/diagnostics/whiz302</docs>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
-[Category("Shard1")]
+[Category("Shard5")]
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "These locals are captured into an expression tree on purpose. A const local is inlined by the compiler as a literal, which turns the parameterized filter under test into a constant one: in the matrix that collapses every /param row onto its /const twin, and elsewhere it stops exercising the captured-parameter path altogether.")]
 public class GinContainmentIntegrationTests : IAsyncDisposable {

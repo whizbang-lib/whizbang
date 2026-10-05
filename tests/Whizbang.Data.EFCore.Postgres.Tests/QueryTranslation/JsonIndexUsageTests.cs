@@ -43,7 +43,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
-[Category("Shard1")]
+[Category("Shard5")]
 public class JsonIndexUsageTests : IAsyncDisposable {
   private const string TABLE = "wh_per_json_index";
 

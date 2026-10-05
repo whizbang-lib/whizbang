@@ -20,6 +20,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | OSSF Scorecard | `security-scorecard.yml` | schedule, dispatch | Repository security posture |
 | Mutation Testing | `mutation.yml` | dispatch | Stryker mutation runs (see `ai-docs/mutation-testing.md`) |
 | Analyzer Sweep | `analyzer-sweep.yml` | dispatch | Runs every analyzer across the solution |
+| Test Shard Report | `test-shard-report.yml` | schedule (monthly), dispatch | Measures every test suite and the EFCore shards, and posts the report on the tracking issue (`ai-docs/test-sharding.md`) |
 | Cache Cleanup | `cache-cleanup-scheduled.yml` | schedule, dispatch | Prunes stale Actions caches |
 | Notify PR Created / Merged | `notify-pr-created.yml`, `notify-pr-merged.yml` | PRs | Push notifications |
 

@@ -28,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/090_IntegrityLedger.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/094_IntegrityLedgerBatch.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/097_PacedRepairDrain.sql</code-under-test>
-[Category("Shard3")]
+[Category("Shard5")]
 public class IntegrityLedgerSqlTests : EFCoreTestBase {
 
   private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
