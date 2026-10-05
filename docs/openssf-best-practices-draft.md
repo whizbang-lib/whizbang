@@ -259,9 +259,8 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 | 4 | `assurance_case`, `documentation_security` | MUST | Add a security assurance case: threat model, trust boundaries, secure design principles applied, common weaknesses countered, and what users can and cannot expect. | repo change |
 | 5 | `signed_releases` | MUST | Add "Verifying a release" to `SECURITY.md` for users: where the Sigstore bundle and provenance are, and `gh attestation verify`. Today it is only in the maintainers' `docs/RELEASING.md`. | repo change |
 | 6 | `access_continuity` | MUST | A second trusted person able to create and close issues, merge, and release within a week: org owner on GitHub, co-owner on the nuget.org account, access to the docs domain, recorded in `GOVERNANCE.md`. Today the organization has one member and one admin. | owner only |
-| 7 | `dco` | SHOULD | Either adopt the DCO (`Signed-off-by` on commits, checked in CI) or leave Unmet with a justification. | owner decision |
-| 8 | `bus_factor` | SHOULD | Unmet until a second regular contributor exists; item 6 is the MUST that matters. | Unmet, justified |
-| 9 | `version_tags_signed` | SUGGESTED | Release tags are created unsigned by the release workflow; leave Unmet or sign tags in the workflow. | optional |
+| 7 | `bus_factor` | SHOULD | Unmet until a second regular contributor exists; item 6 is the MUST that matters. | Unmet, justified |
+| 8 | `version_tags_signed` | SUGGESTED | Release tags are created unsigned by the release workflow; leave Unmet or sign tags in the workflow. | optional |
 
 ## Basics
 
@@ -269,7 +268,7 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 |---|---|---|
 | `achieve_passing` | Met | Passing badge earned. <https://www.bestpractices.dev/projects/15090> |
 | `contribution_requirements` | Met | CONTRIBUTING lists the standards a contribution must meet and links the detailed guides. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#standards-and-guidelines> |
-| `dco` | **Gap** (SHOULD) | No developer certificate of origin or CLA today. See item 7. |
+| `dco` | Met | Every commit must carry a Developer Certificate of Origin sign-off from its author, and a required check fails any pull request commit without one. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#developer-certificate-of-origin> |
 | `governance` | **Gap** | No governance document. See item 2. |
 | `code_of_conduct` | **Gap** | CONTRIBUTING refers to the Contributor Covenant and links `CODE_OF_CONDUCT.md`, which is not in the repository. See item 1. |
 | `roles_responsibilities` | **Gap** | Roles are not documented. See item 2. |
@@ -336,7 +335,7 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 | `crypto_certificate_verification` | Met | Certificate verification is the .NET default and no shipped package overrides it. |
 | `crypto_verification_private` | Met | Same: verification happens before any data is sent, and nothing disables it. |
 | `signed_releases` | **Gap** | Releases are signed (Sigstore bundle and SLSA provenance on every stable release, plus nuget.org's repository signature), but the user-facing verification steps are missing. See item 5. |
-| `version_tags_signed` | Unmet (SUGGESTED) | Tags are created by the release workflow and are not signed. See item 9. |
+| `version_tags_signed` | Unmet (SUGGESTED) | Tags are created by the release workflow and are not signed. See item 8. |
 | `input_validation` | Met | Incoming messages deserialize only into types registered at compile time (an allowlist); unknown or oversized payloads are rejected or dead-lettered, and public APIs validate their arguments. |
 | `hardening` | Met | Native AOT and trimming (no reflection), nullable reference types, warnings as errors, authenticated encryption, and payload size limits. |
 | `assurance_case` | **Gap** | See item 4. |
