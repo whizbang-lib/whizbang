@@ -206,7 +206,8 @@ complementing line coverage. Run via `/whizbang mutate` or scripts/mutation/run-
 **Why it matters**: the attribute is member-level, so applying it to a method that
 has any tested behavior suppresses real coverage. The target is a **literal 100%** of
 new code — lines *and* branches, since a fully executed line can still carry a condition
-nobody took, and the uncovered-new-lines gate counts only the lines. The slack is not in
+nobody took; the PR gate counts uncovered new lines and uncovered new hand-written branches
+(compiler-generated ones are excluded, and the file defines which is which). The slack is not in
 the number; it is in the rare, justified, member-level exclusion, and the file gives the
 decision procedure and worked examples.
 
