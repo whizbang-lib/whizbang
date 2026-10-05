@@ -102,14 +102,27 @@ public class RebuildPerspectiveCommandReceptorCoverageTests {
   private sealed class RecordingRebuilder : IPerspectiveRebuilder {
     public IReadOnlyList<Guid>? LastStreamIds { get; private set; }
 
+    /// <summary>The origin the receptor passed down, so a dropped origin fails rather than passing quietly.</summary>
+    public RebuildOrigin? LastOrigin { get; private set; }
+
     public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct = default) {
       LastStreamIds = [.. streamIds];
       return Task.FromResult(new RebuildResult(perspectiveName, LastStreamIds.Count, 0, TimeSpan.Zero, Success: true, Error: null));
     }
 
+    public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds,
+        RebuildOrigin origin, CancellationToken ct = default) {
+      LastOrigin = origin;
+      return RebuildStreamsAsync(perspectiveName, streamIds, ct);
+    }
+
     public Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct = default) =>
       throw new NotSupportedException("Not exercised — this test drives the ExcludeStreamIds path.");
+    public Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, RebuildOrigin origin, CancellationToken ct = default) =>
+      throw new NotSupportedException("Not exercised — this test drives the ExcludeStreamIds path.");
     public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) =>
+      throw new NotSupportedException("Not exercised — a stream filter is always present in this test.");
+    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, RebuildOrigin origin, CancellationToken ct = default) =>
       throw new NotSupportedException("Not exercised — a stream filter is always present in this test.");
     public Task<RebuildStatus?> GetRebuildStatusAsync(string perspectiveName, CancellationToken ct = default) =>
       throw new NotSupportedException("Not exercised by this receptor.");

@@ -91,6 +91,37 @@ docs(readme): Update installation instructions
 test(core): Add tests for message validation
 ```
 
+### Developer Certificate of Origin
+
+Every commit must be signed off. A sign-off certifies the
+[Developer Certificate of Origin 1.1](https://developercertificate.org): that you wrote the change or
+otherwise have the right to submit it under the project's MIT license. It is one line at the end of
+the commit message, with the same name and email as the commit's author:
+
+```
+Signed-off-by: Jane Doe <jane@example.com>
+```
+
+`git commit -s` adds it from your `user.name` and `user.email`. To do it automatically:
+
+- **VS Code**: set `"git.alwaysSignOff": true`.
+- **JetBrains IDEs**: tick **Sign-off commit** in the commit dialog (it is remembered).
+- **Command line**: `git config --global alias.cs "commit -s"`, then commit with `git cs`.
+- **GitHub web editor**: sign-off is required there by a repository setting, so the web UI adds it.
+
+The **Gate · DCO sign-off** check fails a pull request with any commit that is not signed off by its
+author, and names each one. To fix it, sign off and force-push:
+
+```bash
+git rebase --signoff origin/develop   # every commit on the branch
+git commit --amend --signoff --no-edit  # only the last commit
+git push --force-with-lease
+```
+
+Merge commits, commits by bots (Dependabot, the release automation) and commits authored before the
+DCO was adopted (2026-10-06) are not checked. Commits written with an AI assistant are signed off by
+the person submitting them, who takes responsibility for the contribution.
+
 ## Standards and Guidelines
 
 ### Code Standards
@@ -207,6 +238,7 @@ git push origin feature/my-feature
 - ✅ No compiler warnings
 - ✅ No AOT warnings in production code
 - ✅ Commit messages follow Conventional Commits
+- ✅ Every commit is signed off ([DCO](#developer-certificate-of-origin))
 
 ### Code Review Process
 

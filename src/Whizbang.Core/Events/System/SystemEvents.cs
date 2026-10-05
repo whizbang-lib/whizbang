@@ -13,6 +13,8 @@ namespace Whizbang.Core.Events.System;
 /// <param name="Mode">The rebuild strategy being used.</param>
 /// <param name="TotalStreams">Total number of event streams to process.</param>
 /// <param name="StartedAt">When the rebuild operation started.</param>
+/// <param name="Origin">Who asked for the rebuild and under what request id. Defaults to an empty origin for
+/// an event written before provenance was recorded.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveRebuildStarted_Properties_RoundTripCorrectlyAsync</tests>
 [PinnedId("47c7c500-b017-47dc-a523-d69e59a6b6d8")]
@@ -21,7 +23,8 @@ public record PerspectiveRebuildStarted(
     string PerspectiveName,
     RebuildMode Mode,
     int TotalStreams,
-    DateTimeOffset StartedAt
+    DateTimeOffset StartedAt,
+    Whizbang.Core.Perspectives.RebuildOrigin? Origin = null
 ) : IEvent;
 
 /// <summary>
@@ -44,7 +47,8 @@ public record PerspectiveRebuildProgress(
     int ProcessedStreams,
     int TotalStreams,
     int EventsReplayed,
-    DateTimeOffset StartedAt
+    DateTimeOffset StartedAt,
+    Whizbang.Core.Perspectives.RebuildOrigin? Origin = null
 ) : IEvent;
 
 /// <summary>
@@ -56,6 +60,12 @@ public record PerspectiveRebuildProgress(
 /// <param name="StreamsProcessed">Total number of streams processed.</param>
 /// <param name="EventsReplayed">Total number of events replayed.</param>
 /// <param name="Duration">Wall-clock time for the rebuild.</param>
+/// <param name="Origin">Who asked for the rebuild and under what request id. Defaults to an empty origin for
+/// an event written before provenance was recorded.</param>
+/// <param name="RowDigestBefore">Digest of the targeted rows before the replay, or null when not computed.
+/// Equal to <paramref name="RowDigestAfter"/> means the rebuild ran and changed nothing, which is a different
+/// outcome from never having run at all.</param>
+/// <param name="RowDigestAfter">Digest of the targeted rows after the replay, or null when not computed.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveRebuildCompleted_Properties_RoundTripCorrectlyAsync</tests>
 [PinnedId("5e3fb66f-286a-406f-9cf0-23e77bd96026")]
@@ -65,7 +75,10 @@ public record PerspectiveRebuildCompleted(
     RebuildMode Mode,
     int StreamsProcessed,
     int EventsReplayed,
-    TimeSpan Duration
+    TimeSpan Duration,
+    Whizbang.Core.Perspectives.RebuildOrigin? Origin = null,
+    string? RowDigestBefore = null,
+    string? RowDigestAfter = null
 ) : IEvent;
 
 /// <summary>
@@ -77,6 +90,8 @@ public record PerspectiveRebuildCompleted(
 /// <param name="Error">Error message describing the failure.</param>
 /// <param name="StreamsProcessedBeforeFailure">Number of streams successfully processed before the failure.</param>
 /// <param name="Duration">Wall-clock time before the failure occurred.</param>
+/// <param name="Origin">Who asked for the rebuild and under what request id. Defaults to an empty origin for
+/// an event written before provenance was recorded.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveRebuildFailed_Properties_RoundTripCorrectlyAsync</tests>
 [PinnedId("65600841-5460-4feb-879f-b6b527331184")]
@@ -86,7 +101,8 @@ public record PerspectiveRebuildFailed(
     RebuildMode Mode,
     string Error,
     int StreamsProcessedBeforeFailure,
-    TimeSpan Duration
+    TimeSpan Duration,
+    Whizbang.Core.Perspectives.RebuildOrigin? Origin = null
 ) : IEvent;
 
 // --- Perspective rewind events ---

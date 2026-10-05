@@ -31,8 +31,8 @@ Base URLs used below:
 | CPE name | none |
 | Other comments | Pre-1.0. Stable releases ship as 0.x.0 on nuget.org under the SoftwareExtravaganza.Whizbang.* package IDs, with alpha builds from develop in between. |
 
-Where the site auto-filled a criterion's justification and the auto-filled text was kept, the row
-below says so and records that text.
+Every Justification cell below is the text entered on the site, word for word (for
+`repo_public`, `repo_track` and `repo_distributed`, the site's own auto-filled text was kept).
 
 ## Fixed before submitting
 
@@ -101,10 +101,10 @@ human review.
 
 | Criterion | Answer | Justification |
 |---|---|---|
-| `repo_public` | Met | Auto-filled text kept: "Repository on GitHub, which provides public git repositories with URLs." |
-| `repo_track` | Met | Auto-filled text kept: "Repository on GitHub, which uses git. git can track the changes, who made them, and when they were made." |
+| `repo_public` | Met | Repository on GitHub, which provides public git repositories with URLs. |
+| `repo_track` | Met | Repository on GitHub, which uses git. git can track the changes, who made them, and when they were made. |
 | `repo_interim` | Met | Interim work is public: `develop` carries every change between releases, and each merge publishes an alpha package. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/RELEASING.md> |
-| `repo_distributed` | Met | Auto-filled text kept: "Repository on GitHub, which uses git. git is distributed." |
+| `repo_distributed` | Met | Repository on GitHub, which uses git. git is distributed. |
 
 ### Unique version numbering
 
@@ -238,3 +238,106 @@ human review.
 | `dynamic_analysis_unsafe` | N/A | The software is written in C#, a memory-safe language. |
 | `dynamic_analysis_enable_assertions` | Met | Runtime checks are always on, not compiled out: argument guards and invariant exceptions run in every build, and the property tests assert invariants directly on generated inputs. |
 | `dynamic_analysis_fixed` | Met | A failing property or mutation test blocks the pull request, so anything dynamic analysis finds is fixed before merge; it has found no vulnerabilities. |
+
+---
+
+# Silver level
+
+The silver criteria (<https://www.bestpractices.dev/criteria/1>), in the order of the silver form
+(project 15090, level 1). Silver needs passing plus every silver MUST; a SHOULD or SUGGESTED may be
+Unmet with a justification. Assessed against the repository on 2026-10-04.
+
+**Status**: every MUST is Met except `access_continuity`, which needs the owner (see below). The other rows can be entered today.
+
+## Silver: what is left
+
+| Criterion | Kind | What closes it | Who |
+|---|---|---|---|
+| `access_continuity` | MUST | A second trusted person able to create and close issues, merge, and release within a week: owner on the GitHub organization, co-owner on the nuget.org packages, access to the docs domain, named in `GOVERNANCE.md` (section Continuity). Today the organization has one member and one admin. | owner only |
+| `bus_factor` | SHOULD | Unmet until a second regular contributor exists. | Unmet, justified |
+| `version_tags_signed` | SUGGESTED | Release tags are created unsigned by the release workflow; leave Unmet or sign tags in the workflow. | optional |
+
+## Basics
+
+| Criterion | Answer | Justification |
+|---|---|---|
+| `achieve_passing` | Met | Passing badge earned. <https://www.bestpractices.dev/projects/15090> |
+| `contribution_requirements` | Met | CONTRIBUTING lists the standards a contribution must meet and links the detailed guides. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#standards-and-guidelines> |
+| `dco` | Met | Every commit must carry a Developer Certificate of Origin sign-off from its author, and a required check fails any pull request commit without one. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#developer-certificate-of-origin> |
+| `governance` | Met | A maintainer-led model; the governance document says where each kind of decision is made and who makes it. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md> |
+| `code_of_conduct` | Met | The Contributor Covenant 2.1 in the standard location, with a private reporting address. <https://github.com/whizbang-lib/whizbang/blob/develop/CODE_OF_CONDUCT.md> |
+| `roles_responsibilities` | Met | The governance document lists each role (maintainer, release manager, security contact, conduct enforcement, contributor), its responsibilities and who holds it. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#roles> |
+| `access_continuity` | Unmet | Unmet for now. One maintainer currently holds the GitHub organization, the nuget.org packages and the docs domain. The governance document defines what a backup maintainer must hold to keep the project running (owner access to the GitHub organization, co-owner access on nuget.org, and the docs domain) and will name them once designated. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#continuity> |
+| `bus_factor` | Unmet | One maintainer does most of the work today, so the bus factor is 1. The governance document describes how a regular contributor takes on maintainer responsibilities. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#roles> |
+| `documentation_roadmap` | Met | The roadmap covers the next twelve months: what is planned toward 1.0 and after it, and what is not planned. <https://github.com/whizbang-lib/whizbang/blob/develop/ROADMAP.md> |
+| `documentation_architecture` | Met | The introduction describes the architecture (dispatcher, receptors, perspectives, lenses, and how the packages fit together), and each fundamentals page documents its part. <https://whizba.ng/docs/getting-started/introduction> |
+| `documentation_security` | Met | The security assurance case ends with what an application can and cannot expect from the library. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md#what-you-can-and-cannot-expect> |
+| `documentation_quick_start` | Met | Quick start guide. <https://whizba.ng/docs/getting-started/quick-start> |
+| `documentation_current` | Met | Public APIs link to their docs pages and docs pages to their tests, the links are validated, and a pull request that changes a public API updates its docs in the same change. Known doc defects are tracked as issues and fixed like code. <https://github.com/whizbang-lib/whizbang/blob/develop/ai-docs/documentation-maintenance.md> |
+| `documentation_achievements` | Met | The README shows and links the OpenSSF Best Practices and OpenSSF Scorecard badges. <https://github.com/whizbang-lib/whizbang#readme> |
+| `accessibility_best_practices` | Met | The docs site is structured with headings, every image has alt text, interactive components carry ARIA attributes, and it supports light and dark themes; the library itself has no user interface. <https://whizba.ng> |
+| `internationalization` | N/A | The library produces no text for end users: its output is data, logs and diagnostics for developers and operators. |
+| `sites_password_security` | N/A | The project sites (GitHub, nuget.org, the static docs site) do not store passwords of their own; authentication is GitHub's and nuget.org's. |
+
+## Change Control
+
+| Criterion | Answer | Justification |
+|---|---|---|
+| `maintenance_or_update` | Met | The upgrade path is a package version bump: each release lists its changes, and schema changes are applied automatically by the framework's migrations at startup. <https://github.com/whizbang-lib/whizbang/releases>, <https://whizba.ng/docs/data/schema-migration> |
+
+## Reporting
+
+| Criterion | Answer | Justification |
+|---|---|---|
+| `report_tracker` | Met | GitHub issues. <https://github.com/whizbang-lib/whizbang/issues> |
+| `vulnerability_report_credit` | N/A | No vulnerability reports were resolved in the last twelve months. |
+| `vulnerability_response_process` | Met | `SECURITY.md` documents the process: private report, response within 48 hours, confirm and scope, audit for similar problems, fix, release, and credit the reporter. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md> |
+
+## Quality
+
+| Criterion | Answer | Justification |
+|---|---|---|
+| `coding_standards` | Met | The C# style guide is `ai-docs/code-standards.md` together with `.editorconfig`; CONTRIBUTING requires contributions to follow it. <https://github.com/whizbang-lib/whizbang/blob/develop/ai-docs/code-standards.md> |
+| `coding_standards_enforced` | Met | Style is enforced in the build (`EnforceCodeStyleInBuild`, analyzers as errors) and by a CI job that fails on any `dotnet format` change. |
+| `build_standard_variables` | N/A | No native binaries are built; the output is managed .NET assemblies. |
+| `build_preserve_debug` | Met | Every package ships portable symbols in a `.snupkg` with embedded sources. |
+| `build_non_recursive` | Met | MSBuild builds the solution from its project reference graph, not by recursing into directories. |
+| `build_repeatable` | Met | Builds are deterministic, and CI proves it: the release path rebuilds the tested commit and fails if the binaries' hashes differ from the tested build. |
+| `installation_common` | Met | Installed and removed with NuGet (`dotnet add package` / `dotnet remove package`). |
+| `installation_standard_variables` | Met | NuGet decides where packages are written and honors its standard settings (`NUGET_PACKAGES`, `nuget.config`). |
+| `installation_development_quick` | Met | Clone, `dotnet build`, and `pwsh scripts/Run-Tests.ps1`; integration suites start their databases and brokers in containers. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#setting-up-your-development-environment> |
+| `external_dependencies` | Met | Every dependency and version is listed in `Directory.Packages.props`, with resolved versions and hashes in committed `packages.lock.json` files. <https://github.com/whizbang-lib/whizbang/blob/develop/Directory.Packages.props> |
+| `dependency_monitoring` | Met | Dependabot and a weekly OSV scan check dependencies for known vulnerabilities. <https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml> |
+| `updateable_reused_components` | Met | All third-party code comes in as NuGet packages managed centrally, so updating one is a one-line change; nothing is vendored. |
+| `interfaces_current` | Met | Obsolete-API warnings are build errors (`TreatWarningsAsErrors`), so deprecated APIs cannot be introduced. |
+| `automated_integration_testing` | Met | The full test matrix runs on every pull request and in the merge queue, and reports success or failure per suite. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
+| `regression_tests_added50` | Met | 114 of the 137 bug-fix merges in the six months to 2026-10-04 added or changed tests (83%); the TDD policy requires a failing test before a fix. |
+| `test_statement_coverage80` | Met | Line coverage is 100% on SonarCloud. <https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang> |
+| `test_policy_mandated` | Met | The written policy is strict TDD: tests first, and every added library line covered. <https://github.com/whizbang-lib/whizbang/blob/develop/ai-docs/tdd-strict.md> |
+| `tests_documented_added` | Met | CONTRIBUTING's pull request process says to write tests and the requirements include coverage of new code. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#pull-request-process> |
+| `warnings_strict` | Met | Warnings are errors, analysis level is `latest-recommended`, and Roslynator and SonarAnalyzer rules run in every project. <https://github.com/whizbang-lib/whizbang/blob/develop/Directory.Build.props> |
+
+## Security
+
+| Criterion | Answer | Justification |
+|---|---|---|
+| `implement_secure_design` | Met | Least privilege (read-only workflow tokens, writes per job), fail-safe defaults (authenticated encryption that binds key and cipher identity; tenant scope enforced at the query layer), and complete mediation of message types through a compile-time registry. |
+| `crypto_weaknesses` | Met | Security relies only on AES-256-GCM; no default mechanism depends on a weak algorithm or mode. |
+| `crypto_algorithm_agility` | Met | Message-body encryption is pluggable: the cipher is registered by name and recorded on every sealed body, so a deployment can switch ciphers and still read older bodies. |
+| `crypto_credential_agility` | Met | Keys and connection strings come from the host's configuration (environment, secret store, key vault), never from code, and are replaced without recompiling; key rotation keeps the previous key for reading. <https://whizba.ng/docs/fundamentals/offloads/message-body-store> |
+| `crypto_used_network` | Met | The library has no network protocol of its own; it talks to databases and brokers through their standard clients, which use TLS as the connection string and endpoint require (Azure Service Bus is TLS only). |
+| `crypto_tls12` | Met | TLS comes from the .NET runtime, which negotiates TLS 1.2 or later. |
+| `crypto_certificate_verification` | Met | Certificate verification is the .NET default and no shipped package overrides it. |
+| `crypto_verification_private` | Met | Same: verification happens before any data is sent, and nothing disables it. |
+| `signed_releases` | Met | Every stable release is signed keylessly with Sigstore by the release workflow (no private key exists on any distribution site), and SECURITY.md explains how to verify a GitHub release asset and a nuget.org package. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md#verifying-a-release> |
+| `version_tags_signed` | Unmet | Release tags are created by the automated release workflow and are not signed. The releases themselves are signed: every stable release carries a Sigstore-signed provenance statement covering each package. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md#verifying-a-release> |
+| `input_validation` | Met | Incoming messages deserialize only through JSON metadata registered at compile time (an allowlist); a type with no registered metadata is never deserialized, payload size is limited, and public APIs validate their arguments. |
+| `hardening` | Met | Native AOT and trimming (no reflection), nullable reference types, warnings as errors, authenticated encryption, and payload size limits. |
+| `assurance_case` | Met | Threat model, trust boundaries, secure design principles applied, and the common weaknesses countered. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md> |
+
+## Analysis
+
+| Criterion | Answer | Justification |
+|---|---|---|
+| `static_analysis_common_vulnerabilities` | Met | CodeQL's C# security queries and SonarCloud's vulnerability rules run on every pull request. |
+| `dynamic_analysis_unsafe` | N/A | The software is written in C#, a memory-safe language. |
