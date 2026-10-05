@@ -247,20 +247,15 @@ The silver criteria (<https://www.bestpractices.dev/criteria/1>), in the order o
 (project 15090, level 1). Silver needs passing plus every silver MUST; a SHOULD or SUGGESTED may be
 Unmet with a justification. Assessed against the repository on 2026-10-04.
 
-**Status**: not started. The rows marked **Gap** are the work; everything else can be entered today.
+**Status**: every MUST is Met except `access_continuity`, which needs the owner (see below). The other rows can be entered today.
 
 ## Silver: what is left
 
-| # | Criterion | Kind | What closes it | Who |
-|---|---|---|---|---|
-| 1 | `code_of_conduct` | MUST | Add `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1). CONTRIBUTING already links to that file, which does not exist yet. | repo change |
-| 2 | `governance`, `roles_responsibilities` | MUST | Add `GOVERNANCE.md`: how decisions are made, the roles (maintainer, contributor, security contact, release manager), what each role does and who holds it. | repo change |
-| 3 | `documentation_roadmap` | MUST | Publish a roadmap for the next twelve months that says what is planned and what is not. `plans/v1-v2-roadmap.md` is internal and links to boards that are not public. | repo change |
-| 4 | `assurance_case`, `documentation_security` | MUST | Add a security assurance case: threat model, trust boundaries, secure design principles applied, common weaknesses countered, and what users can and cannot expect. | repo change |
-| 5 | `signed_releases` | MUST | Add "Verifying a release" to `SECURITY.md` for users: where the Sigstore bundle and provenance are, and `gh attestation verify`. Today it is only in the maintainers' `docs/RELEASING.md`. | repo change |
-| 6 | `access_continuity` | MUST | A second trusted person able to create and close issues, merge, and release within a week: org owner on GitHub, co-owner on the nuget.org account, access to the docs domain, recorded in `GOVERNANCE.md`. Today the organization has one member and one admin. | owner only |
-| 7 | `bus_factor` | SHOULD | Unmet until a second regular contributor exists; item 6 is the MUST that matters. | Unmet, justified |
-| 8 | `version_tags_signed` | SUGGESTED | Release tags are created unsigned by the release workflow; leave Unmet or sign tags in the workflow. | optional |
+| Criterion | Kind | What closes it | Who |
+|---|---|---|---|
+| `access_continuity` | MUST | A second trusted person able to create and close issues, merge, and release within a week: owner on the GitHub organization, co-owner on the nuget.org packages, access to the docs domain, named in `GOVERNANCE.md` (section Continuity). Today the organization has one member and one admin. | owner only |
+| `bus_factor` | SHOULD | Unmet until a second regular contributor exists. | Unmet, justified |
+| `version_tags_signed` | SUGGESTED | Release tags are created unsigned by the release workflow; leave Unmet or sign tags in the workflow. | optional |
 
 ## Basics
 
@@ -269,14 +264,14 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 | `achieve_passing` | Met | Passing badge earned. <https://www.bestpractices.dev/projects/15090> |
 | `contribution_requirements` | Met | CONTRIBUTING lists the standards a contribution must meet and links the detailed guides. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#standards-and-guidelines> |
 | `dco` | Met | Every commit must carry a Developer Certificate of Origin sign-off from its author, and a required check fails any pull request commit without one. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#developer-certificate-of-origin> |
-| `governance` | **Gap** | No governance document. See item 2. |
-| `code_of_conduct` | **Gap** | CONTRIBUTING refers to the Contributor Covenant and links `CODE_OF_CONDUCT.md`, which is not in the repository. See item 1. |
-| `roles_responsibilities` | **Gap** | Roles are not documented. See item 2. |
-| `access_continuity` | **Gap** | One person holds every key. See item 6. |
-| `bus_factor` | Unmet (SHOULD) | One active maintainer. The continuity plan (item 6) covers the loss of that person; a second regular contributor would raise the bus factor. |
-| `documentation_roadmap` | **Gap** | See item 3. |
+| `governance` | Met | A maintainer-led model; the governance document says where each kind of decision is made and who makes it. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md> |
+| `code_of_conduct` | Met | The Contributor Covenant 2.1 in the standard location, with a private reporting address. <https://github.com/whizbang-lib/whizbang/blob/develop/CODE_OF_CONDUCT.md> |
+| `roles_responsibilities` | Met | The governance document lists each role (maintainer, release manager, security contact, conduct enforcement, contributor), its responsibilities and who holds it. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#roles> |
+| `access_continuity` | **Gap** | One person holds every key; the governance document's Continuity section says what a backup maintainer needs. See "Silver: what is left". |
+| `bus_factor` | Unmet (SHOULD) | One active maintainer. The continuity plan covers the loss of that person; a second regular contributor would raise the bus factor. |
+| `documentation_roadmap` | Met | The roadmap covers the next twelve months: what is planned toward 1.0 and after it, and what is not planned. <https://github.com/whizbang-lib/whizbang/blob/develop/ROADMAP.md> |
 | `documentation_architecture` | Met | The introduction describes the architecture (dispatcher, receptors, perspectives, lenses, and how the packages fit together), and each fundamentals page documents its part. <https://whizba.ng/docs/getting-started/introduction> |
-| `documentation_security` | **Gap** | Feature-level security docs exist; a statement of what users can and cannot expect is part of item 4. |
+| `documentation_security` | Met | The security assurance case ends with what an application can and cannot expect from the library. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md#what-you-can-and-cannot-expect> |
 | `documentation_quick_start` | Met | Quick start guide. <https://whizba.ng/docs/getting-started/quick-start> |
 | `documentation_current` | Met | Public APIs link to their docs pages and docs pages to their tests, the links are validated, and a pull request that changes a public API updates its docs in the same change. Known doc defects are tracked as issues and fixed like code. <https://github.com/whizbang-lib/whizbang/blob/develop/ai-docs/documentation-maintenance.md> |
 | `documentation_achievements` | Met | The README shows and links the OpenSSF Best Practices and OpenSSF Scorecard badges. <https://github.com/whizbang-lib/whizbang#readme> |
@@ -296,7 +291,7 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 |---|---|---|
 | `report_tracker` | Met | GitHub issues. <https://github.com/whizbang-lib/whizbang/issues> |
 | `vulnerability_report_credit` | N/A | No vulnerability reports were resolved in the last twelve months. |
-| `vulnerability_response_process` | Met | `SECURITY.md` documents the process: private report, response within 48 hours, confirm and scope, audit for similar problems, fix, release. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md> |
+| `vulnerability_response_process` | Met | `SECURITY.md` documents the process: private report, response within 48 hours, confirm and scope, audit for similar problems, fix, release, and credit the reporter. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md> |
 
 ## Quality
 
@@ -334,11 +329,11 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 | `crypto_tls12` | Met | TLS comes from the .NET runtime, which negotiates TLS 1.2 or later. |
 | `crypto_certificate_verification` | Met | Certificate verification is the .NET default and no shipped package overrides it. |
 | `crypto_verification_private` | Met | Same: verification happens before any data is sent, and nothing disables it. |
-| `signed_releases` | **Gap** | Releases are signed (Sigstore bundle and SLSA provenance on every stable release, plus nuget.org's repository signature), but the user-facing verification steps are missing. See item 5. |
-| `version_tags_signed` | Unmet (SUGGESTED) | Tags are created by the release workflow and are not signed. See item 8. |
-| `input_validation` | Met | Incoming messages deserialize only into types registered at compile time (an allowlist); unknown or oversized payloads are rejected or dead-lettered, and public APIs validate their arguments. |
+| `signed_releases` | Met | Every stable release is signed keylessly with Sigstore by the release workflow (no private key exists on any distribution site), and SECURITY.md explains how to verify a GitHub release asset and a nuget.org package. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md#verifying-a-release> |
+| `version_tags_signed` | Unmet (SUGGESTED) | Tags are created by the release workflow and are not signed. See "Silver: what is left". |
+| `input_validation` | Met | Incoming messages deserialize only through JSON metadata registered at compile time (an allowlist); a type with no registered metadata is never deserialized, payload size is limited, and public APIs validate their arguments. |
 | `hardening` | Met | Native AOT and trimming (no reflection), nullable reference types, warnings as errors, authenticated encryption, and payload size limits. |
-| `assurance_case` | **Gap** | See item 4. |
+| `assurance_case` | Met | Threat model, trust boundaries, secure design principles applied, and the common weaknesses countered. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md> |
 
 ## Analysis
 
