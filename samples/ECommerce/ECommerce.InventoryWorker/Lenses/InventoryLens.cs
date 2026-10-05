@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using ECommerce.Contracts.Lenses;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;

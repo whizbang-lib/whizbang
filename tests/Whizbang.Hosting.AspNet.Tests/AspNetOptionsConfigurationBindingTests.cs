@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Collections.Generic;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;

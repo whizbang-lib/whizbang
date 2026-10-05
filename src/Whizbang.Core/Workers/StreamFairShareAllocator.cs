@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 namespace Whizbang.Core.Workers;
 
 /// <summary>One stream's outstanding work, as far as the caller can see it.</summary>

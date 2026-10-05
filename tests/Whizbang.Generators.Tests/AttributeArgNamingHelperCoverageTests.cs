@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Generators.Utilities;
 
 #pragma warning disable CA1707 // test method names use underscores

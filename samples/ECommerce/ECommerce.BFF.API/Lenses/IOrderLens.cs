@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using ECommerce.Contracts.Commands;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;

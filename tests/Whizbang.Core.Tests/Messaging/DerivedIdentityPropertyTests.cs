@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using FsCheck;
 using FsCheck.Fluent;
 using TUnit.Assertions;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma warning disable CA1707
 
 // W4 Phase 0 — this regression-lock test intentionally exercises the legacy timeout-shaped

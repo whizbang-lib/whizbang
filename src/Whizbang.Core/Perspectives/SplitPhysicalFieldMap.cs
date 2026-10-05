@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>One promoted column of a <see cref="FieldStorageMode.Split"/> model.</summary>

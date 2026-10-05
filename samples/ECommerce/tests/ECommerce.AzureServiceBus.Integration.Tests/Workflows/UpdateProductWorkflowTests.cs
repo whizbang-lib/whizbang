@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 // NOTE: Database cleanup happens at fixture initialization (AspireIntegrationFixture.cs:147)
 // No need for [After(Class)] cleanup - the container may be stopped by then
 

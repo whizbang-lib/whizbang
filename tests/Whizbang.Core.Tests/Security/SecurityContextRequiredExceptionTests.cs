@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Core.Security.Exceptions;
 
 namespace Whizbang.Core.Tests.Security;

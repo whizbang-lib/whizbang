@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Tags;

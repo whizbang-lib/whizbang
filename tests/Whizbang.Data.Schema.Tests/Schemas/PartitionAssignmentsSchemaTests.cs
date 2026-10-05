@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Data.Schema.Schemas;
 
 namespace Whizbang.Data.Schema.Tests.Schemas;

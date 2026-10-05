@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma warning disable CS0618
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;

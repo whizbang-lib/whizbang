@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Npgsql;
 using Whizbang.Core.Observability;
 using Whizbang.Data.EFCore.Postgres.Observability;

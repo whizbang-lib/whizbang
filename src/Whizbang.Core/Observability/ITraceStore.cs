@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Observability;

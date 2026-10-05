@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using TUnit.Core.Interfaces;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Migrate.Commands;
 
 namespace Whizbang.Migrate.Tests.Commands;

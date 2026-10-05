@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 namespace Whizbang.Core.Lineage;
 
 /// <summary>One node of the anchored flow graph: an event type at a signed offset from the anchor.</summary>

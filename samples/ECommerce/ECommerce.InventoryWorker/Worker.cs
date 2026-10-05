@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 namespace ECommerce.InventoryWorker;
 
 public class Worker(ILogger<Worker> logger) : BackgroundService {

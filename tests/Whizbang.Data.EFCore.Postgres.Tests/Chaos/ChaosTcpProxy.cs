@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma warning disable CA1031, RCS1075 // a chaos forwarder: every socket failure is the partition it simulates
 using System.Net;
 using System.Net.Sockets;

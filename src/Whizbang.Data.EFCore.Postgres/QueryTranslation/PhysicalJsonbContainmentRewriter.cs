@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json.Serialization;

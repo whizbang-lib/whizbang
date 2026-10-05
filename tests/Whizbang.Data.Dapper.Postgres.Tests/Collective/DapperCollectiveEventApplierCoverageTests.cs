@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma warning disable CA1707, CA1859 // tests assert against the interface return type
 
 using System.Data;

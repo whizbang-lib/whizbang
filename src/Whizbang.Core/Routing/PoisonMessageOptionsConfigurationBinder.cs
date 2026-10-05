@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Globalization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;

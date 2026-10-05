@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using TUnit.Core;
 
 // Force all test classes to run sequentially (not in parallel) to prevent message stealing.

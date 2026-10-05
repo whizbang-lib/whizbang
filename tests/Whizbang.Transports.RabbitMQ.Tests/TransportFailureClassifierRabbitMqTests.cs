@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using RabbitMQ.Client.Events;
 using RabbitMQ.Client.Exceptions;
 using TUnit.Assertions;

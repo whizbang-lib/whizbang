@@ -249,6 +249,15 @@ dotnet_code_quality_unused_parameters = all:suggestion
 ###############################
 [*.cs]
 
+# Every C# file starts with the project's copyright and SPDX license statement (OpenSSF Best
+# Practices gold: copyright_per_file, license_per_file). IDE0073 fails the build when a file's
+# header differs, and `dotnet format` writes it. Generated code (.g.cs) is exempt, and so are the
+# code-generation templates under Templates/, whose text is copied into consumers' generated code. SQL migrations
+# carry no header on purpose: their text is fingerprinted at startup, so editing it would make
+# every existing database see a changed migration.
+file_header_template = Copyright (c) whizbang-lib contributors.\nSPDX-License-Identifier: MIT
+dotnet_diagnostic.IDE0073.severity = warning
+
 # CA1707 (no underscores in member names) directly contradicts this file's own
 # dotnet_naming_rule.constants_rule / private_constants_rule, which mandate all_upper_style
 # with '_' as the word separator for constant fields. Both cannot be satisfied, and the naming

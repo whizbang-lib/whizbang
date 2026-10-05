@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 extern alias shared;
 
 using System.Diagnostics.CodeAnalysis;

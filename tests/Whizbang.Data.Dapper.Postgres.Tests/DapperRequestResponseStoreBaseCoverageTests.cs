@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma warning disable CA1859 // tests deliberately hold fakes behind their interface types
 
 using System.Data;

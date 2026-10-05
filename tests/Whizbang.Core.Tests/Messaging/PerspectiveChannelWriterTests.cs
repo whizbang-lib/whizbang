@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Threading.Channels;
 using Whizbang.Core.Messaging;
 

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Bogus;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;

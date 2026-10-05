@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma warning disable CA1707 // Test method names can contain underscores
 
 using TUnit.Assertions;

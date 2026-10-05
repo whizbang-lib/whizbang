@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Microsoft.Extensions.DependencyInjection;
 
 // W4 — these tests cover legacy timeout-shaped LocalInvokeAndSyncAsync overloads now marked [Obsolete].

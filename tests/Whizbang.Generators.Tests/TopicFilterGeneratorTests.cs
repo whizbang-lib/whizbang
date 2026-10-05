@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.ComponentModel;
 using Microsoft.CodeAnalysis;
 using TUnit.Assertions;

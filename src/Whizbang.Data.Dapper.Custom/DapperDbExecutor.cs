@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Data;
 using Whizbang.Core.Data;
 using DapperExtensions = Dapper;

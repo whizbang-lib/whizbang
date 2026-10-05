@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Lenses;

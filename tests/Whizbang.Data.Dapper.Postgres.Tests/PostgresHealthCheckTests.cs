@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Data;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using TUnit.Assertions;

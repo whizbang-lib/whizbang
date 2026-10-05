@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Diagnostics.CodeAnalysis;
 
 // S3604: False positive on primary constructor field captures (e.g., `private readonly ILogger _logger = logger;`)

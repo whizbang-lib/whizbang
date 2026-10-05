@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 // Test types in nested namespaces for namespace-based routing tests
 
 namespace OutboxTestTypes.Orders.Events {

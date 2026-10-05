@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Diagnostics.CodeAnalysis;
 using Azure.Messaging.ServiceBus;
 using ECommerce.Contracts.Commands;

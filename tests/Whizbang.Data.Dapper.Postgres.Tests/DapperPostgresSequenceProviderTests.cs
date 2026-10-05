@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Postgres;
 using Whizbang.Testing.Contracts;

@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using HotChocolate;
 using HotChocolate.Execution;
 using HotChocolate.Types;

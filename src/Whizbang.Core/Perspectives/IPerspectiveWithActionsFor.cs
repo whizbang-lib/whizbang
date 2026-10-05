@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 namespace Whizbang.Core.Perspectives;
 
 #pragma warning disable S2436 // Reduce the number of type parameters in the generic type

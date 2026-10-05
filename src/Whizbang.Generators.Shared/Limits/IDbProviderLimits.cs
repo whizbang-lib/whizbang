@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 namespace Whizbang.Generators.Shared.Limits;
 
 /// <summary>

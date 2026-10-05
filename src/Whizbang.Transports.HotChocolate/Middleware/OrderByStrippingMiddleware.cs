@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using HotChocolate.Resolvers;
 using Whizbang.Transports.HotChocolate.QueryTranslation;
 

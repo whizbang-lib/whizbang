@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
