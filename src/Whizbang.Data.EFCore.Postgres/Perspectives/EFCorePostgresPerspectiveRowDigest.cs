@@ -41,6 +41,8 @@ public sealed class EFCorePostgresPerspectiveRowDigest(
     IPerspectiveRunnerRegistry registry,
     IServiceInstanceProvider serviceInstance) : IPerspectiveRowDigest {
 
+  private const string GLOBAL_PREFIX = "global::";
+
   // A generated perspective table name: lower-case, leading letter or underscore, then letters, digits and
   // underscores. Deliberately narrow.
   private static readonly Regex _safeIdentifier =
@@ -59,6 +61,14 @@ public sealed class EFCorePostgresPerspectiveRowDigest(
         .FirstOrDefault(p => string.Equals(p.ClrTypeName, perspectiveName, StringComparison.Ordinal))
         ?.ModelType;
     if (string.IsNullOrWhiteSpace(modelType)) { return null; }
+
+    // The two sides spell the same type differently. PerspectiveRegistrationInfo.ModelType comes from the
+    // runner-registry generator and keeps the global:: prefix; wh_perspective_registry.clr_type_name does
+    // not, because migration 034 stripped it and the generator that writes it was fixed to stop adding it.
+    // Joining them without normalizing matches nothing, which this silently reported as "no digest".
+    if (modelType.StartsWith(GLOBAL_PREFIX, StringComparison.Ordinal)) {
+      modelType = modelType[GLOBAL_PREFIX.Length..];
+    }
 
     await dbContext.Database.OpenConnectionAsync(ct);
     try {
