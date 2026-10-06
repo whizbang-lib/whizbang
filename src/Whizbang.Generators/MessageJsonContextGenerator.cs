@@ -3979,7 +3979,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static INamedTypeSymbol? _tryGetTypeSymbolByName(string fullyQualifiedName, Compilation compilation) {
     // Remove global:: prefix for GetTypeByMetadataName
     var metadataName = fullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
-    return compilation.GetTypeByMetadataName(metadataName);
+    var symbol = compilation.GetTypeByMetadataName(metadataName);
+    // A nested type's metadata name joins it to its container with '+' where the display name has '.' (#1176): try
+    // each dot from the right as a nesting boundary until the type resolves.
+    for (var dot = metadataName.LastIndexOf('.'); symbol is null && dot > 0; dot = metadataName.LastIndexOf('.', dot - 1)) {
+      metadataName = metadataName.Remove(dot, 1).Insert(dot, "+");
+      symbol = compilation.GetTypeByMetadataName(metadataName);
+    }
+    return symbol;
   }
 
   /// <summary>
