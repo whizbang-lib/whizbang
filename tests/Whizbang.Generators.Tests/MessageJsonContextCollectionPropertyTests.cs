@@ -54,7 +54,7 @@ public class MessageJsonContextCollectionPropertyTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
     foreach (var item in new[] { "ItemA", "ItemB", "ItemC", "ItemD", "ItemE", "ItemF", "ItemG", "ItemH", "ItemI" }) {
-      await Assert.That(code!).Contains($"global::TestApp.{item}")
+      await Assert.That(code).Contains($"global::TestApp.{item}")
         .Because($"{item} is reachable only as a collection's element, so element extraction must find it");
     }
   }
