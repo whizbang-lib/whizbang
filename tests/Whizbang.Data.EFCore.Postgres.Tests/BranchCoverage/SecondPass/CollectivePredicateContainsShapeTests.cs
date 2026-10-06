@@ -84,12 +84,12 @@ public class CollectivePredicateContainsShapeTests {
     return Expression.Lambda<Func<PerspectiveRow<JobModel>, bool>>(call, row);
   }
 
-  private enum JobKind {
+  internal enum JobKind {
     Routine = 0,
     Urgent = 1,
   }
 
-  private sealed class JobModel {
+  internal sealed class JobModel {
     public string? Name { get; set; }
     public int Count { get; set; }
     public JobKind Kind { get; set; }

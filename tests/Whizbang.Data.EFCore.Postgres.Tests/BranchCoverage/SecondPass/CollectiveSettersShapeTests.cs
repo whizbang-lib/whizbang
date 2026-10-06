@@ -75,11 +75,11 @@ public class CollectiveSettersShapeTests {
     await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(method)).Throws<NotSupportedException>();
   }
 
-  private class ShapeBase {
+  internal class ShapeBase {
     public string Inherited { get; set; } = string.Empty;
   }
 
-  private sealed class ShapeModel : ShapeBase {
+  internal sealed class ShapeModel : ShapeBase {
 #pragma warning disable S1104 // A public field is the selector shape under test.
     public int Marker = 1;
 #pragma warning restore S1104
