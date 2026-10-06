@@ -273,6 +273,21 @@ Describe 'Get-WholeLibraryCoverage' {
     $whole.CoveredOutcomes | Should -Be 5
   }
 
+  It 'lists every uncovered library line and every hand-written decision with an untaken outcome, as the gap' {
+    $report = New-Report $TestDrive 'gap.cobertura.xml' 'src/P/A.cs' @(
+      @{ n = 1; hits = 1; cov = '1/2' },  # if: one outcome untested, listed
+      @{ n = 2; hits = 1; cov = '1/2' },  # await: the compiler's, not listed
+      @{ n = 3; hits = 1; cov = '4/4' },  # complete, not listed
+      @{ n = 4; hits = 0; cov = $null })  # never ran, listed
+    $coverage = Read-CoberturaCoverage @($report)
+    $coverage['src/Whizbang.Testing/T.cs'] = @{ Hits = @{ 1 = 0 }; Conditions = @{} }
+    $source = @{ 'src/P/A.cs' = @('if (x) {', 'await store.SaveAsync(item);', 'var size = kind switch {', 'Do();') }
+
+    $whole = Get-WholeLibraryCoverage -Coverage $coverage -ReadSource { param($p) $source[$p] }
+
+    $whole.Gap | Should -Be @('src/P/A.cs:1: (1/2 conditions) if (x) {', 'src/P/A.cs:4: (never ran) Do();')
+  }
+
   It 'skips a library file it cannot read, rather than counting lines it cannot classify' {
     $report = New-Report $TestDrive 'gone.cobertura.xml' 'src/P/Gone.cs' @(@{ n = 1; hits = 0; cov = '0/2' })
 
@@ -308,11 +323,16 @@ Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
     Copy-Item (Join-Path $script:Fixture 'Calc.cs.txt') (Join-Path $sourceRoot $script:FixturePath)
     $summaryFile = Join-Path $TestDrive 'whole.json'
     $merged = Join-Path $TestDrive 'out/merged.cobertura.xml'
+    $gapFile = Join-Path $TestDrive 'out/library-gap.txt'
     $scriptPath = Join-Path -Path $PSScriptRoot -ChildPath '../../../scripts/Find-UncoveredNewLines.ps1'
 
     $pwsh = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-    & $pwsh -NoProfile -File $scriptPath -CoverageRoot $script:Fixture -SourceRoot $sourceRoot -SummaryOutFile $summaryFile -MergedOutFile $merged | Out-Null
+    & $pwsh -NoProfile -File $scriptPath -CoverageRoot $script:Fixture -SourceRoot $sourceRoot -SummaryOutFile $summaryFile -MergedOutFile $merged -LibraryGapOutFile $gapFile | Out-Null
     $LASTEXITCODE | Should -Be 0
+    Get-Content $gapFile | Should -Be @(
+      "${script:FixturePath}:12: (1/2 conditions) if (x > 0) {",
+      "${script:FixturePath}:15: (1/2 conditions) if (x < -5) {",
+      "${script:FixturePath}:16: (never ran) return 2;")
 
     $summary = Get-Content $summaryFile -Raw | ConvertFrom-Json
     $summary.Lines | Should -Be 8

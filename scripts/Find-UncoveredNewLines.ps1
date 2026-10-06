@@ -59,6 +59,11 @@
     Optional path; the whole-library summary is written there as JSON (Lines, CoveredLines, Outcomes,
     CoveredOutcomes, BlockUnion, Text).
 
+.PARAMETER LibraryGapOutFile
+    Optional path; the whole library's gap is written there, one per line: every library line no test
+    ran, as path:line: (never ran) source, and every line with a hand-written decision some outcome of
+    which no test took, as path:line: (covered/total conditions) source.
+
 .PARAMETER OutFile
     Optional path; the uncovered lines are written there, one per line as path:line: source.
 
@@ -88,7 +93,8 @@ param(
   [string]$DownloadFromRun,
   [string]$SourceRoot,
   [string]$MergedOutFile,
-  [string]$SummaryOutFile
+  [string]$SummaryOutFile,
+  [string]$LibraryGapOutFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -355,24 +361,29 @@ function Test-LibrarySourcePath([string]$Path) {
 #>
 function Get-WholeLibraryCoverage([hashtable]$Coverage, [scriptblock]$ReadSource) {
   $lines = 0; $coveredLines = 0; $outcomes = 0; $coveredOutcomes = 0
-  foreach ($path in $Coverage.Keys) {
+  # The gap, in path and line order: every line no test ran, and every line that ran with a
+  # hand-written decision some outcome of which no test took.
+  $gap = [System.Collections.Generic.List[string]]::new()
+  foreach ($path in ($Coverage.Keys | Sort-Object)) {
     if (-not (Test-LibrarySourcePath $path)) { continue }
     $source = & $ReadSource $path
     if ($null -eq $source) { continue }
     $source = @($source)
     $entry = $Coverage[$path]
-    foreach ($n in $entry.Hits.Keys) {
+    foreach ($n in ($entry.Hits.Keys | Sort-Object)) {
       $lines++
-      if ($entry.Hits[$n] -gt 0) { $coveredLines++ }
-    }
-    foreach ($n in $entry.Conditions.Keys) {
-      $text = if ($n -le $source.Count) { [string]$source[$n - 1] } else { '' }
-      if (-not (Test-HandWrittenDecision $text)) { continue }
-      $outcomes += $entry.Conditions[$n][1]
-      $coveredOutcomes += $entry.Conditions[$n][0]
+      $text = if ($n -le $source.Count) { ([string]$source[$n - 1]).Trim() } else { '' }
+      if ($entry.Hits[$n] -gt 0) { $coveredLines++ } else { $gap.Add("${path}:${n}: (never ran) $text") }
+      if (-not $entry.Conditions.ContainsKey($n) -or -not (Test-HandWrittenDecision $text)) { continue }
+      $c = $entry.Conditions[$n]
+      $outcomes += $c[1]
+      $coveredOutcomes += $c[0]
+      if ($entry.Hits[$n] -gt 0 -and $c[0] -lt $c[1]) { $gap.Add("${path}:${n}: ($($c[0])/$($c[1]) conditions) $text") }
     }
   }
-  return [pscustomobject]@{ Lines = $lines; CoveredLines = $coveredLines; Outcomes = $outcomes; CoveredOutcomes = $coveredOutcomes }
+  return [pscustomobject]@{
+    Lines = $lines; CoveredLines = $coveredLines; Outcomes = $outcomes; CoveredOutcomes = $coveredOutcomes; Gap = $gap
+  }
 }
 
 # A percentage truncated to one decimal, so a gap never reads as 100%.
@@ -561,7 +572,14 @@ Write-Host $whole.Text
 if ($SummaryOutFile) {
   $dir = Split-Path -Parent $SummaryOutFile
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-  [System.IO.File]::WriteAllText($SummaryOutFile, ($whole | ConvertTo-Json))
+  $fields = $whole | Select-Object Lines, CoveredLines, Outcomes, CoveredOutcomes, BlockUnion, Text
+  [System.IO.File]::WriteAllText($SummaryOutFile, ($fields | ConvertTo-Json))
+}
+if ($LibraryGapOutFile) {
+  $dir = Split-Path -Parent $LibraryGapOutFile
+  if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  # Written even when empty: an empty list is the evidence of 100%.
+  [System.IO.File]::WriteAllLines($LibraryGapOutFile, [string[]]$whole.Gap.ToArray())
 }
 
 if (-not $BaseRef) { exit 0 }

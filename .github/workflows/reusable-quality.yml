@@ -336,7 +336,7 @@ jobs:
             git fetch --no-tags origin "$env:BASE_REF"
             $gate = @('-BaseRef', "origin/$env:BASE_REF", '-OutFile', 'coverage/uncovered-new-lines.txt', '-BranchOutFile', 'coverage/uncovered-new-branches.txt')
           }
-          & pwsh scripts/Find-UncoveredNewLines.ps1 -CoverageRoot coverage -MergedOutFile coverage-merged/merged.cobertura.xml -SummaryOutFile coverage-merged/whole-library.json @gate | Write-Host
+          & pwsh scripts/Find-UncoveredNewLines.ps1 -CoverageRoot coverage -MergedOutFile coverage-merged/merged.cobertura.xml -SummaryOutFile coverage-merged/whole-library.json -LibraryGapOutFile coverage-merged/library-gap.txt @gate | Write-Host
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $whole = Get-Content coverage-merged/whole-library.json -Raw | ConvertFrom-Json
           "whole=$($whole.Text)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
@@ -442,6 +442,7 @@ jobs:
             coverage/uncovered-new-branches.txt
             coverage/sonar-findings.txt
             coverage-merged/whole-library.json
+            coverage-merged/library-gap.txt
           if-no-files-found: ignore
 
       - name: Comment PR Gate Results
