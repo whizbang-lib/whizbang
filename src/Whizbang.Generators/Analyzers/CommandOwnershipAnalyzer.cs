@@ -129,7 +129,7 @@ public class CommandOwnershipAnalyzer : DiagnosticAnalyzer {
         .Replace("global::", "");
       var receptorName = TypeNameUtilities.FullyQualified(classSymbol)
         .Replace("global::", "");
-      var location = classSymbol.Locations.FirstOrDefault() ?? Location.None;
+      var location = LocationUtilities.FirstOrNone(classSymbol);
 
       // Dedupe per receptor class: IReceptor<T> + ISyncReceptor<T> on ONE class is one
       // registration unit, not a duplicate claim.

@@ -166,7 +166,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
       var elementType = TypeNameUtilities.MinimallyQualified(arrayType.ElementType);
 
       // Find the property declaration syntax for accurate location
-      var location = propertySymbol.Locations.FirstOrDefault() ?? Location.None;
+      var location = LocationUtilities.FirstOrNone(propertySymbol);
 
       var diagnostic = Diagnostic.Create(
           ArrayPropertyInPerspectiveModel,

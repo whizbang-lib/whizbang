@@ -72,7 +72,7 @@ public class PinnedIdAnalyzer : DiagnosticAnalyzer {
     var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
         TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
 
-    var location = typeSymbol.Locations.FirstOrDefault() ?? Location.None;
+    var location = LocationUtilities.FirstOrNone(typeSymbol);
 
     if (pinnedIdAttribute is null) {
       if (isPerspective) {

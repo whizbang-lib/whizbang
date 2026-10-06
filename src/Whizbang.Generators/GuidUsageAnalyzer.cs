@@ -51,7 +51,7 @@ public class GuidUsageAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : null;
+    var containingType = TypeNameUtilities.DisplayOrNull(methodSymbol.ContainingType);
 
     // Check for Guid.NewGuid()
     if (containingType == "System.Guid" && methodName == "NewGuid") {

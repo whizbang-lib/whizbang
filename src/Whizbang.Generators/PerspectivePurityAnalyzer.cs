@@ -363,7 +363,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     foreach (var invocation in invocations) {
       var symbolInfo = semanticModel.GetSymbolInfo(invocation);
       if (symbolInfo.Symbol is IMethodSymbol methodSymbol) {
-        var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : "";
+        var containingType = TypeNameUtilities.DisplayOrEmpty(methodSymbol.ContainingType);
         var methodName = methodSymbol.Name;
 
         // Check for common database operation patterns
@@ -396,7 +396,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     foreach (var invocation in invocations) {
       var symbolInfo = semanticModel.GetSymbolInfo(invocation);
       if (symbolInfo.Symbol is IMethodSymbol methodSymbol) {
-        var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : "";
+        var containingType = TypeNameUtilities.DisplayOrEmpty(methodSymbol.ContainingType);
         var methodName = methodSymbol.Name;
 
         // Check for HTTP operation patterns

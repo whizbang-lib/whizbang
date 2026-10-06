@@ -137,7 +137,7 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
 
     pinnedId = idValue;
     clrName = TypeNameUtilities.BuildClrTypeName(typeSymbol); // '+'-nested CLR name — same form the catalog stores.
-    location = typeSymbol.Locations.FirstOrDefault() ?? Location.None;
+    location = LocationUtilities.FirstOrNone(typeSymbol);
     return true;
   }
 

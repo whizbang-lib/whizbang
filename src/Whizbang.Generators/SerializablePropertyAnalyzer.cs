@@ -112,7 +112,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
 
     if (isNested) {
       // WHIZ063: Nested type violation
-      var location = parentProperty?.Locations.FirstOrDefault() ?? Location.None;
+      var location = LocationUtilities.FirstOrNone(parentProperty);
       var diagnostic = Diagnostic.Create(
           DiagnosticDescriptors.NonSerializableNestedProperty,
           location,
@@ -125,7 +125,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
       context.ReportDiagnostic(diagnostic);
     } else {
       // Direct property issue (WHIZ060, WHIZ061, WHIZ062)
-      var location = property.Locations.FirstOrDefault() ?? Location.None;
+      var location = LocationUtilities.FirstOrNone(property);
 
       if (descriptor.Id == "WHIZ062") {
         // Interface type - include the interface name

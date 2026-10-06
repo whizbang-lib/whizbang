@@ -106,7 +106,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     // names no interceptable API: _resolveGuidVersionAndSource takes the name as nullable and matches
     // null against none of its patterns, so it answers with no version and no source and the call
     // leaves by the same exit — no separate guard needed here.
-    var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : null;
+    var containingType = TypeNameUtilities.DisplayOrNull(methodSymbol.ContainingType);
 
     // Skip internal Whizbang library code - we control that and don't need interception
     var callingTypeSymbol = _getContainingTypeSymbol(context, invocation, ct);

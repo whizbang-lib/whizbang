@@ -84,7 +84,7 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    var location = symbol.Locations.FirstOrDefault() ?? Location.None;
+    var location = LocationUtilities.FirstOrNone(symbol);
 
     // WB-AUTH-010: applied to non-perspective type?
     if (!_implementsPerspectiveFor(symbol)) {
