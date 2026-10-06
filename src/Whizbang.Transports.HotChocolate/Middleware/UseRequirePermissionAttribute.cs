@@ -48,9 +48,7 @@ public sealed class UseRequirePermissionAttribute : ObjectFieldDescriptorAttribu
 
   private static List<RequirePermissionAttribute> _collectAttributes(MemberInfo member) {
     var fromMember = member.GetCustomAttributes<RequirePermissionAttribute>(inherit: true);
-    var fromDeclaringType = member.DeclaringType is { } t
-      ? t.GetCustomAttributes<RequirePermissionAttribute>(inherit: true)
-      : [];
+    var fromDeclaringType = member.DeclaringType!.GetCustomAttributes<RequirePermissionAttribute>(inherit: true);
     return [.. fromMember, .. fromDeclaringType];
   }
 }

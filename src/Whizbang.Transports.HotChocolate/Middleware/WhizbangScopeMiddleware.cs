@@ -84,7 +84,7 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
 
     var extensions = new List<ScopeExtension>();
     foreach (var (claimType, extensionKey) in _options.ExtensionClaimMappings) {
-      var value = context.User?.FindFirst(claimType)?.Value;
+      var value = context.User.FindFirst(claimType)?.Value;
       if (!string.IsNullOrEmpty(value)) {
         extensions.Add(new ScopeExtension { Key = extensionKey, Value = value });
       }
@@ -113,7 +113,7 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
   private static string? _extractValueWithFallback(HttpContext context, IEnumerable<string> claimTypes, string headerName) {
     // Try each claim type in order
     foreach (var claimType in claimTypes) {
-      var claimValue = context.User?.FindFirst(claimType)?.Value;
+      var claimValue = context.User.FindFirst(claimType)?.Value;
       if (!string.IsNullOrEmpty(claimValue)) {
         return claimValue;
       }
@@ -129,11 +129,10 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
   }
 
   private HashSet<string> _extractRoles(HttpContext context) {
-    var rolesClaim = context.User?.FindAll(_options.RolesClaimType);
-    return rolesClaim?
+    return context.User.FindAll(_options.RolesClaimType)
       .Select(claim => claim.Value)
       .Where(value => !string.IsNullOrEmpty(value))
-      .ToHashSet() ?? [];
+      .ToHashSet();
   }
 
   private HashSet<Permission> _extractPermissions(HttpContext context) =>
@@ -185,7 +184,7 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
     // Add user principal - try all claim types in order
     string? userId = null;
     foreach (var claimType in _options.UserIdClaimTypes) {
-      userId = context.User?.FindFirst(claimType)?.Value;
+      userId = context.User.FindFirst(claimType)?.Value;
       if (!string.IsNullOrEmpty(userId)) {
         break;
       }
@@ -207,11 +206,9 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
   private static Dictionary<string, string> _extractClaims(HttpContext context) {
     var claims = new Dictionary<string, string>();
 
-    if (context.User?.Claims != null) {
-      foreach (var claim in context.User.Claims) {
-        // Use first value for each claim type
-        claims.TryAdd(claim.Type, claim.Value);
-      }
+    foreach (var claim in context.User.Claims) {
+      // Use first value for each claim type
+      claims.TryAdd(claim.Type, claim.Value);
     }
 
     return claims;
