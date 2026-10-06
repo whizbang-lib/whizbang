@@ -49,7 +49,7 @@ public class PgWorkAvailablePollSourceAllOutcomesTests : EFCoreTestBase {
   public async Task Tick_WithNoConnectionConfigured_RaisesNothingAsync(CancellationToken cancellationToken) {
     var sink = new CountingSink();
     var source = _source(connectionString: null, _instance());
-    await source.StartAsync(sink);
+    await source.StartAsync(sink, cancellationToken);
 
     await source.TickForTestsAsync(cancellationToken);
 
@@ -62,7 +62,7 @@ public class PgWorkAvailablePollSourceAllOutcomesTests : EFCoreTestBase {
   public async Task Tick_WithADatabaseHoldingNoWork_RaisesNothingAsync(CancellationToken cancellationToken) {
     var sink = new CountingSink();
     var source = _source(ConnectionString, _instance());
-    await source.StartAsync(sink);
+    await source.StartAsync(sink, cancellationToken);
 
     await source.TickForTestsAsync(cancellationToken);
 
@@ -78,7 +78,7 @@ public class PgWorkAvailablePollSourceAllOutcomesTests : EFCoreTestBase {
     await _seedOwnedOutboxAsync(streamId, instance.InstanceId, cancellationToken);
     var sink = new CountingSink();
     var source = _source(ConnectionString, instance);
-    await source.StartAsync(sink);
+    await source.StartAsync(sink, cancellationToken);
 
     await source.TickForTestsAsync(cancellationToken);
 
