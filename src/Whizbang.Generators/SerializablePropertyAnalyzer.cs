@@ -246,7 +246,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check if it's a System.* or Microsoft.* type
-    var containingNamespace = typeSymbol.ContainingNamespace is null ? "" : TypeNameUtilities.Display(typeSymbol.ContainingNamespace);
+    var containingNamespace = TypeNameUtilities.DisplayOrEmpty(typeSymbol.ContainingNamespace);
     return containingNamespace.StartsWith("System", StringComparison.Ordinal) ||
         containingNamespace.StartsWith("Microsoft", StringComparison.Ordinal);
   }

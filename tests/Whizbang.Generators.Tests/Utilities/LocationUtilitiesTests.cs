@@ -43,4 +43,28 @@ public class LocationUtilitiesTests {
   public async Task FirstOrNone_NoSymbol_IsNoneAsync() {
     await Assert.That(LocationUtilities.FirstOrNone(null)).IsEqualTo(Location.None);
   }
+
+  [Test]
+  public async Task ApplicationOrFallback_SourceAttribute_IsWhereItIsWrittenAsync() {
+    var compilation = GeneratorTestHelper.CreateCompilation("namespace Sample; [System.Obsolete] public class Old { }");
+    var attribute = compilation.GetTypeByMetadataName("Sample.Old")!.GetAttributes().Single();
+    var fallback = compilation.GetTypeByMetadataName("Sample.Old")!.Locations[0];
+
+    var location = LocationUtilities.ApplicationOrFallback(attribute, fallback, CancellationToken.None);
+
+    await Assert.That(location.IsInSource).IsTrue();
+    var text = await location.SourceTree!.GetTextAsync();
+    await Assert.That(text.ToString(location.SourceSpan)).IsEqualTo("System.Obsolete");
+  }
+
+  [Test]
+  public async Task ApplicationOrFallback_MetadataAttribute_IsTheFallbackAsync() {
+    var compilation = GeneratorTestHelper.CreateCompilation("namespace Sample;");
+    var metadataAttribute = compilation.GetTypeByMetadataName("System.ObsoleteAttribute")!.GetAttributes().First();
+    var fallback = Location.Create("fallback.cs", default, default);
+
+    await Assert.That(metadataAttribute.ApplicationSyntaxReference).IsNull()
+      .Because("the control: an attribute read from metadata was never written in this compilation");
+    await Assert.That(LocationUtilities.ApplicationOrFallback(metadataAttribute, fallback, CancellationToken.None)).IsEqualTo(fallback);
+  }
 }

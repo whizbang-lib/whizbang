@@ -106,6 +106,11 @@ public partial class UnnamedAssemblyFallbackTests {
   public Task PerspectiveInvoker_UsesWhizbangCoreAsync() =>
     _assertFallbackNamespaceAsync(new PerspectiveInvokerGenerator(), PERSPECTIVE_SOURCE, "Whizbang.Core.Generated");
 
+  /// <summary>With no perspectives the invoker is still emitted, empty, under the same fallback.</summary>
+  [Test]
+  public Task PerspectiveInvoker_EmptyInvoker_UsesWhizbangCoreAsync() =>
+    _assertFallbackNamespaceAsync(new PerspectiveInvokerGenerator(), RECEPTOR_SOURCE, "Whizbang.Core.Generated");
+
   [Test]
   public Task PerspectiveRunnerRegistry_UsesWhizbangCoreAsync() =>
     _assertFallbackNamespaceAsync(new PerspectiveRunnerRegistryGenerator(), PERSPECTIVE_SOURCE, "Whizbang.Core.Generated");

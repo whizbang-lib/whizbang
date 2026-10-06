@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Linq;
+using System.Threading;
 using Microsoft.CodeAnalysis;
 
 namespace Whizbang.Generators.Shared.Utilities;
@@ -21,4 +22,15 @@ public static class LocationUtilities {
   /// keeps a branch no source declaration takes out of every analyzer.
   /// </remarks>
   public static Location FirstOrNone(ISymbol? symbol) => symbol?.Locations.FirstOrDefault() ?? Location.None;
+
+  /// <summary>
+  /// Where the attribute is written in source, or <paramref name="fallback"/> for an attribute that was
+  /// not written in source (one read from a referenced assembly's metadata).
+  /// </summary>
+  /// <remarks>
+  /// An analyzer reporting on an attribute of the declaration it is analyzing always gets the application
+  /// site; the fallback serves an attribute that arrived through metadata, which has none.
+  /// </remarks>
+  public static Location ApplicationOrFallback(AttributeData attribute, Location fallback, CancellationToken cancellationToken) =>
+    attribute.ApplicationSyntaxReference?.GetSyntax(cancellationToken).GetLocation() ?? fallback;
 }
