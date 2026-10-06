@@ -1048,7 +1048,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       $"Inbox {messageType}", ActivityKind.Consumer, parentContext);
     activity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
     activity?.SetTag("messaging.operation", "receive");
-    activity?.SetTag("whizbang.hop_count", envelope.Hops?.Count ?? 0);
+    // Reached only with a trace parent, which was read from the hops above, so they exist.
+    activity?.SetTag("whizbang.hop_count", envelope.Hops!.Count);
     return activity;
   }
 

@@ -72,6 +72,30 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
   }
 
   [Test]
+  public async Task AppendAsync_WithMessage_WhenNoEnvelopeInsideATrace_StampsTheTraceParentAsync() {
+    // The minimal envelope's hop carries the trace in progress, so a stored event stays linked to it.
+    using var source = new System.Diagnostics.ActivitySource($"Whizbang.Core.Tests.InMemoryEventStore.{Guid.NewGuid():N}");
+    using var listener = new System.Diagnostics.ActivityListener {
+      ShouldListenTo = s => s.Name == source.Name,
+      Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+        System.Diagnostics.ActivitySamplingResult.AllData
+    };
+    System.Diagnostics.ActivitySource.AddActivityListener(listener);
+    using var trace = source.StartActivity("append");
+    var eventStore = new InMemoryEventStore();
+    var streamId = Guid.NewGuid();
+
+    await eventStore.AppendAsync(streamId, new TestEvent { StreamId = streamId, Payload = "traced" });
+
+    var events = new List<MessageEnvelope<TestEvent>>();
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0)) {
+      events.Add(evt);
+    }
+    await Assert.That(trace).IsNotNull();
+    await Assert.That(events[0].Hops[0].TraceParent).IsEqualTo(trace!.Id);
+  }
+
+  [Test]
   public async Task AppendAsync_WithMessage_WhenEnvelopeRegistered_ShouldUseEnvelopeAsync() {
     // Arrange
     using var registry = new EnvelopeRegistry();

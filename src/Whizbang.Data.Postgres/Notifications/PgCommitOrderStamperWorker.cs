@@ -80,7 +80,8 @@ public sealed partial class PgCommitOrderStamperWorker(
   // filling, because each call costs a scan of the whole pending set whatever size it asks for.
   // Only the loop below reads or writes it, and only one instance holds the role, so it needs no
   // synchronization of its own.
-  private int _batchSize = stamperOptions?.Value.BatchSize ?? 1000;
+  // Initializers run in order: _stamperOptions above has already thrown for missing options.
+  private int _batchSize = stamperOptions.Value.BatchSize;
   private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   // Opt-in: register an INotificationDataSource via DI when the DbContext is
   // configured via UseNpgsql(NpgsqlDataSource) — that's the only path that
