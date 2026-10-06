@@ -770,6 +770,25 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         .Replace("global::", "")
         .TrimEnd('?');
 
+    return EFCoreColumnTypeFor(typeName);
+  }
+
+  /// <summary>
+  /// The PostgreSQL column type the EF Core model claims gives a physical field whose CLR type renders as
+  /// <paramref name="typeName"/> (no <c>global::</c> prefix, no nullable suffix). The match is
+  /// exact and ordinal: a name that is not one of the mapped types, however close, is
+  /// <c>text</c>.
+  /// </summary>
+  /// <remarks>
+  /// Public rather than private so a test can pin the whole table, including the names the
+  /// generator rarely or never renders (most CLR spellings of the keyword types) and the near misses that
+  /// must fall through to the default. Not internal because InternalsVisibleTo on this assembly
+  /// exposes its polyfills to the test project. This assembly ships as an analyzer, so its public
+  /// surface is not a consumer API.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/GeneratorColumnTypeTableTests.cs:EFCoreColumnType_MapsEveryKnownNameAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/GeneratorColumnTypeTableTests.cs:EFCoreColumnType_NearMissNames_FallBackToDefaultAsync</tests>
+  public static string EFCoreColumnTypeFor(string typeName) {
     return typeName switch {
       // A declared length is carried by a check constraint rather than by the column's type, so the
       // column is text here as it is in the table. Claiming a limited type while the table holds

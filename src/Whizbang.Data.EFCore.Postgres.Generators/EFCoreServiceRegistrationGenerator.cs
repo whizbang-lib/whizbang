@@ -1310,6 +1310,26 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         .Replace(PLACEHOLDER_GLOBAL, "")
         .TrimEnd('?'); // Remove nullable suffix
 
+    return PostgresColumnTypeFor(typeName);
+  }
+
+  /// <summary>
+  /// The PostgreSQL column type the schema-extension DDL gives a physical field whose CLR type renders as
+  /// <paramref name="typeName"/> (no <c>global::</c> prefix, no nullable suffix). The match is
+  /// exact and ordinal: a name that is not one of the mapped types, however close, is
+  /// <c>TEXT</c>.
+  /// </summary>
+  /// <remarks>
+  /// Public rather than private so a test can pin the whole table, including the names the
+  /// generator rarely or never renders (most CLR spellings of the keyword types) and the near misses that
+  /// must fall through to the default. Not internal for the reason given on
+  /// <see cref="TryLoadRegistrationSnippets"/>: InternalsVisibleTo exposes this assembly's
+  /// polyfills to the test project. This assembly ships as an analyzer, so its public
+  /// surface is not a consumer API.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/GeneratorColumnTypeTableTests.cs:RegistrationColumnType_MapsEveryKnownNameAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/GeneratorColumnTypeTableTests.cs:RegistrationColumnType_NearMissNames_FallBackToDefaultAsync</tests>
+  public static string PostgresColumnTypeFor(string typeName) {
     return typeName switch {
       "System.Guid" => "UUID",
       "System.String" or "string" => "TEXT",
