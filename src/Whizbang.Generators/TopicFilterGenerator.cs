@@ -133,28 +133,26 @@ public class TopicFilterGenerator : IIncrementalGenerator {
       return null;  // No constructor arguments
     }
 
+    // An argument that does not bind leaves the list empty (above), so a bound one always has a type.
     var firstArg = attribute.ConstructorArguments[0];
+    var argType = firstArg.Type!;
 
     // Case 1: String-based filter (TopicFilterAttribute(string filter))
-    if (firstArg.Type?.SpecialType == SpecialType.System_String) {
+    if (argType.SpecialType == SpecialType.System_String) {
       return firstArg.Value?.ToString();
     }
 
     // Case 2: Enum-based filter (TopicFilterAttribute<TEnum>(TEnum value))
-    if (firstArg.Type?.TypeKind == TypeKind.Enum) {
-      var enumType = firstArg.Type;
-      var enumValue = firstArg.Value;
-
-      // Get the enum field for this value by matching the constant value.
-      // Note: enumValue is the numeric value (e.g., 0, 1, 2). An enum argument that carries no value
-      // at all matches no field, so it shares the fallback below, which yields null for it — the same
-      // answer a separate guard gave.
-      var enumField = enumValue is null ? null : enumType.GetMembers()
+    if (argType.TypeKind == TypeKind.Enum) {
+      // A bound enum constant always carries its numeric value (e.g., 0, 1, 2), and every member of an
+      // enum is a constant, so the value is matched against the members' values directly.
+      var enumValue = firstArg.Value!;
+      var enumField = argType.GetMembers()
           .OfType<IFieldSymbol>()
-          .FirstOrDefault(f => f.HasConstantValue && Equals(f.ConstantValue, enumValue));
+          .FirstOrDefault(f => Equals(f.ConstantValue, enumValue));
 
       if (enumField is null) {
-        return enumValue?.ToString();  // Fallback - should be rare
+        return enumValue.ToString();  // A value no member declares, such as a [Flags] combination
       }
 
       // Try to extract Description attribute
