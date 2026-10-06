@@ -256,8 +256,10 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // see "row absent" and both attempt INSERT. The second one hits 23505. The retry catches,
     // clears change-tracker state, and re-enters — the second-pass SELECT now sees the
     // first thread's committed row and the path goes UPDATE. After MAX retries the exception
-    // propagates and the caller routes the work through the failure channel.
-    for (var attempt = 0; attempt <= MAX_DUPLICATE_KEY_RETRIES; attempt++) {
+    // propagates and the caller routes the work through the failure channel. The loop ends only
+    // through that return or that rethrow (the filter stops catching at the last attempt).
+    var attempt = 0;
+    while (true) {
       try {
         await _upsertCoreInnerAsync(context, args, hookPlan, expiresAt, cancellationToken);
         if (attempt > 0) {
@@ -269,6 +271,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         // Clear the failed change tracker state and retry as an UPDATE.
         context.ChangeTracker.Clear();
       }
+      attempt++;
     }
   }
 
@@ -312,10 +315,10 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // ever refactored. The regex matches the unquoted-identifier rule for PostgreSQL
     // (letter or underscore followed by letters, digits, or underscores). Reject
     // anything that doesn't pass — falls back to the SELECT-then-UPDATE retry path.
-    if (!_isValidSqlIdentifier(args.TableName)) {
+    if (!IsValidSqlIdentifier(args.TableName)) {
       return false;
     }
-    if (args.PhysicalFieldValues?.Keys.Any(k => !_isValidSqlIdentifier(k)) == true) {
+    if (args.PhysicalFieldValues?.Keys.Any(k => !IsValidSqlIdentifier(k)) == true) {
       return false;
     }
 
@@ -326,10 +329,11 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // legacy SELECT-then-INSERT path (which serializes through the DbContext's own, reflection-capable,
     // Npgsql JSON options) instead of throwing. We probe via the resolver, whose GetTypeInfo returns null
     // for an unresolvable type — unlike JsonSerializerOptions.GetTypeInfo, which throws NotSupportedException.
-    var resolver = options.TypeInfoResolver;
-    var modelInfo = resolver?.GetTypeInfo(typeof(TModel), options);
-    var metadataInfo = resolver?.GetTypeInfo(typeof(PerspectiveMetadata), options);
-    var scopeInfo = resolver?.GetTypeInfo(typeof(PerspectiveScope), options);
+    // The persistence options are built with a combined resolver (JsonContextRegistry.CreateCombinedOptions).
+    var resolver = options.TypeInfoResolver!;
+    var modelInfo = resolver.GetTypeInfo(typeof(TModel), options);
+    var metadataInfo = resolver.GetTypeInfo(typeof(PerspectiveMetadata), options);
+    var scopeInfo = resolver.GetTypeInfo(typeof(PerspectiveScope), options);
     if (modelInfo is null || metadataInfo is null || scopeInfo is null) {
       return false;
     }
@@ -642,10 +646,15 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// matches the assembly name of the active provider package.
   /// </summary>
   private static bool _isNpgsqlProvider(DbContext context) {
-    return context.Database.ProviderName?.Contains("Npgsql", StringComparison.Ordinal) == true;
+    // A context that can run a command has a provider, and every provider has a name.
+    return context.Database.ProviderName!.Contains("Npgsql", StringComparison.Ordinal);
   }
 
-  private static bool _isValidSqlIdentifier(string s) {
+  /// <summary>
+  /// A plain, unquoted Postgres identifier: a letter or underscore, then letters, digits or
+  /// underscores, at most 63 characters. Internal so the character classes can be asserted directly.
+  /// </summary>
+  internal static bool IsValidSqlIdentifier(string s) {
     if (string.IsNullOrEmpty(s) || s.Length > 63) {
       return false; // PG identifier max is 63 bytes
     }

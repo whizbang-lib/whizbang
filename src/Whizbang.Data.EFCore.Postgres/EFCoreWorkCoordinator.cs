@@ -3685,7 +3685,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .SqlQueryRaw<WorkCoordinatorStatistics>(sql)
       .ToListAsync(cancellationToken);
 
-    return result.FirstOrDefault() ?? new WorkCoordinatorStatistics();
+    // Scalar subqueries with no FROM of their own: always exactly one row.
+    return result.Single();
   }
 
   /// <summary>

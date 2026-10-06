@@ -255,7 +255,7 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
     document = value;
 
     var overload = JsonbDocument.ValueOverloadFor(memberType);
-    if (overload is null || _references(value, null)) {
+    if (overload is null || _readsAParameter(value)) {
       return false;
     }
 
@@ -322,7 +322,7 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
         return true;
 
       case MethodCallExpression { Object: { } dictionary, Method.Name: "get_Item", Arguments: [var key] }
-          when key.Type == typeof(string) && !_references(key, null):
+          when key.Type == typeof(string) && !_readsAParameter(key):
         if (!_path(dictionary, isRoot, steps)) {
           return false;
         }
@@ -386,11 +386,10 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
     source is MethodCallExpression { Method.Name: "op_Implicit", Arguments: [var inner] } ? inner : source;
 
   /// <summary>
-  /// Whether the subtree reads a parameter: any parameter when <paramref name="parameter"/> is null,
-  /// which makes it something other than a value.
+  /// Whether the subtree reads any parameter, which makes it something other than a value.
   /// </summary>
-  private static bool _references(Expression expression, ParameterExpression? parameter) {
-    var finder = new ParameterFinder(parameter);
+  private static bool _readsAParameter(Expression expression) {
+    var finder = new ParameterFinder();
     finder.Visit(expression);
     return finder.Found;
   }
@@ -404,11 +403,11 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
     return current;
   }
 
-  private sealed class ParameterFinder(ParameterExpression? target) : ExpressionVisitor {
+  private sealed class ParameterFinder : ExpressionVisitor {
     public bool Found { get; private set; }
 
     protected override Expression VisitParameter(ParameterExpression node) {
-      Found |= target is null || node == target;
+      Found = true;
       return node;
     }
   }

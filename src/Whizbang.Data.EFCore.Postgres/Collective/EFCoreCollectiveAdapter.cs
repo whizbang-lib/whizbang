@@ -104,7 +104,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(scopeKey);
 
-    var logger = dbContext.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Collective.Apply");
+    var logger = dbContext.GetService<ILoggerFactory>().CreateLogger("Whizbang.Collective.Apply");
 
     // Model-field (jsonb) setters = the spec's setters plus any the hooks added, minus any a hook removed.
     var assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters)
