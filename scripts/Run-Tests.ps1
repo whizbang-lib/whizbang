@@ -1597,10 +1597,23 @@ try {
         #
         # Compare DECLARED test projects against build output instead, so any unbuilt test project
         # triggers the build regardless of which mode asked.
+        #
+        # Only projects the solution builds count. The build below is `dotnet build` of the solution,
+        # so a project outside it (a benchmark, the soak suite) stays unbuilt however often it runs:
+        # counting one made every invocation rebuild the whole solution for nothing. In CI that was
+        # every test suite, about eight minutes each, on every run.
+        $solutionPath = Join-Path -Path $repoRoot -ChildPath 'Whizbang.slnx'
+        $solutionProjects = @{}
+        if (Test-Path $solutionPath) {
+            foreach ($m in [regex]::Matches((Get-Content $solutionPath -Raw), '<Project Path="([^"]+\.csproj)"')) {
+                $solutionProjects[[System.IO.Path]::GetFullPath((Join-Path -Path $repoRoot -ChildPath $m.Groups[1].Value))] = $true
+            }
+        }
         $declaredProjects = @(
             Get-ChildItem -Path $repoRoot -Recurse -Filter "*.csproj" -ErrorAction SilentlyContinue |
                 Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
                 Where-Object { $_.FullName -notmatch "[/\\](bin|obj)[/\\]" } |
+                Where-Object { $solutionProjects.Count -eq 0 -or $solutionProjects.ContainsKey($_.FullName) } |
                 Where-Object { (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match '<WhizbangTestType>' }
         )
 
@@ -1614,6 +1627,14 @@ try {
         )
 
         if ($unbuilt.Count -gt 0) {
+            # -NoBuild is a promise that the build output is already here (CI downloads it). Never
+            # compile behind it: name what is missing, so a short artifact is visible rather than
+            # paid for in minutes, and let discovery run on what exists.
+            if ($NoBuild) {
+                $names = ($unbuilt | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) }) -join ', '
+                Write-Warning "-NoBuild: $($unbuilt.Count) test project(s) in the solution have no $Configuration build output and will not be discovered: $names"
+                return
+            }
             if (-not $useAiOutput) {
                 Write-Host "$($unbuilt.Count) declared test project(s) have no $Configuration build output; building solution first..." -ForegroundColor Yellow
             } else {
