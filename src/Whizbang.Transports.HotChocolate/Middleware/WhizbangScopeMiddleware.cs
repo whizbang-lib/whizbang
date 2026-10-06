@@ -129,10 +129,9 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
   }
 
   private HashSet<string> _extractRoles(HttpContext context) {
-    return context.User.FindAll(_options.RolesClaimType)
+    return [.. context.User.FindAll(_options.RolesClaimType)
       .Select(claim => claim.Value)
-      .Where(value => !string.IsNullOrEmpty(value))
-      .ToHashSet();
+      .Where(value => !string.IsNullOrEmpty(value))];
   }
 
   private HashSet<Permission> _extractPermissions(HttpContext context) =>
