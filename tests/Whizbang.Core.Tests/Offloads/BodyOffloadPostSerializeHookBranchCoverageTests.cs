@@ -62,6 +62,22 @@ public class BodyOffloadPostSerializeHookBranchCoverageTests {
     await Assert.That(claimEnvelope.Payload.Claim.StorageKey).IsEqualTo(store.LastStorageKey);
   }
 
+  // A real ledger insert is a database round-trip, so the hook must survive the insert suspending: it
+  // resumes, the insert completes, and only then is the claim envelope handed back.
+  [Test]
+  public async Task RunAsync_LedgerInsertSuspends_RecordsTheClaimBeforeReturningAsync() {
+    var store = new CapturingStore("memory");
+    var coordinator = new SuspendingRecordingCoordinator();
+    await using var sp = _buildProvider(store, coordinator);
+    var hook = new BodyOffloadPostSerializeHook(sp, sp.GetRequiredService<IOptionsMonitor<MessageBodyOffloadOptions>>());
+
+    var result = await hook.RunAsync(_buildContext(new byte[5_000]), CancellationToken.None);
+
+    await Assert.That(result.NewEnvelope).IsTypeOf<MessageEnvelope<BodyClaimEnvelopePayload>>();
+    await Assert.That(coordinator.Recorded).IsEquivalentTo([(store.LastStorageKey, "memory")])
+      .Because("the ledger insert is awaited to completion even when it yields, so the claim is recorded before the hook returns");
+  }
+
   private static ServiceProvider _buildProvider(CapturingStore store, IWorkCoordinator? coordinator) {
     var services = new ServiceCollection();
     services.AddKeyedSingleton<IMessageBodyStore>(store.ProviderName, (_, _) => store);
@@ -137,6 +153,17 @@ public class BodyOffloadPostSerializeHookBranchCoverageTests {
     public Task RecordOffloadClaimAsync(
         string storageKey, string providerName, CancellationToken cancellationToken = default) {
       throw new InvalidOperationException("ledger unavailable");
+    }
+  }
+
+  private sealed class SuspendingRecordingCoordinator
+      : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, IWorkCoordinator {
+    public List<(string? StorageKey, string ProviderName)> Recorded { get; } = [];
+
+    public async Task RecordOffloadClaimAsync(
+        string storageKey, string providerName, CancellationToken cancellationToken = default) {
+      await Task.Yield();
+      Recorded.Add((storageKey, providerName));
     }
   }
 

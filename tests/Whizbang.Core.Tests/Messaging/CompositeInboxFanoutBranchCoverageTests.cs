@@ -48,6 +48,18 @@ public class CompositeInboxFanoutBranchCoverageTests {
     public Guid OriginServiceId => originServiceId;
   }
 
+  /// <summary>
+  /// A TYPED identity-preserving composite (not a raw bundle) that names the origin service its child
+  /// came from, so expansion takes the typed child builder rather than the raw path.
+  /// </summary>
+  private sealed class OriginTypedComposite(Guid originServiceId, Guid childId, long childSequence, IMessage inner)
+      : IIdentityPreservingComposite {
+    public IEnumerable<IMessage> InnerEvents => [inner];
+    public IReadOnlyList<Guid> InnerEventIds { get; } = [childId];
+    public Guid OriginServiceId => originServiceId;
+    public IReadOnlyList<long?>? InnerCommitSequences { get; } = [childSequence];
+  }
+
   private sealed class ListingCatalog(params Type[] types) : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => types;
   }
@@ -189,5 +201,26 @@ public class CompositeInboxFanoutBranchCoverageTests {
     var child = result.Children.Single();
     await Assert.That(child.SourceServiceId).IsEqualTo(_sourceServiceId)
       .Because("with no origin override the child carries the composite's own source service");
+  }
+
+  // ---- typed path: origin override --------------------------------------------------------------
+
+  [Test]
+  public async Task TryExpand_TypedIdentityCompositeNamingAnOrigin_ChildCarriesTheOriginIdentityAsync() {
+    var origin = Guid.CreateVersion7();
+    var childId = Guid.CreateVersion7();
+    await using var scope = _scope();
+    var composite = new OriginTypedComposite(origin, childId, childSequence: 7, new ChildEvent("a"));
+
+    var result = CompositeInboxFanout.TryExpand(composite, _source(Guid.CreateVersion7()), scope);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    var child = result.Children.Single();
+    await Assert.That(child.SourceServiceId).IsEqualTo(origin)
+      .Because("a typed re-delivered child is recounted under the origin that emitted it, not the relaying source");
+    await Assert.That(child.SourceServiceId).IsNotEqualTo(_sourceServiceId);
+    await Assert.That(child.SourceCommitSequence).IsEqualTo(7L)
+      .Because("the child keeps its original commit sequence so it recounts inside its original window");
+    await Assert.That(child.MessageId).IsEqualTo(childId);
   }
 }

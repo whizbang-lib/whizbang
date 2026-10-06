@@ -38,4 +38,30 @@ public class PoisonDetectionCapabilityStateBranchCoverageTests {
     await Assert.That(state.HasDegradedSurface).IsFalse()
       .Because("a surface that can supply a trustworthy age again is no longer degraded");
   }
+
+  [Test]
+  public async Task ReportAgeCapability_HealthyThenDegrades_IsNewlyDegradedAsync() {
+    var state = new PoisonDetectionCapabilityState();
+    var healthy = state.ReportAgeCapability("transport-a", "inbox.orders", canSupplyTrustworthyAge: true);
+
+    var degraded = state.ReportAgeCapability("transport-a", "inbox.orders", canSupplyTrustworthyAge: false);
+
+    await Assert.That(healthy).IsFalse();
+    await Assert.That(degraded).IsTrue()
+      .Because("a surface that was healthy and then loses its trustworthy age has just transitioned into degraded");
+    await Assert.That(state.DegradedSurfaces.Count).IsEqualTo(1);
+    await Assert.That(state.DegradedSurfaces[0].Entity).IsEqualTo("inbox.orders");
+  }
+
+  [Test]
+  public async Task ReportAgeCapability_HealthyStaysHealthy_IsNotNewlyDegradedAsync() {
+    var state = new PoisonDetectionCapabilityState();
+    _ = state.ReportAgeCapability("transport-a", "inbox.orders", canSupplyTrustworthyAge: true);
+
+    var again = state.ReportAgeCapability("transport-a", "inbox.orders", canSupplyTrustworthyAge: true);
+
+    await Assert.That(again).IsFalse()
+      .Because("a surface that stays healthy never transitions into degraded");
+    await Assert.That(state.HasDegradedSurface).IsFalse();
+  }
 }

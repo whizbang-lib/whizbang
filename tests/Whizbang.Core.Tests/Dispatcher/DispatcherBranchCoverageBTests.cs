@@ -82,6 +82,8 @@ public sealed class DispatcherBranchCoverageBTests {
     public Type? HandledType { get; init; }
     public Func<object, object?> Handler { get; init; } = static _ => null;
     public bool PublisherThrows { get; init; }
+    /// <summary>When set, each event-store cascade genuinely suspends, as a real store write does.</summary>
+    public bool YieldOnEventStoreCascade { get; init; }
     public List<IMessage> OutboxCascades { get; } = [];
     public List<IMessage> EventStoreCascades { get; } = [];
 
@@ -125,8 +127,10 @@ public sealed class DispatcherBranchCoverageBTests {
 
     protected override Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
       EventStoreCascades.Add(message);
-      return Task.CompletedTask;
+      return YieldOnEventStoreCascade ? _yieldAsync() : Task.CompletedTask;
     }
+
+    private static async Task _yieldAsync() => await Task.Yield();
   }
 
   // ========================================
@@ -535,6 +539,28 @@ public sealed class DispatcherBranchCoverageBTests {
     await Assert.That(dispatcher.EventStoreCascades).IsEquivalentTo([(IMessage)inner])
       .Because("an atomic composite would fail on a null child; skipping it lets the real children fan out");
     await Assert.That(dispatcher.OutboxCascades).IsEmpty();
+  }
+
+  // A real child cascade awaits a store write, so the fan-out loop must resume after each suspended
+  // child and carry on: past a null child, through to the last real one, in the producer's order.
+  [Test]
+  public async Task FanOutCompositeLocallyAtPublishAsync_ChildCascadeSuspends_ResumesThroughEveryRemainingChildAsync() {
+    await using var provider = _provider();
+    var dispatcher = new ProbeDispatcher(provider) { YieldOnEventStoreCascade = true };
+    var first = new BcbInnerEvent(_newId(), "first");
+    var last = new BcbInnerEvent(_newId(), "last");
+    var composite = new BcbComposite {
+      StreamId = _newId(),
+      Atomicity = FanoutAtomicity.Atomic,
+      Inner = [first, null!, last]
+    };
+
+    await dispatcher.FanOutCompositeLocallyAtPublishAsync(composite, typeof(BcbComposite), MessageId.New());
+
+    await Assert.That(dispatcher.EventStoreCascades.Count).IsEqualTo(2)
+      .Because("the loop resumes after the suspended first child, skips the null, and cascades the last child");
+    await Assert.That(dispatcher.EventStoreCascades[0]).IsSameReferenceAs(first);
+    await Assert.That(dispatcher.EventStoreCascades[1]).IsSameReferenceAs(last);
   }
 
   // ========================================

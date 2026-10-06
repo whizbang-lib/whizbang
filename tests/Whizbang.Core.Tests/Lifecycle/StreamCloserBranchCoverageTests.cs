@@ -65,4 +65,33 @@ public class StreamCloserBranchCoverageTests {
     await Assert.That(string.Join(",", log)).IsEqualTo("before,close")
       .Because("nothing was truncated, so there is no destruction to announce after the fact");
   }
+
+  /// <summary>A post-destruction hook that genuinely suspends before it finishes its work.</summary>
+  private sealed class SuspendingAfterHook(List<string> log) : IDestructionHook {
+    public ValueTask<DestructionResult> OnBeforeDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
+      log.Add("before");
+      return ValueTask.FromResult(DestructionResult.Proceed());
+    }
+
+    public async ValueTask OnAfterDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
+      log.Add("after-started");
+      await Task.Yield();
+      log.Add("after-finished");
+    }
+  }
+
+  // A real post-destruction hook (a notifier, a cascade) awaits I/O, so the close must survive the
+  // hook suspending: it resumes, lets the hook finish, and only then returns the coordinator's result.
+  [Test]
+  public async Task Close_PostDestructionHookSuspends_WaitsForTheHookThenReturnsTheClosedResultAsync() {
+    var log = new List<string>();
+    var coordinator = new FixedResultCoordinator(log, new StreamCloseResult("closed", 3));
+    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance, new SuspendingAfterHook(log));
+
+    var result = await closer.CloseAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
+
+    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(string.Join(",", log)).IsEqualTo("before,close,after-started,after-finished")
+      .Because("the close awaits the post-destruction hook to completion before returning, even when the hook yields");
+  }
 }

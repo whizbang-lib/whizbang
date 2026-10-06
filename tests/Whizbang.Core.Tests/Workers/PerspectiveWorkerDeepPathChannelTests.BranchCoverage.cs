@@ -341,6 +341,43 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       .Because("one applier per stream at a time: the contender runs only after the holder left");
   }
 
+  [Test]
+  public async Task WithStreamAffinityGate_ContendedWithASubscriber_ReportsTheContendedKeyOnceAndStillWaitsAsync() {
+    // The non-null side of the contention notification. Integration tests take it too, but coverage is
+    // compared per test project, so this project has to take both sides itself.
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.ContendedObservedPerspective";
+    var registry = new SingleRunnerRegistry(perspectiveName, new RecordingRunner(), [typeof(DeepChannelEvent)]);
+    var (worker, _, _) = _buildBranchWorker(new RecordingWorkCoordinator(), registry, new BranchSetup());
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var contended = new ConcurrentQueue<(Guid StreamId, string PerspectiveName)>();
+    worker.OnStreamAffinityGateContended += contended.Enqueue;
+    var secondEntered = false;
+
+    var holder = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, () => release.Task, CancellationToken.None);
+
+    await Assert.That(contended.IsEmpty).IsTrue()
+      .Because("taking a free gate is not contention");
+
+    var contender = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, () => {
+      secondEntered = true;
+      return Task.CompletedTask;
+    }, CancellationToken.None);
+
+    await Assert.That(contended.Count).IsEqualTo(1);
+    await Assert.That(contended.Single()).IsEqualTo((streamId, perspectiveName))
+      .Because("a held gate reports the contended (stream, perspective) key to the subscriber before parking");
+    await Assert.That(secondEntered).IsFalse()
+      .Because("reporting contention does not let the contender past the holder");
+
+    release.TrySetResult();
+    await Task.WhenAll(holder, contender).WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(secondEntered).IsTrue();
+    await Assert.That(contended.Count).IsEqualTo(1)
+      .Because("only the one parked caller was contended");
+  }
+
   // ------------------------------------------------------------------
   // Post-lifecycle firing (internal seam)
   // ------------------------------------------------------------------
@@ -380,6 +417,42 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(_branchSum(meters, "whizbang.lifecycle_coordinator.post_lifecycle_fired")).IsEqualTo(1d);
     await Assert.That(_branchSum(meters, "whizbang.lifecycle_coordinator.post_lifecycle_errors")).IsEqualTo(1d)
       .Because("the event whose stage threw is isolated and counted, and the others still ran");
+  }
+
+  [Test]
+  public async Task FirePostLifecycleDetached_WithCoordinatorWhoseEveryStepSuspends_StillFiresEveryStageAndRecordsCompletionAsync() {
+    // Every await inside the per-event try suspends once (security context, the four stage advances and the
+    // completion record), so the post-lifecycle loop resumes into that try at each step. Completed-task fakes
+    // never take those resume paths.
+    var coordinator = new LifecycleMarkingCoordinator { CompleteAsynchronously = true };
+    var security = new YieldingSecurityContextProvider();
+    var registry = new SingleRunnerRegistry("Deep.SuspendingLifecyclePerspective", new RecordingRunner(), [typeof(DeepChannelEvent)]);
+    var (worker, _, provider) = _buildBranchWorker(coordinator, registry, new BranchSetup {
+      Services = services => services.AddSingleton<Whizbang.Core.Security.IMessageSecurityContextProvider>(security)
+    });
+
+    var incomplete = Guid.CreateVersion7();
+    var first = Guid.CreateVersion7();
+    var second = Guid.CreateVersion7();
+    var lifecycle = new BranchLifecycleCoordinator { AdvanceAsynchronously = true };
+    lifecycle.Incomplete.Add(incomplete);
+    var batch = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
+    foreach (var id in new[] { incomplete, first, second }) {
+      batch[id] = (_envelope(id, new DeepChannelEvent("suspending")), Guid.CreateVersion7());
+    }
+
+    await worker.FirePostLifecycleDetachedAsync(batch, lifecycle, receptorInvoker: null, [], provider, CancellationToken.None);
+
+    await Assert.That(security.Calls).IsEqualTo(2)
+      .Because("the security context is established for each complete event and never for the incomplete one");
+    await Assert.That(string.Join(",", lifecycle.Advanced[first])).IsEqualTo(string.Join(",", _terminalStages))
+      .Because("an advance that suspends still fires every terminal stage, in order");
+    await Assert.That(string.Join(",", lifecycle.Advanced[second])).IsEqualTo(string.Join(",", _terminalStages));
+    await Assert.That(lifecycle.Advanced.ContainsKey(incomplete)).IsFalse();
+    await Assert.That(coordinator.RecordedLifecycleCompletions.Count).IsEqualTo(2)
+      .Because("the loop resumes after each suspended record and moves on to the next event");
+    await Assert.That(coordinator.RecordedLifecycleCompletions).Contains(first);
+    await Assert.That(coordinator.RecordedLifecycleCompletions).Contains(second);
   }
 
   private static readonly LifecycleStage[] _terminalStages = [
@@ -696,10 +769,12 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   /// <summary>Records durable lifecycle completion markers; everything else is inert.</summary>
   private sealed class LifecycleMarkingCoordinator : IWorkCoordinator {
     public ConcurrentQueue<Guid> RecordedLifecycleCompletions { get; } = new();
+    /// <summary>When true, recording a completion suspends before it finishes, so the caller resumes.</summary>
+    public bool CompleteAsynchronously { get; init; }
 
     public Task RecordLifecycleCompletionAsync(Guid eventId, CancellationToken cancellationToken = default) {
       RecordedLifecycleCompletions.Enqueue(eventId);
-      return Task.CompletedTask;
+      return CompleteAsynchronously ? _yieldOnceAsync() : Task.CompletedTask;
     }
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -717,6 +792,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     public HashSet<Guid> Untracked { get; } = [];
     public HashSet<Guid> FailOnAdvance { get; } = [];
     public ConcurrentDictionary<Guid, ConcurrentQueue<LifecycleStage>> Advanced { get; } = new();
+    /// <summary>When true, every stage advance suspends before it finishes, so the caller resumes.</summary>
+    public bool AdvanceAsynchronously { get; init; }
 
     public ILifecycleTracking BeginTracking(Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source, Guid? streamId = null, Type? perspectiveType = null) =>
       new BranchTracking(this, eventId);
@@ -743,10 +820,26 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
           throw new InvalidOperationException($"scripted post-lifecycle failure at {stage}");
         }
         owner.Advanced.GetOrAdd(eventId, static _ => new ConcurrentQueue<LifecycleStage>()).Enqueue(stage);
-        return ValueTask.CompletedTask;
+        return owner.AdvanceAsynchronously ? new ValueTask(_yieldOnceAsync()) : ValueTask.CompletedTask;
       }
 
       public ValueTask DrainDetachedAsync() => ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>Completes after one real suspension, so the awaiting state machine takes its resume path.</summary>
+  private static async Task _yieldOnceAsync() => await Task.Yield();
+
+  /// <summary>A security provider that establishes no context, after suspending once, and counts its calls.</summary>
+  private sealed class YieldingSecurityContextProvider : Whizbang.Core.Security.IMessageSecurityContextProvider {
+    private int _calls;
+    public int Calls => Volatile.Read(ref _calls);
+
+    public async ValueTask<Whizbang.Core.Security.IScopeContext?> EstablishContextAsync(
+        IMessageEnvelope envelope, IServiceProvider scopedProvider, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _calls);
+      await Task.Yield();
+      return null;
     }
   }
 

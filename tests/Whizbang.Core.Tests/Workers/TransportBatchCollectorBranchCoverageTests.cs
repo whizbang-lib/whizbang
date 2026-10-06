@@ -56,4 +56,56 @@ public class TransportBatchCollectorBranchCoverageTests {
     await Assert.That(Volatile.Read(ref flushedEvents)).IsEqualTo(0)
       .Because("a failed flush is not reported as flushed");
   }
+
+  [Test]
+  public async Task DisposeAsync_WithFlushSubscriber_ReportsTheFlushedBatchSizeAsync() {
+    // The other dispose tests either have no subscriber or a flush that fails, so the notification
+    // is never raised to anyone. A successful flush must report its size to the subscriber.
+    var reported = new List<int>();
+    var collector = new TransportBatchCollector<int>(_neverOnItsOwn(), _ => Task.CompletedTask);
+    collector.OnBatchFlushed += count => { lock (reported) { reported.Add(count); } };
+
+    collector.Enqueue(1);
+    collector.Enqueue(2);
+    collector.Enqueue(3);
+    await collector.DisposeAsync();
+
+    List<int> observed;
+    lock (reported) { observed = [.. reported]; }
+    await Assert.That(observed).IsEquivalentTo([3])
+      .Because("a successful flush reports exactly once, with the number of messages it delivered");
+  }
+
+  [Test]
+  public async Task FlushFailsWhileRunning_ReArmsTheSlideTimerAndRetriesTheBatchAsync() {
+    // Every other failing-flush test fails at dispose, when the slide timer is already gone. While the
+    // collector is running, a failed flush re-queues the batch and re-arms the slide timer, and that
+    // timer's tick is what delivers the retry.
+    var attempts = 0;
+    var delivered = new List<int>();
+    var retried = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Size 1 flushes on the enqueue itself; the short slide only matters once the failure re-arms it,
+    // and the hard max is far out of reach so only the re-armed slide timer can deliver the retry.
+    await using var collector = new TransportBatchCollector<int>(
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 1, MaxWaitMs = 600_000 },
+      batch => {
+        if (Interlocked.Increment(ref attempts) == 1) {
+          return Task.FromException(new InvalidOperationException("broker unavailable"));
+        }
+        lock (delivered) { delivered.AddRange(batch); }
+        return Task.CompletedTask;
+      });
+    collector.OnBatchFlushed += count => retried.TrySetResult(count);
+
+    collector.Enqueue(42);
+
+    var flushedCount = await retried.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(flushedCount).IsEqualTo(1);
+    await Assert.That(Volatile.Read(ref attempts)).IsEqualTo(2)
+      .Because("the first attempt failed and the re-armed slide timer drove exactly one retry");
+    List<int> observed;
+    lock (delivered) { observed = [.. delivered]; }
+    await Assert.That(observed).IsEquivalentTo([42])
+      .Because("the failed batch is kept and delivered by the retry rather than dropped");
+  }
 }

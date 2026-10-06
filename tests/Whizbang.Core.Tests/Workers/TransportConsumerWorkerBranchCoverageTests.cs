@@ -173,6 +173,20 @@ public class TransportConsumerWorkerBranchCoverageTests {
     await Assert.That(deadLetters.Moved).Count().IsEqualTo(1);
   }
 
+  [Test]
+  public async Task PoisonVerdict_DeadLetterMoveCompletesAsynchronously_MovesTheRowAndKeepsTheBatchAsync() {
+    // The other poison tests use a store that answers synchronously, so the quarantine never resumes
+    // from inside its move. A real store suspends on the database; the resumed move must still land
+    // and the batch must still be stored, not nacked.
+    var (stored, deadLetters) = await _runPoisonBatchAsync(
+      withGeneration: true, withInstance: true, moveCompletesAsynchronously: true);
+
+    await Assert.That(deadLetters.Moved).IsEquivalentTo([Guid.Parse("0199aaaa-bbbb-cccc-dddd-eeeeffff0101")])
+      .Because("the quarantined row is the one moved, whether or not the move completes synchronously");
+    await Assert.That(stored).IsEqualTo(1)
+      .Because("an asynchronous move must not fail the batch that reported the redelivery");
+  }
+
   // ---- null payload ---------------------------------------------------------------------------
 
   [Test]
@@ -286,11 +300,11 @@ public class TransportConsumerWorkerBranchCoverageTests {
   }
 
   private static async Task<(int Stored, RecordingDeadLetterStore DeadLetters)> _runPoisonBatchAsync(
-      bool withGeneration, bool withInstance) {
+      bool withGeneration, bool withInstance, bool moveCompletesAsynchronously = false) {
     var poisoned = Guid.Parse("0199aaaa-bbbb-cccc-dddd-eeeeffff0101");
     var coordinator = new ObservingWorkCoordinator(
       [new InboxRedeliveryObservation(poisoned, 10) { ProcessingAttempts = 10 }]);
-    var deadLetters = new RecordingDeadLetterStore();
+    var deadLetters = new RecordingDeadLetterStore { CompleteAsynchronously = moveCompletesAsynchronously };
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
@@ -398,13 +412,23 @@ public class TransportConsumerWorkerBranchCoverageTests {
   }
 
   private sealed class RecordingDeadLetterStore : IDeadLetterStore {
-    public List<Guid> Moved { get; } = [];
+    private readonly List<Guid> _moved = [];
 
-    public Task<Guid?> MoveAsync(
+    /// <summary>When set, each move yields before recording, as a store writing to the database does.</summary>
+    public bool CompleteAsynchronously { get; init; }
+
+    public List<Guid> Moved {
+      get { lock (_moved) { return [.. _moved]; } }
+    }
+
+    public async Task<Guid?> MoveAsync(
         Guid deadLetterId, string sourceTable, Guid sourceId, MessageFailureReason failureReason,
         string? errorText, Guid instanceId, string generation, CancellationToken ct = default) {
-      Moved.Add(sourceId);
-      return Task.FromResult<Guid?>(deadLetterId);
+      if (CompleteAsynchronously) {
+        await Task.Yield();
+      }
+      lock (_moved) { _moved.Add(sourceId); }
+      return deadLetterId;
     }
   }
 

@@ -38,6 +38,20 @@ public class PerspectiveMigrationWorkerBranchCoverageTests {
       Task.FromResult<RebuildStatus?>(null);
   }
 
+  /// <summary>Yields before answering, as a rebuild that runs against the database does.</summary>
+  private sealed class YieldingRebuilder(Func<string, RebuildResult> respond) : IPerspectiveRebuilder {
+    public async Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct = default) {
+      await Task.Yield();
+      return respond(perspectiveName);
+    }
+    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) =>
+      throw new NotSupportedException();
+    public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct = default) =>
+      throw new NotSupportedException();
+    public Task<RebuildStatus?> GetRebuildStatusAsync(string perspectiveName, CancellationToken ct = default) =>
+      Task.FromResult<RebuildStatus?>(null);
+  }
+
   private sealed class CapturingLogger : ILogger<PerspectiveMigrationWorker> {
     private readonly List<string> _messages = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -114,5 +128,45 @@ public class PerspectiveMigrationWorkerBranchCoverageTests {
     await Assert.That(failureLine).IsNotNull();
     await Assert.That(failureLine).EndsWith(": unknown")
       .Because("a failure with no error text still names a reason, rather than an empty one an operator cannot search for");
+  }
+
+  [Test]
+  public async Task ExecuteAsync_RebuildAndStatusWritesCompleteAsynchronously_RecordsEachOutcomeInOrderAsync() {
+    // The sibling tests answer every await synchronously, so the loop never resumes inside its
+    // per-rebuild try block. Real rebuilds and status writes suspend on the database: after resuming
+    // from the rebuild, from a success write and from a failure write, each outcome must still be
+    // recorded against its own migration, and the next rebuild must still run.
+    var rebuilder = new YieldingRebuilder(name => name == "BrokenPerspective"
+      ? new RebuildResult(name, 0, 0, TimeSpan.Zero, false, "projection threw")
+      : new RebuildResult(name, 4, 9, TimeSpan.FromSeconds(1), true, null));
+    var statuses = new List<(string Key, int Status, string Description)>();
+    var worker = new PerspectiveMigrationWorker(
+      rebuilder: rebuilder,
+      logger: new CapturingLogger(),
+      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
+        new PendingMigrationRebuild("HealthyPerspective", "perspective:HealthyPerspective"),
+        new PendingMigrationRebuild("BrokenPerspective", "perspective:BrokenPerspective"),
+        new PendingMigrationRebuild("LaterPerspective", "perspective:LaterPerspective"),
+      ]),
+      UpdateMigrationStatus = async (key, status, description, _) => {
+        await Task.Yield();
+        lock (statuses) { statuses.Add((key, status, description)); }
+      },
+    };
+
+    await worker.StartAsync(CancellationToken.None);
+    await worker.ExecuteTask!.WaitAsync(_wait);
+    await worker.StopAsync(CancellationToken.None);
+
+    List<(string Key, int Status, string Description)> recorded;
+    lock (statuses) { recorded = [.. statuses]; }
+    await Assert.That(recorded.ConvertAll(s => (s.Key, s.Status))).IsEquivalentTo(
+        [("perspective:HealthyPerspective", 2), ("perspective:BrokenPerspective", -1), ("perspective:LaterPerspective", 2)],
+        TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("each rebuild's outcome is written to its own migration row, and a failure resumed from an "
+             + "asynchronous write does not stop the rebuilds after it");
+    await Assert.That(recorded[1].Description).IsEqualTo("Failed: projection threw")
+      .Because("the failure text the rebuild reported is what the operator sees on the migration row");
   }
 }

@@ -21,6 +21,9 @@ public class TransientDatabaseFailureBranchCoverageTests {
   [Arguments("57P02", TransientDatabaseFailure.CONNECTION_LOST)]
   [Arguments("57P03", TransientDatabaseFailure.CONNECTION_LOST)]
   [Arguments("08P01", TransientDatabaseFailure.CONNECTION_LOST)]
+  // Five characters ending in "3" but neither lock_not_available nor cannot_connect_now: the
+  // classifier must fall past both exact codes to the connection-class prefix.
+  [Arguments("08003", TransientDatabaseFailure.CONNECTION_LOST)]
   [Arguments("08", TransientDatabaseFailure.CONNECTION_LOST)]
   [Arguments("08003X", TransientDatabaseFailure.CONNECTION_LOST)]
   [Arguments("53", TransientDatabaseFailure.INSUFFICIENT_RESOURCES)]
@@ -43,6 +46,9 @@ public class TransientDatabaseFailureBranchCoverageTests {
   [Arguments("57P04")]
   [Arguments("57000")]
   [Arguments("55P02")]
+  // numeric_value_out_of_range: ends in "3" like the lock-timeout and cannot-connect-now codes, and
+  // is a data defect that no retry fixes.
+  [Arguments("22003")]
   [Arguments("55000")]
   [Arguments("5")]
   [Arguments("")]

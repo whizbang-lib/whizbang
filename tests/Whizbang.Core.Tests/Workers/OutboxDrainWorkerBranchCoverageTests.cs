@@ -173,6 +173,31 @@ public class OutboxDrainWorkerBranchCoverageTests {
       .Because("with no attempt limit configured no row is ever dead-lettered, however many attempts it has");
   }
 
+  [Test]
+  public async Task AttemptsOverLimit_DeadLetterMoveCompletesAsynchronously_RowIsMovedAndNotPublishedAsync() {
+    // Every other store fake answers synchronously, so the drain never resumes from inside the move's
+    // try block. A real store suspends on the database; the resumed path must still skip the publish,
+    // because the row it would publish no longer exists.
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var coord = new BranchWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId, attempts: 11)];
+    await using var sp = _sp(coord);
+    var drain = new BranchDrainChannel();
+    var completion = new BranchCompletionChannel();
+    var publish = new BranchPublishStrategy();
+    var dlqStore = new YieldingDeadLetterStore();
+    var worker = _worker(sp, drain, completion, new BranchFailureChannel(),
+      new OutboxDrainWorkerOptions { Enabled = true, MaxOutboxAttempts = 10 }, publish, deadLetterStore: dlqStore);
+
+    await _drainOnceAsync(worker, drain, streamId);
+
+    await Assert.That(dlqStore.Moved).IsEquivalentTo([msgId])
+      .Because("an over-limit row is moved to dead letters even when the move completes asynchronously");
+    await Assert.That(publish.Published).IsEmpty()
+      .Because("after the move resumes the row is skipped; publishing it would deliver a message already dead-lettered");
+  }
+
   // ---- publish seams --------------------------------------------------------------------------
 
   [Test]
@@ -533,6 +558,19 @@ public class OutboxDrainWorkerBranchCoverageTests {
         Guid instanceId, string generation, CancellationToken ct = default) {
       Moved.Add(sourceId);
       return Task.FromResult<Guid?>(deadLetterId);
+    }
+  }
+
+  /// <summary>Records each move after yielding, as a store that writes to the database does.</summary>
+  private sealed class YieldingDeadLetterStore : IDeadLetterStore {
+    public ConcurrentBag<Guid> Moved { get; } = [];
+    public async Task<Guid?> MoveAsync(
+        Guid deadLetterId, string sourceTable, Guid sourceId,
+        MessageFailureReason failureReason, string? errorText,
+        Guid instanceId, string generation, CancellationToken ct = default) {
+      await Task.Yield();
+      Moved.Add(sourceId);
+      return deadLetterId;
     }
   }
 

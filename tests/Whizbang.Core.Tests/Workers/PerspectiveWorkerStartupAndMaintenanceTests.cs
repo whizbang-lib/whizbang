@@ -752,6 +752,27 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     await fx.Worker.StopAsync(CancellationToken.None);
   }
 
+  [Test]
+  public async Task Startup_RewindScanCanceled_PropagatesRatherThanLoggingAScanErrorAsync() {
+    // The cancellation side of the scan's catch filter: a cancellation is a stop, not a failed scan, so
+    // it must leave the worker instead of being swallowed and letting startup carry on into the loop.
+    var coordinator = new StartupCoordinator { RewindQueryException = new OperationCanceledException("stop requested") };
+    var fx = _build(coordinator, _registryWithOnePerspective());
+
+    using var cts = new CancellationTokenSource();
+    await fx.Worker.StartAsync(cts.Token);
+    await coordinator.WaitForRewindQueriesAsync(1, TimeSpan.FromSeconds(10));
+
+    await Assert.That(async () => await fx.Worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)))
+      .Throws<OperationCanceledException>()
+      .Because("the startup scan swallows ordinary failures but lets cancellation through");
+    await Assert.That(fx.Worker.ExecuteTask!.IsCanceled).IsTrue()
+      .Because("a cancellation escaping the worker body settles it canceled, never faulted");
+
+    await cts.CancelAsync();
+    try { await fx.Worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+  }
+
   // ============================================================
   // NOTIFY listener subscribe/unsubscribe
   // ============================================================

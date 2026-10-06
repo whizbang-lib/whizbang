@@ -614,4 +614,114 @@ public class InboxDispatchWorkerBranchCoverageTests {
     await Assert.That(invoker.Invocations).DoesNotContain(LifecycleStage.PreInboxDetached)
       .Because("the runtime registry answers only for the inline stage");
   }
+
+  // ============================================================
+  // Dead-letter moves that suspend (lines 378, 602, 772, 864)
+  // ============================================================
+  // Each IsConfigured check is followed by a try whose MoveAsync a real store completes
+  // asynchronously. Every other suite's store completes synchronously, so the state machine's
+  // resume path into that try had never run; these tests make the move suspend once and assert
+  // the terminal behavior still happens after resumption.
+
+  /// <summary>DLQ store whose move suspends before it records and succeeds, as a database write does.</summary>
+  private sealed class YieldingDeadLetterStore : IDeadLetterStore {
+    public ConcurrentBag<(string SourceTable, Guid SourceId, MessageFailureReason Reason)> Moves { get; } = [];
+    public async Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId,
+        MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation, CancellationToken ct = default) {
+      await Task.Yield();
+      Moves.Add((sourceTable, sourceId, failureReason));
+      return deadLetterId;
+    }
+  }
+
+  [Test]
+  public async Task MaxAttemptsExceeded_DeadLetterMoveSuspends_StillReleasesTheRowWithoutCompletingAsync() {
+    var store = new YieldingDeadLetterStore();
+    var parts = new WorkerParts {
+      WorkerOptions = new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 },
+      DeadLetterStore = store,
+    };
+    await using var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = parts.Build(sp);
+
+    var work = _makeWork(attempts: 4);
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var (sourceTable, sourceId, reason) = store.Moves.Single();
+    await Assert.That(sourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(sourceId).IsEqualTo(work.MessageId);
+    await Assert.That(reason).IsEqualTo(MessageFailureReason.MaxAttemptsExceeded);
+    await Assert.That(parts.HandlerCommit.All).IsEmpty()
+      .Because("after the suspended move resumes, the row is gone and the legacy terminal commit must be skipped");
+    await Assert.That(parts.Inbox.RemovedInFlight.Contains(work.MessageId)).IsTrue();
+  }
+
+  [Test]
+  public async Task UndeserializablePayload_DeadLetterMoveSuspends_StillReleasesTheRowWithoutFailureAsync() {
+    var store = new YieldingDeadLetterStore();
+    var parts = new WorkerParts {
+      Deserializer = new RefusingDeserializer(),
+      DeadLetterStore = store,
+    };
+    await using var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = parts.Build(sp);
+
+    var work = _makeWork();
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var (_, sourceId, reason) = store.Moves.Single();
+    await Assert.That(sourceId).IsEqualTo(work.MessageId);
+    await Assert.That(reason).IsEqualTo(MessageFailureReason.SerializationError);
+    await Assert.That(parts.Failure.All).IsEmpty()
+      .Because("a move that resumed successfully is terminal; routing a failure as well would re-feed the row");
+    await Assert.That(parts.HandlerCommit.All).IsEmpty();
+    await Assert.That(parts.Inbox.RemovedInFlight.Contains(work.MessageId)).IsTrue();
+  }
+
+  [Test]
+  public async Task CompositeOverOwnCap_DeadLetterMoveSuspends_StillReleasesTheRowWithoutCompletingAsync() {
+    var store = new YieldingDeadLetterStore();
+    var parts = new WorkerParts {
+      Deserializer = new FakeCompositeDeserializer(new OverCapComposite(5)),
+      DeadLetterStore = store,
+    };
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = parts.Build(sp);
+
+    var work = _makeWork();
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var (_, sourceId, reason) = store.Moves.Single();
+    await Assert.That(sourceId).IsEqualTo(work.MessageId);
+    await Assert.That(reason).IsEqualTo(MessageFailureReason.CompositeInnerEventLimitExceeded);
+    await Assert.That(parts.HandlerCommit.All).IsEmpty()
+      .Because("the resumed move deleted the composite row, so neither children nor a terminal commit may follow");
+    await Assert.That(parts.Inbox.RemovedInFlight.Contains(work.MessageId)).IsTrue();
+  }
+
+  [Test]
+  public async Task CompositeOverConsumerBudget_DeadLetterMoveSuspends_StillReleasesTheRowWithoutCompletingAsync() {
+    var store = new YieldingDeadLetterStore();
+    var parts = new WorkerParts {
+      Deserializer = new FakeCompositeDeserializer(new WideComposite(12)),
+      WorkerOptions = new InboxDispatchWorkerOptions { MaxCompositeChildrenPerExpansion = 3, EnforceCompositeExpansionBudget = true },
+      DeadLetterStore = store,
+    };
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = parts.Build(sp);
+
+    var work = _makeWork();
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var (_, sourceId, reason) = store.Moves.Single();
+    await Assert.That(sourceId).IsEqualTo(work.MessageId);
+    await Assert.That(reason).IsEqualTo(MessageFailureReason.CompositeInnerEventLimitExceeded);
+    await Assert.That(parts.HandlerCommit.All).IsEmpty()
+      .Because("a refused expansion is dead-lettered, and after the move resumes nothing is committed for it");
+    await Assert.That(parts.Inbox.RemovedInFlight.Contains(work.MessageId)).IsTrue();
+  }
 }

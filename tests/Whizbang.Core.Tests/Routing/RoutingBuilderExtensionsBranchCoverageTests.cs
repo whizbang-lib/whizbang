@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -45,6 +46,23 @@ public class RoutingBuilderExtensionsBranchCoverageTests {
 
     await Assert.That(options.ControlClass).IsSameReferenceAs(bound)
       .Because("the strategy, the mint and the receive boundary must all read one control-class object");
+  }
+
+  [Test]
+  public async Task WithRouting_NoControlClassAccessorResolvable_KeepsTheCodeConfiguredControlClassAsync() {
+    var services = new ServiceCollection();
+    new WhizbangBuilder(services).WithRouting(r => r.ControlClass.CadenceMultiplier = 7);
+    // Drop the options pipeline's open-generic IOptions<> so nothing can answer for
+    // IOptions<ControlClassOptions>; the routing builder's own closed registration remains.
+    services.RemoveAll(typeof(IOptions<>));
+    await using var provider = services.BuildServiceProvider();
+
+    var controlAccessor = provider.GetService<IOptions<ControlClassOptions>>();
+    var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
+
+    await Assert.That(controlAccessor).IsNull();
+    await Assert.That(options.ControlClass.CadenceMultiplier).IsEqualTo(7)
+      .Because("with no control-class accessor to adopt from, the code callback's settings stand");
   }
 
   private sealed class NullValueOptions : IOptions<ControlClassOptions> {

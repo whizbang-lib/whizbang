@@ -239,4 +239,104 @@ public partial class InboxDrainWorkerCoverageTests {
     await Assert.That(perf[0].Message).Contains("enqueued=5", StringComparison.Ordinal);
     await Assert.That(perf[0].Message).Contains("fetches=2", StringComparison.Ordinal);
   }
+
+  /// <summary>An inbox writer whose every write suspends before it records, as a bounded channel under load does.</summary>
+  private sealed class YieldingInboxChannel : IInboxChannelWriter {
+    private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
+    private readonly List<Guid> _written = [];
+    public ChannelReader<InboxWork> Reader => _channel.Reader;
+    public List<Guid> Written {
+      get {
+        lock (_written) { return [.. _written]; }
+      }
+    }
+    public async ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) {
+      await Task.Yield();
+      lock (_written) { _written.Add(work.MessageId); }
+      await _channel.Writer.WriteAsync(work, ct);
+    }
+    public bool TryWrite(InboxWork work) => _channel.Writer.TryWrite(work);
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { /* nothing tracked */ }
+    public bool ShouldRenewLease(Guid messageId) => false;
+    public void Complete() => _channel.Writer.Complete();
+    public event Action? OnNewInboxWorkAvailable;
+    public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
+  }
+
+  /// <summary>A coordinator whose every fetch suspends before answering from its script, as a database round trip does.</summary>
+  private sealed class YieldingFetchCoordinator : IWorkCoordinator {
+    private int _calls;
+    public Func<int, IReadOnlyList<InboxBatchRow>> Respond { get; init; } = _ => [];
+    public int CallCount => Volatile.Read(ref _calls);
+
+    public async Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+        IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream, long? maxBytes,
+        CancellationToken cancellationToken = default) {
+      await Task.Yield();
+      var call = Interlocked.Increment(ref _calls);
+      return Respond(call);
+    }
+
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  [Test]
+  public async Task DrainStreamBatch_WriteAndTailDrainBothSuspend_DispatchesThePageInOrderThenDrainsTheTailAsync() {
+    // Every await in the per-stream dispatch block (the channel write and the loop-until-empty tail
+    // drain) suspends once here, as a real channel and database do. The other drain tests complete
+    // both synchronously, so the dispatch block's resume paths had never run.
+    var streamId = (Guid)TrackedGuid.New();
+    var first = (Guid)TrackedGuid.New();
+    var second = (Guid)TrackedGuid.New();
+    var coord = new YieldingFetchCoordinator {
+      // Call 1 is the batched fetch and fills the cap of 2, which hands the stream to the tail
+      // drain; call 2 is the tail drain's fetch and finds nothing more.
+      Respond = call => call == 1 ? [_row(second, streamId), _row(first, streamId)] : [],
+    };
+    var drain = new DrainedSignalingChannel();
+    var inbox = new YieldingInboxChannel();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    await using var sp = services.BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var worker = new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drain, inbox, gate,
+      Options.Create(new InboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 2,
+        MaxPerStreamCeiling = 2,
+        AdaptivePerStreamEnabled = false,
+      }),
+      _jsonOpts,
+      NullLogger<InboxDrainWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId, cts.Token);
+    await drain.Drained.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    Guid[] expectedOrder = [.. new[] { first, second }.Order()];
+    var written = inbox.Written;
+    await Assert.That(written).Count().IsEqualTo(2)
+      .Because("both rows are handed over, each after its suspended write resumes");
+    await Assert.That(written[0]).IsEqualTo(expectedOrder[0]);
+    await Assert.That(written[1]).IsEqualTo(expectedOrder[1])
+      .Because("the page is dispatched in message-id order even though the fetch returned it reversed");
+    await Assert.That(coord.CallCount).IsEqualTo(2)
+      .Because("a page that filled the cap must still reach the tail drain after the writes resumed");
+  }
 }

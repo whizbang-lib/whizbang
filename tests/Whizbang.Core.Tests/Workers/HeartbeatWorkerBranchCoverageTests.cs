@@ -153,7 +153,32 @@ public class HeartbeatWorkerBranchCoverageTests {
     await Assert.That(bus.Published).Contains(typeof(InstanceLeavingSignal));
   }
 
+  [Test]
+  public async Task StopAsync_BusPublishSuspends_StillPublishesInstanceLeavingAfterResumingAsync() {
+    // A real bus publish crosses the network and suspends; the stop path must resume and finish
+    // the goodbye rather than only working against a bus that completes synchronously.
+    var bus = new YieldingBus();
+    var worker = _worker(new FakeTimeProvider(_start), () => Task.FromResult(true), _options(), bus: bus).Worker;
+
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(bus.Completed).Contains(typeof(InstanceLeavingSignal))
+      .Because("the publish resumed after suspending and ran to completion before stop returned");
+  }
+
   // ── helpers ────────────────────────────────────────────────────────────
+
+  private sealed class YieldingBus : ISignalBus {
+    public List<Type> Completed { get; } = [];
+    public async ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
+      where TSignal : ISignal {
+      await Task.Yield();
+      lock (Completed) { Completed.Add(typeof(TSignal)); }
+    }
+    public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler) where TSignal : ISignal
+      => new NoopSub();
+    private sealed class NoopSub : ISignalSubscription { public void Dispose() { /* nothing to release */ } }
+  }
 
   private static HeartbeatWorkerOptions _options() => new() { IntervalSeconds = 30, SlowIntervalSeconds = 60 };
 

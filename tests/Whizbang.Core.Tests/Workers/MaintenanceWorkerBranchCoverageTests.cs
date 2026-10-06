@@ -267,4 +267,137 @@ public class MaintenanceWorkerBranchCoverageTests {
       PerspectiveStreamGroupRegistry.Clear();
     }
   }
+
+  // ---- collaborators that complete asynchronously -----------------------------------------------
+  // Every other maintenance fake answers with an already-completed task, so the cycle never suspends
+  // inside the guarded try blocks below and the resume path after each await is never exercised. A
+  // real database call does suspend; these fakes yield first so the cycle resumes the way it does in
+  // production.
+
+  /// <summary>Records its runs and yields before each one completes, as a real snapshot write does.</summary>
+  private sealed class YieldingRunner : IPerspectiveRunner {
+    private readonly List<(Guid StreamId, string Perspective, Guid LastEventId)> _calls = [];
+    public Type PerspectiveType => typeof(object);
+    public List<(Guid StreamId, string Perspective, Guid LastEventId)> Snapshot() {
+      lock (_calls) { return [.. _calls]; }
+    }
+    public async Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) {
+      await Task.Yield();
+      lock (_calls) { _calls.Add((streamId, perspectiveName, lastProcessedEventId)); }
+    }
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+  }
+
+  /// <summary>
+  /// Answers epoch closure and rewrite recording asynchronously and records the order the cycle
+  /// reached each call in.
+  /// </summary>
+  private sealed class YieldingCoordinator : IWorkCoordinator {
+    private readonly List<string> _calls = [];
+    public List<EphemeralSnapshotTarget> Pairs { get; init; } = [];
+    public List<TableRewriteCandidate> Candidates { get; init; } = [];
+    public int EpochsToClose { get; init; }
+
+    public List<string> Snapshot() {
+      lock (_calls) { return [.. _calls]; }
+    }
+
+    private void _record(string call) {
+      lock (_calls) { _calls.Add(call); }
+    }
+
+    public async Task<int> CloseDigestEpochsAsync(int settleSeconds, int maxEpochs, CancellationToken cancellationToken = default) {
+      await Task.Yield();
+      _record("close-epochs");
+      return EpochsToClose;
+    }
+
+    public Task<IReadOnlyList<TableRewriteCandidate>> GetTablesNeedingRewriteAsync(CancellationToken cancellationToken = default)
+      => Task.FromResult<IReadOnlyList<TableRewriteCandidate>>(Candidates);
+
+    public async Task RequestTableRewriteAsync(string tableName, CancellationToken cancellationToken = default) {
+      await Task.Yield();
+      _record("request:" + tableName);
+    }
+
+    public Task<IReadOnlyList<EphemeralSnapshotTarget>> GetEphemeralPairsNeedingSnapshotAsync(CancellationToken cancellationToken = default)
+      => Task.FromResult<IReadOnlyList<EphemeralSnapshotTarget>>(Pairs);
+
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
+      _record("perform-maintenance");
+      return Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
+    }
+
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  [Test]
+  public async Task EpochClosure_CompletesAsynchronously_CycleResumesAndStillReachesTheReapAsync() {
+    var coord = new YieldingCoordinator { EpochsToClose = 3 };
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions { EpochClosureEnabled = true }));
+    await using var sp = services.BuildServiceProvider();
+
+    await _build(sp.GetRequiredService<IServiceScopeFactory>()).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Snapshot()).IsEquivalentTo(["close-epochs", "perform-maintenance"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a closure that suspends on the database must resume into the rest of the cycle; the reap "
+             + "runs after closure, never instead of it and never before it");
+  }
+
+  [Test]
+  public async Task RewriteRecording_CompletesAsynchronously_EveryCandidateIsStillRecordedInOrderAsync() {
+    var coord = new YieldingCoordinator {
+      Candidates = [
+        new TableRewriteCandidate("wh_event_store", 4.2, Requested: false),
+        new TableRewriteCandidate("wh_outbox", 3.1, Requested: true),
+        new TableRewriteCandidate("wh_inbox", 3.9, Requested: false),
+      ],
+    };
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    await using var sp = services.BuildServiceProvider();
+
+    await _build(sp.GetRequiredService<IServiceScopeFactory>()).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    var requests = coord.Snapshot().Where(c => c.StartsWith("request:", StringComparison.Ordinal)).ToList();
+    await Assert.That(requests).IsEquivalentTo(["request:wh_event_store", "request:wh_inbox"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a recording that suspends resumes into the next candidate, and the one already on the books "
+             + "is still skipped after the loop has resumed from an earlier await");
+  }
+
+  [Test]
+  public async Task ReapDrivenSnapshot_RunnerCompletesAsynchronously_EveryPairStillGetsItsSnapshotAsync() {
+    var firstStream = Guid.CreateVersion7();
+    var secondStream = Guid.CreateVersion7();
+    var firstEvent = Guid.CreateVersion7();
+    var secondEvent = Guid.CreateVersion7();
+    var coord = new YieldingCoordinator {
+      Pairs = [
+        new EphemeralSnapshotTarget(firstStream, "LivePerspective", firstEvent),
+        new EphemeralSnapshotTarget(secondStream, "LivePerspective", secondEvent),
+      ],
+    };
+    var runner = new YieldingRunner();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new PartialRegistry("LivePerspective", runner));
+    await using var sp = services.BuildServiceProvider();
+
+    await _build(sp.GetRequiredService<IServiceScopeFactory>()).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(runner.Snapshot()).IsEquivalentTo(
+        [(firstStream, "LivePerspective", firstEvent), (secondStream, "LivePerspective", secondEvent)],
+        TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a snapshot write that suspends must resume into the next pair, so every pair the reaper is "
+             + "about to delete from has its rewind floor first");
+  }
 }
