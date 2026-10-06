@@ -1,0 +1,41 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Routing;
+
+namespace Whizbang.Core.Tests.Routing;
+
+/// <summary>
+/// Branch backfill for <see cref="PoisonDetectionCapabilityState.ReportAgeCapability"/>: a surface
+/// that is already degraded does not count as newly degraded again, and recovering clears it.
+/// </summary>
+public class PoisonDetectionCapabilityStateBranchCoverageTests {
+
+  [Test]
+  public async Task ReportAgeCapability_AlreadyDegraded_IsNotNewlyDegradedAgainAsync() {
+    var state = new PoisonDetectionCapabilityState();
+
+    var first = state.ReportAgeCapability("transport-a", "inbox.orders", canSupplyTrustworthyAge: false);
+    var second = state.ReportAgeCapability("transport-a", "inbox.orders", canSupplyTrustworthyAge: false);
+
+    await Assert.That(first).IsTrue();
+    await Assert.That(second).IsFalse()
+      .Because("the transition into degraded is reported once per surface, so the caller logs once rather than per message");
+    await Assert.That(state.HasDegradedSurface).IsTrue();
+  }
+
+  [Test]
+  public async Task ReportAgeCapability_DegradedThenRecovered_IsNotNewlyDegradedAndClearsTheSurfaceAsync() {
+    var state = new PoisonDetectionCapabilityState();
+    _ = state.ReportAgeCapability("transport-a", "inbox.orders", canSupplyTrustworthyAge: false);
+
+    var recovered = state.ReportAgeCapability("transport-a", "inbox.orders", canSupplyTrustworthyAge: true);
+
+    await Assert.That(recovered).IsFalse();
+    await Assert.That(state.HasDegradedSurface).IsFalse()
+      .Because("a surface that can supply a trustworthy age again is no longer degraded");
+  }
+}
