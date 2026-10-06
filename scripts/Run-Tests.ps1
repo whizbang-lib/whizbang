@@ -1001,10 +1001,16 @@ try {
     # collector instruments in memory, inside the test process: nothing on disk is rewritten.
     # Every test project must reference Microsoft.Testing.Extensions.CodeCoverage, or its module
     # rejects --coverage as an unknown option.
+    #
+    # Each module also writes the binary <guid>.coverage beside its Cobertura report. A Cobertura line
+    # records how many outcomes its process took, not which, so merging per-process reports cannot
+    # tell one outcome taken twice from two different outcomes; the binary report records every
+    # block's hit, and the quality gate unions those across processes (Find-UncoveredNewLines.ps1,
+    # Merge-BlockCoverage).
     if ($ModuleCoverage) {
         $testArgs += "--coverage"
         $testArgs += "--coverage-output-format"
-        $testArgs += "cobertura"
+        $testArgs += "cobertura,coverage"
         $testArgs += "--coverage-settings"
         $testArgs += (Join-Path $repoRoot "codecoverage.config")
     }

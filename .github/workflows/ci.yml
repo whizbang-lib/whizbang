@@ -988,13 +988,20 @@ jobs:
     # The gate's decision logic is code that decides what merges, so it has tests of its own. Cheap
     # (seconds, no build) and run on every event, so a broken rule can never reach a protected branch.
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
       # A full checkout: the inert-list test checks every tracked file the list matches.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The coverage merge tests read real binary coverage reports with the tool the quality job uses.
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install dotnet-coverage
+        run: dotnet tool install --global dotnet-coverage --version 18.12.0
       - name: Run the pipeline script tests
         shell: pwsh
         run: |
