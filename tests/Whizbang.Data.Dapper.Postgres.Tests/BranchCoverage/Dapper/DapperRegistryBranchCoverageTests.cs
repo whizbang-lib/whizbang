@@ -129,7 +129,7 @@ public class DapperRegistryBranchCoverageTests : IAsyncDisposable {
   }
 
   private static IMessageTypeCatalog _catalog(string clrTypeName) =>
-    new([new MessageTypeCatalogEntry(typeof(CoverageMarker), clrTypeName, "event", PINNED_ID)]);
+    new FixedCatalog([new MessageTypeCatalogEntry(typeof(CoverageMarker), clrTypeName, "event", PINNED_ID)]);
 
   /// <summary>The largest value the counter reports at collection; the untouched series report zero.</summary>
   private static long _observedMaximum(PassiveCounter<long> counter) {

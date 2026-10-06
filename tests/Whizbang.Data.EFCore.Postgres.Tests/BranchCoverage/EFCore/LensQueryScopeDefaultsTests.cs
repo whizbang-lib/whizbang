@@ -102,21 +102,21 @@ public class LensQueryScopeDefaultsTests {
       Filters = ScopeFilters.Tenant,
       TenantId = "tenant-a",
       SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
-    }).ToList();
+    }).AsEnumerable().ToList();
     var flagNoPrincipals = ScopedAccessHelper.ApplyFilterInfo(rows, new ScopeFilterInfo {
       Filters = ScopeFilters.Principal,
       SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
-    }).ToList();
+    }).AsEnumerable().ToList();
     var flagWithPrincipals = ScopedAccessHelper.ApplyFilterInfo(rows, new ScopeFilterInfo {
       Filters = ScopeFilters.Principal,
       SecurityPrincipals = new HashSet<SecurityPrincipalId> { new("group:p1") },
-    }).ToList();
+    }).AsEnumerable().ToList();
 
     await Assert.That(tenantOnly.Count).IsEqualTo(2)
       .Because("only the tenant clause applies");
     await Assert.That(flagNoPrincipals.Count).IsEqualTo(3)
       .Because("with no principals held, the principal clause is not composed at all");
-    await Assert.That(flagWithPrincipals.Select(r => r.Scope.UserId)).IsEquivalentTo(["user-1"])
+    await Assert.That(flagWithPrincipals.Select(r => r.Scope.UserId!)).IsEquivalentTo(["user-1"])
       .Because("only the row that allows group:p1 is visible to a caller holding it");
   }
 
@@ -125,16 +125,16 @@ public class LensQueryScopeDefaultsTests {
     var rows = _rows();
     var p1 = new HashSet<SecurityPrincipalId> { new("group:p1") };
 
-    var both = rows.FilterByUserOrPrincipals("user-2", p1).ToList();
-    var userWithNullSet = rows.FilterByUserOrPrincipals("user-2", null!).ToList();
-    var principalsOnly = rows.FilterByUserOrPrincipals(null, p1).ToList();
-    var neither = rows.FilterByUserOrPrincipals(null, new HashSet<SecurityPrincipalId>()).ToList();
+    var both = rows.FilterByUserOrPrincipals("user-2", p1).AsEnumerable().ToList();
+    var userWithNullSet = rows.FilterByUserOrPrincipals("user-2", null!).AsEnumerable().ToList();
+    var principalsOnly = rows.FilterByUserOrPrincipals(null, p1).AsEnumerable().ToList();
+    var neither = rows.FilterByUserOrPrincipals(null, new HashSet<SecurityPrincipalId>()).AsEnumerable().ToList();
 
-    await Assert.That(both.Select(r => r.Scope.UserId)).IsEquivalentTo(["user-1", "user-2"])
+    await Assert.That(both.Select(r => r.Scope.UserId!)).IsEquivalentTo(["user-1", "user-2"])
       .Because("user-2's own row OR the row allowing group:p1");
-    await Assert.That(userWithNullSet.Select(r => r.Scope.UserId)).IsEquivalentTo(["user-2"])
+    await Assert.That(userWithNullSet.Select(r => r.Scope.UserId!)).IsEquivalentTo(["user-2"])
       .Because("a null principal set reads as no principals, leaving the user clause alone");
-    await Assert.That(principalsOnly.Select(r => r.Scope.UserId)).IsEquivalentTo(["user-1"]);
+    await Assert.That(principalsOnly.Select(r => r.Scope.UserId!)).IsEquivalentTo(["user-1"]);
     await Assert.That(neither).IsEmpty()
       .Because("no user and no principals grants no access");
   }

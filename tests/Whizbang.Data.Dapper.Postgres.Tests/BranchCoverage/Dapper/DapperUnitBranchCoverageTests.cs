@@ -138,7 +138,7 @@ public class DapperUnitBranchCoverageTests {
   /// <summary>Setting a property to null binds the JSON null literal, which clears the value in the document.</summary>
   [Test]
   public async Task SpecCompiler_NullConstant_BindsJsonNullAsync() {
-    var spec = new CoverageSpec(s => s.SetProperty<string?>(m => m.Note, null));
+    var spec = new CoverageSpec(s => s.SetProperty(m => m.Note, (string?)null));
 
     var compiled = DapperCollectiveSpecCompiler<CoverageModel>.Compile(spec, _collectiveJsonOptions);
 

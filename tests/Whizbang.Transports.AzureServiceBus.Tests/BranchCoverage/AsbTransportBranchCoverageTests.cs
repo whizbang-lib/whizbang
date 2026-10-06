@@ -281,9 +281,9 @@ public class AsbTransportBranchCoverageTests {
       new AzureServiceBusOptions { MaxAutoLockRenewalDuration = TimeSpan.FromMinutes(5) },
       NullLogger<AzureServiceBusTransport>.Instance);
     var t0 = DateTimeOffset.UtcNow;
-    var args = new ReleaseCountingSessionArgs();
+    var args = new ReleaseCountingSessionEventArgs();
 
-    transport.OnSessionInitializing(new TransportDestination(TOPIC), ReleaseCountingSessionArgs.SESSION_ID, t0);
+    transport.OnSessionInitializing(new TransportDestination(TOPIC), ReleaseCountingSessionEventArgs.SESSION_ID, t0);
     transport.RotateSessionIfPastBudget(
       args, new TransportDestination(TOPIC, "default"), t0 + TimeSpan.FromMinutes(5));
 
@@ -512,7 +512,7 @@ file sealed class FailingAdminClient(string message) : IServiceBusAdminClient {
 }
 
 /// <summary>Session message args that count <c>ReleaseSession</c> calls instead of reaching a broker.</summary>
-file sealed class ReleaseCountingSessionArgs() : ProcessSessionMessageEventArgs(
+file sealed class ReleaseCountingSessionEventArgs() : ProcessSessionMessageEventArgs(
     ServiceBusModelFactory.ServiceBusReceivedMessage(sessionId: SESSION_ID),
     new FixedSessionReceiver(),
     CancellationToken.None) {

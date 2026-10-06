@@ -55,7 +55,7 @@ public class AsbComponentBranchCoverageTests {
       }
     };
 
-    await Assert.That(() => retry.CreateClientWithRetryAsync(CONNECTION_STRING))
+    await Assert.That(async () => { await retry.CreateClientWithRetryAsync(CONNECTION_STRING); })
       .Throws<InvalidOperationException>();
     await Assert.That(attempts).IsEqualTo(1)
       .Because("only Service Bus and transient Azure failures are worth another attempt");

@@ -199,19 +199,19 @@ public class PgSharedNotifyConnectionBranchTests : EFCoreTestBase {
   }
 
   private sealed class CapturingLogger : ILogger<PgSharedNotifyConnection> {
-    private readonly Lock _gate = new();
+    private readonly Lock _entriesLock = new();
     private readonly List<(LogLevel Level, int EventId)> _entries = [];
 
     public int WarningCount {
       get {
-        lock (_gate) {
+        lock (_entriesLock) {
           return _entries.Count(e => e.Level >= LogLevel.Warning);
         }
       }
     }
 
     public bool HasEvent(int eventId) {
-      lock (_gate) {
+      lock (_entriesLock) {
         return _entries.Exists(e => e.EventId == eventId);
       }
     }
@@ -219,7 +219,7 @@ public class PgSharedNotifyConnectionBranchTests : EFCoreTestBase {
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
-      lock (_gate) {
+      lock (_entriesLock) {
         _entries.Add((logLevel, eventId.Id));
       }
     }
