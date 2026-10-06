@@ -28,7 +28,6 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
 
     var tcs = new TaskCompletionSource<IMessageEnvelope>();
     var record = new RequestRecord(
-      RequestId: requestId,
       CompletionSource: tcs,
       ExpiresAt: DateTimeOffset.UtcNow + timeout
     );
@@ -87,7 +86,6 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
       var tcs = new TaskCompletionSource<IMessageEnvelope>();
       tcs.SetResult(response);
       var newRecord = new RequestRecord(
-        RequestId: MessageId.New(), // Placeholder
         CompletionSource: tcs,
         ExpiresAt: DateTimeOffset.UtcNow.AddMinutes(1) // Short expiry
       );
@@ -120,8 +118,8 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
     return Task.CompletedTask;
   }
 
+  // The request id is not kept: a record is found by its correlation id, and nothing reads the id back.
   private sealed record RequestRecord(
-    MessageId RequestId,
     TaskCompletionSource<IMessageEnvelope> CompletionSource,
     DateTimeOffset ExpiresAt
   );
