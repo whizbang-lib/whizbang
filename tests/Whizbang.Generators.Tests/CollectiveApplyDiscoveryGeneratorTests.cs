@@ -16,43 +16,6 @@ namespace Whizbang.Generators.Tests;
 [Category("CollectiveEvents")]
 public class CollectiveApplyDiscoveryGeneratorTests {
 
-  /// <summary>
-  /// Source-code stub of the collective-events surface — the generator
-  /// runs against test source plus this stub so the <c>using</c> /
-  /// <c>[CollectiveApplyFor]</c> references resolve. (Whizbang.Core
-  /// itself isn't on the compilation; the generator only needs to find
-  /// the attribute by FQN.)
-  /// </summary>
-  private const string COLLECTIVE_STUBS = """
-        namespace Whizbang.Core.Messaging {
-          public interface ICollectiveScope { string ScopeKind { get; } }
-          public interface ICollectiveEvent {
-            ICollectiveScope Scope { get; }
-            System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds { get; }
-          }
-        }
-
-        namespace Whizbang.Core.Perspectives {
-          using Whizbang.Core.Messaging;
-          public interface ICollectiveSetters<TModel> where TModel : class { }
-          public interface ICollectiveQuery { }
-          public interface ICollectiveSpec<TModel> where TModel : class {
-            System.Linq.Expressions.Expression<System.Action<ICollectiveSetters<TModel>>> Setters { get; }
-          }
-
-          public enum CollectiveScopeHandling { Framework = 0, Custom = 1 }
-          public enum CollectiveSpecKind { Linq = 0, RawSql = 1 }
-
-          [System.AttributeUsage(System.AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
-          public sealed class CollectiveApplyForAttribute : System.Attribute {
-            public CollectiveScopeHandling ScopeHandling { get; init; } = CollectiveScopeHandling.Framework;
-            public CollectiveSpecKind SpecKind { get; init; } = CollectiveSpecKind.Linq;
-            public int BatchSize { get; init; }
-            public int StatementTimeoutSeconds { get; init; }
-          }
-        }
-        """;
-
   // ── Happy path: single default-attributed method ───────────────────────
 
   [Test]
@@ -67,7 +30,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
             public sealed class JobModel { public string Status { get; set; } = ""; }
 
             public sealed record ArchiveJobsCollectiveEvent(
-              ICollectiveScope Scope,
+              CollectiveScope Scope,
               System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
 
             public sealed class JobPerspective {
@@ -75,7 +38,6 @@ public class CollectiveApplyDiscoveryGeneratorTests {
               public ICollectiveSpec<JobModel> Apply(ArchiveJobsCollectiveEvent e) => null!;
             }
 
-            {{COLLECTIVE_STUBS}}
             """;
 
     var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
@@ -109,7 +71,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
             public sealed class JobModel { public string Status { get; set; } = ""; }
 
             public sealed record ArchiveJobsCollectiveEvent(
-              ICollectiveScope Scope,
+              CollectiveScope Scope,
               System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
 
             public sealed class JobPerspective {
@@ -117,7 +79,6 @@ public class CollectiveApplyDiscoveryGeneratorTests {
               public ICollectiveSpec<JobModel> Apply(ArchiveJobsCollectiveEvent e, ICollectiveQuery q) => null!;
             }
 
-            {{COLLECTIVE_STUBS}}
             """;
 
     var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
@@ -144,7 +105,6 @@ public class CollectiveApplyDiscoveryGeneratorTests {
               public ICollectiveSpec<JobModel> NotAttributed(int x) => null!;
             }
 
-            {{COLLECTIVE_STUBS}}
             """;
 
     var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
@@ -170,14 +130,13 @@ public class CollectiveApplyDiscoveryGeneratorTests {
             namespace TestApp;
 
             public sealed class JobModel { }
-            public sealed record E(ICollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+            public sealed record E(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
 
             public sealed class P {
               [CollectiveApplyFor(ScopeHandling = CollectiveScopeHandling.Custom)]
               public ICollectiveSpec<JobModel> Apply(E e) => null!;
             }
 
-            {{COLLECTIVE_STUBS}}
             """;
 
     var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
@@ -202,14 +161,13 @@ public class CollectiveApplyDiscoveryGeneratorTests {
             namespace TestApp;
 
             public sealed class JobModel { }
-            public sealed record E(ICollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+            public sealed record E(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
 
             public sealed class P {
               [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)]
               public ICollectiveSpec<JobModel> Apply(E e) => null!;
             }
 
-            {{COLLECTIVE_STUBS}}
             """;
 
     var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
@@ -232,14 +190,13 @@ public class CollectiveApplyDiscoveryGeneratorTests {
             namespace TestApp;
 
             public sealed class JobModel { }
-            public sealed record E(ICollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+            public sealed record E(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
 
             public sealed class P {
               [CollectiveApplyFor(BatchSize = 250, StatementTimeoutSeconds = 15)]
               public ICollectiveSpec<JobModel> Apply(E e) => null!;
             }
 
-            {{COLLECTIVE_STUBS}}
             """;
 
     var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
@@ -262,14 +219,13 @@ public class CollectiveApplyDiscoveryGeneratorTests {
             namespace TestApp;
 
             public sealed class JobModel { }
-            public sealed record E(ICollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+            public sealed record E(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
 
             public sealed class P {
               [CollectiveApplyFor]
               public ICollectiveSpec<JobModel> Apply(E e) => null!;
             }
 
-            {{COLLECTIVE_STUBS}}
             """;
 
     var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
@@ -293,8 +249,8 @@ public class CollectiveApplyDiscoveryGeneratorTests {
             namespace TestApp;
 
             public sealed class JobModel { }
-            public sealed record ArchiveEvent(ICollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
-            public sealed record TouchEvent(ICollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+            public sealed record ArchiveEvent(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+            public sealed record TouchEvent(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
 
             public sealed class JobPerspective {
               [CollectiveApplyFor]
@@ -304,7 +260,6 @@ public class CollectiveApplyDiscoveryGeneratorTests {
               public ICollectiveSpec<JobModel> TouchAll(TouchEvent e) => null!;
             }
 
-            {{COLLECTIVE_STUBS}}
             """;
 
     var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
@@ -329,14 +284,13 @@ public class CollectiveApplyDiscoveryGeneratorTests {
             namespace TestApp;
 
             public sealed class M { }
-            public sealed record E(ICollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+            public sealed record E(CollectiveScope Scope, System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
 
             public sealed class P {
               [CollectiveApplyFor]
               public ICollectiveSpec<M> Apply(E e) => null!;
             }
 
-            {{COLLECTIVE_STUBS}}
             """;
 
     var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
