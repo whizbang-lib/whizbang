@@ -688,7 +688,9 @@ public partial class DeadLetterRecoveryWorker(
       if (housekeepingDecision is not null) {
         // Volume rollup before the slot releases: dead letters actually re-driven this cycle.
         _metricsRollup?.RecordItems(HousekeepingCoordinator.Activity.DeadLetterRecovery, scanRecovered);
-        _housekeeping?.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);
+        // A decision exists only when the coordinator granted the slot (see the TryBegin above),
+        // so _housekeeping is non-null whenever housekeepingDecision is.
+        _housekeeping!.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);
       }
     }
   }

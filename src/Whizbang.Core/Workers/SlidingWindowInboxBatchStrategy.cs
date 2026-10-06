@@ -175,7 +175,7 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
         // slice-23 per-stream buffer this sort now covers cross-transport-message events
         // for the same stream — fan-in saga aggregates no longer see late events because
         // the window holds them until quiet, then flushes them all in MessageId order.
-        var array = batch is InboxMessage[] arr ? arr : [.. batch];
+        InboxMessage[] array = [.. batch];
         if (array.Length > 1) {
           Array.Sort(array, static (a, b) => a.MessageId.CompareTo(b.MessageId));
         }
