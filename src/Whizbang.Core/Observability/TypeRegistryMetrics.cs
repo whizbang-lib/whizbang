@@ -75,8 +75,16 @@ public sealed class TypeRegistryMetrics {
   }
 
   /// <summary>The drift-attribution tag: the given service, else the entry assembly, else a sentinel.</summary>
-  private static KeyValuePair<string, object?> _serviceTag(string? service) {
-    service ??= System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name;
+  private static KeyValuePair<string, object?> _serviceTag(string? service) =>
+    ServiceTag(service, System.Reflection.Assembly.GetEntryAssembly());
+
+  /// <summary>
+  /// The drift-attribution tag for <paramref name="service"/>, falling back to
+  /// <paramref name="entryAssembly"/>'s name, then a sentinel. Internal so the fallbacks can be
+  /// asserted: under a managed host the entry assembly is never null.
+  /// </summary>
+  internal static KeyValuePair<string, object?> ServiceTag(string? service, System.Reflection.Assembly? entryAssembly) {
+    service ??= entryAssembly?.GetName().Name;
     return new KeyValuePair<string, object?>("service", string.IsNullOrEmpty(service) ? "<unknown>" : service);
   }
 }
