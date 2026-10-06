@@ -17,6 +17,7 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -90,6 +91,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     public TimeSpan? CapturedLookback { get; private set; }
     public Dictionary<string, IReadOnlyList<string>>? CapturedPerspectivesMap { get; private set; }
     public ConcurrentBag<Guid> RecordedLifecycleCompletions { get; } = [];
+    /// <summary>Runs after each lifecycle completion is recorded, with the running total.</summary>
+    public Action<int>? OnRecordedCompletion { get; init; }
     private readonly SemaphoreSlim _recordSignal = new(0, int.MaxValue);
 
     public async Task WaitForRecordedCompletionsAsync(int count, TimeSpan timeout) {
@@ -103,6 +106,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     // ── rewind startup scan ──────────────────────────────────
     public Queue<IReadOnlyList<RewindCursorInfo>> RewindResults { get; } = new();
     public bool ThrowOnRewindQuery { get; init; }
+    /// <summary>When set, every rewind-scan query throws this instead of answering.</summary>
+    public Exception? RewindQueryException { get; init; }
     private int _rewindQueryCount;
     public int RewindQueryCount => _rewindQueryCount;
     private readonly SemaphoreSlim _rewindSignal = new(0, int.MaxValue);
@@ -117,6 +122,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
     // ── periodic statistics ──────────────────────────────────
     public bool ThrowOnFirstGatherStatistics { get; init; }
+    /// <summary>The pending perspective event count every statistics gather reports.</summary>
+    public long PendingPerspectiveEvents { get; init; }
     private int _gatherCount;
     public int GatherStatisticsCount => _gatherCount;
     private readonly SemaphoreSlim _gatherSignal = new(0, int.MaxValue);
@@ -148,7 +155,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       if (call == 1 && ThrowOnFirstGatherStatistics) {
         throw new InvalidOperationException("simulated statistics failure");
       }
-      return Task.FromResult(new WorkCoordinatorStatistics());
+      return Task.FromResult(new WorkCoordinatorStatistics { PendingPerspectiveEvents = PendingPerspectiveEvents });
     }
 
     public Task<IReadOnlyList<OrphanedLifecycleEvent>> GetOrphanedLifecycleEventsAsync(
@@ -172,6 +179,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     public Task RecordLifecycleCompletionAsync(Guid eventId, CancellationToken cancellationToken = default) {
       RecordedLifecycleCompletions.Add(eventId);
       _recordSignal.Release();
+      OnRecordedCompletion?.Invoke(RecordedLifecycleCompletions.Count);
       return Task.CompletedTask;
     }
 
@@ -180,6 +188,9 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       _rewindSignal.Release();
       if (ThrowOnRewindQuery) {
         throw new InvalidOperationException("simulated rewind-scan failure");
+      }
+      if (RewindQueryException is not null) {
+        throw RewindQueryException;
       }
       IReadOnlyList<RewindCursorInfo> result = RewindResults.Count > 0 ? RewindResults.Dequeue() : [];
       return Task.FromResult(result);
@@ -283,7 +294,9 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       PerspectiveWorkerOptions? options = null,
       PerspectiveRewindOptions? rewindOptions = null,
       SpyLifecycleCoordinator? lifecycleCoordinator = null,
-      IWorkNotificationListener? notificationListener = null) {
+      IWorkNotificationListener? notificationListener = null,
+      PerspectiveMetrics? metrics = null,
+      bool registerLifecycleCoordinator = true) {
     var harness = new PerspectiveWorkerTestHarness();
     var lifecycle = lifecycleCoordinator ?? new SpyLifecycleCoordinator();
     var instanceProvider = new InstanceProvider();
@@ -291,7 +304,9 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<ILifecycleCoordinator>(lifecycle);
+    if (registerLifecycleCoordinator) {
+      services.AddSingleton<ILifecycleCoordinator>(lifecycle);
+    }
     services.AddSingleton(registry);
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
     services.AddLogging();
@@ -331,7 +346,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options ?? new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 1_000_000,
         MaxConcurrentDrainConsumers = 1,
-      })).Value));
+      })).Value),
+      metrics: metrics);
     return new Fixture(worker, harness, coordinator, lifecycle);
   }
 
@@ -618,6 +634,119 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       .Because("Stale-tracking cleanup runs every 10 batch cycles — 121 cycles must have triggered it.");
     await Assert.That(lifecycle.LastCleanupThreshold).IsEqualTo(TimeSpan.FromMinutes(5))
       .Because("Tracking older than 5 minutes is considered stale — the documented cleanup threshold.");
+
+    await cts.CancelAsync();
+    await fx.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Maintenance_SixtyCyclesWithMetricsAndNoLifecycleCoordinator_PublishesThePendingCountAsync() {
+    var coordinator = new StartupCoordinator { PendingPerspectiveEvents = 42 };
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory));
+    using var meters = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var fx = _build(coordinator, _registryWithOnePerspective(),
+      options: new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 1_000_000,
+        MaxConcurrentDrainConsumers = 1,
+        DrainBatcher = new SlidingWindowBatcherOptions {
+          MaxSize = 1,  // one drain stream per cycle → 1 cycle per enqueued id
+          SlidingWindow = TimeSpan.FromMilliseconds(1),
+          MaxWait = TimeSpan.FromMilliseconds(1),
+        },
+      },
+      metrics: metrics,
+      registerLifecycleCoordinator: false);
+
+    using var cts = new CancellationTokenSource();
+    await fx.Worker.StartAsync(cts.Token);
+
+    // 60 one-stream cycles. The stale-tracking cleanup runs at cycles 10 through 60 with no lifecycle
+    // coordinator to clean; the statistics gather at cycle 60 runs after it in the same cycle, so reaching
+    // the gather proves every cleanup before it passed.
+    for (var i = 0; i < 60; i++) {
+      await fx.Harness.EnqueueDrainStreamAsync(Guid.CreateVersion7(), cts.Token);
+    }
+    await coordinator.WaitForGatherStatisticsAsync(1, TimeSpan.FromSeconds(30));
+    await cts.CancelAsync();
+    // The gauge is set after the gather returns, inside the same cycle: the body has to have finished.
+    await fx.Worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(fx.Worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("a host with no lifecycle coordinator has nothing stale to clean, which is not a failure");
+    var pending = meters.GetByName("whizbang.perspective.pending_events");
+    await Assert.That(pending).Count().IsEqualTo(1);
+    await Assert.That(pending[0].Value).IsEqualTo(42d)
+      .Because("the pending-events gauge publishes the count the periodic statistics gather returned");
+  }
+
+  // ============================================================
+  // Orphan reconciliation: pass budget and stop requests
+  // ============================================================
+
+  [Test]
+  public async Task Startup_OrphanBacklogThatNeverDrains_StopsAfterThePassBudgetAsync() {
+    // Every pass returns a full batch, so the backlog never reads as drained: only the pass budget ends it.
+    var fullBatch = Enumerable.Range(0, 100).Select(_ => _orphan()).ToList();
+    var coordinator = new StartupCoordinator { Orphans = fullBatch };
+    var fx = _build(coordinator, _registryWithOnePerspective());
+
+    using var cts = new CancellationTokenSource();
+    await fx.Worker.StartAsync(cts.Token);
+    // The rewind scan runs strictly after reconciliation, so reaching it proves reconciliation returned.
+    await coordinator.WaitForRewindQueriesAsync(1, TimeSpan.FromSeconds(60));
+
+    await Assert.That(coordinator.OrphanQueryCount).IsEqualTo(20)
+      .Because("reconciliation runs at most 20 bounded passes, so a backlog that never drains cannot hold "
+        + "startup past the liveness budget");
+
+    await cts.CancelAsync();
+    await fx.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Startup_StopRequestedDuringOrphanReconciliation_RunsNoFurtherPassAsync() {
+    var fullBatch = Enumerable.Range(0, 100).Select(_ => _orphan()).ToList();
+    using var cts = new CancellationTokenSource();
+    // The stop arrives as the last orphan of the first full pass is recorded, between passes.
+    var coordinator = new StartupCoordinator {
+      Orphans = fullBatch,
+      OnRecordedCompletion = recorded => {
+        if (recorded == fullBatch.Count) {
+          cts.Cancel();
+        }
+      }
+    };
+    var fx = _build(coordinator, _registryWithOnePerspective());
+
+    await fx.Worker.StartAsync(cts.Token);
+    await coordinator.WaitForRecordedCompletionsAsync(fullBatch.Count, TimeSpan.FromSeconds(30));
+    await fx.Worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(coordinator.OrphanQueryCount).IsEqualTo(1)
+      .Because("the first pass returned a full batch, which would ordinarily start a second pass; the stop "
+        + "request ends reconciliation between passes instead");
+    await Assert.That(coordinator.RecordedLifecycleCompletions.Count).IsEqualTo(fullBatch.Count);
+
+    await fx.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Startup_RewindScanOnDisposedServices_PropagatesRatherThanLoggingAScanErrorAsync() {
+    // An ObjectDisposedException means the host is tearing the container down. The scan's best-effort
+    // catch is deliberately not for that: it would log a scan error for what is a shutdown.
+    var coordinator = new StartupCoordinator { RewindQueryException = new ObjectDisposedException("service provider") };
+    var fx = _build(coordinator, _registryWithOnePerspective());
+
+    using var cts = new CancellationTokenSource();
+    await fx.Worker.StartAsync(cts.Token);
+    await coordinator.WaitForRewindQueriesAsync(1, TimeSpan.FromSeconds(10));
+
+    await Assert.That(async () => await fx.Worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)))
+      .Throws<ObjectDisposedException>()
+      .Because("the startup scan swallows ordinary failures but lets disposal through");
 
     await cts.CancelAsync();
     await fx.Worker.StopAsync(CancellationToken.None);
