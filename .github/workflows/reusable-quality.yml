@@ -66,6 +66,8 @@ jobs:
         run: |
           dotnet tool install --global dotnet-sonarscanner
           dotnet tool install --global dotnet-reportgenerator-globaltool
+          # Reads the suites' binary coverage reports; the version is the one Find-UncoveredNewLines.ps1 names.
+          dotnet tool install --global dotnet-coverage --version 18.12.0
 
       # SonarCloud free plan only supports main branch + PR analysis, so the scanner is
       # skipped for push events to non-main branches (e.g. develop).
@@ -305,9 +307,51 @@ jobs:
           echo "Found coverage files: $COVERAGE_FILES"
           echo "files=$COVERAGE_FILES" >> "$GITHUB_OUTPUT"
 
+      # ---- One merge for every consumer -------------------------------------------------------------
+      # Each test process writes its own Cobertura report, and a report line records how many outcomes
+      # of a decision that process took, not which. Taking the best count per line therefore reads a
+      # decision whose outcomes ran in different processes (a unit suite and an integration shard) as
+      # half covered. The suites also upload the binary report beside each Cobertura one; its block
+      # hits merge exactly, and Find-UncoveredNewLines.ps1 uses them to count such a decision as covered
+      # when every block of its function ran (Merge-BlockCoverage explains why that is exact). The
+      # merged report it writes is what ReportGenerator turns into Sonar's coverage, so Sonar, the
+      # new-code gate and the whole-library row count the same outcomes.
+      #
+      # On a pull request the same run lists the uncovered new lines and new hand-written branches:
+      # a new line counts as uncovered when no test ran it; a new hand-written decision (if, ?:, ??, ?.,
+      # &&, ||, switch arms, when, catch, loops, is-patterns) counts as an uncovered branch when some
+      # outcome of it was never taken. Compiler-generated branches (await state machines, initializers)
+      # are excluded; the rule is in ai-docs/coverage-exclusions.md. The lists are posted on the PR in
+      # one comment, and only the last step fails the job when either is not empty. The whole-library
+      # row is informational and never fails the job.
+      - name: Merge Coverage Across Test Processes
+        id: uncovered
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          $gate = @()
+          if ($env:EVENT_NAME -eq 'pull_request') {
+            git fetch --no-tags origin "$env:BASE_REF"
+            $gate = @('-BaseRef', "origin/$env:BASE_REF", '-OutFile', 'coverage/uncovered-new-lines.txt', '-BranchOutFile', 'coverage/uncovered-new-branches.txt')
+          }
+          & pwsh scripts/Find-UncoveredNewLines.ps1 -CoverageRoot coverage -MergedOutFile coverage-merged/merged.cobertura.xml -SummaryOutFile coverage-merged/whole-library.json @gate | Write-Host
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $whole = Get-Content coverage-merged/whole-library.json -Raw | ConvertFrom-Json
+          "whole=$($whole.Text)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          if ($env:EVENT_NAME -eq 'pull_request') {
+            $count = @(Get-Content coverage/uncovered-new-lines.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
+            $branches = @(Get-Content coverage/uncovered-new-branches.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
+            "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "branches=$branches" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
       - name: Merge Coverage Reports
         run: |
-          COVERAGE_FILES="${{ steps.check-coverage.outputs.files }}"
+          # The single report the step above merged across test processes (every per-process report
+          # is in it); the per-process files remain the Codecov upload and the empty-coverage check.
+          COVERAGE_FILES="coverage-merged/merged.cobertura.xml"
           echo "Coverage files to merge: $COVERAGE_FILES"
 
           # File filters to exclude from coverage reports
@@ -376,24 +420,7 @@ jobs:
         run: dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
 
       # ---- PR quality gate: 100% of new lines and hand-written branches covered, zero Sonar findings --
-      # A new line counts as uncovered when no test ran it; a new hand-written decision (if, ?:, ??, ?.,
-      # &&, ||, switch arms, when, catch, loops, is-patterns) counts as an uncovered branch when some
-      # outcome of it was never taken. Compiler-generated branches (await state machines, initializers)
-      # are excluded; the rule is in ai-docs/coverage-exclusions.md.
-      # Both lists are computed after the scanner has submitted the analysis, uploaded, posted on the
-      # PR in one comment, and only then does one step fail the job when either list is not empty.
-      - name: Uncovered New Lines
-        if: github.event_name == 'pull_request'
-        id: uncovered
-        shell: pwsh
-        run: |
-          git fetch --no-tags origin "${{ github.base_ref }}"
-          & pwsh scripts/Find-UncoveredNewLines.ps1 -CoverageRoot coverage -BaseRef "origin/${{ github.base_ref }}" -OutFile coverage/uncovered-new-lines.txt -BranchOutFile coverage/uncovered-new-branches.txt | Write-Host
-          $count = @(Get-Content coverage/uncovered-new-lines.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
-          $branches = @(Get-Content coverage/uncovered-new-branches.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
-          "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "branches=$branches" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
+      # The uncovered new lines and branches were listed by "Merge Coverage Across Test Processes".
       - name: Sonar Findings on New Code
         if: github.event_name == 'pull_request'
         id: sonar-findings
@@ -414,6 +441,7 @@ jobs:
             coverage/uncovered-new-lines.txt
             coverage/uncovered-new-branches.txt
             coverage/sonar-findings.txt
+            coverage-merged/whole-library.json
           if-no-files-found: ignore
 
       - name: Comment PR Gate Results
@@ -424,6 +452,7 @@ jobs:
           UNCOVERED: ${{ steps.uncovered.outputs.count }}
           UNCOVERED_BRANCHES: ${{ steps.uncovered.outputs.branches }}
           FINDINGS: ${{ steps.sonar-findings.outputs.count }}
+          WHOLE_LIBRARY: ${{ steps.uncovered.outputs.whole }}
         run: |
           MARKER="<!-- pr-quality-gate -->"
           BODY="${MARKER}
@@ -434,6 +463,7 @@ jobs:
           | Coverage of new lines | $([ "${UNCOVERED}" = "0" ] && echo "100%, every added library line is executed by a test" || echo "**${UNCOVERED} line(s) not executed by any test**") |
           | Coverage of new branches | $([ "${UNCOVERED_BRANCHES}" = "0" ] && echo "100%, every outcome of every added hand-written decision is taken by a test" || echo "**${UNCOVERED_BRANCHES} line(s) with a decision outcome no test takes**") |
           | Sonar findings on new code | $([ "${FINDINGS:-?}" = "0" ] && echo "none" || echo "**${FINDINGS:-?} open finding(s)**") |
+          | Whole library (informational, not gated) | ${WHOLE_LIBRARY:-unknown} |
           "
           if [ "${UNCOVERED}" != "0" ]; then
             BODY="${BODY}

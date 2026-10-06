@@ -115,6 +115,35 @@ Two consequences worth knowing:
 The rule and its fixtures are tested in `.github/scripts/tests/Find-UncoveredNewLines.Tests.ps1`. Change
 both together.
 
+### Outcomes taken in different test processes
+
+Every test process writes its own report, and a Cobertura line says how many outcomes of a decision
+that process took, not which. Two processes that each took one outcome of an `if` look exactly like two
+that took the same one, so the gate can never add them up. It keeps the best count any one process saw
+(per condition, where the collector's detail says which condition is which), and recovers the rest from
+the **binary** report (`*.coverage`) each process writes beside its Cobertura one. Those record every
+block's hit and merge exactly (`dotnet-coverage merge`). The collector counts an outcome as taken when
+the block it leads to ran, so once every block of a function ran in some process, every outcome in it
+was taken, whichever process took it, and the gate counts those lines as covered. A line in a function
+with a block no test ran keeps the reports' count: which of its outcomes is missing cannot be told
+without the IL, so nothing is claimed. A decision whose two outcomes run in two different suites is
+therefore covered as soon as the rest of its function is.
+
+The merged report is also what Sonar reads, so Sonar, the gate and the whole-library row agree.
+Codecov still receives the per-process reports and merges them its own way.
+
+### The whole-library row
+
+The PR comment's last row, **Whole library (informational, not gated)**, shows the coverage of all
+hand-written library code on every PR, so the remaining gap is visible until it is zero: lines over
+everything under `src/` that is instrumented and not generated (`src/Whizbang.Testing` is not
+instrumented; `*.g.cs`, `obj/` and the `.whizbang` cache are generated), and outcomes of hand-written
+decisions by the same rule as above. For example, "Whole library: lines 99.9%, hand-written branches
+98.6% (382 outcomes untested)", and once nothing is left, "Whole library: lines 100%, hand-written
+branches 100%, every hand-written decision in the library is covered". Percentages are truncated, so a
+gap never reads as 100%. The row never fails the job; new code is what the gate enforces.
+`/pr-health` prints the same line.
+
 ---
 
 ## Reading the gate's list
