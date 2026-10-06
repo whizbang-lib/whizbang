@@ -146,21 +146,26 @@ function Get-JumpOutcomes([System.Xml.XmlElement]$Line, [int]$Total) {
   some report observed, so neither can claim an outcome no test took. Outcomes split across processes on
   one condition are recovered from block data instead (Merge-BlockCoverage).
 #>
-function Read-CoberturaCoverage([string[]]$ReportPaths) {
+function Read-CoberturaCoverage([string[]]$ReportPaths, [scriptblock]$ReadSource = $null) {
   $coverage = @{}
+  $sourceCache = @{}
   foreach ($reportPath in $ReportPaths) {
     [xml]$xml = Get-Content -Path $reportPath -Raw
     $sources = @($xml.coverage.sources.source | Where-Object { $_ })
     foreach ($cls in $xml.SelectNodes('//class')) {
       $path = Get-RelativeSourcePath ([string]$cls.GetAttribute('filename')) $sources
-      if (-not $coverage.ContainsKey($path)) { $coverage[$path] = @{ Hits = @{}; Conditions = @{}; LineBest = @{}; JumpBest = @{} } }
+      if (-not $coverage.ContainsKey($path)) { $coverage[$path] = @{ Hits = @{}; Conditions = @{}; LineBest = @{}; JumpBest = @{}; IfOutcomes = @{} } }
       $entry = $coverage[$path]
+      $classHits = @{}
+      $halfJumps = [System.Collections.Generic.List[int]]::new()
       foreach ($line in $cls.SelectNodes('lines/line')) {
         $n = [int]$line.GetAttribute('number')
         $h = [int]$line.GetAttribute('hits')
+        $classHits[$n] = $h
         if (-not $entry.Hits.ContainsKey($n) -or $entry.Hits[$n] -lt $h) { $entry.Hits[$n] = $h }
         if ($line.GetAttribute('condition-coverage') -match '\((\d+)/(\d+)\)') {
           $covered = [int]$Matches[1]; $total = [int]$Matches[2]
+          if ($h -gt 0 -and $covered -eq 1 -and $total -eq 2) { $halfJumps.Add($n) }
           if (-not $entry.LineBest.ContainsKey($n) -or $entry.LineBest[$n] -lt $covered) { $entry.LineBest[$n] = $covered }
           $jumps = Get-JumpOutcomes $line $total
           if (-not $entry.JumpBest.ContainsKey($n)) {
@@ -180,9 +185,62 @@ function Read-CoberturaCoverage([string[]]$ReportPaths) {
           $entry.Conditions[$n] = @($best, $total)
         }
       }
+      if ($null -ne $ReadSource -and $halfJumps.Count -gt 0) {
+        if (-not $sourceCache.ContainsKey($path)) {
+          $text = & $ReadSource $path
+          $sourceCache[$path] = if ($null -eq $text) { $null } else { [string[]]@($text) }
+        }
+        Add-IfBodyEvidence $entry $sourceCache[$path] $classHits $halfJumps
+      }
+    }
+  }
+  foreach ($entry in $coverage.Values) {
+    foreach ($n in @($entry.IfOutcomes.Keys)) {
+      if ($entry.IfOutcomes[$n] -eq 3 -and $entry.Conditions[$n][0] -lt 2) { $entry.Conditions[$n] = @(2, 2) }
     }
   }
   return $coverage
+}
+
+<#
+  Records which outcome each one-of-two `if (...) {` line took in one report, from whether that report
+  ran the body: 1 for true, 2 for false, OR'ed across reports. A braced body is entered only through
+  the decision's true outcome (C# cannot jump into a block from outside it, and a local function
+  declared in it is callable only inside it), so a report that ran any line strictly inside the braces
+  took true, and one that ran the decision with a single outcome and none of the body took false. A
+  decision both ways across reports has had both its outcomes taken, which the per-line counts alone
+  cannot show. Only a single-jump condition counts (total 2), and only a body on lines of its own: a
+  body on the decision's line, or an empty one, gives no evidence.
+#>
+function Add-IfBodyEvidence([hashtable]$Entry, [string[]]$Source, [hashtable]$ClassHits, $HalfJumps) {
+  if ($null -eq $Source) { return }
+  foreach ($n in $HalfJumps) {
+    if ($n -gt $Source.Count) { continue }
+    $code = (Get-CodeText $Source[$n - 1]).Trim()
+    if ($code -notmatch '^(\}\s*else\s+)?if\s*\(.*\)\s*\{$') { continue }
+    $close = Find-ClosingBraceLine $Source $n
+    if ($close -lt 0) { continue }
+    $body = @($ClassHits.Keys | Where-Object { $_ -gt $n -and $_ -lt $close } | Sort-Object | Select-Object -First 1)
+    if ($body.Count -eq 0) { continue }
+    $outcome = if ($ClassHits[$body[0]] -gt 0) { 1 } else { 2 }
+    $previous = if ($Entry.IfOutcomes.ContainsKey($n)) { $Entry.IfOutcomes[$n] } else { 0 }
+    $Entry.IfOutcomes[$n] = $previous -bor $outcome
+  }
+}
+
+<#
+  The line holding the brace that closes the block opened at the end of line $Line (1-based), or -1.
+  Strings and comments are skipped (Get-CodeText), so only code braces count.
+#>
+function Find-ClosingBraceLine([string[]]$Source, [int]$Line) {
+  $depth = 1
+  for ($i = $Line; $i -lt $Source.Count; $i++) {
+    foreach ($c in (Get-CodeText $Source[$i]).ToCharArray()) {
+      if ($c -eq '{') { $depth++ } elseif ($c -eq '}') { $depth-- }
+      if ($depth -eq 0) { return $i + 1 }
+    }
+  }
+  return -1
 }
 
 <#
@@ -536,7 +594,14 @@ $reports = @(Get-ChildItem -Path $CoverageRoot -Recurse -Filter '*.cobertura.xml
 if ($reports.Count -eq 0) {
   Write-Error "No *.cobertura.xml under '$CoverageRoot'."
 }
-$coverage = Read-CoberturaCoverage @($reports | ForEach-Object { $_.FullName })
+if (-not $SourceRoot) { $SourceRoot = (Get-Location).Path }
+$readSource = {
+  param($p)
+  $f = Join-Path $SourceRoot $p
+  if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f } else { $null }
+}.GetNewClosure()
+
+$coverage = Read-CoberturaCoverage @($reports | ForEach-Object { $_.FullName }) -ReadSource $readSource
 if ($coverage.Count -eq 0) {
   Write-Error "The $($reports.Count) report(s) under '$CoverageRoot' measured no source file. The collector skipped every assembly."
 }
@@ -551,13 +616,6 @@ if ($blockUnion) {
 } else {
   Write-Host "::warning::No binary (*.coverage) reports under '$CoverageRoot': outcomes of one line taken in different test processes cannot be unioned, so branch counts may be overstated."
 }
-
-if (-not $SourceRoot) { $SourceRoot = (Get-Location).Path }
-$readSource = {
-  param($p)
-  $f = Join-Path $SourceRoot $p
-  if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f } else { $null }
-}.GetNewClosure()
 
 if ($MergedOutFile) {
   Write-MergedCobertura -Coverage $coverage -OutFile $MergedOutFile -SourceRoot $SourceRoot

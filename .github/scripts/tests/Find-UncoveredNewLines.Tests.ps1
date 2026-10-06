@@ -160,6 +160,63 @@ Describe 'Read-CoberturaCoverage, per-condition union' {
   }
 }
 
+Describe 'Read-CoberturaCoverage, if-body evidence' {
+  BeforeAll {
+    $script:IfFile = 'src/P/If.cs'
+    $script:IfSource = @(
+      'void M(int x) {',          # 1
+      '  if (x > 0) {',           # 2  the decision
+      '    Positive();',          # 3  its body: entered only through the true outcome
+      '  }',                      # 4
+      '  After();',               # 5
+      '  if (x > 9) { Big(); }',  # 6  body on the decision's own line: no evidence
+      '  if (x < 0) {',           # 7
+      '  }',                      # 8  empty body: no evidence
+      '}')
+    $script:IfRead = { param($p) if ($p -eq $script:IfFile) { $script:IfSource } else { $null } }
+  }
+
+  It 'counts both outcomes when one process ran the body and another ran the line without it' {
+    $a = New-Report $TestDrive 'ifa.cobertura.xml' $script:IfFile @(@{ n = 2; hits = 1; cov = '1/2' }, @{ n = 3; hits = 1; cov = $null }, @{ n = 5; hits = 1; cov = $null })
+    $b = New-Report $TestDrive 'ifb.cobertura.xml' $script:IfFile @(@{ n = 2; hits = 1; cov = '1/2' }, @{ n = 3; hits = 0; cov = $null }, @{ n = 5; hits = 1; cov = $null })
+
+    $coverage = Read-CoberturaCoverage @($a, $b) -ReadSource $script:IfRead
+
+    $coverage[$script:IfFile].Conditions[2] | Should -Be @(2, 2)
+  }
+
+  It 'claims nothing when every process took the same outcome' {
+    $a = New-Report $TestDrive 'ifc.cobertura.xml' $script:IfFile @(@{ n = 2; hits = 1; cov = '1/2' }, @{ n = 3; hits = 1; cov = $null })
+    $b = New-Report $TestDrive 'ifd.cobertura.xml' $script:IfFile @(@{ n = 2; hits = 1; cov = '1/2' }, @{ n = 3; hits = 1; cov = $null })
+
+    $coverage = Read-CoberturaCoverage @($a, $b) -ReadSource $script:IfRead
+
+    $coverage[$script:IfFile].Conditions[2] | Should -Be @(1, 2)
+  }
+
+  It 'takes no evidence from a body on the decision line or an empty body' {
+    $a = New-Report $TestDrive 'ife.cobertura.xml' $script:IfFile @(@{ n = 6; hits = 1; cov = '1/2' }, @{ n = 7; hits = 1; cov = '1/2' }, @{ n = 9; hits = 1; cov = $null })
+    $b = New-Report $TestDrive 'iff.cobertura.xml' $script:IfFile @(@{ n = 6; hits = 1; cov = '1/2' }, @{ n = 7; hits = 1; cov = '1/2' }, @{ n = 9; hits = 0; cov = $null })
+
+    $coverage = Read-CoberturaCoverage @($a, $b) -ReadSource $script:IfRead
+
+    $coverage[$script:IfFile].Conditions[6] | Should -Be @(1, 2)
+    $coverage[$script:IfFile].Conditions[7] | Should -Be @(1, 2)
+      # Line 9 is past the body's closing brace, so whether it ran says nothing about the decision.
+  }
+
+  It 'proves the real collector output: each process taking one outcome of the same if' {
+    $reports = @((Join-Path $script:Fixture 'A/A.cobertura.xml'), (Join-Path $script:Fixture 'B/B.cobertura.xml'))
+    $source = Get-Content (Join-Path $script:Fixture 'Calc.cs.txt')
+
+    $coverage = Read-CoberturaCoverage $reports -ReadSource { param($p) $source }
+
+    $coverage[$script:FixturePath].Conditions[5] | Should -Be @(2, 2)
+    $coverage[$script:FixturePath].Conditions[12] | Should -Be @(2, 2)
+    $coverage[$script:FixturePath].Conditions[15] | Should -Be @(1, 2)
+  }
+}
+
 Describe 'Read-BlockCoverage' {
   It 'sorts each line into the functions every block of which ran, and the functions some block of which did not' {
     $blocks = Read-BlockCoverage (Join-Path $script:Fixture 'merged-blocks.xml')
@@ -330,7 +387,6 @@ Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
     & $pwsh -NoProfile -File $scriptPath -CoverageRoot $script:Fixture -SourceRoot $sourceRoot -SummaryOutFile $summaryFile -MergedOutFile $merged -LibraryGapOutFile $gapFile | Out-Null
     $LASTEXITCODE | Should -Be 0
     Get-Content $gapFile | Should -Be @(
-      "${script:FixturePath}:12: (1/2 conditions) if (x > 0) {",
       "${script:FixturePath}:15: (1/2 conditions) if (x < -5) {",
       "${script:FixturePath}:16: (never ran) return 2;")
 
@@ -338,9 +394,9 @@ Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
     $summary.Lines | Should -Be 8
     $summary.CoveredLines | Should -Be 7
     $summary.Outcomes | Should -Be 6
-    $summary.CoveredOutcomes | Should -Be 4
+    $summary.CoveredOutcomes | Should -Be 5
     $summary.BlockUnion | Should -BeTrue
-    $summary.Text | Should -Be 'Whole library: lines 87.5%, hand-written branches 66.6% (2 outcomes untested)'
+    $summary.Text | Should -Be 'Whole library: lines 87.5%, hand-written branches 83.3% (1 outcome untested)'
     (Read-CoberturaCoverage @($merged))[$script:FixturePath].Conditions[5] | Should -Be @(2, 2)
   }
 }

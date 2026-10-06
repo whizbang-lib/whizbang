@@ -129,6 +129,11 @@ with a block no test ran keeps the reports' count: which of its outcomes is miss
 without the IL, so nothing is claimed. A decision whose two outcomes run in two different suites is
 therefore covered as soon as the rest of its function is.
 
+One more piece of evidence is exact without the IL: an `if (...) {` whose body sits on lines of its
+own. C# cannot jump into a block from outside it, so the body is entered only through the true
+outcome: a report that ran any line inside the braces took true, and one that ran the decision with
+one outcome and none of the body took false. Seen both ways across reports, the decision is covered.
+
 The merged report is also what Sonar reads, so Sonar, the gate and the whole-library row agree.
 Codecov still receives the per-process reports and merges them its own way.
 
