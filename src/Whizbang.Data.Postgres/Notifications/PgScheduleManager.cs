@@ -218,7 +218,7 @@ public sealed class PgScheduleManager(
     cmd.Parameters.Add(new NpgsqlParameter("target", NpgsqlDbType.Smallint) { Value = targetStatus });
     cmd.Parameters.Add(new NpgsqlParameter("ver", NpgsqlDbType.Bigint) { Value = (object?)expectedVersion ?? DBNull.Value });
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    var updated = result is bool b && b;
+    var updated = ScalarResult.IsTrue(result);
     if (updated) {
       // #720: the arm-on-mutation doorbell was queued inside the call's transaction; ring it after the commit.
       await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken).ConfigureAwait(false);

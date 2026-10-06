@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.Dapper.Postgres;
 
@@ -118,7 +119,7 @@ public sealed partial class DapperPerspectiveSnapshotStore(
     cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
 
     var result = await cmd.ExecuteScalarAsync(ct);
-    return result is true;
+    return ScalarResult.IsTrue(result);
   }
 
   public async Task PruneOldSnapshotsAsync(Guid streamId, string perspectiveName, int keepCount, CancellationToken ct = default) {

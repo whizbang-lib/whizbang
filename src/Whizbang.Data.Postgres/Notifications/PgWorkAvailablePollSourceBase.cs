@@ -104,7 +104,7 @@ public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollS
     await using var cmd = new NpgsqlCommand(DetectSql, conn);
     cmd.Parameters.AddWithValue("instance_id", _instanceProvider.InstanceId);
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
-    return result is bool b && b;
+    return ScalarResult.IsTrue(result);
   }
 
   /// <inheritdoc />

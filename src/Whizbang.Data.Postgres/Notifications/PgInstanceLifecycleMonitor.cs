@@ -184,7 +184,7 @@ public sealed partial class PgInstanceLifecycleMonitor(
     while (await reader.ReadAsync(ct)) {
       var id = reader.GetGuid(0);
       var age = TimeSpan.FromSeconds(Math.Max(0, reader.GetDouble(1)));
-      if (oldestAge is null || age > oldestAge) {
+      if (oldestAge is not { } oldest || age > oldest) {
         oldestAge = age;
       }
       (reader.GetBoolean(2) ? alive : dead).Add(id);

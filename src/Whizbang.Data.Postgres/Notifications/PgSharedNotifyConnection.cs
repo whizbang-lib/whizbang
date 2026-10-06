@@ -455,7 +455,7 @@ public sealed partial class PgSharedNotifyConnection(
           lockCmd.CommandText = "SELECT claim_instance_alive_lock(@instanceId)";
           lockCmd.Parameters.AddWithValue("@instanceId", _instanceProvider.InstanceId);
           var lockResult = await lockCmd.ExecuteScalarAsync(stoppingToken).ConfigureAwait(false);
-          _aliveLockHeld = lockResult is bool b && b;
+          _aliveLockHeld = ScalarResult.IsTrue(lockResult);
           if (!_aliveLockHeld) {
             // Uncommon: a duplicate-startup race left a previous session holding the lock.
             // Non-fatal — the heartbeat table fallback still functions.

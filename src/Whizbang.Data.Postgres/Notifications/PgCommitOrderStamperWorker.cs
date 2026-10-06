@@ -80,7 +80,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   // filling, because each call costs a scan of the whole pending set whatever size it asks for.
   // Only the loop below reads or writes it, and only one instance holds the role, so it needs no
   // synchronization of its own.
-  private int _batchSize = stamperOptions?.Value?.BatchSize ?? 1000;
+  private int _batchSize = stamperOptions?.Value.BatchSize ?? 1000;
   private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   // Opt-in: register an INotificationDataSource via DI when the DbContext is
   // configured via UseNpgsql(NpgsqlDataSource) — that's the only path that
@@ -475,7 +475,7 @@ public sealed partial class PgCommitOrderStamperWorker(
     await using var cmd = new NpgsqlCommand("SELECT pg_try_advisory_lock(@k)", conn);
     cmd.Parameters.AddWithValue("k", lockKey);
     var result = await cmd.ExecuteScalarAsync(ct);
-    return result is bool b && b;
+    return ScalarResult.IsTrue(result);
   }
 
   private static async Task _releaseLeaderLockAsync(NpgsqlConnection conn, long lockKey) {
@@ -521,7 +521,7 @@ public sealed partial class PgCommitOrderStamperWorker(
     await using var cmd = new NpgsqlCommand(
       "SELECT EXISTS(SELECT 1 FROM wh_event_store WHERE commit_sequence IS NULL)", conn);
     var result = await cmd.ExecuteScalarAsync(ct);
-    return result is true;
+    return ScalarResult.IsTrue(result);
   }
 
   private void _setLeader(bool isLeader) {
