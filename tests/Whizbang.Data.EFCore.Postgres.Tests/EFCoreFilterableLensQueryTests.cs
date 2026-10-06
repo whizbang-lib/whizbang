@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests all filter combinations: tenant, user, organization, customer, principal.
 /// </summary>
 [Category("Integration")]
-[Category("Shard3")]
+[Category("Shard2")]
 public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
   private readonly Uuid7IdProvider _idProvider = new();
 

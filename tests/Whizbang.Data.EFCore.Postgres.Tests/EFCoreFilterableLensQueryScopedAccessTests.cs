@@ -51,7 +51,7 @@ internal sealed class FilterableLensScopeContext : IScopeContext {
 /// Complements EFCoreFilterableLensQueryTests, which covers ApplyFilter-driven filtering.
 /// </summary>
 [Category("Integration")]
-[Category("Shard3")]
+[Category("Shard2")]
 public class EFCoreFilterableLensQueryScopedAccessTests : EFCoreTestBase {
   private readonly Uuid7IdProvider _idProvider = new();
 
