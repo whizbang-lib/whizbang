@@ -54,7 +54,7 @@ public class PinnedTypeLedgerShapeTests {
   public async Task EntryWithoutFormerNames_AtABarePath_StillGovernsRenamesAsync() {
     const string ledger = """
       { "version": 1, "types": [
-        { "pinnedId": "11111111-2222-3333-4444-555555555555", "clrTypeName": "MyApp.Events.OrderCreatedEvent", "kind": "event" }
+        { "pinnedId": "11111111-2222-3333-4444-555555555555", "clrTypeName": "MyApp.Events.OrderCreatedEvent", "kind": "event", "formerNames": null }
       ] }
       """;
 

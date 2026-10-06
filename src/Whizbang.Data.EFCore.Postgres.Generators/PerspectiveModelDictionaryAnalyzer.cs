@@ -245,7 +245,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// <remarks>A type with no containing namespace is not in System either, so it answers false
   /// through the same comparison instead of needing a guard on a line of its own.</remarks>
   private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : null;
+    var ns = TypeNameUtilities.DisplayOrNull(type.ContainingNamespace);
 
     // Skip common system types that definitely won't contain Dictionary
     if (ns == "System") {

@@ -12,59 +12,53 @@ namespace Whizbang.Generators.Tests;
 /// Naming the defaults explicitly, <c>ScopeHandling = Framework</c> and <c>SpecKind = Linq</c>, emits
 /// the same registration as leaving them out; only the non-zero values select Custom and RawSql.
 /// </summary>
+/// <remarks>
+/// Written against the framework's own attribute rather than a stand-in: a stand-in declared inside
+/// a <c>Whizbang.Core.*</c> namespace resolves <c>System.Attribute</c> against the framework's
+/// <c>Whizbang.Core.System</c> namespace, does not bind, and leaves every named argument an error
+/// value, so the generator never reads it.
+/// </remarks>
 /// <tests>src/Whizbang.Generators/CollectiveApplyDiscoveryGenerator.cs</tests>
 [Category("SourceGenerators")]
 public class CollectiveApplyDiscoveryGeneratorBranchTests {
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task ExplicitDefaults_EmitFrameworkAndLinqAsync() {
-    var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>("""
+  private static string _registry(string arguments) {
+    var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>($$"""
       using Whizbang.Core.Messaging;
       using Whizbang.Core.Perspectives;
 
-      namespace TestApp {
-        public sealed class JobModel { }
+      namespace TestApp;
 
-        public sealed record TouchEvent(
-          ICollectiveScope Scope,
-          System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
+      public sealed class JobModel { }
 
-        public sealed class JobPerspective {
-          [CollectiveApplyFor(ScopeHandling = CollectiveScopeHandling.Framework, SpecKind = CollectiveSpecKind.Linq)]
-          public ICollectiveSpec<JobModel> Touch(TouchEvent e) => null!;
-        }
-      }
+      public sealed record TouchEvent(
+        CollectiveScope Scope,
+        System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds) : ICollectiveEvent;
 
-      namespace Whizbang.Core.Messaging {
-        public interface ICollectiveScope { string ScopeKind { get; } }
-        public interface ICollectiveEvent {
-          ICollectiveScope Scope { get; }
-          System.Collections.Generic.IReadOnlyList<System.Guid> MatchedStreamIds { get; }
-        }
-      }
-
-      namespace Whizbang.Core.Perspectives {
-        public interface ICollectiveSetters<TModel> where TModel : class { }
-        public interface ICollectiveSpec<TModel> where TModel : class {
-          System.Linq.Expressions.Expression<System.Action<ICollectiveSetters<TModel>>> Setters { get; }
-        }
-
-        public enum CollectiveScopeHandling { Framework = 0, Custom = 1 }
-        public enum CollectiveSpecKind { Linq = 0, RawSql = 1 }
-
-        [System.AttributeUsage(System.AttributeTargets.Method)]
-        public sealed class CollectiveApplyForAttribute : System.Attribute {
-          public CollectiveScopeHandling ScopeHandling { get; init; }
-          public CollectiveSpecKind SpecKind { get; init; }
-        }
+      public sealed class JobPerspective {
+        [CollectiveApplyFor({{arguments}})]
+        public ICollectiveSpec<JobModel> Touch(TouchEvent e) => null!;
       }
       """);
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
+    return GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs") ?? "";
+  }
 
-    await Assert.That(code).IsNotNull();
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ExplicitDefaults_EmitFrameworkAndLinqAsync() {
+    var code = _registry("ScopeHandling = CollectiveScopeHandling.Framework, SpecKind = CollectiveSpecKind.Linq");
+
+    await Assert.That(code).Contains("Touch")
+      .Because("the control: the handler is registered");
     await Assert.That(code).Contains("CollectiveScopeHandling.Framework");
     await Assert.That(code).Contains("CollectiveSpecKind.Linq");
-    await Assert.That(code).DoesNotContain("CollectiveScopeHandling.Custom");
-    await Assert.That(code).DoesNotContain("CollectiveSpecKind.RawSql");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task NonZeroValues_EmitCustomAndRawSqlAsync() {
+    var code = _registry("ScopeHandling = CollectiveScopeHandling.Custom, SpecKind = CollectiveSpecKind.RawSql");
+
+    await Assert.That(code).Contains("CollectiveScopeHandling.Custom");
+    await Assert.That(code).Contains("CollectiveSpecKind.RawSql");
   }
 }
