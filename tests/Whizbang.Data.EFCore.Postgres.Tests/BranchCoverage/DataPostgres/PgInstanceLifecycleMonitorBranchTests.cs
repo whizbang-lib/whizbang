@@ -75,8 +75,11 @@ public class PgInstanceLifecycleMonitorBranchTests : EFCoreTestBase {
 
     await Assert.That(_sum(livenessMetrics.DeathsRetracted.Instrument, outcome: null)).IsEqualTo(1L)
       .Because("the instance heartbeat again, so its announced death is retracted and counted");
-    List<Type> expected = [typeof(InstanceDiedSignal), typeof(InstanceJoinedSignal)];
-    await Assert.That(bus.Published).IsEquivalentTo(expected);
+    // Compared by name: a structural equivalence walk over System.Type reflects into members that
+    // throw for non-generic-parameter types.
+    List<string> expected = [nameof(InstanceDiedSignal), nameof(InstanceJoinedSignal)];
+    List<string> published = [.. bus.Published.Select(t => t.Name)];
+    await Assert.That(published).IsEquivalentTo(expected);
   }
 
   private static WhizbangMetrics _whizbangMetrics() =>

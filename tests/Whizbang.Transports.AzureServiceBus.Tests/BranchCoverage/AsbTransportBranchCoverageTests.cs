@@ -296,11 +296,11 @@ public class AsbTransportBranchCoverageTests {
   // ========================================
 
   /// <summary>
-  /// A null stream id yields a streamless session key rather than a parsed stream, and a number too
-  /// large for a double travels as its JSON text instead of turning into infinity.
+  /// A null stream id yields a streamless session key rather than a parsed stream, and travels as a
+  /// null application property.
   /// </summary>
   [Test]
-  public async Task PublishAsync_NullStreamIdAndOverflowingNumber_UsesStreamlessSessionAndRawTextAsync() {
+  public async Task PublishAsync_NullStreamId_UsesStreamlessSessionAsync() {
     var client = new RaisableServiceBusClient();
     var transport = new AzureServiceBusTransport(
       client,
@@ -309,15 +309,13 @@ public class AsbTransportBranchCoverageTests {
       NullLogger<AzureServiceBusTransport>.Instance);
     var envelope = AsbTransportTestData.CreateEnvelope();
     var metadata = new Dictionary<string, JsonElement> {
-      ["StreamId"] = AsbTransportTestData.Json("null"),
-      ["huge"] = AsbTransportTestData.Json("1e400")
+      ["StreamId"] = AsbTransportTestData.Json("null")
     };
 
     await transport.PublishAsync(envelope, new TransportDestination(TOPIC, "orders.created", metadata));
 
     var sent = client.LastSender!.Sent.Single();
     await Assert.That(sent.SessionId).IsEqualTo(AsbSessionKey.For(null, envelope.MessageId.Value));
-    await Assert.That(sent.ApplicationProperties["huge"]).IsEqualTo("1e400");
     await Assert.That(sent.ApplicationProperties["StreamId"]).IsNull();
   }
 

@@ -262,8 +262,14 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
       .IsEqualTo(0L);
   }
 
+  /// <summary>
+  /// The cursor function derives the new position from processed perspective events, not from the
+  /// payload's LastEventId; with no outstanding events for the pair it marks the cursor complete
+  /// (status 2). An empty payload never reaches that function, so the status change proves the
+  /// non-empty list was serialized and applied.
+  /// </summary>
   [Test]
-  public async Task FlushCompletions_WithACursor_AdvancesItAsync() {
+  public async Task FlushCompletions_WithACursor_MarksItCompleteAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);
     var (streamId, eventId) = await _seedEventAsync(connection, withBody: false);
@@ -278,7 +284,8 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
       }]));
 
     await Assert.That(await _countAsync(connection,
-      "SELECT count(*) FROM wh_perspective_cursors WHERE last_event_id = ANY(@ids)", [eventId])).IsEqualTo(1L)
+      "SELECT count(*) FROM wh_perspective_cursors WHERE stream_id = ANY(@ids) AND perspective_name = 'P.Flush' AND status = 2",
+      [streamId])).IsEqualTo(1L)
       .Because("a non-empty cursor list is serialized and applied, not replaced by the empty-list payload");
   }
 
