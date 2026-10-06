@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -368,6 +369,9 @@ public class AsbComponentBranchCoverageTests {
         o.AutoProvisionInfrastructure = false;
         o.EnableSessions = false;
       });
+    // The transport registration defaults a registry query; remove it so the host genuinely has
+    // no receptor registry, which is the shape this test is named for.
+    services.RemoveAll<Whizbang.Core.Messaging.IReceptorRegistryQuery>();
     await using var provider = services.BuildServiceProvider();
     var router = (NamespaceRoutingTransport)provider.GetRequiredService<ITransport>();
     await router.InitializeAsync();
