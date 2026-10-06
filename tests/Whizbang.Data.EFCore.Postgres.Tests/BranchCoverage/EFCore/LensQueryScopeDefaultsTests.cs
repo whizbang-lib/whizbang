@@ -45,48 +45,48 @@ public class LensQueryScopeDefaultsTests {
 
   [Test]
   public async Task MultiModel_EveryArity_DefaultScope_TenantWithoutOptions_ConfiguredOtherwiseAsync() {
-    using (var a = new EFCorePostgresLensQuery<Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
-    using (var b = new EFCorePostgresLensQuery<Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
+    await using (var a = new EFCorePostgresLensQuery<Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
+    await using (var b = new EFCorePostgresLensQuery<Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
       await _assertTenantDefaultAsync(() => a.DefaultScope);
       await Assert.That(b.DefaultScope).IsNotNull();
     }
-    using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
-    using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
+    await using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
+    await using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
       await _assertTenantDefaultAsync(() => a.DefaultScope);
       await Assert.That(b.DefaultScope).IsNotNull();
     }
-    using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
-    using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
+    await using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
+    await using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
       await _assertTenantDefaultAsync(() => a.DefaultScope);
       await Assert.That(b.DefaultScope).IsNotNull();
     }
-    using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
-    using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
+    await using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
+    await using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
       await _assertTenantDefaultAsync(() => a.DefaultScope);
       await Assert.That(b.DefaultScope).IsNotNull();
     }
-    using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
-    using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
+    await using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
+    await using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
       await _assertTenantDefaultAsync(() => a.DefaultScope);
       await Assert.That(b.DefaultScope).IsNotNull();
     }
-    using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
-    using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
+    await using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
+    await using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
       await _assertTenantDefaultAsync(() => a.DefaultScope);
       await Assert.That(b.DefaultScope).IsNotNull();
     }
-    using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
-    using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
+    await using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
+    await using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
       await _assertTenantDefaultAsync(() => a.DefaultScope);
       await Assert.That(b.DefaultScope).IsNotNull();
     }
-    using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
-    using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
+    await using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
+    await using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
       await _assertTenantDefaultAsync(() => a.DefaultScope);
       await Assert.That(b.DefaultScope).IsNotNull();
     }
-    using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
-    using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
+    await using (var a = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, null!))
+    await using (var b = new EFCorePostgresLensQuery<Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc, Doc>(_context(), _tables, NullScopeContextAccessor.Instance, _global)) {
       await _assertTenantDefaultAsync(() => a.DefaultScope);
       await Assert.That(b.DefaultScope).IsNotNull();
     }

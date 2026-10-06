@@ -47,7 +47,8 @@ public class IndexStatisticsStepClaimTests {
       new BareContext(new DbContextOptionsBuilder<BareContext>().UseNpgsql(UNUSED_CONNECTION).Options), typeof(BareContext), timeProvider: null);
     var after = DateTimeOffset.UtcNow;
 
-    await Assert.That(new[] { _expected("public", before), _expected("public", after) }).Contains(key!);
+    string[] windowKeys = [_expected("public", before), _expected("public", after)];
+    await Assert.That(windowKeys).Contains(key!);
   }
 
   [Test]

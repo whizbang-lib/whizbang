@@ -78,7 +78,7 @@ public class CollectivePredicateContainsShapeTests {
 
   private static Expression<Func<PerspectiveRow<JobModel>, bool>> _withDefaultComparer(int[] values) {
     var row = Expression.Parameter(typeof(PerspectiveRow<JobModel>), "row");
-    var count = Expression.Property(Expression.Property(row, nameof(PerspectiveRow<JobModel>.Data)), nameof(JobModel.Count));
+    var count = Expression.Property(Expression.Property(row, nameof(PerspectiveRow<>.Data)), nameof(JobModel.Count));
     var method = typeof(Holder).GetMethod(nameof(Holder.Contains), [typeof(int[]), typeof(int), typeof(IEqualityComparer<int>)])!;
     var call = Expression.Call(method, Expression.Constant(values), count, Expression.Default(typeof(IEqualityComparer<int>)));
     return Expression.Lambda<Func<PerspectiveRow<JobModel>, bool>>(call, row);

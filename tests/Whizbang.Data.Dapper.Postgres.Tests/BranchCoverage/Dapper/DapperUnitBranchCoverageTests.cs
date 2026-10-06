@@ -217,7 +217,7 @@ public class DapperUnitBranchCoverageTests {
 }
 
 /// <summary>A model with a settable property of each shape the compiler tests need, and one field.</summary>
-file sealed class CoverageModel {
+sealed file class CoverageModel {
   internal int Counter = 1;
 
   public string Status { get; set; } = string.Empty;
@@ -227,20 +227,20 @@ file sealed class CoverageModel {
   public bool IsFlagged { get; set; }
 }
 
-file sealed class CoverageSpec(Expression<Action<ICollectiveSetters<CoverageModel>>> setters) : ICollectiveSpec<CoverageModel> {
+sealed file class CoverageSpec(Expression<Action<ICollectiveSetters<CoverageModel>>> setters) : ICollectiveSpec<CoverageModel> {
   public Expression<Action<ICollectiveSetters<CoverageModel>>> Setters { get; } = setters;
 }
 
-file sealed class EmptyCatalog : IMessageTypeCatalog {
+sealed file class EmptyCatalog : IMessageTypeCatalog {
   public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [];
 }
 
-file sealed class RefusingConnectionFactory : IDbConnectionFactory {
+sealed file class RefusingConnectionFactory : IDbConnectionFactory {
   public Task<System.Data.IDbConnection> CreateConnectionAsync(CancellationToken cancellationToken = default) =>
     throw new InvalidOperationException("an empty catalog must not open a connection");
 }
 
-file sealed class CapturingLogger<T> : ILogger<T> {
+sealed file class CapturingLogger<T> : ILogger<T> {
   public List<string> Messages { get; } = [];
 
   public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;

@@ -129,7 +129,7 @@ public class DapperRegistryBranchCoverageTests : IAsyncDisposable {
   }
 
   private static FixedCatalog _catalog(string clrTypeName) =>
-    new FixedCatalog([new MessageTypeCatalogEntry(typeof(CoverageMarker), clrTypeName, "event", PINNED_ID)]);
+    new([new MessageTypeCatalogEntry(typeof(CoverageMarker), clrTypeName, "event", PINNED_ID)]);
 
   /// <summary>The largest value the counter reports at collection; the untouched series report zero.</summary>
   private static long _observedMaximum(PassiveCounter<long> counter) {
@@ -153,7 +153,7 @@ public class DapperRegistryBranchCoverageTests : IAsyncDisposable {
   }
 }
 
-file sealed class RecordingLogger<T> : ILogger<T> {
+sealed file class RecordingLogger<T> : ILogger<T> {
   private readonly List<(LogLevel Level, string Message)> _entries = [];
 
   public bool Contains(LogLevel level, string fragment) =>
@@ -168,7 +168,7 @@ file sealed class RecordingLogger<T> : ILogger<T> {
 }
 
 /// <summary>A meter factory that owns the meters it creates, so a test's instruments are its own.</summary>
-file sealed class TestMeterFactory : IMeterFactory {
+sealed file class TestMeterFactory : IMeterFactory {
   private readonly List<Meter> _meters = [];
 
   public Meter Create(MeterOptions options) {

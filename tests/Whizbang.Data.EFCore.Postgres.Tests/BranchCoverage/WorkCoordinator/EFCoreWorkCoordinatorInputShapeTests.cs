@@ -352,7 +352,7 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
   private static async Task<long> _countAsync(NpgsqlConnection connection, string sql, Guid[] ids) {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = sql;
-    cmd.Parameters.AddWithValue("ids", ids);
+    cmd.Parameters.AddWithValue(nameof(ids), ids);
     return (long)(await cmd.ExecuteScalarAsync())!;
   }
 

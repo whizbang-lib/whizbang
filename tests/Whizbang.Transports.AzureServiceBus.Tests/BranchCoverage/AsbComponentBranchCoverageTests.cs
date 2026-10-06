@@ -55,8 +55,7 @@ public class AsbComponentBranchCoverageTests {
       }
     };
 
-    await Assert.That(async () => { await retry.CreateClientWithRetryAsync(CONNECTION_STRING); })
-      .Throws<InvalidOperationException>();
+    await Assert.ThrowsAsync<InvalidOperationException>(async () => await retry.CreateClientWithRetryAsync(CONNECTION_STRING));
     await Assert.That(attempts).IsEqualTo(1)
       .Because("only Service Bus and transient Azure failures are worth another attempt");
   }
@@ -399,9 +398,9 @@ public class AsbComponentBranchCoverageTests {
       new TopologyManifest("coverage-service", [], [new InboxSubscription("inbox.coverage")]));
 
     var defaults = new AzureServiceBusOptions();
-    var created = adminClient.CreatedSubscriptions.Single();
-    await Assert.That(created.MaxDeliveryCount).IsEqualTo(defaults.MaxDeliveryAttempts);
-    await Assert.That(created.RequiresSession).IsEqualTo(defaults.EnableSessions);
+    var (_, _, requiresSession, maxDeliveryCount) = adminClient.CreatedSubscriptions.Single();
+    await Assert.That(maxDeliveryCount).IsEqualTo(defaults.MaxDeliveryAttempts);
+    await Assert.That(requiresSession).IsEqualTo(defaults.EnableSessions);
   }
 
   private static Whizbang.Core.Tags.MessageTagRegistration _tagRegistration(Type messageType, string tag) => new() {
@@ -416,7 +415,7 @@ public class AsbComponentBranchCoverageTests {
 }
 
 /// <summary>A client that hands every receiver request the same scripted dead-letter receiver.</summary>
-file sealed class DeadLetterQueueClient : ServiceBusClient {
+sealed file class DeadLetterQueueClient : ServiceBusClient {
   public ScriptedDeadLetterReceiver Receiver { get; } = new();
 
   public override ServiceBusReceiver CreateReceiver(
@@ -424,7 +423,7 @@ file sealed class DeadLetterQueueClient : ServiceBusClient {
 }
 
 /// <summary>Serves queued batches, then empty pages; records what was abandoned.</summary>
-file sealed class ScriptedDeadLetterReceiver : ServiceBusReceiver {
+sealed file class ScriptedDeadLetterReceiver : ServiceBusReceiver {
   public Queue<IReadOnlyList<ServiceBusReceivedMessage>> Batches { get; } = new();
   public List<string> Abandoned { get; } = [];
 
@@ -445,7 +444,7 @@ file sealed class ScriptedDeadLetterReceiver : ServiceBusReceiver {
 }
 
 /// <summary>Hands each non-default namespace its own recording client, keyed by namespace.</summary>
-file sealed class RecordingNamespaceClientFactory : IServiceBusNamespaceClientFactory {
+sealed file class RecordingNamespaceClientFactory : IServiceBusNamespaceClientFactory {
   public Dictionary<string, RaisableServiceBusClient> Clients { get; } = new(StringComparer.Ordinal);
 
   public ServiceBusClient CreateClient(string namespaceKey, string connectionString, AzureServiceBusOptions options) {
@@ -459,7 +458,7 @@ file sealed class RecordingNamespaceClientFactory : IServiceBusNamespaceClientFa
 }
 
 /// <summary>A logger with every level enabled that records level and rendered message.</summary>
-file sealed class RecordingLogger<T> : ILogger<T> {
+sealed file class RecordingLogger<T> : ILogger<T> {
   private readonly List<(LogLevel Level, string Message)> _entries = [];
 
   public bool Contains(LogLevel level, string fragment) =>

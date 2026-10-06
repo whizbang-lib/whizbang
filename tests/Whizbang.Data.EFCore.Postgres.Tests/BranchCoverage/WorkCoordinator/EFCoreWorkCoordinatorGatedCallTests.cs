@@ -257,7 +257,7 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
   private static async Task<long> _countAsync(NpgsqlConnection connection, string sql, Guid id) {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = sql;
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return (long)(await cmd.ExecuteScalarAsync())!;
   }
 

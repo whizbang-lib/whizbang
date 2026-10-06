@@ -316,12 +316,12 @@ public class DapperCollectiveApplierBranchCoverageTests : PostgresTestBase {
 }
 
 /// <summary>A per-event hook that clears the <c>updated_at</c> value the default hook set.</summary>
-file sealed class ClearUpdatedAtHook : IApplyHook<DapperPostgresPerspectiveStoreTests.TestModel> {
+sealed file class ClearUpdatedAtHook : IApplyHook<DapperPostgresPerspectiveStoreTests.TestModel> {
   public void Configure(IApplyHookBuilder<DapperPostgresPerspectiveStoreTests.TestModel> b, ApplyHookContext context) =>
     b.SetColumn(ApplyHookColumns.UPDATED_AT, null);
 }
 
 /// <summary>A collection type no JSON context describes, whose text form is its items joined by pipes.</summary>
-file sealed class PipeJoinedTags : List<string> {
+sealed file class PipeJoinedTags : List<string> {
   public override string ToString() => string.Join('|', this);
 }

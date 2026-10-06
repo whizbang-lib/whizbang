@@ -271,7 +271,7 @@ public class EFCoreWorkCoordinatorScalarShapeTests : EFCoreTestBase {
       "commit_handler_batch",
       "(p_results JSONB) RETURNS TABLE(handler_id UUID, success BOOLEAN, error_message TEXT, tier INTEGER, bulk_error TEXT)",
       "SELECT (e->>'handler_id')::uuid, TRUE, NULL::TEXT, 2, NULL::TEXT FROM jsonb_array_elements(p_results) e");
-    using var services = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    await using var services = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(services.GetRequiredService<IMeterFactory>()));
     var logger = new CapturingLogger(enabled: true);
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(

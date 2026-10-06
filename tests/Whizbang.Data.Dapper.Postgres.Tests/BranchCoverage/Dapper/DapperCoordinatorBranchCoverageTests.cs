@@ -313,7 +313,7 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
 }
 
 /// <summary>A gate logger with every level enabled that records rendered messages.</summary>
-file sealed class GateLogger : ILogger<WorkCoordinatorGate> {
+sealed file class GateLogger : ILogger<WorkCoordinatorGate> {
   private readonly List<string> _messages = [];
 
   public IReadOnlyList<string> Messages {

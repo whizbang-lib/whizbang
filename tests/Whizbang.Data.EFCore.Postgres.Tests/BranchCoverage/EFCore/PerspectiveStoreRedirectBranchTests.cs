@@ -95,7 +95,7 @@ public class PerspectiveStoreRedirectBranchTests : EFCoreTestBase {
     await connection.OpenAsync();
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = $"SELECT COUNT(*) FROM \"{table}\" WHERE id = @id";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return (long)(await cmd.ExecuteScalarAsync())!;
   }
 }

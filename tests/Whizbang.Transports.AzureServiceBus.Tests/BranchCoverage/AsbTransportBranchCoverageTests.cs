@@ -440,7 +440,7 @@ public class AsbTransportBranchCoverageTests {
 /// activities started under this test's own root, so activities from tests running in parallel
 /// never satisfy an assertion here.
 /// </summary>
-file sealed class ActivityCapture : IDisposable {
+sealed file class ActivityCapture : IDisposable {
   private readonly ActivityListener _listener;
   private readonly Activity _root;
   private readonly ConcurrentQueue<Activity> _stopped = new();
@@ -448,7 +448,7 @@ file sealed class ActivityCapture : IDisposable {
   public ActivityCapture() {
     _listener = new ActivityListener {
       ShouldListenTo = static source => source.Name is "Whizbang.Transport" or "Whizbang.Hosting" or "Whizbang.Tracing",
-      Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+      Sample = static (ref _) => ActivitySamplingResult.AllDataAndRecorded,
       ActivityStopped = _stopped.Enqueue
     };
     ActivitySource.AddActivityListener(_listener);
@@ -466,8 +466,8 @@ file sealed class ActivityCapture : IDisposable {
 }
 
 /// <summary>An administration client whose every operation fails with the given message.</summary>
-file sealed class FailingAdminClient(string message) : IServiceBusAdminClient {
-  private InvalidOperationException _failure() => new InvalidOperationException(message);
+sealed file class FailingAdminClient(string message) : IServiceBusAdminClient {
+  private InvalidOperationException _failure() => new(message);
 
   public Task<NamespaceProperties> GetNamespacePropertiesAsync(CancellationToken cancellationToken = default) =>
     Task.FromException<NamespaceProperties>(_failure());
@@ -510,7 +510,7 @@ file sealed class FailingAdminClient(string message) : IServiceBusAdminClient {
 }
 
 /// <summary>Session message args that count <c>ReleaseSession</c> calls instead of reaching a broker.</summary>
-file sealed class ReleaseCountingSessionEventArgs() : ProcessSessionMessageEventArgs(
+sealed file class ReleaseCountingSessionEventArgs() : ProcessSessionMessageEventArgs(
     ServiceBusModelFactory.ServiceBusReceivedMessage(sessionId: SESSION_ID),
     new FixedSessionReceiver(),
     CancellationToken.None) {
@@ -526,7 +526,7 @@ file sealed class ReleaseCountingSessionEventArgs() : ProcessSessionMessageEvent
 }
 
 /// <summary>A client whose receivers find an empty entity head.</summary>
-file sealed class HeadPeekClient : ServiceBusClient {
+sealed file class HeadPeekClient : ServiceBusClient {
   public EmptyHeadReceiver Receiver { get; } = new();
 
   public override string FullyQualifiedNamespace => "peek.servicebus.windows.net";
@@ -537,7 +537,7 @@ file sealed class HeadPeekClient : ServiceBusClient {
 }
 
 /// <summary>A receiver whose head peek returns no message.</summary>
-file sealed class EmptyHeadReceiver : ServiceBusReceiver {
+sealed file class EmptyHeadReceiver : ServiceBusReceiver {
   public int PeekCalls { get; private set; }
 
   public override Task<ServiceBusReceivedMessage> PeekMessageAsync(long? fromSequenceNumber = default, CancellationToken cancellationToken = default) {

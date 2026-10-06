@@ -117,7 +117,8 @@ public class ModelSchemaResolutionTests : EFCoreTestBase {
     await Assert.That(unmappedKey).IsEqualTo(expected);
     await Assert.That(explicitKey).IsEqualTo(expected)
       .Because("an explicit public schema and the defaulted one claim the same window");
-    await Assert.That(new[] { PhysicalColumnFill.ClaimKey("public", before), PhysicalColumnFill.ClaimKey("public", after) })
+    string[] windowKeys = [PhysicalColumnFill.ClaimKey("public", before), PhysicalColumnFill.ClaimKey("public", after)];
+    await Assert.That(windowKeys)
       .Contains(systemKey!)
       .Because("without an injected clock the step dates the window from the system clock");
   }

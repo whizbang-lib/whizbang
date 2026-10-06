@@ -31,9 +31,10 @@ public class DefaultSchemaBranchTests : EFCoreTestBase {
   public async Task OtherLiveVersions_EmptyOrQuotedDefaultSchema_FindsTheOtherReleaseAsync(string schema, CancellationToken cancellationToken) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync(cancellationToken);
-    await using (var insert = new NpgsqlCommand(@"
+    await using (var insert = new NpgsqlCommand("""
         INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at, metadata)
-        VALUES (@id, 'fleet-svc', 'fleet-host', 1, NOW(), NOW(), '{""Version"":""9.9.9""}'::jsonb);", conn)) {
+        VALUES (@id, 'fleet-svc', 'fleet-host', 1, NOW(), NOW(), '{"Version":"9.9.9"}'::jsonb);
+        """, conn)) {
       insert.Parameters.AddWithValue("id", Guid.NewGuid());
       await insert.ExecuteNonQueryAsync(cancellationToken);
     }

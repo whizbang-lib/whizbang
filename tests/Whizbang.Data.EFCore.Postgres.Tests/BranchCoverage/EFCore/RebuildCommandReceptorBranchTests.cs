@@ -45,8 +45,8 @@ public class RebuildCommandReceptorBranchTests : EFCoreTestBase {
       PerspectiveNames: null, Mode: RebuildMode.InPlace, IncludeStreamIds: null, ExcludeStreamIds: [excluded]), CancellationToken.None);
 
     await Assert.That(rebuilder.LastStreamIds).IsNotNull();
-    await Assert.That(rebuilder.LastStreamIds!).Contains(kept);
-    await Assert.That(rebuilder.LastStreamIds!).DoesNotContain(excluded);
+    await Assert.That(rebuilder.LastStreamIds).Contains(kept);
+    await Assert.That(rebuilder.LastStreamIds).DoesNotContain(excluded);
   }
 
   [Test]
