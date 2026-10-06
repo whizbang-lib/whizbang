@@ -33,8 +33,10 @@ namespace Whizbang.Generators.Tests;
 /// <tests>src/Whizbang.Generators.Shared/Models/PhysicalColumnSql.cs</tests>
 [Category("SourceGenerators")]
 public class GeneratorColumnTypeTableTests {
-  // A character no mapped name contains, so a substitution can never produce another mapped name.
-  private const char FOREIGN = 'Ж';
+  // Characters no mapped name contains, so a substitution can never produce another mapped name: one
+  // below and one above every character the names use, because the compiler's dispatch on a character
+  // splits that range and refuses an unmatched character separately on each side.
+  private static readonly string[] _foreign = ["!", "\u0416"];
 
   private static readonly (string Name, string Type)[] _registrationTable = [
     ("System.Guid", "UUID"),
@@ -106,12 +108,16 @@ public class GeneratorColumnTypeTableTests {
     ("System.TimeOnly", $"(TIME '00:00' + {MICROS})"),
   ];
 
-  /// <summary>Every one-character substitution of every mapped name, plus lengths no mapped name has.</summary>
+  /// <summary>Every one-character substitution of every mapped name, plus a name of every length.</summary>
   private static List<string> _nearMisses(IEnumerable<string> names) {
-    var misses = new List<string> { "", "x", new('y', 40) };
+    // Every length up to past the longest mapped name: the dispatch on length has a slot per length in
+    // that range, mapped or not, and a name of an unmapped length is refused there.
+    var misses = Enumerable.Range(0, 41).Select(n => new string('y', n)).ToList();
     foreach (var name in names) {
       for (var i = 0; i < name.Length; i++) {
-        misses.Add(string.Concat(name.AsSpan(0, i), FOREIGN.ToString(), name.AsSpan(i + 1)));
+        foreach (var foreign in _foreign) {
+          misses.Add(string.Concat(name.AsSpan(0, i), foreign, name.AsSpan(i + 1)));
+        }
       }
     }
     return misses;
