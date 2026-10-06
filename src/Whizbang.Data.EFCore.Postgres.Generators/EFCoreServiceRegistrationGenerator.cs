@@ -515,7 +515,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelClrTypeName: TypeNameUtilities.BuildClrTypeName(modelType),
         DbSetPropertyName: dbSetPropertyName,
         TableBaseName: tableBaseName,
-        NamespaceHint: TypeNameUtilities.Display(symbol.ContainingNamespace),
         Keys: keys,
         PhysicalFields: physicalFields,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
@@ -626,7 +625,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelClrTypeName: candidate.ModelClrTypeName,
         DbSetPropertyName: candidate.DbSetPropertyName,
         TableName: tableName,
-        NamespaceHint: candidate.NamespaceHint,
         Keys: candidate.Keys,
         PhysicalFields: candidate.PhysicalFields,
         JsonIndexes: candidate.JsonIndexes,
@@ -3792,7 +3790,6 @@ internal sealed record DbContextInfo(
 /// <c>TypeNameFormatter.FormatClrTypeName</c></param>
 /// <param name="DbSetPropertyName">Property name for DbSet (e.g., "ActiveJobTemplateModels" for nested Model classes)</param>
 /// <param name="TableName">Snake_case table name</param>
-/// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective. Empty = default context only</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model (for DDL generation)</param>
 /// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
@@ -3813,7 +3810,6 @@ internal sealed record PerspectiveModelInfo(
     string ModelClrTypeName,
     string DbSetPropertyName,
     string TableName,
-    string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
@@ -3838,7 +3834,6 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="ModelClrTypeName">The model's CLR type name (<c>Outer+Model</c> for nested types), the registry key</param>
 /// <param name="DbSetPropertyName">Property name for DbSet</param>
 /// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
-/// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
@@ -3860,7 +3855,6 @@ internal sealed record PerspectiveModelCandidate(
     string ModelClrTypeName,
     string DbSetPropertyName,
     string TableBaseName,
-    string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,

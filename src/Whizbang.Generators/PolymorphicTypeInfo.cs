@@ -21,7 +21,6 @@ namespace Whizbang.Generators;
 /// <param name="BaseTypeName">Fully qualified base type name with global:: prefix</param>
 /// <param name="BaseSimpleName">Simple type name without namespace, used for method naming</param>
 /// <param name="DerivedTypes">All concrete derived types that inherit from or implement this base</param>
-/// <param name="IsInterface">True if BaseTypeName is an interface, false if it's a class</param>
 /// <docs>extending/source-generators/polymorphic-serialization</docs>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonPolymorphicAbstractType_DiscoversDerivedTypesAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonDerivedTypeAttributes_DiscoversDerivedTypesAsync</tests>
@@ -29,8 +28,7 @@ namespace Whizbang.Generators;
 internal sealed record PolymorphicTypeInfo(
     string BaseTypeName,
     string BaseSimpleName,
-    ImmutableArray<string> DerivedTypes,
-    bool IsInterface
+    ImmutableArray<string> DerivedTypes
 ) {
   /// <summary>
   /// Unique identifier derived from fully qualified name, suitable for C# identifiers.

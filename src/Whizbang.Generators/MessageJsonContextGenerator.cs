@@ -2243,8 +2243,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       discoveredPolymorphicTypes[typeNameToProcess] = new PolymorphicTypeInfo(
           BaseTypeName: typeNameToProcess,
           BaseSimpleName: typeSymbol.Name,
-          DerivedTypes: [.. derivedTypeNames],
-          IsInterface: typeSymbol.TypeKind == TypeKind.Interface
+          DerivedTypes: [.. derivedTypeNames]
       );
     }
   }
@@ -2638,7 +2637,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         var elementSimpleName = parts[^1].Replace(PLACEHOLDER_GLOBAL, "");
 
         arrayTypes[arrayTypeName] = new ArrayTypeInfo(
-            ArrayTypeName: arrayTypeName,
             ElementTypeName: elementTypeName,
             ElementSimpleName: elementSimpleName
         );
@@ -3897,8 +3895,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       registry.Add(new PolymorphicTypeInfo(
           BaseTypeName: baseTypeName,
           BaseSimpleName: simpleName,
-          DerivedTypes: derivedTypes,
-          IsInterface: isInterface
+          DerivedTypes: derivedTypes
       ));
     }
 

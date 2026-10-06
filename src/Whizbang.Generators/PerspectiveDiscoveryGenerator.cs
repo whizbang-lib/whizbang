@@ -93,9 +93,6 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Get model type and StreamId property (same across all interfaces for this class)
-    var modelType = perspectiveInterfaces[0].TypeArguments[0];
-    var streamKeyPropertyName = _findStreamIdProperty(modelType);
 
     var className = TypeNameUtilities.FullyQualified(classSymbol);
 
@@ -139,7 +136,6 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           InterfaceTypeArguments: typeArguments,
           EventTypes: eventTypes,
           MessageTypeNames: messageTypeNames,
-          StreamIdPropertyName: streamKeyPropertyName,
           EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
           EventValidationErrors: validationErrors.Count > 0 ? [.. validationErrors] : null,
           IsWithActionsInterface: isWithActions
@@ -147,20 +143,6 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     }).ToArray();
 
     return results;
-  }
-
-  /// <summary>
-  /// Finds the StreamId property in a model type.
-  /// Returns the property name if found, null otherwise.
-  /// Searches the type hierarchy to find [StreamId] on inherited properties.
-  /// </summary>
-  private static string? _findStreamIdProperty(ITypeSymbol modelType) {
-    if (modelType is not INamedTypeSymbol namedType) {
-      return null;
-    }
-
-    var streamIdProperty = namedType.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-    return streamIdProperty?.Name;
   }
 
   /// <summary>

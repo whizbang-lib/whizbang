@@ -361,15 +361,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // Detect polymorphic properties in model type
     var hasPolymorphicProperties = _hasPolymorphicProperties(modelType as INamedTypeSymbol);
 
-    // Detect Split storage mode on model type
-    var isSplitMode = _isSplitStorageMode(modelType as INamedTypeSymbol);
-
     return new PerspectiveCandidate(
         ModelTypeName: TypeNameUtilities.FullyQualified(modelType),
         TableBaseName: tableBaseName,
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
-        IsSplitMode: isSplitMode,
         BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex
     );
   }
@@ -389,12 +385,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableName: tableName,
         PhysicalFields: candidate.PhysicalFields,
         HasPolymorphicProperties: candidate.HasPolymorphicProperties,
-        BuildsDataIndex: candidate.BuildsDataIndex
-,
-        IsSplitMode: candidate.IsSplitMode);
+        BuildsDataIndex: candidate.BuildsDataIndex);
   }
 
-  private const string PERSPECTIVE_STORAGE_ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveStorageAttribute";
   private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE = "Whizbang.Core.Perspectives.PolymorphicDiscriminatorAttribute";
@@ -611,31 +604,6 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         VectorIndexType: null,
         VectorIndexLists: null
     );
-  }
-
-  /// <summary>
-  /// Checks if a model type contains any polymorphic properties (abstract types or [JsonPolymorphic] types).
-  /// </summary>
-  /// <summary>
-  /// Detects if the model type has [PerspectiveStorage(FieldStorageMode.Split)] attribute.
-  /// Split models use Property().HasColumnType("jsonb") instead of ComplexProperty().ToJson()
-  /// because ToJson() crashes on null values for stripped physical fields.
-  /// </summary>
-  private static bool _isSplitStorageMode(INamedTypeSymbol? modelType) {
-    if (modelType is null) {
-      return false;
-    }
-
-    var storageAttr = modelType.GetAttributes()
-        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, PERSPECTIVE_STORAGE_ATTRIBUTE));
-    if (storageAttr is null) {
-      return false;
-    }
-
-    // FieldStorageMode.Split == 2
-    return storageAttr.ConstructorArguments.Length > 0 &&
-        storageAttr.ConstructorArguments[0].Value is int mode &&
-        mode == 2;
   }
 
   /// <summary>
