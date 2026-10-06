@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 
 namespace Whizbang.Generators.Tests;
 
@@ -73,5 +74,39 @@ public class MessageTagDiscoveryGeneratorCoverageTests {
       .Because("the sibling attribute instance without Exclude must still register.");
     await Assert.That(code).DoesNotContain("silent-heartbeat")
       .Because("Exclude = true must drop that specific tag attribute instance from the registry.");
+  }
+
+  /// <summary>
+  /// A number on a tag attribute is written the same way whatever culture the build machine runs in (#1175). On a
+  /// comma-decimal culture <c>1.5</c> used to be emitted as <c>1,5</c>, which does not compile.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_NumericTagValue_OnACommaDecimalCulture_IsWrittenInvariantlyAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public class SampledTagAttribute : MessageTagAttribute {
+              public double Rate { get; init; }
+            }
+
+            [SampledTag(Tag = "sampled", Rate = 1.5)]
+            public record SampledEvent(Guid Id);
+            """;
+    var previous = CultureInfo.CurrentCulture;
+    CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+    try {
+      var code = GeneratorTestHelper.GetGeneratedSource(
+        GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source), "MessageTagRegistry.g.cs");
+      var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<MessageTagDiscoveryGenerator>(source);
+
+      await Assert.That(code).Contains("Rate = 1.5");
+      await Assert.That(errors.Select(e => e.ToString())).IsEmpty();
+    } finally {
+      CultureInfo.CurrentCulture = previous;
+    }
   }
 }

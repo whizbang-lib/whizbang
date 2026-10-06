@@ -249,7 +249,9 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
         string s => $"\"{_escapeString(s)}\"",
         bool b => b ? "true" : "false",
         char c => $"'{c}'",
-        _ => value.Value?.ToString() ?? "null"
+        // Invariant, so a number is written the same on every build machine (#1175): on a comma-decimal culture
+        // 1.5 was written 1,5, which does not compile.
+        _ => System.Convert.ToString(value.Value, System.Globalization.CultureInfo.InvariantCulture)
       };
     }
 
