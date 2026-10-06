@@ -171,7 +171,8 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
     } finally {
       if (sw is not null) {
         sw.Stop();
-        _metrics?.DispatchDuration.Record(sw.Elapsed.TotalMilliseconds,
+        // The stopwatch is started only when metrics are wired, and _metrics is readonly.
+        _metrics!.DispatchDuration.Record(sw.Elapsed.TotalMilliseconds,
           new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
           new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_TYPE, eventTypeName),
           new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.EVENT_NAMESPACE, eventNamespace));

@@ -615,7 +615,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
       .Because("A throwing post-apply receptor must not escape the sink and fault ExecuteAsync — a faulted " +
         "body trips BackgroundServiceExceptionBehavior.StopHost and crash-loops the service.");
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -711,7 +711,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
       .Because("An un-guarded apply failure would fault ExecuteAsync and trip " +
         "BackgroundServiceExceptionBehavior.StopHost — the crash-loop this test guards against.");
     // Fully stop the background worker so it doesn't linger and starve sibling [NotInParallel] tests.
@@ -1219,7 +1219,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* teardown */ }
 
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse();
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse();
     await Assert.That(coordinator.ReportedFailures.Count).IsEqualTo(0)
       .Because("A busy lock is not a failed apply; reporting it would count toward dead-lettering a good event.");
     await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(sinkWork.WorkId)
@@ -1435,7 +1435,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       IReceptorInvoker? receptorInvoker = null, ILeaseRenewalChannel? leaseRenewalChannel = null,
       LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null,
       CompositeMetrics? compositeMetrics = null, bool lockBusyCountsAsFailure = false,
-      ISyncEventTracker? syncEventTracker = null, TimeProvider? timeProvider = null, int predecessorWaitSeconds = 30) {
+      ISyncEventTracker? syncEventTracker = null, TimeProvider? timeProvider = null, int predecessorWaitSeconds = 30,
+      PerspectiveMetrics? metrics = null) {
     var instanceProvider = new InstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -1495,6 +1496,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
       })).Value),
+      metrics: metrics,
       timeProvider: timeProvider,
       leaseRegistry: leaseRegistry,
       compositeMetrics: compositeMetrics);
