@@ -207,7 +207,7 @@ public static class MappedPathDiscovery {
 
     // Empty rather than null for a type with no containing namespace: it answers both checks
     // correctly and leaves no null for one analyzer to want guarded and another to want conditional.
-    var containing = type.ContainingNamespace is { } ns ? TypeNameUtilities.Display(ns) : string.Empty;
+    var containing = TypeNameUtilities.DisplayOrEmpty(type.ContainingNamespace);
 
     return containing.StartsWith("System", System.StringComparison.Ordinal)
       && !containing.StartsWith("System.Collections", System.StringComparison.Ordinal);

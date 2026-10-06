@@ -73,7 +73,7 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
 
     AttributeData? inheritScopeAttr = null;
     foreach (var attr in attrs) {
-      var name = attr.AttributeClass?.Name;
+      var name = TypeNameUtilities.SimpleNameOrNull(attr.AttributeClass);
       if (name == "InheritScopeAttribute" || name == "InheritScope") {
         inheritScopeAttr = attr;
         break;
@@ -84,7 +84,7 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    var location = symbol.Locations.FirstOrDefault() ?? Location.None;
+    var location = LocationUtilities.FirstOrNone(symbol);
 
     // WB-AUTH-010: applied to non-perspective type?
     if (!_implementsPerspectiveFor(symbol)) {

@@ -590,11 +590,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Check if marked with [WhizbangSerializable] attribute
     bool isSerializable = typeSymbol.GetAttributes()
-        .Any(a => a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_SERIALIZABLE}");
+        .Any(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, $"global::{WHIZBANG_SERIALIZABLE}"));
 
     // Check if marked with [GraphQLName] attribute (implies GraphQL serialization needed)
     bool hasGraphQLName = typeSymbol.GetAttributes()
-        .Any(a => a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{GRAPHQL_NAME_ATTRIBUTE}");
+        .Any(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, $"global::{GRAPHQL_NAME_ATTRIBUTE}"));
 
     // Check if this type is a perspective model (used as TModel in IPerspectiveFor<TModel, ...>)
     // Look for sibling or nested types that implement IPerspectiveFor<ThisType, ...>
@@ -3162,7 +3162,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithWhizbangIdProperty_SkipsConverterGenerationAsync</tests>
   private static bool _hasWhizbangIdAttribute(INamedTypeSymbol typeSymbol) {
     return typeSymbol.GetAttributes().Any(a =>
-        a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_ID_ATTRIBUTE}");
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, $"global::{WHIZBANG_ID_ATTRIBUTE}"));
   }
 
   /// <summary>
@@ -3477,8 +3477,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonPolymorphicAbstractType_DiscoversDerivedTypesAsync</tests>
   private static bool _hasJsonPolymorphicAttribute(INamedTypeSymbol typeSymbol) {
     return typeSymbol.GetAttributes().Any(a =>
-        a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) ==
-        "global::System.Text.Json.Serialization.JsonPolymorphicAttribute");
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, "global::System.Text.Json.Serialization.JsonPolymorphicAttribute"));
   }
 
   /// <summary>

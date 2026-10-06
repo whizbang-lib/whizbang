@@ -193,7 +193,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     const string PERSPECTIVE_STORAGE_ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveStorageAttribute";
 
     foreach (var attribute in modelType.GetAttributes()) {
-      var attrClassName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
+      var attrClassName = TypeNameUtilities.DisplayOrNull(attribute.AttributeClass);
       if (attrClassName == PERSPECTIVE_STORAGE_ATTRIBUTE && attribute.ConstructorArguments.Length > 0) {
         var modeArg = attribute.ConstructorArguments[0];
         if (modeArg.Value is int modeValue) {
@@ -217,7 +217,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
     foreach (var property in properties) {
       foreach (var attribute in property.GetAttributes()) {
-        var attrClassName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
+        var attrClassName = TypeNameUtilities.DisplayOrNull(attribute.AttributeClass);
 
         if (attrClassName == PHYSICAL_FIELD_ATTRIBUTE) {
           var fieldInfo = _extractPhysicalFieldInfo(property, attribute);
@@ -692,6 +692,25 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         .Replace("global::", "")
         .TrimEnd('?');
 
+    return PostgresTypeFor(typeName);
+  }
+
+  /// <summary>
+  /// The PostgreSQL column type the perspective table DDL gives a physical field whose CLR type renders as
+  /// <paramref name="typeName"/> (no <c>global::</c> prefix, no nullable suffix). The match is
+  /// exact and ordinal: a name that is not one of the mapped types, however close, is
+  /// <c>TEXT</c>.
+  /// </summary>
+  /// <remarks>
+  /// Public rather than private so a test can pin the whole table, including the names the
+  /// generator rarely or never renders (most CLR spellings of the keyword types) and the near misses that
+  /// must fall through to the default. Not internal because InternalsVisibleTo on this assembly
+  /// collides with the test project's polyfills (see AssemblyInfo.cs). This assembly ships as an analyzer, so its public
+  /// surface is not a consumer API.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/GeneratorColumnTypeTableTests.cs:SchemaColumnType_MapsEveryKnownNameAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/GeneratorColumnTypeTableTests.cs:SchemaColumnType_NearMissNames_FallBackToDefaultAsync</tests>
+  public static string PostgresTypeFor(string typeName) {
     return typeName switch {
       // A declared length is carried by a check constraint rather than by the column's type, so the
       // column is text here as it is in the table. Claiming a limited type while the table holds

@@ -146,8 +146,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// </summary>
   private static bool _isPromotedToJsonb(IPropertySymbol member) {
     var attribute = member.GetAttributes().FirstOrDefault(a =>
-      a.AttributeClass is { } attributeClass
-      && TypeNameUtilities.Display(attributeClass) == "Whizbang.Core.Perspectives.PhysicalFieldAttribute");
+      TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PhysicalFieldAttribute"));
     if (attribute is null) {
       return false;
     }
@@ -245,7 +244,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// <remarks>A type with no containing namespace is not in System either, so it answers false
   /// through the same comparison instead of needing a guard on a line of its own.</remarks>
   private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : null;
+    var ns = TypeNameUtilities.DisplayOrNull(type.ContainingNamespace);
 
     // Skip common system types that definitely won't contain Dictionary
     if (ns == "System") {
@@ -267,7 +266,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// </remarks>
   private static bool _isPropertyIgnored(IPropertySymbol property) {
     foreach (var attr in property.GetAttributes()) {
-      var attrName = attr.AttributeClass is { } attributeClass ? TypeNameUtilities.Display(attributeClass) : null;
+      var attrName = TypeNameUtilities.DisplayOrNull(attr.AttributeClass);
       if (attrName == null) {
         continue;
       }

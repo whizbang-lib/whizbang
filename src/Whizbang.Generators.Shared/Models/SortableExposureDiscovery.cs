@@ -114,9 +114,7 @@ public static class SortableExposureDiscovery {
   /// <summary>The exposure an attribute declares, before its own switches narrow it.</summary>
   private static int _declaredExposure(
       AttributeData attribute, ImmutableArray<string> extraComposingNames) {
-    var name = attribute.AttributeClass is null
-      ? null
-      : TypeNameUtilities.Display(attribute.AttributeClass);
+    var name = TypeNameUtilities.DisplayOrNull(attribute.AttributeClass);
 
     if (name is not null) {
       if (_knownComposingAttributes.TryGetValue(name, out var known)) {

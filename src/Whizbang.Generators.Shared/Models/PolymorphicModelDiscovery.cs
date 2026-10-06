@@ -97,10 +97,8 @@ public static class PolymorphicModelDiscovery {
   /// Checks whether a type is a System namespace type that is NOT a collections type.
   /// </summary>
   private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace is { } containingNamespace
-      ? TypeNameUtilities.Display(containingNamespace)
-      : null;
-    return ns?.StartsWith("System", System.StringComparison.Ordinal) == true &&
+    var ns = TypeNameUtilities.DisplayOrEmpty(type.ContainingNamespace);
+    return ns.StartsWith("System", System.StringComparison.Ordinal) &&
            !ns.StartsWith("System.Collections", System.StringComparison.Ordinal);
   }
 

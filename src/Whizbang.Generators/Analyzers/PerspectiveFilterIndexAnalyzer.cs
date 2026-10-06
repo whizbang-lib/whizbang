@@ -698,7 +698,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// </summary>
   internal static bool IsIndexBacked(IPropertySymbol property) {
     foreach (var attribute in property.GetAttributes()) {
-      var name = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
+      var name = TypeNameUtilities.DisplayOrNull(attribute.AttributeClass);
 
       switch (name) {
         case STREAM_ID_ATTRIBUTE:

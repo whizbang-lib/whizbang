@@ -111,9 +111,9 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
     }
 
     var hasEvictor = symbol.GetAttributes().Any(static a =>
-      a.AttributeClass?.Name is "RowTtlAttribute" or "RowTtl" or "RowCapAttribute" or "RowCap");
+      TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "RowTtlAttribute" or "RowTtl" or "RowCapAttribute" or "RowCap");
     var isolated = symbol.GetAttributes().Any(static a =>
-      a.AttributeClass?.Name is "StreamGroupIsolatedAttribute" or "StreamGroupIsolated");
+      TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "StreamGroupIsolatedAttribute" or "StreamGroupIsolated");
 
     // WHIZ142 is local: Bridge on the sole membership.
     if (memberships.Length == 1 && memberships[0].Bridge) {
@@ -173,7 +173,7 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
   private static ImmutableArray<(string Key, bool Announce, bool Bridge)> _memberships(INamedTypeSymbol symbol) {
     var memberships = ImmutableArray.CreateBuilder<(string, bool, bool)>();
     foreach (var attribute in symbol.GetAttributes().Where(static a =>
-        a.AttributeClass?.Name is "StreamGroupAttribute" or "StreamGroup")) {
+        TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "StreamGroupAttribute" or "StreamGroup")) {
       if (attribute.ConstructorArguments.Length == 0 ||
           attribute.ConstructorArguments[0].Value is not string key || key.Length == 0) {
         continue;

@@ -15,8 +15,13 @@ namespace Whizbang.Generators.Tests;
 /// Tests are stubs pending fix.
 /// </remarks>
 public class PathResolverTests {
+  // Every test here reads or writes the process-wide WHIZBANG_DOCS_PATH override, so they share one
+  // constraint key: run concurrently, one test's override is another test's environment.
+  private const string DOCS_PATH_VARIABLE = "WHIZBANG_DOCS_PATH";
+
 
   [Test]
+  [NotInParallel(DOCS_PATH_VARIABLE)]
   public async Task FindDocsRepositoryPath_ReturnsPathOrNullAsync() {
     // Arrange & Act
     var result = PathResolver.FindDocsRepositoryPath();
@@ -32,6 +37,7 @@ public class PathResolverTests {
   }
 
   [Test]
+  [NotInParallel(DOCS_PATH_VARIABLE)]
   public async Task FindDocsRepositoryPath_WithEnvironmentVariable_UsesEnvironmentPathAsync() {
     // Arrange
     var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
@@ -54,6 +60,7 @@ public class PathResolverTests {
   }
 
   [Test]
+  [NotInParallel(DOCS_PATH_VARIABLE)]
   public async Task FindDocsRepositoryPath_WithInvalidEnvironmentVariable_FallsBackToSiblingDiscoveryAsync() {
     // Arrange
     var invalidPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
@@ -87,6 +94,7 @@ public class PathResolverTests {
   /// while nothing else is executing.
   /// </remarks>
   [Test]
+  [NotInParallel(DOCS_PATH_VARIABLE)]
   public async Task FindDocsRepositoryPath_StartedOutsideAnyGitWorkingTree_ReturnsNullAsync() {
     // Arrange - a directory with no .git anywhere above it (the temp root is not a working tree)
     var outsideAnyRepository = Path.Combine(Path.GetTempPath(), $"whizbang-no-git-{Guid.NewGuid():N}", "nested");
@@ -113,6 +121,7 @@ public class PathResolverTests {
   /// <c>whizbang-lib.github.io</c> sibling, the resolver must find that sibling.
   /// </summary>
   [Test]
+  [NotInParallel(DOCS_PATH_VARIABLE)]
   public async Task FindDocsRepositoryPath_StartedInsideAWorkingTreeWithADocsSibling_ReturnsTheSiblingAsync() {
     // Arrange - parent/{repo/.git/, whizbang-lib.github.io/}, starting deep inside repo
     var parent = Path.Combine(Path.GetTempPath(), $"whizbang-git-{Guid.NewGuid():N}");
@@ -134,6 +143,27 @@ public class PathResolverTests {
         .Because("the walk up from src/Whizbang.Generators reaches the .git directory, making the repository the library root");
       await Assert.That(Path.GetFullPath(result!)).IsEqualTo(Path.GetFullPath(docsSibling))
         .Because("the documentation repository is the whizbang-lib.github.io directory beside the library root, not beside the start directory");
+    } finally {
+      Environment.SetEnvironmentVariable("WHIZBANG_DOCS_PATH", previousEnvironmentOverride);
+      Directory.Delete(parent, recursive: true);
+    }
+  }
+
+  /// <summary>
+  /// Inside a working tree whose parent holds no <c>whizbang-lib.github.io</c> directory there is no
+  /// documentation repository, and the resolver says so rather than inventing a path.
+  /// </summary>
+  [Test]
+  [NotInParallel(DOCS_PATH_VARIABLE)]
+  public async Task FindDocsRepositoryPath_StartedInsideAWorkingTreeWithoutADocsSibling_ReturnsNullAsync() {
+    var parent = Path.Combine(Path.GetTempPath(), $"whizbang-git-{Guid.NewGuid():N}");
+    var repository = Path.Combine(parent, "whizbang");
+    Directory.CreateDirectory(Path.Combine(repository, ".git"));
+    var previousEnvironmentOverride = Environment.GetEnvironmentVariable("WHIZBANG_DOCS_PATH");
+    Environment.SetEnvironmentVariable("WHIZBANG_DOCS_PATH", null);
+
+    try {
+      await Assert.That(PathResolver.FindDocsRepositoryPath(repository)).IsNull();
     } finally {
       Environment.SetEnvironmentVariable("WHIZBANG_DOCS_PATH", previousEnvironmentOverride);
       Directory.Delete(parent, recursive: true);

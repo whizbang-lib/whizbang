@@ -118,7 +118,7 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
   /// and falls out of the same comparison rather than needing a guard on a line of its own.
   /// </remarks>
   private static bool _isInMintingNamespace(ISymbol containingSymbol) {
-    var display = containingSymbol.ContainingNamespace is { } ns ? TypeNameUtilities.Display(ns) : string.Empty;
+    var display = TypeNameUtilities.DisplayOrEmpty(containingSymbol.ContainingNamespace);
     return display == MINTING_NAMESPACE_PREFIX
       || display.StartsWith(MINTING_NAMESPACE_PREFIX + ".", System.StringComparison.Ordinal);
   }

@@ -106,12 +106,12 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     // names no interceptable API: _resolveGuidVersionAndSource takes the name as nullable and matches
     // null against none of its patterns, so it answers with no version and no source and the call
     // leaves by the same exit — no separate guard needed here.
-    var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : null;
+    var containingType = TypeNameUtilities.DisplayOrNull(methodSymbol.ContainingType);
 
     // Skip internal Whizbang library code - we control that and don't need interception
     var callingTypeSymbol = _getContainingTypeSymbol(context, invocation, ct);
     if (callingTypeSymbol is not null) {
-      var callingNamespace = callingTypeSymbol.ContainingNamespace is { } callingNamespaceSymbol ? TypeNameUtilities.Display(callingNamespaceSymbol) : "";
+      var callingNamespace = TypeNameUtilities.DisplayOrEmpty(callingTypeSymbol.ContainingNamespace);
       if (callingNamespace.StartsWith("Whizbang", StringComparison.Ordinal)) {
         return (null, null);
       }
@@ -212,8 +212,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     var compilation = context.SemanticModel.Compilation;
     return compilation.Assembly.GetAttributes().Any(attr =>
         TypeNameUtilities.IsNamed(attr.AttributeClass, SUPPRESS_ATTRIBUTE) ||
-        attr.AttributeClass?.Name == SUPPRESS_ATTRIBUTE_NAME ||
-        attr.AttributeClass?.Name == SUPPRESS_SHORT_NAME)
+        TypeNameUtilities.SimpleNameOrNull(attr.AttributeClass) is SUPPRESS_ATTRIBUTE_NAME or SUPPRESS_SHORT_NAME)
       ? "SuppressGuidInterceptionAttribute on assembly"
       : null;
   }

@@ -127,8 +127,7 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
     }
 
     var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
-      attr.AttributeClass is not null &&
-      TypeNameHelper.GetFullyQualifiedName(attr.AttributeClass) == StandardInterfaceNames.PINNED_ID_ATTRIBUTE);
+      TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
     if (pinnedIdAttribute is null ||
         pinnedIdAttribute.ConstructorArguments.Length == 0 ||
         pinnedIdAttribute.ConstructorArguments[0].Value is not string idValue ||
@@ -138,7 +137,7 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
 
     pinnedId = idValue;
     clrName = TypeNameUtilities.BuildClrTypeName(typeSymbol); // '+'-nested CLR name — same form the catalog stores.
-    location = typeSymbol.Locations.FirstOrDefault() ?? Location.None;
+    location = LocationUtilities.FirstOrNone(typeSymbol);
     return true;
   }
 
