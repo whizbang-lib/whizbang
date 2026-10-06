@@ -51,7 +51,7 @@ public sealed record WhizbangIdInfo(
   /// Used for deduplication and collision detection.
   /// </summary>
   /// <tests>No tests found</tests>
-  public string FullyQualifiedName => $"{Namespace}.{TypeName}";
+  public string FullyQualifiedName => Namespace.Length == 0 ? TypeName : $"{Namespace}.{TypeName}";
 
   /// <summary>
   /// Value equality is used for deduplication.

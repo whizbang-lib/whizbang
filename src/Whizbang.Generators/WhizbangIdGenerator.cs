@@ -125,7 +125,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     // Extract namespace - either from attribute or containing namespace
-    string targetNamespace = structSymbol.ContainingNamespace is null ? "Global" : TypeNameUtilities.Display(structSymbol.ContainingNamespace);
+    string targetNamespace = _namespaceOf(structSymbol);
 
     // Check for Namespace property in attribute
     var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");
@@ -167,6 +167,13 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// accepted. The display-name and fully qualified comparisons that used to follow could only agree with the name
   /// test: a class displayed as <c>Whizbang.Core.WhizbangIdAttribute</c> is named <c>WhizbangIdAttribute</c>.
   /// </remarks>
+  /// <summary>
+  /// The namespace a declaration's id is generated into: the one it is declared in, or none for the global namespace
+  /// (#1174). Displayed, the global namespace reads <c>&lt;global namespace&gt;</c>, which is not a namespace name.
+  /// </summary>
+  private static string _namespaceOf(ISymbol symbol) =>
+    symbol.ContainingNamespace.IsGlobalNamespace ? "" : TypeNameUtilities.Display(symbol.ContainingNamespace);
+
   private static bool _isWhizbangIdAttribute(AttributeData attribute) =>
     TypeNameUtilities.SimpleNameOrNull(attribute.AttributeClass) is "WhizbangIdAttribute" or "WhizbangId";
 
@@ -188,8 +195,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     var typeName = propertySymbol.Type.Name;
 
     // Extract namespace - either from attribute or containing type's namespace
-    var containingType = propertySymbol.ContainingType;
-    string targetNamespace = containingType?.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : "Global";
+    string targetNamespace = _namespaceOf(propertySymbol);
 
     // Check for Namespace property in attribute
     var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");
@@ -243,9 +249,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     var typeName = parameterSymbol.Type.Name;
 
     // Extract namespace - either from attribute or containing type's namespace
-    var containingMethod = parameterSymbol.ContainingSymbol as IMethodSymbol;
-    var containingType = containingMethod?.ContainingType;
-    string targetNamespace = containingType?.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : "Global";
+    string targetNamespace = _namespaceOf(parameterSymbol);
 
     // Check for Namespace property in attribute
     var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");
@@ -446,7 +450,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("using global::Whizbang.Core.ValueObjects;");
     sb.AppendLine();
 
-    sb.AppendLine($"namespace {id.Namespace};");
+    sb.AppendLine(_namespaceDeclaration(id.Namespace));
     sb.AppendLine();
 
     // Struct declaration - implements IWhizbangId, IEquatable, IComparable
@@ -648,7 +652,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("using System.Text.Json.Serialization;");
     sb.AppendLine();
 
-    sb.AppendLine($"namespace {id.Namespace};");
+    sb.AppendLine(_namespaceDeclaration(id.Namespace));
     sb.AppendLine();
 
     // Converter class
@@ -689,7 +693,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine(NULLABLE_ENABLE);
     sb.AppendLine();
 
-    sb.AppendLine($"namespace {id.Namespace};");
+    sb.AppendLine(_namespaceDeclaration(id.Namespace));
     sb.AppendLine();
 
     // Factory class
@@ -711,6 +715,14 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
+  /// <summary>The file-scoped namespace line for an id, or a blank line for one in the global namespace.</summary>
+  private static string _namespaceDeclaration(string idNamespace) =>
+    idNamespace.Length == 0 ? "" : $"namespace {idNamespace};";
+
+  /// <summary>Fills a template's <c>namespace __NAMESPACE__;</c> line, or drops it for an id in the global namespace.</summary>
+  private static string _replaceNamespace(string template, string idNamespace) =>
+    template.Replace("namespace __NAMESPACE__;", _namespaceDeclaration(idNamespace));
+
   /// <summary>
   /// Generates a strongly-typed provider for the WhizbangId.
   /// </summary>
@@ -719,7 +731,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     var template = TemplateUtilities.GetEmbeddedTemplate(assembly, "WhizbangIdProviderTemplate.cs");
 
     // Replace namespace
-    template = template.Replace("__NAMESPACE__", id.Namespace);
+    template = _replaceNamespace(template, id.Namespace);
 
     // Replace type name
     template = template.Replace("__TYPE_NAME__", id.TypeName);
@@ -744,7 +756,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     );
 
     // Determine namespace (use first ID's namespace for the Generated sub-namespace)
-    var firstNamespace = ids[0].Namespace;
+    // An id in the global namespace has none to hang the registration under; it goes under Whizbang.Generated.
+    var firstNamespace = ids[0].Namespace.Length == 0 ? "Whizbang" : ids[0].Namespace;
     template = template.Replace("__NAMESPACE__", firstNamespace);
 
     // Replace header

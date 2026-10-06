@@ -76,4 +76,60 @@ public class GlobalNamespaceGenerationTests {
     await Assert.That(accessors).Contains("Expression<Func<global::GlobalModel, global::System.Guid>> Id");
     await Assert.That(GeneratorTestHelper.GetGeneratedCompilationErrors<PerspectiveAccessorGenerator>(source)).IsEmpty();
   }
+
+  /// <summary>
+  /// A perspective over an event in the global namespace contributes no perspective namespace, as a receptor of one
+  /// contributes no receptor namespace (#1177). The registry used to record the literal text "&lt;global namespace&gt;".
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task EventNamespaceRegistry_PerspectiveOfAGlobalEvent_RegistersNoNamespaceAsync() {
+    var result = GeneratorTestHelper.RunGenerator<EventNamespaceRegistryGenerator>("""
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      public record GlobalEvent : IEvent {
+        [StreamId] public Guid Id { get; init; }
+      }
+
+      public class GlobalModel {
+        [StreamId] public Guid Id { get; init; }
+      }
+
+      public class GlobalPerspective : IPerspectiveFor<GlobalModel, GlobalEvent> {
+        public GlobalModel Apply(GlobalModel current, GlobalEvent @event) => current;
+      }
+      """);
+    var source = GeneratorTestHelper.GetGeneratedSource(result, "EventNamespaceSource.g.cs");
+
+    await Assert.That(source).IsNotNull();
+    await Assert.That(source).DoesNotContain("global namespace");
+    await Assert.That(source).Contains("Discovered 0 perspective namespace(s)");
+  }
+
+  /// <summary>
+  /// A <c>[WhizbangId]</c> declared in the global namespace generates code that compiles (#1174): no
+  /// <c>namespace &lt;global namespace&gt;;</c>, and the id named without a leading dot, whether the attribute is on the
+  /// struct, on a property or on a parameter.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task WhizbangId_InTheGlobalNamespace_GeneratesCodeThatCompilesAsync() {
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<WhizbangIdGenerator>("""
+      using Whizbang.Core;
+
+      [WhizbangId]
+      public readonly partial struct GlobalOrderId;
+
+      public class GlobalCustomer {
+        [WhizbangId]
+        public GlobalCustomerId Id { get; set; }
+      }
+
+      public record GlobalShipment([WhizbangId] GlobalShipmentId Id);
+      """);
+
+    await Assert.That(errors.Select(e => e.ToString())).IsEmpty();
+  }
 }
