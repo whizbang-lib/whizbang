@@ -3,8 +3,8 @@
 
 using System;
 using System.Collections.Generic;
-using Whizbang.Core.Messaging;
 using System.Text.Json;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Transports;
