@@ -349,6 +349,79 @@ public class CursorInversionDetectorTests {
       .Because("nothing is stamped on either side → event_id fallback is the only option");
   }
 
+  // ---------- a stream several services feed ----------
+  //
+  // The filter no longer discards an event whose id sorts below the row's, because an id orders by when
+  // and where it was minted, not by this stream's order. Those events now reach the detector, and the
+  // detector is what has to answer them: an id below the cursor is an INVERSION, and the anchor it
+  // returns is where the replay starts.
+  //
+  // The ids below are the shape that lost a batch on a consuming deployment. The event stored first was
+  // minted LAST by the service that owns the record, so its id sorts above the twenty-three that follow
+  // it in this stream. Nothing was out of order in transit: versions were contiguous and commit
+  // sequences monotonic. Only the ids invert, and only while the stamper is behind — which is exactly
+  // when neither side has a commit sequence and this path runs.
+
+  /// <summary>Stored first in this stream, minted last elsewhere, so its id sorts highest.</summary>
+  private const string CROSS_SOURCE_CURSOR_ID = "01a10db8-41dc-7353-99d8-70889923a9a9";
+
+  [Test]
+  public async Task ResolveInversionAnchor_IdMintedElsewhereSortsBelowTheCursor_AnchorsTheRewindAsync() {
+    var pending = Guid.Parse("01a10db8-41d7-706a-8ace-000280b19c8f");
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [_envelope(pending)],
+      rawByEventId: _lookup(),
+      lastProcessedEventId: Guid.Parse(CROSS_SOURCE_CURSOR_ID),
+      lastProcessedCommitSequence: null);
+
+    await Assert.That(anchor).IsEqualTo(pending)
+      .Because("the event has never been applied and sorts below the cursor, which is an inversion to "
+        + "rewind to. Returning null here would leave it applied out of order or not at all, which is "
+        + "the loss the filter stopped causing.");
+  }
+
+  [Test]
+  public async Task ResolveInversionAnchor_AWholeBatchBelowTheCursor_AnchorsTheEarliestAsync() {
+    // The batch as it arrived. Every one of them sorts below the cursor, and the replay has to start at
+    // the earliest or the ones before the anchor stay missing.
+    Guid[] batch = [
+      Guid.Parse("01a10db8-41d7-706a-8ace-000280b19c8f"),
+      Guid.Parse("01a10db8-41d7-706a-8ace-00153129429b"),
+      Guid.Parse("01a10db8-41d7-706a-8ace-00248d33dc56"),
+      Guid.Parse("01a10db8-41d7-706a-8ace-003970ab218e"),
+    ];
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [.. batch.Select(_envelope)],
+      rawByEventId: _lookup(),
+      lastProcessedEventId: Guid.Parse(CROSS_SOURCE_CURSOR_ID),
+      lastProcessedCommitSequence: null);
+
+    await Assert.That(anchor).IsEqualTo(batch[0])
+      .Because("the earliest inverted event is where the replay has to start; anchoring later leaves "
+        + "the ones before it unapplied.");
+  }
+
+  [Test]
+  public async Task ResolveInversionAnchor_OnceStamped_TheSequenceDecidesNotTheIdAsync() {
+    // The same batch after the stamper catches up. A commit sequence is assigned by the stream's own
+    // store in the order the stream stores events, so it cannot invert the way an id minted elsewhere
+    // can — and once both sides carry one, the ids stop mattering entirely.
+    var pending = Guid.Parse("01a10db8-41d7-706a-8ace-000280b19c8f");
+    var streamId = Guid.CreateVersion7();
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [_envelope(pending)],
+      rawByEventId: _lookup(_raw(streamId, pending, commitSequence: 4095131)),
+      lastProcessedEventId: Guid.Parse(CROSS_SOURCE_CURSOR_ID),
+      lastProcessedCommitSequence: 4095125);
+
+    await Assert.That(anchor).IsNull()
+      .Because("4095131 follows 4095125, so the event is in order and nothing needs rewinding, however "
+        + "the two ids happen to sort.");
+  }
+
   // ---------- _partitionByCooldown (slice 26.15) ----------
   //
   // Splits the drain batch into (cooled, fresh) so the inversion detector runs only on

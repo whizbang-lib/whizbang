@@ -1,8 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Whizbang.Core.ValueObjects;
-
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>
@@ -19,10 +17,11 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// <para>
 /// When they do not, the question is not "which came first" but "can this row's position be compared at
-/// all". A row written by an older version of this library has no sequence and an id that is not a UUIDv7,
-/// so comparing it as text against a UUIDv7 is meaningless rather than merely imprecise. In every case
-/// where ordering cannot be established, the filter defers: it reports not-applied and lets Apply's own
-/// idempotency handle a true duplicate. That direction is deliberate. Re-applying an event a second time
+/// all". It cannot: an id orders by when it was minted and by whom, which is not the order a stream that
+/// several services feed stores them in. In every case where ordering cannot be established, the filter
+/// defers: it reports not-applied and leaves an inversion to the rewind the worker performs for one.
+/// The one case it still answers from ids is equality, which infers no ordering — an id equal to the
+/// row's is that row's own event. That direction is deliberate. Re-applying an event a second time
 /// is visible and recoverable; discarding one that was never applied leaves a read model permanently
 /// wrong with nothing pending to repair it.
 /// </para>
@@ -62,24 +61,29 @@ public static class PerspectiveIdempotencyFilter {
       return false;
     }
 
-    // Neither side is stamped. Comparing ids as text is only meaningful when both ids are time-ordered:
-    // a UUIDv7 encodes its timestamp in the leading bytes, so lexical order is commit order. A v4 id
-    // encodes nothing there. Its leading nibble is random, so it sits at an arbitrary point in the same
-    // ordering -- about 15 times in 16 above every UUIDv7 generated this decade -- and comparing against
-    // it does not produce a worse answer, it produces an unrelated one.
+    // Neither side is stamped, so there is no position either side can be read from.
     //
-    // It is weaker than that even. Where rows carrying such metadata have been examined, the stored id
-    // matched no event in the store at all: it is a value an older version wrote into the row, not the
-    // id of the event that was applied to it. So the row records no position this filter can read, and
-    // the only safe reading of it is that nothing is known -- not that the event came earlier.
-    if (!Guid.TryParse(lastAppliedEventId, out var lastApplied)
-        || !TrackedGuid.FromExternal(lastApplied).IsTimeOrdered
-        || !TrackedGuid.FromExternal(incomingEventId).IsTimeOrdered) {
-      return false;
-    }
-
-    // Both canonical, so the comparison cannot turn on how the stored id happened to be cased. Ordinal
-    // because this is a byte-order comparison of two UUIDv7s, not a linguistic one.
-    return string.CompareOrdinal(incomingEventId.ToString("D"), lastApplied.ToString("D")) <= 0;
+    // This used to compare the two ids as text, on the reasoning that a UUIDv7 encodes its timestamp in
+    // the leading bytes, so lexical order is commit order. That holds only while ONE writer mints every
+    // id in the order the stream stores them. A stream fed by more than one service breaks it: a v7 id
+    // orders by the moment it was minted, on the service that minted it, which is not where it lands in
+    // another service's stream. An event minted last by the service that owns it can be stored first
+    // downstream, and then its id sorts above every event that follows it in that stream.
+    //
+    // Measured on a consuming deployment: one such inversion in a batch of twenty-four discarded the
+    // whole batch, because every later event compared against that row's id and read as already applied.
+    // Nothing was out of order in transit -- the stream's versions were contiguous and its commit
+    // sequences monotonic. Only the ids were inverted, and they say nothing about this stream's order.
+    //
+    // So the ORDERING comparison is gone rather than narrowed again. What remains is equality, which
+    // infers no order at all: an id equal to the row's recorded one is that row's own event, applied by
+    // definition, and that is what makes a re-read of the same event a no-op.
+    //
+    // An id that merely sorts LOWER is an inversion, which PerspectiveWorker already answers by
+    // rewinding to it. It is not evidence that the event was applied, and reporting not-applied is what
+    // leaves it to that path. Re-applying an event is visible and recoverable; discarding one that was
+    // never applied leaves the read model permanently wrong with nothing pending to repair it, which is
+    // the asymmetry this filter exists to respect.
+    return Guid.TryParse(lastAppliedEventId, out var lastApplied) && lastApplied == incomingEventId;
   }
 }
