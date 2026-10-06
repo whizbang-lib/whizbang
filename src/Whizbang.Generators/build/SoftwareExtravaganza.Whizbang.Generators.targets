@@ -1,4 +1,17 @@
 <Project>
+  <!-- Where the message registry finds the documentation checkout for its docs and tests maps (#1180). The generator
+       reads only these build inputs, never the process environment, so its output is the same on every machine for
+       the same inputs. WhizbangDocsPath defaults from the WHIZBANG_DOCS_PATH environment variable, which MSBuild
+       captures as a build input; without it the generator looks for a whizbang-lib.github.io sibling of the git root
+       above ProjectDir. -->
+  <PropertyGroup>
+    <WhizbangDocsPath Condition="'$(WhizbangDocsPath)' == ''">$(WHIZBANG_DOCS_PATH)</WhizbangDocsPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <CompilerVisibleProperty Include="WhizbangDocsPath" />
+    <CompilerVisibleProperty Include="ProjectDir" />
+  </ItemGroup>
+
   <!-- Whizbang Message Registry: extract JSON from generated C# (cross-platform) -->
   <UsingTask TaskName="WhizbangExtractMessageRegistryJson" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>

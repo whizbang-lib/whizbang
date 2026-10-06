@@ -13,11 +13,9 @@ namespace Whizbang.Generators.Tests;
 /// Coverage-focused tests for <see cref="MessageRegistryGenerator"/> targeting branches that the
 /// primary test suite does not reach: unresolvable dispatcher invocations, the generic-type-argument
 /// fallback for null-literal arguments, marker-only perspectives, and the code-docs-map.json /
-/// code-tests-map.json enrichment pipeline (driven via the WHIZBANG_DOCS_PATH environment variable).
+/// code-tests-map.json enrichment pipeline (driven by the WhizbangDocsPath MSBuild property, #1180).
 /// </summary>
 public class MessageRegistryGeneratorCoverageTests {
-  private const string DOCS_PATH_ENV_VAR = "WHIZBANG_DOCS_PATH";
-  private const string DOCS_PATH_PARALLEL_KEY = "WhizbangDocsPathEnvVar";
 
   // ========================================
   // Dispatcher extraction edge cases
@@ -141,11 +139,10 @@ namespace TestNamespace {
   }
 
   // ========================================
-  // Docs / tests map enrichment (WHIZBANG_DOCS_PATH-driven)
+  // Docs / tests map enrichment (WhizbangDocsPath-driven)
   // ========================================
 
   [Test]
-  [NotInParallel(DOCS_PATH_PARALLEL_KEY)]
   [RequiresAssemblyFiles()]
   public async Task MessageRegistryGenerator_DocsRepoWithMaps_EnrichesRegistryWithDocsUrlAndTestsAsync() {
     // Arrange - a fake docs repository with valid code-docs-map.json and
@@ -221,7 +218,6 @@ namespace TestNamespace {
   }
 
   [Test]
-  [NotInParallel(DOCS_PATH_PARALLEL_KEY)]
   [RequiresAssemblyFiles()]
   public async Task MessageRegistryGenerator_MalformedMapFiles_ReportsInfoDiagnosticsAndStillGeneratesAsync() {
     // Arrange - both map files exist but contain invalid JSON. The generator must
@@ -261,7 +257,6 @@ namespace TestNamespace {
   }
 
   [Test]
-  [NotInParallel(DOCS_PATH_PARALLEL_KEY)]
   [RequiresAssemblyFiles()]
   public async Task MessageRegistryGenerator_DocsRepoWithoutMapFiles_GeneratesWithoutEnrichmentAsync() {
     // Arrange - the docs repository path resolves, but neither map file exists.
@@ -298,7 +293,6 @@ namespace TestNamespace {
   }
 
   [Test]
-  [NotInParallel(DOCS_PATH_PARALLEL_KEY)]
   [RequiresAssemblyFiles()]
   public async Task MessageRegistryGenerator_NullAndEmptyMapContents_GeneratesWithoutEnrichmentAsync() {
     // Arrange - the docs map deserializes to null (JSON literal "null") and the
@@ -368,17 +362,11 @@ namespace TestNamespace {
   }
 
   /// <summary>
-  /// Runs the generator with WHIZBANG_DOCS_PATH pointing at the given docs repository,
-  /// restoring the previous environment variable value afterwards.
+  /// Runs the generator with the WhizbangDocsPath build property pointing at the given docs repository: an input to the
+  /// run, not process state, so these tests need no serialization.
   /// </summary>
-  [RequiresAssemblyFiles()]
-  private static GeneratorDriverRunResult _runGeneratorWithDocsPath(string source, string docsRepoPath) {
-    var previousValue = Environment.GetEnvironmentVariable(DOCS_PATH_ENV_VAR);
-    Environment.SetEnvironmentVariable(DOCS_PATH_ENV_VAR, docsRepoPath);
-    try {
-      return GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(source);
-    } finally {
-      Environment.SetEnvironmentVariable(DOCS_PATH_ENV_VAR, previousValue);
-    }
-  }
+  [RequiresAssemblyFiles]
+  private static GeneratorDriverRunResult _runGeneratorWithDocsPath(string source, string docsRepoPath) =>
+    GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(
+      source, new Dictionary<string, string> { [PathResolver.DOCS_PATH_PROPERTY] = docsRepoPath });
 }
