@@ -76,6 +76,27 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
       .Because("a slot still held after the call returns is a leak that starves every later caller");
   }
 
+  /// <summary>
+  /// The same call on a coordinator built without a gate does the same work (each case asserts its
+  /// own result) and never touches a gate: no hold is recorded under the caller. Running both arms
+  /// in one class keeps the gate conditional fully covered within a single coverage report.
+  /// </summary>
+  [Test]
+  [MethodDataSource(nameof(GatedCalls))]
+  public async Task UngatedCall_DoesTheSameWorkWithoutTakingASlotAsync(string call) {
+    var (expectedCaller, invoke) = _calls[call];
+    using var probe = new GateProbe();
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      dbContext, JsonContextRegistry.CreateCombinedOptions(), logger: null, metrics: probe.Metrics, gate: null);
+
+    await invoke(coordinator, connection);
+
+    await Assert.That(probe.Callers).DoesNotContain(expectedCaller)
+      .Because("a coordinator without a gate goes straight to the pool, so no slot hold is recorded");
+  }
+
   private static Dictionary<string, (string, Func<EFCoreWorkCoordinator<WorkCoordinationDbContext>, NpgsqlConnection, Task>)> _buildCalls() {
     var calls = new Dictionary<string, (string, Func<EFCoreWorkCoordinator<WorkCoordinationDbContext>, NpgsqlConnection, Task>)>(StringComparer.Ordinal);
     void register(string key, string caller, Func<EFCoreWorkCoordinator<WorkCoordinationDbContext>, NpgsqlConnection, Task> invoke) =>
