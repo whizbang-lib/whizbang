@@ -186,7 +186,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var stopped = new List<Activity>();
     using var listener = new ActivityListener {
       ShouldListenTo = source => source.Name == "Whizbang.Transport",
-      Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
+      Sample = (ref options) => ActivitySamplingResult.AllData,
       ActivityStopped = activity => {
         lock (stopped) {
           stopped.Add(activity);
@@ -274,7 +274,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var stopped = new List<Activity>();
     using var listener = new ActivityListener {
       ShouldListenTo = source => source.Name == "Whizbang.Transport",
-      Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
+      Sample = (ref options) => ActivitySamplingResult.AllData,
       ActivityStopped = activity => {
         lock (stopped) {
           stopped.Add(activity);

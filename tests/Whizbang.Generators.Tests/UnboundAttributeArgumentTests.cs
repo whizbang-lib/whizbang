@@ -127,7 +127,7 @@ public class UnboundAttributeArgumentTests {
       }
       """);
 
-    var found = JsonIndexDiscovery.CompositesFrom(compilation.GetTypeByMetadataName("Probe.ProbeModel")!);
+    var found = JsonIndexDiscovery.CompositesFrom(compilation.GetTypeByMetadataName("Probe.ProbeModel"));
 
     await Assert.That(found).Count().IsEqualTo(1);
     await Assert.That(found[0].Unique).IsFalse();

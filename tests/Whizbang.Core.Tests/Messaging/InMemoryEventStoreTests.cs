@@ -77,7 +77,7 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
     using var source = new System.Diagnostics.ActivitySource($"Whizbang.Core.Tests.InMemoryEventStore.{Guid.NewGuid():N}");
     using var listener = new System.Diagnostics.ActivityListener {
       ShouldListenTo = s => s.Name == source.Name,
-      Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+      Sample = (ref _) =>
         System.Diagnostics.ActivitySamplingResult.AllData
     };
     System.Diagnostics.ActivitySource.AddActivityListener(listener);
