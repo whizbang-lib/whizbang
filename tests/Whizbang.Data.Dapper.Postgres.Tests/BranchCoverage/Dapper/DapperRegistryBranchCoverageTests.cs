@@ -128,7 +128,7 @@ public class DapperRegistryBranchCoverageTests : IAsyncDisposable {
     await Assert.That(logger.Contains(LogLevel.Information, "Applied 1 rename(s)")).IsTrue();
   }
 
-  private static IMessageTypeCatalog _catalog(string clrTypeName) =>
+  private static FixedCatalog _catalog(string clrTypeName) =>
     new FixedCatalog([new MessageTypeCatalogEntry(typeof(CoverageMarker), clrTypeName, "event", PINNED_ID)]);
 
   /// <summary>The largest value the counter reports at collection; the untouched series report zero.</summary>
@@ -147,10 +147,10 @@ public class DapperRegistryBranchCoverageTests : IAsyncDisposable {
   }
 
   private sealed record CoverageMarker;
-}
 
-file sealed class FixedCatalog(IReadOnlyList<MessageTypeCatalogEntry> entries) : IMessageTypeCatalog {
-  public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => entries;
+  private sealed class FixedCatalog(IReadOnlyList<MessageTypeCatalogEntry> entries) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => entries;
+  }
 }
 
 file sealed class RecordingLogger<T> : ILogger<T> {
