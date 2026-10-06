@@ -48,6 +48,10 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
+    // One walk per model, shared by every interface: a perspective implementing two interfaces over the same model
+    // reported each property once per interface (#1179).
+    var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+
     // Find IPerspectiveFor<TModel, ...> interfaces
     foreach (var iface in typeSymbol.AllInterfaces) {
       // Must be IPerspectiveFor with at least 2 type arguments (TModel + at least one TEvent)
@@ -64,7 +68,6 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
 
       // Check model for Dictionary properties (recursive with cycle detection). A field promoted to a
       // jsonb column is left out: it is stored and read as that column, not mapped in the document.
-      var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
       _checkForDictionary(context, modelType, visited, promotedToJsonbSkipped: true);
     }
   }

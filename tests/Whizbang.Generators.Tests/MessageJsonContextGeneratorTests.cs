@@ -4434,6 +4434,47 @@ public record GetEventsCommand : ICommand {
   }
 
   /// <summary>
+  /// A nested <c>IEvent</c> or <c>ICommand</c> member resolves through the registry's lazy polymorphic
+  /// type info, which quarantines a derived type whose property graph cannot configure. The context's
+  /// own polymorphic factory carries no quarantine, so dispatching the interface to it first would let
+  /// one bad contract type fail every serialize that reaches a <c>List&lt;IEvent&gt;</c>.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_appendPolymorphicTypeChecks</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithWhizbangInterfaceCollections_DispatchesTheInterfacesToTheRegistryAsync() {
+    const string source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record OrderCreatedEvent : IEvent {
+  public string OrderId { get; init; } = "";
+}
+
+public record CreateOrderCommand : ICommand {
+  public string ProductId { get; init; } = "";
+}
+
+public record Batch : IEvent {
+  public List<IEvent> Events { get; init; } = new();
+  public List<ICommand> Commands { get; init; } = new();
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).DoesNotContain("return CreatePolymorphic_Whizbang_Core_IEvent(options);")
+      .Because("the context's own IEvent polymorphism has no quarantine and would shadow the registry dispatch");
+    await Assert.That(code).DoesNotContain("return CreatePolymorphic_Whizbang_Core_ICommand(options);");
+    await Assert.That(code).Contains("JsonContextRegistry.GetLazyPolymorphicTypeInfo<global::Whizbang.Core.IEvent>(options)");
+    await Assert.That(code).Contains("JsonContextRegistry.GetLazyPolymorphicTypeInfo<global::Whizbang.Core.ICommand>(options)");
+  }
+
+  /// <summary>
   /// Tests that when a handler returns List&lt;ICommand&gt;, the generator includes
   /// ALL command types discovered in the compilation as derived types.
   /// </summary>

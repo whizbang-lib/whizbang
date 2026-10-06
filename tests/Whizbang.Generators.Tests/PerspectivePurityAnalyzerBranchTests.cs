@@ -200,4 +200,26 @@ public class PerspectivePurityAnalyzerBranchTests {
 
     await Assert.That(diagnostics.Where(d => d.Id is "WHIZ102" or "WHIZ103")).IsEmpty();
   }
+
+  /// <summary>
+  /// WHIZ105 points at the injected parameter even when it is written with the verbatim prefix, <c>@event</c> (#1178).
+  /// The lookup compared <c>@event</c> with the symbol's name <c>event</c>, found nothing, and fell back to the
+  /// constructor's name.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task NonPureService_InjectedAsAVerbatimNamedParameter_IsReportedOnTheParameterAsync() {
+    var diagnostics = await _diagnosticsAsync(HEADER + """
+      public class EventSink { }
+
+      public class SinkPerspective : IPerspectiveFor<Order, OrderUpdated> {
+        public SinkPerspective(EventSink @event) { }
+        public Order Apply(Order current, OrderUpdated updated) => current;
+      }
+      """);
+
+    var reported = diagnostics.Single(d => d.Id == "WHIZ105");
+    await Assert.That(reported.Location.SourceTree!.ToString().Substring(reported.Location.SourceSpan.Start, reported.Location.SourceSpan.Length))
+      .IsEqualTo("EventSink @event");
+  }
 }

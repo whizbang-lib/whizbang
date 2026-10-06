@@ -50,4 +50,53 @@ public class PerspectiveModelDictionaryAnalyzerBranchTests {
     await Assert.That(whiz810.All(m => m.Contains("Totals", StringComparison.Ordinal) || m.Contains("Tallies", StringComparison.Ordinal))).IsTrue()
       .Because("only the dictionary interfaces are reported; the key/value pair is not a dictionary");
   }
+
+  private const string TWO_INTERFACES_SOURCE = """
+      using System;
+      using System.Collections.Generic;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record OpenedEvent : IEvent;
+      public record ClosedEvent : IEvent;
+
+      public abstract class Shape { }
+
+      public class LedgerModel {
+        public Guid Id { get; set; }
+        public Dictionary<string, int> Totals { get; set; } = [];
+        public Shape? Outline { get; set; }
+      }
+
+      public class LedgerPerspective :
+          IPerspectiveFor<LedgerModel, OpenedEvent>,
+          IPerspectiveFor<LedgerModel, ClosedEvent> {
+        public LedgerModel Apply(LedgerModel currentData, OpenedEvent @event) => currentData;
+        public LedgerModel Apply(LedgerModel currentData, ClosedEvent @event) => currentData;
+      }
+      """;
+
+  /// <summary>
+  /// A perspective that implements two interfaces over one model has WHIZ810 reported once per dictionary property,
+  /// not once per interface (#1179).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task DictionaryProperty_OfAModelTwoInterfacesShare_IsReportedOnceAsync() {
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelDictionaryAnalyzer>(TWO_INTERFACES_SOURCE);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ810")).IsEqualTo(1);
+  }
+
+  /// <summary>The polymorphic analyzer had the same shape: one diagnostic per property, whatever the interface count.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task PolymorphicProperty_OfAModelTwoInterfacesShare_IsReportedOnceAsync() {
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelPolymorphicAnalyzer>(TWO_INTERFACES_SOURCE);
+
+    await Assert.That(diagnostics.Count(d => d.GetMessage(CultureInfo.InvariantCulture).Contains("Outline", StringComparison.Ordinal)))
+      .IsEqualTo(1);
+  }
 }

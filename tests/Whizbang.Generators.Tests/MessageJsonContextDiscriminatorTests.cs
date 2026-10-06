@@ -126,4 +126,39 @@ namespace ConsumerApp.Events.Wholesale {
     await Assert.That(code).Contains(
         "new JsonDerivedType(typeof(global::ConsumerApp.Events.Retail.OrderPlaced), \"ConsumerApp.Events.Retail.OrderPlaced\")");
   }
+
+  /// <summary>
+  /// A public subclass nested in another type is registered as a derived type of its message (#1176), at any depth.
+  /// The lookup used the display name, <c>Outer.Placed</c>, where the compilation knows it as <c>Outer+Placed</c>, and
+  /// silently left it out, so it could not be (de)serialized through its base.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNestedDerivedTypes_RegistersThemAsync() {
+    const string source = """
+
+using Whizbang.Core;
+
+namespace ConsumerApp.Events;
+
+public class OrderEventBase : IEvent {
+  public System.Guid MessageId { get; set; }
+}
+
+public static class Orders {
+  public sealed class Placed : OrderEventBase { public string OrderId { get; set; } = ""; }
+
+  public static class Returns {
+    public sealed class Requested : OrderEventBase { public string OrderId { get; set; } = ""; }
+  }
+}
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+
+    await Assert.That(code).Contains("new JsonDerivedType(typeof(global::ConsumerApp.Events.Orders.Placed)");
+    await Assert.That(code).Contains("new JsonDerivedType(typeof(global::ConsumerApp.Events.Orders.Returns.Requested)");
+  }
 }

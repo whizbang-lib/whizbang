@@ -284,11 +284,9 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
       // Check if parameter type (or its interface) has [PureService] attribute
       if (!_hasPureServiceAttribute(parameterType)) {
-        // Find the parameter location in the constructor
-        var parameterSyntax = constructorDeclaration.ParameterList.Parameters
-            .FirstOrDefault(p => p.Identifier.Text == parameter.Name);
-
-        var location = parameterSyntax?.GetLocation() ?? constructorDeclaration.Identifier.GetLocation();
+        // The parameter's own syntax, by position: matched by name, a parameter written @event never matched the
+        // symbol's name, event, and the diagnostic fell back to the constructor (#1178).
+        var location = constructorDeclaration.ParameterList.Parameters[parameter.Ordinal].GetLocation();
 
         var diagnostic = Diagnostic.Create(
             NonPureServiceInjected,
