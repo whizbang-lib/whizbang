@@ -225,6 +225,88 @@ public class PerspectiveWorkerDrainModeTests {
   }
 
   [Test]
+  public async Task DrainMode_EmptyJoinReapWithDeadLetterMetrics_CountsTheReapedRowsAsync() {
+    // The reaped rows are dead-lettered in the database without passing through the dead-letter store, so
+    // this counter is the only place the meter learns of them.
+    var coordinator = new DrainModeWorkCoordinator {
+      StreamEventsToReturn = [],   // empty join — the orphan signature
+      ReapReturns = 3,
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var harness = new PerspectiveWorkerTestHarness();
+    var streamId = Guid.NewGuid();
+    using var meterFactory = new Whizbang.Core.Tests.Observability.TestMeterFactory();
+    var deadLetterMetrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory));
+    using var meters = new Whizbang.Core.Tests.Observability.MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new DrainModePerspectiveRunnerRegistry());
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(new DrainModeEventStore());
+    services.AddSingleton<IEventTypeProvider>(new FakeEventTypeProvider([typeof(DrainModeTestEvent)]));
+    services.AddLogging();
+    var serviceProvider = services.BuildServiceProvider();
+
+    var options = new PerspectiveWorkerOptions {
+      PollingIntervalMilliseconds = 50,
+      MaxPerspectiveEventAttempts = 10,
+      MaxConcurrentDrainConsumers = 1,
+    };
+    var worker = new PerspectiveWorker(
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor(options),
+      deadLetterMetrics: deadLetterMetrics);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    await coordinator.WaitForReapAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    // The counter moves after the reap returns, inside the same batch: the body has to have finished.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    int reapCalls;
+    lock (coordinator.ReapCalls) { reapCalls = coordinator.ReapCalls.Count; }
+    var counted = meters.GetByName("whizbang.dead_letters.added")
+      .Where(m => m.Tags.GetValueOrDefault("source_table") == DeadLetterSourceTable.PERSPECTIVE_EVENTS
+        && m.Tags.GetValueOrDefault("reason") == "PerspectiveSourceEventMissing")
+      .Sum(m => m.Value);
+    await Assert.That(reapCalls).IsGreaterThanOrEqualTo(1);
+    await Assert.That(counted).IsEqualTo(3d * reapCalls)
+      .Because("every reaped orphan is a dead letter, counted under the perspective-events table and the "
+        + "missing-source-event reason");
+  }
+
+  [Test]
   public async Task DrainMode_ManyConsumers_StopWithoutFaultingTheWorkerAsync() {
     // More than one consumer loop takes the fan-out path, where the loops are awaited together.
     // On shutdown every loop ends by cancellation, so the await sees an OperationCanceledException
@@ -294,7 +376,7 @@ public class PerspectiveWorkerDrainModeTests {
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
       .Because("every consumer loop ends by cancellation on shutdown, which is the normal way out, not a fault");
     await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
       .Because("the worker must finish once its loops and watchdog have ended, so a host's StopAsync returns");
@@ -372,7 +454,7 @@ public class PerspectiveWorkerDrainModeTests {
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
       .Because("a failed orphan disposal is a warning with the maintenance sweep as backstop, not a dead worker");
     (Guid InstanceId, List<Guid> StreamIds, int MaxAttempts)[] calls;
     lock (coordinator.ReapCalls) { calls = [.. coordinator.ReapCalls]; }

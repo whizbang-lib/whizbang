@@ -694,6 +694,11 @@ jobs:
         shell: pwsh
         run: ./scripts/Lint-MigrationSql.ps1
 
+      # A test project outside Whizbang.slnx is never built, so its tests never run and nothing says so (#1160).
+      - name: Every test project is in the solution
+        shell: pwsh
+        run: ./scripts/Test-SolutionTestProjects.ps1
+
   build:
     name: Build · Compile
     needs: [version, changes, release-pr, ff-validated]
@@ -733,7 +738,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/reusable-test-unit.yml
     with:
-      # Use pre-built artifacts with in-job instrumentation for coverage
+      # Run the pre-built output; each test module collects its own line and branch coverage
       artifact-name: build-${{ github.run_id }}
 
   postgres-integration:
@@ -743,10 +748,12 @@ jobs:
     permissions:
       contents: read
     # The three Postgres-tagged projects run sequentially inside one job (shared containers),
-    # and EFCore alone is ~87% of it — so EFCore is sliced four ways by shard category while
+    # and EFCore alone is ~87% of it — so EFCore is sliced five ways by shard category while
     # Dapper and Soak ride their own runners. Every tagged project appears in exactly one shard;
     # ShardCoverageGuardTests fails the build if a class carries no shard category, which would
-    # otherwise mean it silently runs in no shard at all.
+    # otherwise mean it silently runs in no shard at all. Classes are placed by measured cost, not
+    # test count: scripts/Measure-TestShards.ps1 (ai-docs/test-sharding.md) proposes the moves, and
+    # .github/scripts/tests/Measure-TestShards.Tests.ps1 fails if a shard category has no leg here.
     # Whizbang.Soak.Tests is Postgres-tagged but is NOT an integration-mode project, so it has
     # never run in this job and gets no shard — a shard for it would run zero tests, emit no
     # coverage artifact, and hang the quality gate waiting for a file that never arrives.
@@ -766,6 +773,9 @@ jobs:
           - shard: efcore-4
             projectFilter: 'EFCore\.Postgres'
             testFilter: '[Category=Shard4]'
+          - shard: efcore-5
+            projectFilter: 'EFCore\.Postgres'
+            testFilter: '[Category=Shard5]'
           - shard: dapper
             projectFilter: 'Dapper\.Postgres'
             testFilter: ''

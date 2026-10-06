@@ -51,7 +51,7 @@ public partial class ServiceBusConsumerWorker(
   ServiceBusConsumerOptions? options = null,
   MessageProcessingOptions? messageProcessingOptions = null) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
 #pragma warning restore S107
-  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly ITransport _transport = ArgumentGuard.NotNull(transport);
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
   private readonly TaskCompletionSource _subscriptionsReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -70,10 +70,10 @@ public partial class ServiceBusConsumerWorker(
     => SubscriptionsReady.WaitAsync(cancellationToken);
   private readonly IEventMarkerResolver _eventMarkerResolver = eventMarkerResolver;
   private readonly IEphemeralModeResolver _ephemeralModeResolver = ephemeralModeResolver;
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly ConcurrentBag<Task> _detachedTasks = [];
-  private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
+  private readonly ILogger<ServiceBusConsumerWorker> _logger = ArgumentGuard.NotNull(logger);
+  private readonly OrderedStreamProcessor _orderedProcessor = ArgumentGuard.NotNull(orderedProcessor);
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IEnvelopeSerializer _envelopeSerializer = envelopeSerializer;
   private readonly IReceptorRegistryQuery _receptorRegistry = receptorRegistry;
@@ -444,7 +444,7 @@ public partial class ServiceBusConsumerWorker(
       await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
 
       if (_isEventWithoutPerspectives(work.MessageType, scopedProvider)) {
-        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, ct, _detachedTasks.Add);
+        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, _detachedTasks.Add, ct);
       }
     }
   }
@@ -454,8 +454,8 @@ public partial class ServiceBusConsumerWorker(
   /// </summary>
   private static async Task _invokePostLifecycleForEventAsync(
     InboxWork work, IMessageEnvelope typedEnvelope, IReceptorInvoker receptorInvoker,
-    LifecycleExecutionContext lifecycleContext, IServiceProvider scopedProvider, CancellationToken ct,
-    Action<Task>? trackDetachedTask = null) {
+    LifecycleExecutionContext lifecycleContext, IServiceProvider scopedProvider, Action<Task> trackDetachedTask,
+    CancellationToken ct) {
     var coordinator = scopedProvider.GetService<ILifecycleCoordinator>();
     if (coordinator is not null) {
       var eventId = work.Envelope.MessageId.Value;
@@ -471,7 +471,7 @@ public partial class ServiceBusConsumerWorker(
     } else {
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
       var detachedTask = _fireDetachedStageStaticAsync(scopeFactory, typedEnvelope, LifecycleStage.PostLifecycleDetached, lifecycleContext);
-      trackDetachedTask?.Invoke(detachedTask);
+      trackDetachedTask(detachedTask);
 
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, ct);

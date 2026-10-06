@@ -44,7 +44,7 @@ public sealed class AppendAndWaitEventStoreDecorator(
     : ForwardingEventStoreDecorator(inner), IEventStore {
   private static readonly TimeSpan _defaultTimeout = TimeSpan.FromSeconds(30);
 
-  private readonly IPerspectiveSyncAwaiter _syncAwaiter = syncAwaiter ?? throw new ArgumentNullException(nameof(syncAwaiter));
+  private readonly IPerspectiveSyncAwaiter _syncAwaiter = ArgumentGuard.NotNull(syncAwaiter);
   private readonly IEventCompletionAwaiter _eventCompletionAwaiter = eventCompletionAwaiter;
   private readonly IScopedEventTracker _scopedEventTracker = scopedEventTracker;
 

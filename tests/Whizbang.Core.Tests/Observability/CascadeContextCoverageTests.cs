@@ -51,4 +51,17 @@ public class CascadeContextCoverageTests {
       .Because("an empty 'nothing to merge' input must short-circuit to the same instance, "
              + "leaving existing metadata untouched rather than rebuilding an identical copy");
   }
+
+  /// <summary>
+  /// No scope means no security context at all, not an empty one; a scope's tenant and user are
+  /// carried over as they are.
+  /// </summary>
+  [Test]
+  public async Task SecurityFromScope_NullScopeIsNull_AndAScopeCarriesItsIdsAsync() {
+    var fromScope = CascadeContext.SecurityFromScope(new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-1", UserId = "user-1" });
+
+    await Assert.That(CascadeContext.SecurityFromScope(null)).IsNull();
+    await Assert.That(fromScope!.TenantId).IsEqualTo("tenant-1");
+    await Assert.That(fromScope.UserId).IsEqualTo("user-1");
+  }
 }

@@ -15,11 +15,21 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 public class RebuildBalancePerspective :
     IPerspectiveFor<RebuildBalanceModel, RebuildCreditedEvent>,
-    IPerspectiveFor<RebuildBalanceModel, RebuildDebitedEvent> {
+    IPerspectiveFor<RebuildBalanceModel, RebuildDebitedEvent>,
+    IPerspectiveWithActionsFor<RebuildBalanceModel, RebuildClosedEvent> {
 
   public RebuildBalancePerspective() { }
 
+  private static int _creditsApplied;
+
+  /// <summary>How many credits were folded since <see cref="ResetCreditsApplied"/>: the evidence a replay was skipped.</summary>
+  public static int CreditsApplied => Volatile.Read(ref _creditsApplied);
+
+  /// <summary>Starts a count of folded credits.</summary>
+  public static void ResetCreditsApplied() => Interlocked.Exchange(ref _creditsApplied, 0);
+
   public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildCreditedEvent @event) {
+    Interlocked.Increment(ref _creditsApplied);
     return new RebuildBalanceModel {
       Id = @event.StreamId,
       Balance = currentData.Balance + @event.Amount
@@ -31,6 +41,12 @@ public class RebuildBalancePerspective :
       Id = currentData.Id == Guid.Empty ? @event.StreamId : currentData.Id,
       Balance = currentData.Balance - @event.Amount
     };
+  }
+
+  // A closed account leaves no row. Mirrors a real projection that purges on a terminal event -- the
+  // shape that 32 ended sessions in an upgraded environment sat in, still present, after a rebuild.
+  public ApplyResult<RebuildBalanceModel> Apply(RebuildBalanceModel currentData, RebuildClosedEvent @event) {
+    return ApplyResult<RebuildBalanceModel>.Purge();
   }
 }
 
@@ -50,4 +66,9 @@ public record RebuildDebitedEvent : IEvent {
   [StreamId]
   public required Guid StreamId { get; init; }
   public required decimal Amount { get; init; }
+}
+
+public record RebuildClosedEvent : IEvent {
+  [StreamId]
+  public required Guid StreamId { get; init; }
 }

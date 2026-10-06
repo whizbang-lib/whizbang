@@ -73,7 +73,8 @@ public class PolicyContext {
       IServiceProvider? services,
       string environment = "development"
   ) {
-    Message = message ?? throw new ArgumentNullException(nameof(message));
+    ArgumentNullException.ThrowIfNull(message);
+    Message = message;
     MessageType = message.GetType();
     Envelope = envelope;
     Services = services;
@@ -101,7 +102,8 @@ public class PolicyContext {
       IServiceProvider? services,
       string environment
   ) {
-    Message = message ?? throw new ArgumentNullException(nameof(message));
+    ArgumentNullException.ThrowIfNull(message);
+    Message = message;
     MessageType = message.GetType();
     Envelope = envelope;
     Services = services;

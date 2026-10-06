@@ -640,4 +640,29 @@ public class TransportSubscriptionBuilderTests {
   }
 
   #endregion
+
+  /// <summary>
+  /// An inbox strategy that asks for no subscription (a service that receives no commands) leaves
+  /// the legacy singular surface with nothing to return: null, not an exception.
+  /// </summary>
+  [Test]
+  public async Task BuildInboxDestination_StrategyWithNoSubscriptions_ReturnsNullAsync() {
+    var routingOptions = new RoutingOptions();
+    var discovery = new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry());
+    var builder = new TransportSubscriptionBuilder(
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: new NoSubscriptionsStrategy(),
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
+
+    await Assert.That(builder.BuildInboxDestinations()).IsEmpty();
+    await Assert.That(builder.BuildInboxDestination()).IsNull();
+  }
+
+  private sealed class NoSubscriptionsStrategy : IInboxRoutingStrategy {
+    public InboxSubscription GetSubscription(IReadOnlySet<string> ownedDomains, string serviceName, MessageKind kind) =>
+      throw new InvalidOperationException("the plural surface is the one under test");
+    public IReadOnlyList<InboxSubscription> GetSubscriptions(InboxSubscriptionContext context) => [];
+  }
 }

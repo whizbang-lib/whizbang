@@ -51,16 +51,16 @@ public sealed partial class InboxDrainWorker(
   ILogger<InboxDrainWorker> logger,
   ClaimChurnFeedback? churnFeedback = null) : BackgroundService {
 #pragma warning restore S107
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly ClaimChurnFeedback? _churnFeedback = churnFeedback;
   private readonly PoisonAdmissionPolicy _poisonPolicy = new(new PoisonAdmissionPolicy.Settings());
-  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-  private readonly IInboxDrainChannel _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
-  private readonly IInboxChannelWriter _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+  private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
+  private readonly IInboxDrainChannel _drainChannel = ArgumentGuard.NotNull(drainChannel);
+  private readonly IInboxChannelWriter _inboxChannelWriter = ArgumentGuard.NotNull(inboxChannelWriter);
+  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly InboxDrainWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
-  private readonly ILogger<InboxDrainWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly JsonSerializerOptions _jsonOptions = ArgumentGuard.NotNull(jsonOptions);
+  private readonly ILogger<InboxDrainWorker> _logger = ArgumentGuard.NotNull(logger);
   // Idle-state tracking for fixture cleanup-between-tests coordination. Mirrors the
   // sibling OutboxDrainWorker contract so fixtures can wait deterministically for the
   // inbox drain pipeline to quiesce before truncating tables.
@@ -543,8 +543,7 @@ public sealed partial class InboxDrainWorker(
   }
 
   private InboxWork _toInboxWork(InboxBatchRow row) {
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
-      ?? throw new InvalidOperationException("No JsonTypeInfo for MessageEnvelope<JsonElement>.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var envelope = JsonSerializer.Deserialize(row.EventData, typeInfo) as IMessageEnvelope<JsonElement>
       ?? throw new InvalidOperationException($"Failed to deserialize envelope for inbox message {row.MessageId}.");
     // Priority step 1 on the wire: the row's number is the consumer's classification, and the envelope the handler

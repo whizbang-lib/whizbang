@@ -158,6 +158,92 @@ public class PerspectiveWorkerDeepPathReplayTests {
     await Assert.That(postPerspectiveIds).Contains(rangeLoadedEventId);
   }
 
+  [Test]
+  public async Task Worker_RewindWithoutReplayReader_TriggerAlreadyLoaded_IssuesNoTriggerLookupAsync() {
+    // Arrange — the post-cursor load already returned the rewind trigger, so the fallback has nothing to add.
+    var streamId = Guid.CreateVersion7();
+    var triggerEventId = Guid.CreateVersion7();
+
+    var coordinator = new ReplayWorkCoordinator();
+    coordinator.CursorOverrides[(PERSPECTIVE, streamId)] = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = PERSPECTIVE,
+      LastEventId = Guid.CreateVersion7(),
+      Status = PerspectiveProcessingStatus.RewindRequired,
+      RewindTriggerEventId = triggerEventId
+    };
+
+    var triggerEnvelope = _envelope(triggerEventId, new ReplayDeepEvent("trigger"));
+    var eventStore = new ReplayEventStore();
+    eventStore.EnqueueResponse([triggerEnvelope]); // upcoming-events load
+    eventStore.EnqueueResponse([triggerEnvelope]); // processed-events load: the trigger is already in it
+
+    var runner = new ReplayRunner();
+    var registry = new ReplayRegistry(PERSPECTIVE, runner, [typeof(ReplayDeepEvent)]);
+    var invoker = new EventIdRecordingInvoker();
+    var (worker, harness) = _createWorker(coordinator, eventStore, registry, invoker, replayReader: null);
+
+    var processedSignal = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnPerspectiveEventProcessed += e => processedSignal.TrySetResult(e.EventCount);
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueWorkAsync(_rewindWork(streamId), cts.Token);
+    var processedCount = await processedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    // Assert — no third range query, and the trigger fired handlers once
+    await Assert.That(runner.RewindCallCount).IsEqualTo(1);
+    await Assert.That(eventStore.GetEventsBetweenCallCount).IsEqualTo(2)
+      .Because("a trigger the processed set already holds needs no lookup up to it");
+    await Assert.That(processedCount).IsEqualTo(1)
+      .Because("the trigger is not prepended a second time");
+    await Assert.That(invoker.EventIdsAtStage(LifecycleStage.PostPerspectiveInline).Count(id => id == triggerEventId)).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Worker_RewindWithoutReplayReader_EventTypesUnavailable_SkipsTheTriggerLookupAsync() {
+    // Arrange — an event store is registered but no event types are: nothing can be deserialized, so the
+    // fallback must not query the store for the trigger.
+    var streamId = Guid.CreateVersion7();
+    var triggerEventId = Guid.CreateVersion7();
+
+    var coordinator = new ReplayWorkCoordinator();
+    coordinator.CursorOverrides[(PERSPECTIVE, streamId)] = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = PERSPECTIVE,
+      LastEventId = Guid.CreateVersion7(),
+      Status = PerspectiveProcessingStatus.RewindRequired,
+      RewindTriggerEventId = triggerEventId
+    };
+
+    var eventStore = new ReplayEventStore();
+    eventStore.EnqueueResponse([_envelope(triggerEventId, new ReplayDeepEvent("trigger"))]);
+
+    var runner = new ReplayRunner();
+    var registry = new ReplayRegistry(PERSPECTIVE, runner, [typeof(ReplayDeepEvent)]);
+    var invoker = new EventIdRecordingInvoker();
+    var (worker, harness) = _createWorker(
+      coordinator, eventStore, registry, invoker, replayReader: null,
+      eventTypeProvider: NullEventTypeProvider.Instance);
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueWorkAsync(_rewindWork(streamId), cts.Token);
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    // Assert — the rewind ran, and the store was never asked for anything
+    await Assert.That(runner.RewindCallCount).IsEqualTo(1);
+    await Assert.That(eventStore.GetEventsBetweenCallCount).IsEqualTo(0)
+      .Because("without event types no load can deserialize, the trigger lookup included");
+    await Assert.That(invoker.EventIdsAtStage(LifecycleStage.PostPerspectiveInline).Count).IsEqualTo(0);
+  }
+
   #region Test event + helpers
 
   private sealed record ReplayDeepEvent(string Data) : IEvent;
@@ -196,7 +282,8 @@ public class PerspectiveWorkerDeepPathReplayTests {
       ReplayEventStore eventStore,
       ReplayRegistry registry,
       IReceptorInvoker invoker,
-      IPerspectiveReplayReader? replayReader) {
+      IPerspectiveReplayReader? replayReader,
+      IEventTypeProvider? eventTypeProvider = null) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
@@ -220,7 +307,7 @@ public class PerspectiveWorkerDeepPathReplayTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
-      eventTypeProvider: registry,
+      eventTypeProvider: eventTypeProvider ?? registry,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: new SyncEventTracker(),
       logger: NullLogger<PerspectiveWorker>.Instance,

@@ -58,7 +58,7 @@ public sealed class AwaitPerspectiveSyncAttribute(Type perspectiveType) : Attrib
   /// <summary>
   /// Gets the type of the perspective to wait for.
   /// </summary>
-  public Type PerspectiveType { get; } = perspectiveType ?? throw new ArgumentNullException(nameof(perspectiveType));
+  public Type PerspectiveType { get; } = ArgumentGuard.NotNull(perspectiveType);
 
   /// <summary>
   /// Gets or sets the event types to wait for.

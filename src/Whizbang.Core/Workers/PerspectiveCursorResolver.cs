@@ -24,9 +24,9 @@ public sealed partial class PerspectiveCursorResolver(
     PerspectiveCursorCache cache,
     IWorkCoordinator coordinator,
     ILogger<PerspectiveCursorResolver> logger) : IPerspectiveCursorResolver {
-  private readonly PerspectiveCursorCache _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-  private readonly ILogger<PerspectiveCursorResolver> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly PerspectiveCursorCache _cache = ArgumentGuard.NotNull(cache);
+  private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
+  private readonly ILogger<PerspectiveCursorResolver> _logger = ArgumentGuard.NotNull(logger);
 
   /// <inheritdoc />
   public async Task<(Guid? LastEventId, long? LastCommitSequence)> GetAsync(

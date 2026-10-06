@@ -40,8 +40,10 @@ internal sealed class TagPolicyStartupValidator : IHostedService {
       IOptions<SystemEvents.SystemEventOptions> systemEventOptions,
       IConfiguration configuration) {
     _systemEventOptions = systemEventOptions.Value;
-    _options = options ?? throw new ArgumentNullException(nameof(options));
-    _registrationSource = registrationSource ?? throw new ArgumentNullException(nameof(registrationSource));
+    ArgumentNullException.ThrowIfNull(options);
+    _options = options;
+    ArgumentNullException.ThrowIfNull(registrationSource);
+    _registrationSource = registrationSource;
     _configuration = configuration;
   }
 

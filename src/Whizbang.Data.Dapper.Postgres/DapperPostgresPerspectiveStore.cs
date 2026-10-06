@@ -59,8 +59,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     }
 
     var json = reader.GetString(0);
-    var typeInfo = jsonOptions.GetTypeInfo(typeof(TModel))
-      ?? throw new InvalidOperationException($"No JsonTypeInfo found for {typeof(TModel).Name}.");
+    var typeInfo = jsonOptions.GetTypeInfo(typeof(TModel));
     var model = (TModel?)JsonSerializer.Deserialize(json, typeInfo);
     return model is null || split is null
       ? model
@@ -215,10 +214,8 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     await using var conn = new NpgsqlConnection(connectionString);
     await conn.OpenAsync(cancellationToken);
 
-    var dataTypeInfo = jsonOptions.GetTypeInfo(typeof(TModel))
-      ?? throw new InvalidOperationException($"No JsonTypeInfo found for {typeof(TModel).Name}. Ensure the type is registered in a JsonSerializerContext.");
-    var scopeTypeInfo = jsonOptions.GetTypeInfo(typeof(PerspectiveScope))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveScope. Ensure the type is registered in InfrastructureJsonContext.");
+    var dataTypeInfo = jsonOptions.GetTypeInfo(typeof(TModel));
+    var scopeTypeInfo = jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
 
     // Per-event apply hooks: resolve once, mutate the data object (SetProperty) in place before serialization,
     // and take the updated_at / version-bump decision from the plan. The default whizbang.timestamps hook yields
@@ -242,9 +239,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     // and those rows keep an empty object as before.
     var metadataJson = "{}";
     if (metadata is not null) {
-      var metadataTypeInfo = jsonOptions.GetTypeInfo(typeof(PerspectiveMetadata))
-        ?? throw new InvalidOperationException(
-          "No JsonTypeInfo found for PerspectiveMetadata. Ensure InfrastructureJsonContext is in the resolver chain.");
+      var metadataTypeInfo = jsonOptions.GetTypeInfo(typeof(PerspectiveMetadata));
       metadataJson = JsonSerializer.Serialize(metadata, metadataTypeInfo);
     }
 

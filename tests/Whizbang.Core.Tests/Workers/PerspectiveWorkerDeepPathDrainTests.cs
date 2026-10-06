@@ -898,14 +898,19 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
       PerspectiveMetrics? metrics = null,
       StoredFormFailureRegistry? storedFormFailures = null,
-      ISyncEventTracker? syncEventTracker = null) {
+      ISyncEventTracker? syncEventTracker = null,
+      Func<IServiceProvider, IPerspectiveRunnerRegistry>? registryFactory = null) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    if (registryFactory is not null) {
+      services.AddTransient(registryFactory);
+    } else {
+      services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    }
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
     services.AddSingleton<IEventStore>(eventStore);
     if (lifecycleCoordinator is not null) {

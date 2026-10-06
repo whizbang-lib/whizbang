@@ -27,8 +27,8 @@ public sealed partial class RecentlyProcessedEventCacheSweepWorker(
     RecentlyProcessedEventCache cache,
     IOptions<RecentlyProcessedEventCacheOptions> options,
     ILogger<RecentlyProcessedEventCacheSweepWorker> logger) : BackgroundService {
-  private readonly RecentlyProcessedEventCache _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-  private readonly RecentlyProcessedEventCacheOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
+  private readonly RecentlyProcessedEventCache _cache = ArgumentGuard.NotNull(cache);
+  private readonly RecentlyProcessedEventCacheOptions _options = ArgumentGuard.NotNull(options).Value;
   private readonly ILogger<RecentlyProcessedEventCacheSweepWorker> _logger =
     logger;
 

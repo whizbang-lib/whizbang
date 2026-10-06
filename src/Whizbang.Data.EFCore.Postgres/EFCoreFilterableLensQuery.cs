@@ -39,9 +39,11 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
       string tableName,
       IScopeContextAccessor scopeContextAccessor,
       IOptions<WhizbangCoreOptions> options) {
-    _context = context ?? throw new ArgumentNullException(nameof(context));
+    ArgumentNullException.ThrowIfNull(context);
+    _context = context;
     ArgumentNullException.ThrowIfNull(tableName);
-    _scopeContextAccessor = scopeContextAccessor ?? throw new ArgumentNullException(nameof(scopeContextAccessor));
+    ArgumentNullException.ThrowIfNull(scopeContextAccessor);
+    _scopeContextAccessor = scopeContextAccessor;
     _defaultQueryScope = options?.Value.DefaultQueryScope ?? QueryScope.Tenant;
   }
 

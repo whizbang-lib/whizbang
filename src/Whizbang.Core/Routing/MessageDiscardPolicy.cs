@@ -134,8 +134,10 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
       IOptions<RoutingOptions> routingOptions,
       IEventMarkerResolver markerResolver,
       Configuration.WhizbangCoreOptions? coreOptions = null) {
-    _registry = registry ?? throw new ArgumentNullException(nameof(registry));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(registry);
+    _registry = registry;
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     ArgumentNullException.ThrowIfNull(meter);
     _markerResolver = markerResolver;
     _absorbedNamespaces = routingOptions.Value.AbsorbedNamespaces;

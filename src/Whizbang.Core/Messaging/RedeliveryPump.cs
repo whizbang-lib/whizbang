@@ -97,8 +97,8 @@ public sealed class RedeliveryPump(
     ICompositeFactory compositeFactory,
     RedeliveryPumpOptions? options = null,
     TimeProvider? timeProvider = null) {
-  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-  private readonly IEnvelopeSerializer _envelopeSerializer = envelopeSerializer ?? throw new ArgumentNullException(nameof(envelopeSerializer));
+  private readonly ITransport _transport = ArgumentGuard.NotNull(transport);
+  private readonly IEnvelopeSerializer _envelopeSerializer = ArgumentGuard.NotNull(envelopeSerializer);
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly RedeliveryPumpOptions _options = options ?? new RedeliveryPumpOptions();
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;

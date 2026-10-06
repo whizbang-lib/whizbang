@@ -3426,6 +3426,14 @@ public record PerspectiveCursorCompletion {
   public int EventsProcessed { get; init; }
 
   /// <summary>
+  /// The type of the event that purged the row, when this run left it purged; null otherwise. A rebuild reports it so
+  /// a deleted row says why it is gone (#1151).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#terminal-purges</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildStreamsAsync_WhenTheLastEventAlwaysPurges_DeletesTheRowWithoutFoldingTheStreamAsync</tests>
+  public string? PurgedBy { get; init; }
+
+  /// <summary>
   /// Event IDs actually processed by the runner in this batch.
   /// Used by complete_perspective_cursor_work to mark only these specific events
   /// as processed, preventing concurrent late-arriving events from being

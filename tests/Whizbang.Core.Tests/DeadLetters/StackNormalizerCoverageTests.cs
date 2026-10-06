@@ -98,4 +98,24 @@ public sealed class StackNormalizerCoverageTests {
       .Because("the consumer frame is the attribution that matters; a Whizbang frame alongside it "
              + "would tie the cohort to library internals an upgrade could change");
   }
+
+  /// <summary>
+  /// A prose identity keys on at most the first 160 characters of the scrubbed message, so two
+  /// failures that differ only past that point (a long tail of context) land in one cohort, while a
+  /// difference inside the first 160 characters still separates them. (Letters outside a-f, so the
+  /// hex scrub leaves the text alone.)
+  /// </summary>
+  [Test]
+  public async Task Normalize_ProseLongerThan160Characters_KeysOnlyOnTheFirst160Async() {
+    var head = new string('x', 160);
+    var sameHeadOneTail = StackNormalizer.Normalize(head + " tail one")!;
+    var sameHeadAnotherTail = StackNormalizer.Normalize(head + " tail two that is longer")!;
+    var differentHead = StackNormalizer.Normalize("y" + head[1..] + " tail one")!;
+
+    await Assert.That(sameHeadOneTail.IsProse).IsTrue();
+    await Assert.That(sameHeadOneTail.SequenceHash).IsEqualTo(sameHeadAnotherTail.SequenceHash)
+      .Because("text past the first 160 characters must not split a cohort");
+    await Assert.That(differentHead.SequenceHash).IsNotEqualTo(sameHeadOneTail.SequenceHash)
+      .Because("a difference inside the first 160 characters is part of the identity");
+  }
 }

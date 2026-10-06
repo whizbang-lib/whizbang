@@ -388,6 +388,97 @@ public class PerspectiveWorkerDeepPathMiscTests {
       .Because("Guid.Empty work ids are filtered — nothing must reach the completion channel");
   }
 
+  [Test]
+  public async Task Worker_DrainWindowFillsToMaxSize_ClosesTheBatchWithoutWaitingOutTheWindowAsync() {
+    // Arrange — MaxSize 2: the first signal opens the accumulation window, the second fills the batch.
+    // The window is timed through a fake clock that is never advanced, so the only way the batch can
+    // close is by reaching MaxSize.
+    var streamA = Guid.CreateVersion7();
+    var streamB = Guid.CreateVersion7();
+    var eventA = Guid.CreateVersion7();
+    var eventB = Guid.CreateVersion7();
+    var coordinator = new MiscWorkCoordinator();
+    coordinator.EnqueueStreamEvents([
+      _raw(streamA, eventA, Guid.CreateVersion7()),
+      _raw(streamB, eventB, Guid.CreateVersion7())
+    ]);
+    var eventStore = new MiscEventStore();
+    eventStore.EnqueueDeserialized([
+      _envelope(eventA, new MiscDeepEvent("a")),
+      _envelope(eventB, new MiscDeepEvent("b"))
+    ]);
+    var runner = new MiscRunner();
+    var registry = new MiscRegistry(PERSPECTIVE, runner, [typeof(MiscDeepEvent)]);
+    var drainChannel = new SignalingDrainChannel();
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+    var (worker, _, _) = _createWorker(
+      coordinator, eventStore, registry,
+      configure: opts => {
+        opts.MaxConcurrentDrainConsumers = 1;
+        opts.DrainBatcher = new SlidingWindowBatcherOptions {
+          SlidingWindow = TimeSpan.FromSeconds(30),
+          MaxWait = TimeSpan.FromSeconds(30),
+          MaxSize = 2
+        };
+      },
+      drainChannelOverride: drainChannel,
+      timeProvider: clock);
+
+    // Act — write A, wait until the worker is inside the accumulation window, then write B
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamA, cts.Token);
+    await drainChannel.ReaderImpl.WindowWaitEntered.WaitAsync(TimeSpan.FromSeconds(10));
+    await drainChannel.WriteAsync(streamB, cts.Token);
+    await coordinator.WaitForCompletionsAsync(2, TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    // Assert — one fetch carried both streams, and it happened with the window still open
+    await Assert.That(coordinator.GetStreamEventsCallCount).IsEqualTo(1)
+      .Because("a batch that reached MaxSize is complete: it closes at once instead of waiting out the window");
+    coordinator.StreamEventsRequests.TryPeek(out var requestedStreams);
+    var requested = requestedStreams ?? [];
+    await Assert.That(requested).Contains(streamA);
+    await Assert.That(requested).Contains(streamB);
+    await Assert.That(coordinator.Completions.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task Worker_DrainChannelWithoutAReader_StillServesThePerEventChannelAsync() {
+    // Arrange — a drain channel that exposes no reader: the consumer loop waits on the work channel alone.
+    var streamId = Guid.CreateVersion7();
+    var coordinator = new MiscWorkCoordinator();
+    var runner = new MiscRunner();
+    var registry = new MiscRegistry(PERSPECTIVE, runner, [typeof(MiscDeepEvent)]);
+    var (worker, harness, _) = _createWorker(
+      coordinator, new MiscEventStore(), registry,
+      configure: opts => opts.MaxConcurrentDrainConsumers = 1,
+      drainChannelOverride: new ReaderlessDrainChannel());
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueWorkAsync(_work(streamId), cts.Token);
+    await coordinator.WaitForCompletionsAsync(1, TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    // Assert — the per-event work was applied and completed
+    await Assert.That(runner.RunCallCount).IsEqualTo(1)
+      .Because("with no drain reader the loop must still wake for, and apply, per-event work");
+    await Assert.That(coordinator.Completions.Count).IsEqualTo(1);
+    await Assert.That(coordinator.GetStreamEventsCallCount).IsEqualTo(0)
+      .Because("nothing can arrive on a drain channel with no reader, so no drain fetch runs");
+  }
+
+  /// <summary>A drain channel that exposes no reader, as a host wiring only the per-event channel would.</summary>
+  private sealed class ReaderlessDrainChannel : IPerspectiveDrainChannel {
+    public ChannelReader<Guid> Reader => null!;
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+    public bool TryWrite(Guid streamId) => false;
+  }
+
   #region Test event + helpers
 
   private sealed record MiscDeepEvent(string Data) : IEvent;

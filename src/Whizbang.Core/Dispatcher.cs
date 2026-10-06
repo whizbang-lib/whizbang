@@ -271,7 +271,7 @@ public abstract partial class Dispatcher(
     DispatchContext = MessageDispatchContext.CascadeDefault
   };
 
-  private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+  private readonly IServiceProvider _internalServiceProvider = ArgumentGuard.NotNull(serviceProvider);
   private Whizbang.Core.Observability.ReEmissionDiagnostic? _reEmissionDiagnostic;
   private bool _reEmissionResolved;
 
@@ -288,7 +288,7 @@ public abstract partial class Dispatcher(
     return _reEmissionDiagnostic;
   }
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
-  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+  private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly ITraceStore? _traceStore = traceStore;
   private readonly ITopicRegistry? _topicRegistry = topicRegistry;
   private readonly ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? PassthroughRoutingStrategy.Instance;

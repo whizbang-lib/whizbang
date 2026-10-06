@@ -141,29 +141,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   private string _serializeFailures(MessageFailure[] failures) {
     if (failures.Length == 0) { return "[]"; }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageFailure[]. Ensure the type is registered.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageFailure[]));
     return JsonSerializer.Serialize(failures, typeInfo);
   }
 
   private string _serializeNewOutboxMessages(OutboxMessage[] messages) {
     if (messages.Length == 0) { return "[]"; }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(OutboxMessage[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for OutboxMessage[]. Ensure the type is registered.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(OutboxMessage[]));
     return JsonSerializer.Serialize(messages, typeInfo);
   }
 
   private string _serializeNewInboxMessages(InboxMessage[] messages) {
     if (messages.Length == 0) { return "[]"; }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(InboxMessage[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for InboxMessage[]. Ensure the type is registered.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(InboxMessage[]));
     return JsonSerializer.Serialize(messages, typeInfo);
   }
 
   private string _serializePerspectiveCompletions(PerspectiveCursorCompletion[] completions) {
     if (completions.Length == 0) { return "[]"; }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorCompletion[]. Ensure the type is registered.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorCompletion[]));
     return JsonSerializer.Serialize(completions, typeInfo);
   }
 
@@ -3989,10 +3985,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_group", group));
     cmd.Parameters.Add(new NpgsqlParameter(P_LIMIT, limit));
 
-    var envelopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
-      ?? throw new InvalidOperationException("No JsonTypeInfo for MessageEnvelope<JsonElement>.");
-    var metadataTypeInfo = _jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata))
-      ?? throw new InvalidOperationException("No JsonTypeInfo for EnvelopeMetadata.");
+    var envelopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var metadataTypeInfo = _jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
 
     var results = new List<OutboxMessage>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -4235,7 +4229,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Serialize ProcessedEventIds as JSON string for the JSONB parameter (AOT-safe)
       var processedEventIdsJson = System.Text.Json.JsonSerializer.Serialize(
         processedEventIds,
-        _jsonOptions.GetTypeInfo(typeof(Guid[])) ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]"));
+        _jsonOptions.GetTypeInfo(typeof(Guid[])));
 
       await _dbContext.Database.ExecuteSqlRawAsync(
         sql,
@@ -4600,8 +4594,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // The concrete event type is resolved downstream by the lifecycle coordinator/receptors.
     JsonElement payload;
     try {
-      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement))
-        ?? throw new InvalidOperationException("No JsonTypeInfo found for JsonElement.");
+      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement));
       payload = (JsonElement)(System.Text.Json.JsonSerializer.Deserialize(row.EventData, typeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event {row.EventId} as JsonElement."));
     } catch (NotSupportedException) {
@@ -4635,8 +4628,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     try {
-      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement))
-        ?? throw new InvalidOperationException("No JsonTypeInfo found for JsonElement.");
+      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement));
       var scopeElement = (JsonElement)(System.Text.Json.JsonSerializer.Deserialize(scopeJson, typeInfo)!);
 
       string? tenantId = null;

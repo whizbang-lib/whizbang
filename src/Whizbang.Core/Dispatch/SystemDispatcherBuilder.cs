@@ -70,7 +70,8 @@ public sealed class SystemDispatcherBuilder {
       IDispatcher dispatcher,
       string? actualPrincipal,
       string? ambientTenantId) {
-    _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+    ArgumentNullException.ThrowIfNull(dispatcher);
+    _dispatcher = dispatcher;
     _actualPrincipal = actualPrincipal;
     _ambientTenantId = ambientTenantId;
   }

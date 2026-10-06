@@ -39,7 +39,8 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   /// </summary>
   /// <param name="options">Configuration options for the clock.</param>
   public DebuggerAwareClock(DebuggerAwareClockOptions options) {
-    _options = options ?? throw new ArgumentNullException(nameof(options));
+    ArgumentNullException.ThrowIfNull(options);
+    _options = options;
     _pauseStateChannel = Channel.CreateBounded<bool>(new BoundedChannelOptions(10) {
       FullMode = BoundedChannelFullMode.DropOldest
     });

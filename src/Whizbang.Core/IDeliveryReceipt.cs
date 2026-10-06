@@ -119,7 +119,7 @@ public sealed class DeliveryReceipt(
   public DateTimeOffset Timestamp { get; } = DateTimeOffset.UtcNow;
 
   /// <inheritdoc />
-  public string Destination { get; } = destination ?? throw new ArgumentNullException(nameof(destination));
+  public string Destination { get; } = ArgumentGuard.NotNull(destination);
 
   /// <inheritdoc />
   public DeliveryStatus Status { get; } = status;

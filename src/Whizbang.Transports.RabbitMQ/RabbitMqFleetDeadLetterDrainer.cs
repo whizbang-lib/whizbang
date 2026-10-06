@@ -58,8 +58,10 @@ public sealed class RabbitMqFleetDeadLetterDrainer : ITransportDeadLetterDrainer
   internal RabbitMqFleetDeadLetterDrainer(
       Func<IReadOnlyCollection<string>> activeDeadLetterQueues,
       Func<string, ITransportDeadLetterDrainer> drainerFactory) {
-    _activeDeadLetterQueues = activeDeadLetterQueues ?? throw new ArgumentNullException(nameof(activeDeadLetterQueues));
-    _drainerFactory = drainerFactory ?? throw new ArgumentNullException(nameof(drainerFactory));
+    ArgumentNullException.ThrowIfNull(activeDeadLetterQueues);
+    _activeDeadLetterQueues = activeDeadLetterQueues;
+    ArgumentNullException.ThrowIfNull(drainerFactory);
+    _drainerFactory = drainerFactory;
   }
 
   /// <inheritdoc />

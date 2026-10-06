@@ -119,6 +119,8 @@ public sealed partial class PerspectiveRebuilder(
 
     var sw = Stopwatch.StartNew();
     RebuildRun? run = null;
+    // What the caller named, counted before anything filters the list; zero when it named nothing.
+    var requested = streamIds?.Count ?? 0;
     // One id per rebuild, so the Started/Completed pair for this run can be found together. Time-ordered so a
     // reader can sort rebuilds without joining anything.
     Guid rebuildStreamId = TrackedGuid.New();
@@ -150,7 +152,9 @@ public sealed partial class PerspectiveRebuilder(
       // perspective (most RunAsync calls become no-ops).
       var eventTypes = _effectiveEventTypes(sp, registry, perspectiveName);
       streamIds ??= await _resolveStreamIdsToReplayAsync(sp, perspectiveName, eventTypes, ct);
+      var resolved = streamIds.Count;
       streamIds = await _withoutStateBasedStreamsAsync(sp, perspectiveName, streamIds, ct);
+      run.StreamsRefused = resolved - streamIds.Count;
 
       // Blue-green needs a driver that can build and swap a shadow table. Without one the rebuild
       // replays in place, as it always did, and says so rather than claiming a swap it never made.
@@ -197,6 +201,18 @@ public sealed partial class PerspectiveRebuilder(
       await _streamGroupPresenceReconcileAsync(perspectiveName, sp, ct);
 
       sw.Stop();
+      // A caller that names streams is asserting they exist. Rebuilding none of them is not success, whether every
+      // one was refused or none had events: reporting it green is how 32 rows sat unrepaired through a clean run.
+      if (requested > 0 && run.StreamsProcessed == 0) {
+        var nothingRebuilt = _nothingRebuiltError(requested, run.StreamsRefused);
+        LogRebuildNothingRebuilt(logger, mode, perspectiveName, requested, run.StreamsRefused);
+        await _emitAsync(new PerspectiveRebuildFailed(
+            rebuildStreamId, perspectiveName, mode, nothingRebuilt, 0, sw.Elapsed, origin));
+        return new RebuildResult(perspectiveName, 0, run.EventsReplayed, sw.Elapsed, false, nothingRebuilt) {
+          StreamsRequested = requested,
+          StreamsRefused = run.StreamsRefused,
+        };
+      }
       LogRebuildCompleted(logger, mode, perspectiveName, run.StreamsProcessed, sw.ElapsedMilliseconds);
       var digestAfter = digester is null
           ? null
@@ -205,18 +221,31 @@ public sealed partial class PerspectiveRebuilder(
           rebuildStreamId, perspectiveName, mode, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, origin,
           digestBefore, digestAfter));
 
-      return new RebuildResult(perspectiveName, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, true, null);
+      return new RebuildResult(perspectiveName, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, true, null) {
+        StreamsRequested = requested,
+        StreamsRefused = run.StreamsRefused,
+        StreamsPurged = run.StreamsPurged,
+      };
     } catch (Exception ex) {
       sw.Stop();
       var streamsProcessed = run?.StreamsProcessed ?? 0;
       LogRebuildFailed(logger, ex, mode, perspectiveName, streamsProcessed, sw.ElapsedMilliseconds);
       await _emitAsync(new PerspectiveRebuildFailed(
           rebuildStreamId, perspectiveName, mode, ex.Message, streamsProcessed, sw.Elapsed, origin));
-      return new RebuildResult(perspectiveName, streamsProcessed, run?.EventsReplayed ?? 0, sw.Elapsed, false, ex.Message);
+      return new RebuildResult(perspectiveName, streamsProcessed, run?.EventsReplayed ?? 0, sw.Elapsed, false, ex.Message) {
+        StreamsRequested = requested,
+        StreamsRefused = run?.StreamsRefused ?? 0,
+      };
     } finally {
       _activeRebuilds.TryRemove(perspectiveName, out _);
     }
   }
+
+  /// <summary>Why a rebuild of named streams rebuilt none of them, in words an operator can act on.</summary>
+  private static string _nothingRebuiltError(int requested, int refused) =>
+    refused == requested
+      ? $"None of the {requested} requested stream(s) was rebuilt: all {refused} are state-based (ephemeral or compacted) and not a rebuildable source of truth."
+      : $"None of the {requested} requested stream(s) was rebuilt: {refused} refused as state-based, {requested - refused} had no events for this perspective.";
 
   /// <summary>
   /// StateBased streams (ephemeral OR compacted) are NOT a rebuildable source of truth — an ephemeral
@@ -446,7 +475,15 @@ public sealed partial class PerspectiveRebuilder(
       var completions = await run.Runner.RunRebuildAsync(streamId, run.PerspectiveName, ct);
       streamSw.Stop();
       processed++;
-      run.StreamsProcessed++;
+      // A stream with no events for this perspective comes back as one placeholder completion with no position.
+      // It was looked at, not rebuilt, so it does not count as processed.
+      if (completions.Any(c => c.LastEventId != Guid.Empty)) {
+        run.StreamsProcessed++;
+      }
+      foreach (var purged in completions.Where(c => c.PurgedBy is not null)) {
+        run.StreamsPurged++;
+        LogRebuildRowPurged(logger, run.PerspectiveName, purged.StreamId, purged.PurgedBy!);
+      }
       run.EventsReplayed += completions.Count;
 
       foreach (var completion in completions) {
@@ -510,6 +547,8 @@ public sealed partial class PerspectiveRebuilder(
     public Stopwatch Elapsed { get; } = Stopwatch.StartNew();
     public int StreamsProcessed { get; set; }
     public int EventsReplayed { get; set; }
+    public int StreamsRefused { get; set; }
+    public int StreamsPurged { get; set; }
   }
 
   /// <summary>
@@ -585,6 +624,14 @@ public sealed partial class PerspectiveRebuilder(
   [LoggerMessage(Level = LogLevel.Debug,
       Message = "Could not digest the rebuilt rows for {Perspective}; the rebuild itself is unaffected")]
   private static partial void LogRowDigestNotComputed(ILogger logger, Exception ex, string perspective);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Rebuild of perspective {Perspective} left stream {StreamId} purged: terminal event {PurgedBy}")]
+  private static partial void LogRebuildRowPurged(ILogger logger, string perspective, Guid streamId, string purgedBy);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "{Mode} rebuild of perspective {Perspective} rebuilt none of the {Requested} requested stream(s); {Refused} refused as state-based")]
+  private static partial void LogRebuildNothingRebuilt(ILogger logger, RebuildMode mode, string perspective, int requested, int refused);
 
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Completed {Mode} rebuild of perspective {Perspective} — {Streams} streams in {ElapsedMs}ms")]

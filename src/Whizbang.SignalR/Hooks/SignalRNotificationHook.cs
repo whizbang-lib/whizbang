@@ -102,7 +102,8 @@ public sealed class SignalRNotificationHook<THub>(IHubContext<THub> hubContext) 
         var placeholder = $"{{{prop.Name}}}";
         if (result.Contains(placeholder, StringComparison.Ordinal)) {
           var value = prop.Value.ValueKind switch {
-            JsonValueKind.String => prop.Value.GetString() ?? "",
+            // GetString returns null only for JsonValueKind.Null, never for this arm.
+            JsonValueKind.String => prop.Value.GetString()!,
             JsonValueKind.Number => prop.Value.GetRawText(),
             JsonValueKind.True => "true",
             JsonValueKind.False => "false",

@@ -31,10 +31,10 @@ public sealed partial class RepairDrainWorker(
     IOptions<StreamIntegrityOptions> options,
     ILogger<RepairDrainWorker> logger,
     TimeProvider? timeProvider = null) : BackgroundService {
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
+  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<RepairDrainWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILogger<RepairDrainWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
   private double _tokens;
 

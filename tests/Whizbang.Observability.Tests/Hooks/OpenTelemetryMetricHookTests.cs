@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -515,5 +516,42 @@ public class OpenTelemetryMetricHookTests {
     var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
 
     await Assert.That(result).IsNull();
+  }
+
+  /// <summary>
+  /// A metric type the hook does not know (a value outside the enum, e.g. from a newer attribute
+  /// assembly) records nothing rather than guessing an instrument, and still passes the payload on.
+  /// The same attribute as a counter does record, so the listener is shown to be watching.
+  /// </summary>
+  [Test]
+  public async Task OnTaggedMessage_UnknownMetricType_RecordsNothingAndPassesThePayloadOnAsync() {
+    var unknownName = $"test.unknown.{Guid.CreateVersion7():N}";
+    var counterName = $"test.known.{Guid.CreateVersion7():N}";
+    var recorded = new System.Collections.Concurrent.ConcurrentBag<string>();
+    using var listener = new MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (instrument.Meter == OpenTelemetryMetricHook.Meter && (instrument.Name == unknownName || instrument.Name == counterName)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, _, _, _) => recorded.Add(instrument.Name));
+    listener.SetMeasurementEventCallback<double>((instrument, _, _, _) => recorded.Add(instrument.Name));
+    listener.Start();
+    var hook = new OpenTelemetryMetricHook();
+    var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 10m };
+    TagContext<MetricTagAttribute> contextFor(string name, MetricType type) => new() {
+      Attribute = new MetricTagAttribute { Tag = "test-unknown", MetricName = name, Type = type, ValueProperty = "Amount" },
+      Message = message,
+      MessageType = typeof(TestOrderEvent),
+      Payload = JsonSerializer.SerializeToElement(message)
+    };
+
+    var result = await hook.OnTaggedMessageAsync(contextFor(unknownName, (MetricType)99), CancellationToken.None);
+    await hook.OnTaggedMessageAsync(contextFor(counterName, MetricType.Counter), CancellationToken.None);
+
+    await Assert.That(result).IsNull();
+    await Assert.That(recorded).DoesNotContain(unknownName);
+    await Assert.That(recorded).Contains(counterName);
   }
 }

@@ -22,7 +22,7 @@ public abstract class BasePollSignalSource<TSignal>(
   TimeSpan interval,
   PollIdleBackoff? idleBackoff = null
 ) : IPollSignalSource<TSignal> where TSignal : ISignal, new() {
-  private readonly TimeProvider _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+  private readonly TimeProvider _clock = ArgumentGuard.NotNull(clock);
   private readonly PollIdleBackoff? _idleBackoff = idleBackoff;
   private TimeSpan _baseInterval = interval > TimeSpan.Zero
     ? interval

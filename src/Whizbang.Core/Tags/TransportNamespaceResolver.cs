@@ -53,7 +53,8 @@ public sealed class TransportNamespaceResolver {
   public TransportNamespaceResolver(
       TagOptions tagOptions,
       Func<IEnumerable<MessageTagRegistration>>? registrationSource = null) {
-    _tagOptions = tagOptions ?? throw new ArgumentNullException(nameof(tagOptions));
+    ArgumentNullException.ThrowIfNull(tagOptions);
+    _tagOptions = tagOptions;
     _registrationSource = registrationSource ?? MessageTagRegistry.GetAllTags;
     // Lazy + thread-safe: built on first resolution, after module initializers have populated
     // the registry and after host configuration has finalized the bindings.

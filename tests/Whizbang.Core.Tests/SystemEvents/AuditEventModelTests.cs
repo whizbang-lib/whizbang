@@ -408,4 +408,12 @@ public class AuditEventModelTests {
       .Because("the audit trail is read newest-first and this model ships with the framework, so a "
         + "consumer ordering by it has no way to declare the index itself");
   }
+
+  [Test]
+  public async Task HumanizeNamespace_NestedUnderAnEmptyOuterSegment_ReturnsEmptyAsync() {
+    // "+EndedEvent" has a nested separator but no outer type name, so there is no context to show;
+    // the description must be empty rather than a stray arrow or blank segment.
+    var result = AuditEventProjection.HumanizeNamespace("+EndedEvent");
+    await Assert.That(result).IsEqualTo(string.Empty);
+  }
 }

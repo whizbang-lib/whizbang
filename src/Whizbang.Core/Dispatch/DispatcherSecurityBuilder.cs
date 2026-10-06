@@ -77,7 +77,8 @@ public sealed partial class DispatcherSecurityBuilder {
     string? effectivePrincipal,
     string? actualPrincipal,
     string? tenantId = null) {
-    _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+    ArgumentNullException.ThrowIfNull(dispatcher);
+    _dispatcher = dispatcher;
     _contextType = contextType;
     _effectivePrincipal = effectivePrincipal;
     _actualPrincipal = actualPrincipal;

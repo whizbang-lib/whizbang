@@ -43,7 +43,7 @@ public sealed class ScopeDefinition(string name) {
   /// The unique name for this scope.
   /// Used to select the scope when creating lenses via <see cref="IScopedLensFactory"/>.
   /// </summary>
-  public string Name { get; } = name ?? throw new ArgumentNullException(nameof(name));
+  public string Name { get; } = ArgumentGuard.NotNull(name);
 
   /// <summary>
   /// The property name to filter by (e.g., "TenantId", "UserId").

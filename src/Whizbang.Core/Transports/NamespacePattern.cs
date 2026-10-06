@@ -29,7 +29,7 @@ namespace Whizbang.Core.Transports;
 /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ShouldHandleNullNamespaceAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_Constructor_WithNullPattern_ShouldThrowAsync</tests>
 public class NamespacePattern(string pattern) {
-  private readonly string _pattern = pattern ?? throw new ArgumentNullException(nameof(pattern));
+  private readonly string _pattern = ArgumentGuard.NotNull(pattern);
   private readonly Regex _regex = _patternToRegex(pattern);
 
   /// <summary>

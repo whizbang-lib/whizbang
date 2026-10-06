@@ -65,9 +65,12 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
     Func<IReadOnlyList<T>, CancellationToken, Task> flush,
     BatchFlusherOptions options,
     ILogger logger) {
-    _flush = flush ?? throw new ArgumentNullException(nameof(flush));
-    _options = options ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(flush);
+    _flush = flush;
+    ArgumentNullException.ThrowIfNull(options);
+    _options = options;
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
 
     _channel = Channel.CreateBounded<T>(new BoundedChannelOptions(_options.ChannelCapacity) {
       FullMode = BoundedChannelFullMode.Wait,

@@ -129,4 +129,12 @@ public class SecurityPrincipalIdJsonConverterTests {
     await Assert.That(scope.AllowedPrincipals[0]).IsEqualTo("user:user-456");
     await Assert.That(scope.AllowedPrincipals[1]).IsEqualTo("group:team-A");
   }
+
+  [Test]
+  public async Task Deserialize_JsonNull_ReturnsTheDefaultPrincipalAsync() {
+    var principal = JsonSerializer.Deserialize<SecurityPrincipalId>("null", _createOptions());
+
+    await Assert.That(principal).IsEqualTo(default(SecurityPrincipalId));
+    await Assert.That(principal.Value).IsNull();
+  }
 }

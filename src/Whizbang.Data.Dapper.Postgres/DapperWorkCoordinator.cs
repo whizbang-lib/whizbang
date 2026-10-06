@@ -209,8 +209,7 @@ public partial class DapperWorkCoordinator(
       return "[]";
     }
 
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageFailure[]));
     return JsonSerializer.Serialize(failures, typeInfo);
   }
 
@@ -219,8 +218,7 @@ public partial class DapperWorkCoordinator(
       return "[]";
     }
 
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(OutboxMessage[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for OutboxMessage[]. Ensure the type is registered in InfrastructureJsonContext.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(OutboxMessage[]));
     return JsonSerializer.Serialize(messages, typeInfo);
   }
 
@@ -229,8 +227,7 @@ public partial class DapperWorkCoordinator(
       return "[]";
     }
 
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(InboxMessage[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for InboxMessage[]. Ensure the type is registered in InfrastructureJsonContext.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(InboxMessage[]));
     return JsonSerializer.Serialize(messages, typeInfo);
   }
 
@@ -239,8 +236,7 @@ public partial class DapperWorkCoordinator(
       return "[]";
     }
 
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorCompletion[]));
     return JsonSerializer.Serialize(completions, typeInfo);
   }
 
@@ -251,7 +247,7 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var processedEventIdsJson = JsonSerializer.Serialize(
       completion.ProcessedEventIds,
-      _jsonOptions.GetTypeInfo(typeof(Guid[])) ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]"));
+      _jsonOptions.GetTypeInfo(typeof(Guid[])));
 
     await connection.ExecuteAsync(
       "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @ProcessedEventIds::jsonb, @Status, @Error)",
@@ -276,7 +272,7 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var processedEventIdsJson = JsonSerializer.Serialize(
       failure.ProcessedEventIds,
-      _jsonOptions.GetTypeInfo(typeof(Guid[])) ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]"));
+      _jsonOptions.GetTypeInfo(typeof(Guid[])));
 
     await connection.ExecuteAsync(
       "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @ProcessedEventIds::jsonb, @Status, @Error)",

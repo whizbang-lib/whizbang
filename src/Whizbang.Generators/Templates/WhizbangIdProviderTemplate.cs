@@ -19,7 +19,8 @@ public sealed class __TYPE_NAME__Provider : global::Whizbang.Core.IWhizbangIdPro
   /// <param name="baseProvider">The base provider to use for TrackedGuid generation</param>
   /// <exception cref="ArgumentNullException">Thrown when baseProvider is null</exception>
   public __TYPE_NAME__Provider(global::Whizbang.Core.IWhizbangIdProvider baseProvider) {
-    _baseProvider = baseProvider ?? throw new ArgumentNullException(nameof(baseProvider));
+    ArgumentNullException.ThrowIfNull(baseProvider);
+    _baseProvider = baseProvider;
   }
 
   /// <summary>

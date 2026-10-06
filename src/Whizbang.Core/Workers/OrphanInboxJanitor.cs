@@ -88,28 +88,28 @@ public sealed class OrphanInboxJanitor : BackgroundService {
       using var scope = _services.CreateScope();
       var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
       if (coordinator is null) {
-        _logger?.LogDebug("OrphanInboxJanitor skipped: no IWorkCoordinator registered");
+        _logger.LogDebug("OrphanInboxJanitor skipped: no IWorkCoordinator registered");
         return;
       }
 
       var handledTypeNames = _collectHandledTypeNames(scope.ServiceProvider);
       if (handledTypeNames.Count == 0) {
-        _logger?.LogInformation("OrphanInboxJanitor skipped: no locally-handled types — refusing to purge to avoid emptying the inbox during cold start");
+        _logger.LogInformation("OrphanInboxJanitor skipped: no locally-handled types — refusing to purge to avoid emptying the inbox during cold start");
         return;
       }
 
       var purged = await coordinator.PurgeOrphanInboxAsync(handledTypeNames, stoppingToken);
       if (purged.Count == 0) {
-        _logger?.LogInformation("OrphanInboxJanitor: no orphan inbox rows to purge ({HandledTypeCount} handled types)", handledTypeNames.Count);
+        _logger.LogInformation("OrphanInboxJanitor: no orphan inbox rows to purge ({HandledTypeCount} handled types)", handledTypeNames.Count);
       } else {
-        _logger?.LogInformation("OrphanInboxJanitor: purged {PurgedCount} orphan inbox rows ({HandledTypeCount} handled types)",
+        _logger.LogInformation("OrphanInboxJanitor: purged {PurgedCount} orphan inbox rows ({HandledTypeCount} handled types)",
           purged.Count, handledTypeNames.Count);
         foreach (var group in purged.GroupBy(p => p.MessageType)) {
-          _logger?.LogInformation("  → {Count}× {MessageType}", group.Count(), group.Key);
+          _logger.LogInformation("  → {Count}× {MessageType}", group.Count(), group.Key);
         }
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _logger?.LogError(ex, "OrphanInboxJanitor startup sweep failed; service continues");
+      _logger.LogError(ex, "OrphanInboxJanitor startup sweep failed; service continues");
     }
   }
 

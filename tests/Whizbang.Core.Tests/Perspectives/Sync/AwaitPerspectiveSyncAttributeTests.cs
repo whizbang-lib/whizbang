@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using TUnit.Core;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives.Sync;
 
 namespace Whizbang.Core.Tests.Perspectives.Sync;
@@ -237,4 +238,18 @@ public class AwaitPerspectiveSyncAttributeTests {
   [AwaitPerspectiveSync(typeof(TestPerspective))]
   [AwaitPerspectiveSync(typeof(TestPerspective), TimeoutMs = 10000)]
   private sealed class MultiSyncTestClass;
+
+  // ==========================================================================
+  // ReceptorSyncAttributeInfo (the runtime form the generator emits)
+  // ==========================================================================
+
+  [Test]
+  [NotInParallel] // Reads the static DefaultTimeoutMs that other tests here modify
+  public async Task ReceptorSyncAttributeInfo_EffectiveTimeoutMs_ExplicitWinsAndMinusOneUsesTheDefaultAsync() {
+    var explicitInfo = new ReceptorSyncAttributeInfo(typeof(TestPerspective), null, 2500, SyncFireBehavior.FireOnSuccess);
+    var defaulted = new ReceptorSyncAttributeInfo(typeof(TestPerspective), null, -1, SyncFireBehavior.FireOnSuccess);
+
+    await Assert.That(explicitInfo.EffectiveTimeoutMs).IsEqualTo(2500);
+    await Assert.That(defaulted.EffectiveTimeoutMs).IsEqualTo(AwaitPerspectiveSyncAttribute.DefaultTimeoutMs);
+  }
 }

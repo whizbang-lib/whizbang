@@ -39,4 +39,15 @@ public class FullHistoryPerspectiveRegistryTests {
     await Assert.That(FullHistoryPerspectiveRegistry.AnyFullHistory([other])).IsFalse();
     await Assert.That(FullHistoryPerspectiveRegistry.AnyFullHistory([])).IsFalse();
   }
+
+  /// <summary>
+  /// A row with no association name (null or empty) is never treated as full-history, so it can
+  /// never block an ephemeral stream from closing.
+  /// </summary>
+  [Test]
+  [Arguments(null)]
+  [Arguments("")]
+  public async Task IsFullHistory_NullOrEmptyName_IsFalseAsync(string? name) {
+    await Assert.That(FullHistoryPerspectiveRegistry.IsFullHistory(name!)).IsFalse();
+  }
 }

@@ -108,8 +108,8 @@ public partial class PerspectiveWorker(
   private readonly Whizbang.Core.Observability.CompositeMetrics? _compositeMetrics = compositeMetrics;
   private readonly Whizbang.Core.Perspectives.StoredFormFailureRegistry _storedFormFailures =
     storedFormFailures ?? new Whizbang.Core.Perspectives.StoredFormFailureRegistry(timeProvider);
-  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly WorkCompletionMeter? _completionMeter = completionMeter;
   private readonly Whizbang.Core.Messaging.WorkCoordinatorGate? _gate = gate;
   private int _widthClampLogged;
@@ -129,7 +129,7 @@ public partial class PerspectiveWorker(
   /// </summary>
   public Task StartupScanComplete => _startupScanTcs.Task;
   private readonly PerspectiveMetrics? _metrics = metrics;
-  private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
+  private readonly PerspectiveWorkerOptions _options = ArgumentGuard.NotNull(options).Value;
   private readonly Whizbang.Core.Execution.IConcurrencyGovernor _governor =
     governor;
   /// <summary>
@@ -347,7 +347,7 @@ public partial class PerspectiveWorker(
 
   // Two-phase TTL cache to prevent duplicate Apply when SQL re-delivers events during batched completion window
   private readonly ProcessedEventCache _processedEventCache = new(
-    TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.LeaseSeconds),
+    TimeSpan.FromSeconds(ArgumentGuard.NotNull(options).Value.LeaseSeconds),
     observer: processedEventCacheObserver,
     timeProvider: timeProvider
   );
@@ -3049,14 +3049,14 @@ public partial class PerspectiveWorker(
   private readonly struct ClaimWindowScope(
       ConcurrentDictionary<Guid, byte> reservations,
       List<Guid> owned,
-      WorkCompletionMeter? completionMeter = null,
-      int workItemCount = 0,
-      Action<Guid>? onReleased = null)
+      WorkCompletionMeter? completionMeter,
+      int workItemCount,
+      Action<Guid> onReleased)
     : IDisposable {
     public void Dispose() {
       foreach (var workId in owned) {
         reservations.TryRemove(workId, out _);
-        onReleased?.Invoke(workId);
+        onReleased(workId);
       }
 
       // The batch has stopped occupying this instance, so the claim loop's outstanding budget can
@@ -4402,7 +4402,7 @@ public partial class PerspectiveWorker(
         batchProcessedEvents, lifecycleCoordinator, groupedWork, scopedProvider, cancellationToken);
     } else if (receptorInvoker is not null) {
       await _firePostLifecycleFallbackAsync(
-        batchProcessedEvents, receptorInvoker, scopedProvider, cancellationToken, _detachedTasks.Add, batchIsNewByEventId);
+        batchProcessedEvents, receptorInvoker, scopedProvider, _detachedTasks.Add, batchIsNewByEventId, cancellationToken);
     }
   }
 
@@ -4497,9 +4497,9 @@ public partial class PerspectiveWorker(
       ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
       IReceptorInvoker receptorInvoker,
       IServiceProvider scopedProvider,
-      CancellationToken cancellationToken,
-      Action<Task>? trackDetachedTask = null,
-      IReadOnlyDictionary<Guid, bool>? batchIsNewByEventId = null) {
+      Action<Task> trackDetachedTask,
+      IReadOnlyDictionary<Guid, bool>? batchIsNewByEventId,
+      CancellationToken cancellationToken) {
 
     foreach (var (eventId, (envelope, streamId)) in batchProcessedEvents) {
       var isNew = batchIsNewByEventId is null
@@ -4521,7 +4521,7 @@ public partial class PerspectiveWorker(
       // Detached: fire-and-forget with own DI scope
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
       var detachedTask = FireDetachedStageStaticAsync(scopeFactory, envelope, LifecycleStage.PostLifecycleDetached, context);
-      trackDetachedTask?.Invoke(detachedTask);
+      trackDetachedTask(detachedTask);
       // Inline: blocks pipeline
       await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
         context with { CurrentStage = LifecycleStage.PostLifecycleInline }, cancellationToken);

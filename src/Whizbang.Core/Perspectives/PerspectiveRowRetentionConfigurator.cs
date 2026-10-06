@@ -20,7 +20,7 @@ public sealed partial class PerspectiveRowRetentionConfigurator(
     IOptions<PerspectiveRowRetentionOptions> options,
     ILogger<PerspectiveRowRetentionConfigurator> logger) : IHostedService {
   private readonly PerspectiveRowRetentionOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<PerspectiveRowRetentionConfigurator> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILogger<PerspectiveRowRetentionConfigurator> _logger = ArgumentGuard.NotNull(logger);
 
   /// <inheritdoc/>
   public Task StartAsync(CancellationToken cancellationToken) {

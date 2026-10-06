@@ -31,7 +31,7 @@ public sealed class EventCompletionAwaiter(ISyncEventTracker syncEventTracker) :
   /// <inheritdoc />
   public Guid AwaiterId { get; } = TrackedGuid.New();
 
-  private readonly ISyncEventTracker _syncEventTracker = syncEventTracker ?? throw new ArgumentNullException(nameof(syncEventTracker));
+  private readonly ISyncEventTracker _syncEventTracker = ArgumentGuard.NotNull(syncEventTracker);
 
   /// <inheritdoc />
   public Task<bool> WaitForEventsAsync(

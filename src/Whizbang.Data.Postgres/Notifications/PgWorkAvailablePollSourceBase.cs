@@ -60,9 +60,12 @@ public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollS
     INotificationDataSource? notificationDataSource = null
   ) : base(clock, interval, WorkAvailablePollDefaults.IdleBackoff) {
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(configuration);
+    _configuration = configuration;
+    ArgumentNullException.ThrowIfNull(instanceProvider);
+    _instanceProvider = instanceProvider;
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     _connectionStringFallback = connectionStringFallback;
     _notificationDataSource = notificationDataSource;
     _signalingGate = signalingGate;

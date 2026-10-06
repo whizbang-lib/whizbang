@@ -16,7 +16,7 @@ namespace Whizbang.Core.Temporal;
 /// <docs>fundamentals/temporal/saga-deadlines</docs>
 /// <remarks>Constructor.</remarks>
 public sealed class SagaDeadlineScheduler(IScheduleManager manager) : ISagaDeadlineScheduler {
-  private readonly IScheduleManager _manager = manager ?? throw new ArgumentNullException(nameof(manager));
+  private readonly IScheduleManager _manager = ArgumentGuard.NotNull(manager);
 
   /// <inheritdoc />
   public Guid DeadlineScheduleId(Guid sagaStreamId, string deadlineName) {

@@ -64,10 +64,7 @@ public sealed class InMemoryWireTransport : ITransport {
     if (preSerializedBytes is { } pre) {
       bytes = pre.ToArray();
     } else {
-      var typeInfo = _wireOptions.GetTypeInfo(envelope.GetType())
-        ?? throw new InvalidOperationException(
-          $"No JsonTypeInfo for envelope type {TypeNameFormatter.DisplayName(envelope.GetType())}. " +
-          "Register the payload's JsonSerializerContext (JsonContextRegistry) before publishing.");
+      var typeInfo = _wireOptions.GetTypeInfo(envelope.GetType());
       bytes = JsonSerializer.SerializeToUtf8Bytes(envelope, typeInfo);
     }
 

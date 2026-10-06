@@ -74,6 +74,27 @@ public class SagaClaimPruneStepTests {
     await Assert.That(store.Pruned.Select(p => p.Before).Distinct()).IsEquivalentTo([_now.AddDays(-2)]);
   }
 
+  /// <summary>
+  /// With no <see cref="SagaOptions"/> registered the step still prunes, on the default retention
+  /// measured from the system clock, rather than skipping the cycle or pruning everything.
+  /// </summary>
+  [Test]
+  public async Task Run_NoOptionsRegistered_PrunesOnTheDefaultRetentionFromTheSystemClockAsync() {
+    var store = new RecordingStore();
+    var services = new ServiceCollection();
+    services.AddSingleton<IClaimedEmissionStore>(store);
+    await using var provider = services.BuildServiceProvider();
+    var retention = new SagaOptions().ClaimRetention;
+
+    var earliest = TimeProvider.System.GetUtcNow() - retention;
+    await new SagaClaimPruneStep(NullLogger<SagaClaimPruneStep>.Instance).RunAsync(provider, CancellationToken.None);
+    var latest = TimeProvider.System.GetUtcNow() - retention;
+
+    await Assert.That(store.Pruned.Select(p => p.Prefix)).IsEquivalentTo(SagaClaimPruneStep.SpentClaimPrefixes);
+    await Assert.That(store.Pruned.All(p => p.Before >= earliest && p.Before <= latest)).IsTrue()
+      .Because("the cutoff is the default retention before now, read from the system clock when no options exist");
+  }
+
   /// <summary>With no claim store there is nothing to prune, and the step does not fail the cycle.</summary>
   [Test]
   public async Task Run_NoClaimStore_DoesNothingAsync() {

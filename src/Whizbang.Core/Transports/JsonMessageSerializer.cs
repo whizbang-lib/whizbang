@@ -43,7 +43,8 @@ public class JsonMessageSerializer : IMessageSerializer {
   /// </summary>
   /// <param name="context">JsonSerializerContext containing JsonTypeInfo for all message types.</param>
   public JsonMessageSerializer(JsonSerializerContext context) {
-    _context = context ?? throw new ArgumentNullException(nameof(context));
+    ArgumentNullException.ThrowIfNull(context);
+    _context = context;
   }
 
   /// <summary>

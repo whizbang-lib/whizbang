@@ -55,7 +55,7 @@ internal sealed partial class InertConcurrencyStartupReporter(
     IOptions<OrderedStreamProcessorOptions> orderedStream,
     IOptions<OutboxDrainWorkerOptions> outboxDrain,
     IOptions<InboxDispatchWorkerOptions> inboxDispatch) : IHostedService {
-  private readonly ILogger<InertConcurrencyStartupReporter> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILogger<InertConcurrencyStartupReporter> _logger = ArgumentGuard.NotNull(logger);
   private readonly WorkCoordinatorOptions? _coordinator = _resolve(services, coordinator);
   private readonly OrderedStreamProcessorOptions? _orderedStream = _resolve(services, orderedStream);
   private readonly OutboxDrainWorkerOptions? _outboxDrain = _resolve(services, outboxDrain);

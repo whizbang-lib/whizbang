@@ -76,9 +76,9 @@ public partial class TransportPublishStrategy(
   public const string BODY_SIZE_METADATA_KEY = "whizbang.body-size";
 #pragma warning restore CA1707
 
-  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-  private readonly ITransportReadinessCheck _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
-  private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
+  private readonly ITransport _transport = ArgumentGuard.NotNull(transport);
+  private readonly ITransportReadinessCheck _readinessCheck = ArgumentGuard.NotNull(readinessCheck);
+  private readonly string _inboxTopic = ArgumentGuard.NotNull(inboxTopic);
   private readonly ICommandInboxAddressResolver _namespaceRouting = namespaceRouting;
   private readonly Whizbang.Core.Tags.TransportNamespaceResolver? _transportNamespaces = transportNamespaces;
 

@@ -65,4 +65,24 @@ public class SignalBusHealthSourceCoverageTests {
     await Assert.That(health.State).IsEqualTo(ComponentState.Connecting)
       .Because("before the doorbell route has been probed even once, health must read as still-connecting rather than falsely operational or falsely degraded");
   }
+
+  /// <summary>
+  /// A failed loopback probe degrades the signal bus and names the transport that failed when the
+  /// probe knew it; without one, the detail carries no empty "(transport )" fragment.
+  /// </summary>
+  [Test]
+  public async Task Report_FailedProbe_NamesTheTransportOnlyWhenKnownAsync() {
+    var named = new SignalBusLivenessState();
+    named.MarkProbeResult(success: false, DateTimeOffset.UnixEpoch, failedTransport: "rabbitmq");
+    var unnamed = new SignalBusLivenessState();
+    unnamed.MarkProbeResult(success: false, DateTimeOffset.UnixEpoch);
+
+    var namedReport = named.Report();
+    var unnamedReport = unnamed.Report();
+
+    await Assert.That(namedReport.State).IsEqualTo(ComponentState.Degraded);
+    await Assert.That(namedReport.Detail).StartsWith("wire-route self-test failed (transport rabbitmq):");
+    await Assert.That(unnamedReport.State).IsEqualTo(ComponentState.Degraded);
+    await Assert.That(unnamedReport.Detail).StartsWith("wire-route self-test failed:");
+  }
 }
