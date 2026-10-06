@@ -337,6 +337,7 @@ public class JsonIndexDeclarationAnalyzerTests {
   [Arguments("[Indexed(IndexKinds.Substring, caseInsensitive: true)]", "string Label")]
   [Arguments("[Indexed(IndexKinds.Search)]", "string Label")]
   [Arguments("[Indexed]", "int Count")]
+  [Arguments("[Indexed(\"ordered\", \"yes\")]", "int Count")]
   [Arguments("[Indexed(IndexKinds.Ordered)]", "DateTime OccurredAt")]
   public async Task ACapabilityThatApplies_IsNotReportedAsync(string declaration, string property) {
     var source = _model($$"""

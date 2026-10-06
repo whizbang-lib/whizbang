@@ -89,6 +89,18 @@ public class UnboundAttributeArgumentTests {
   }
 
   [Test]
+  [RequiresAssemblyFiles]
+  public async Task IndexedArgumentsThatDoNotBind_GenerateWhatABareIndexedDoesAsync() {
+    var unbound = await _allOutputAsync(_model("", "[Indexed(\"ordered\", \"yes\")]"));
+    var bare = await _allOutputAsync(_model("", "[Indexed]"));
+
+    await Assert.That(bare).Contains("sku")
+      .Because("the setup must generate the field's index for the comparison to mean anything");
+    await Assert.That(unbound).IsEqualTo(bare)
+      .Because("arguments no constructor accepts are neither a kind nor a request to fold case");
+  }
+
+  [Test]
   public async Task IndexedArgumentsThatDoNotBind_DeclareWhatABareIndexedDoesAsync() {
     var compilation = GeneratorTestHelper.CreateCompilation("""
       using Whizbang.Core.Perspectives;
@@ -107,10 +119,16 @@ public class UnboundAttributeArgumentTests {
     var unbound = model.GetMembers("Unbound").OfType<IPropertySymbol>().Single();
     var bare = model.GetMembers("Bare").OfType<IPropertySymbol>().Single();
 
+    await Assert.That(JsonIndexDiscovery.DeclaredKind(unbound)).IsNotNull()
+      .Because("the declaration is still an [Indexed], so it is read rather than skipped");
     await Assert.That(JsonIndexDiscovery.DeclaredKind(unbound)).IsEqualTo(JsonIndexDiscovery.DeclaredKind(bare))
       .Because("an argument list no constructor accepts falls back to the default kind");
     await Assert.That(JsonIndexDiscovery.DeclaresCaseInsensitive(unbound)).IsFalse()
       .Because("and to the default of respecting case");
+    await Assert.That(JsonIndexDiscovery.DeclaresCaseInsensitive(bare)).IsFalse()
+      .Because("which is also what a bound declaration's defaulted flag says");
+    await Assert.That(JsonIndexDiscovery.DeclaredKind(unbound, caseInsensitive: false)).IsEqualTo(JsonIndexDiscovery.DeclaredKind(bare))
+      .Because("so the declaration belongs to the plain expression");
   }
 
   [Test]
