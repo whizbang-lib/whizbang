@@ -2461,23 +2461,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Checks if a type is a collection type that would be handled by _extractElementType.
-  /// Includes Dictionary types whose value types are extracted.
-  /// </summary>
-  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_DictionaryAsDirectProperty_TreatedAsCollectionAsync</tests>
-  private static bool _isCollectionType(string fullyQualifiedTypeName) {
-    return fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.List<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IList<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.ICollection<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IEnumerable<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.Dictionary<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IDictionary<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IReadOnlyDictionary<", StringComparison.Ordinal);
-  }
-
-  /// <summary>
   /// Extracts type name from a direct (non-collection) property.
   /// Returns null if the type is a primitive, framework type, or collection.
   /// </summary>
@@ -2490,13 +2473,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     // Nothing to discover for: primitive and framework types; anything under System.*, which is
-    // either handled natively by STJ or not worth discovering; collection types, whose element type
-    // _extractElementType already pulled out; and array types, likewise. All four answer the same
-    // way, so they share one test instead of four early returns, only the first of which any caller
-    // reaches today.
+    // either handled natively by STJ or not worth discovering, collection types included (their
+    // element type _extractElementType already pulled out); and array types, likewise. All answer
+    // the same way, so they share one test instead of early returns.
     if (_isPrimitiveOrFrameworkType(typeName)
         || typeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)
-        || _isCollectionType(typeName)
         || typeName.EndsWith("[]", StringComparison.Ordinal)) {
       return null;
     }

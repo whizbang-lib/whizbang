@@ -129,13 +129,16 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// Recursively checks a nested class/struct type for Dictionary properties.
   /// </summary>
+  /// <remarks>
+  /// A System type needs no filter here: <see cref="_checkForDictionary"/> returns for every
+  /// non-collection System type before it looks at a member.
+  /// </remarks>
   private static void _checkNestedTypeForDictionary(
       SymbolAnalysisContext context,
       INamedTypeSymbol propType,
       HashSet<INamedTypeSymbol> visited) {
 
-    if ((propType.TypeKind == TypeKind.Class || propType.TypeKind == TypeKind.Struct) &&
-        !_isSystemPrimitiveType(propType)) {
+    if (propType.TypeKind == TypeKind.Class || propType.TypeKind == TypeKind.Struct) {
       _checkForDictionary(context, propType, visited);
     }
   }
@@ -226,7 +229,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
     foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
       if (_isDictionaryType(typeArg)) {
         _reportDictionaryDiagnostic(context, member, containingType, typeArg);
-      } else if (!_isSystemPrimitiveType(typeArg)) {
+      } else {
         _checkForDictionary(context, typeArg, visited);
       }
     }
@@ -241,22 +244,6 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
     return typeName == "System.Collections.Generic.Dictionary<TKey, TValue>" ||
            typeName == "System.Collections.Generic.IDictionary<TKey, TValue>" ||
            typeName == "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>";
-  }
-
-  /// <summary>True for the handful of System types that never hold anything worth walking into.</summary>
-  /// <remarks>A type with no containing namespace is not in System either, so it answers false
-  /// through the same comparison instead of needing a guard on a line of its own.</remarks>
-  private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
-    var ns = TypeNameUtilities.DisplayOrNull(type.ContainingNamespace);
-
-    // Skip common system types that definitely won't contain Dictionary
-    if (ns == "System") {
-      var name = type.Name;
-      return name is "String" or "DateTime" or "DateTimeOffset" or "TimeSpan" or
-             "Guid" or "Decimal" or "Uri" or "Version" or "DateOnly" or "TimeOnly";
-    }
-
-    return false;
   }
 
   /// <summary>
