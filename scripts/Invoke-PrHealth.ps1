@@ -10,8 +10,8 @@
       1. The CI checks (Watch-PrChecks.ps1): each check and its outcome; waits for them to settle
          unless -Snapshot.
       2. The SonarCloud gate and every open finding of any type on new code (Get-SonarPrFindings.ps1).
-      3. The uncovered new lines (Find-UncoveredNewLines.ps1), computed from the CI run's own coverage
-         artifacts for the PR's head commit.
+      3. The uncovered new lines and uncovered new hand-written branches (Find-UncoveredNewLines.ps1),
+         computed from the CI run's own coverage artifacts for the PR's head commit.
 
     The report lands in .whizbang/cache/pr-health/pr-<n>-<timestamp>.md (the repository's ignored
     cache) with the raw JSON and text files beside it. The exit code is 0 when the PR is clean and 1
@@ -76,12 +76,14 @@ $sonar = Get-Content "$prefix-sonar.json" -Raw | ConvertFrom-Json
 #    run is still going) is "unknown", never zero: absence of coverage must not read as full coverage.
 $run = gh run list @repoArgs --commit $pr.headRefOid --workflow ci.yml --limit 1 --json databaseId --jq '.[0].databaseId'
 $uncoveredCount = $null
+$uncoveredBranchCount = $null
 $coverageNote = 'no CI run found for the head commit yet'
 if ($run) {
   $covDir = Join-Path $ReportDir "coverage-$run"
-  & pwsh (Join-Path $scripts 'Find-UncoveredNewLines.ps1') -CoverageRoot $covDir -BaseRef $BaseRef -DownloadFromRun $run -OutFile "$prefix-uncovered.txt" 2>&1 | Out-Host
+  & pwsh (Join-Path $scripts 'Find-UncoveredNewLines.ps1') -CoverageRoot $covDir -BaseRef $BaseRef -DownloadFromRun $run -OutFile "$prefix-uncovered.txt" -BranchOutFile "$prefix-uncovered-branches.txt" 2>&1 | Out-Host
   if (Test-Path "$prefix-uncovered.txt") {
     $uncoveredCount = @(Get-Content "$prefix-uncovered.txt" | Where-Object { $_ }).Count
+    $uncoveredBranchCount = @(Get-Content "$prefix-uncovered-branches.txt" -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
   } else {
     $coverageNote = "unknown: CI run $run produced no coverage artifacts (build or tests failed?)"
   }
@@ -104,12 +106,16 @@ foreach ($f in $sonar.findings) { $lines.Add("- $($f.type) $($f.severity) $($f.r
 $lines.Add("")
 if ($null -eq $uncoveredCount) {
   $lines.Add("## Uncovered new lines: $coverageNote")
+  $lines.Add("## Uncovered new branches: $coverageNote")
 } else {
   $lines.Add("## Uncovered new lines: $uncoveredCount")
   foreach ($u in (Get-Content "$prefix-uncovered.txt" | Where-Object { $_ })) { $lines.Add("- ``$u``") }
+  $lines.Add("")
+  $lines.Add("## Uncovered new branches: $uncoveredBranchCount")
+  foreach ($u in (Get-Content "$prefix-uncovered-branches.txt" -ErrorAction SilentlyContinue | Where-Object { $_ })) { $lines.Add("- ``$u``") }
 }
 $lines.Add("")
-$clean = ($checks.fail -eq 0) -and ($checks.pending -eq 0) -and ($sonar.findings.Count -eq 0) -and ($sonar.gate -eq 'OK') -and ($uncoveredCount -eq 0)
+$clean = ($checks.fail -eq 0) -and ($checks.pending -eq 0) -and ($sonar.findings.Count -eq 0) -and ($sonar.gate -eq 'OK') -and ($uncoveredCount -eq 0) -and ($uncoveredBranchCount -eq 0)
 $lines.Add($(if ($clean) { "## Verdict: clean. Ready to merge." } else { "## Verdict: not yet. Fix everything above, push, and run this again." }))
 $report = "$prefix.md"
 [System.IO.File]::WriteAllLines($report, $lines.ToArray())

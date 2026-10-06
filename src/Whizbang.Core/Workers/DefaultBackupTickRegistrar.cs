@@ -38,10 +38,10 @@ public sealed partial class DefaultBackupTickRegistrar(
   ISchemaReadyGate schemaReadyGate,
   ILogger<DefaultBackupTickRegistrar> logger
 ) : IHostedService {
-  private readonly IBackupTickRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
-  private readonly ILogger<DefaultBackupTickRegistrar> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly IBackupTickRegistry _registry = ArgumentGuard.NotNull(registry);
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
+  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
+  private readonly ILogger<DefaultBackupTickRegistrar> _logger = ArgumentGuard.NotNull(logger);
 
   /// <inheritdoc />
   public Task StartAsync(CancellationToken cancellationToken) {

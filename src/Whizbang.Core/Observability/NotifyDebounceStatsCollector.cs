@@ -35,7 +35,7 @@ public sealed partial class NotifyDebounceStatsCollector(
   // type is built by hand (CompositionSatisfiabilityTests guards the surface from growing). DI
   // always supplies ILogger<T>; tests pass NullLogger.
   private readonly ILogger<NotifyDebounceStatsCollector> _logger =
-    logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentGuard.NotNull(logger);
 
   private const int COLLECTION_INTERVAL_SECONDS = 15;
 

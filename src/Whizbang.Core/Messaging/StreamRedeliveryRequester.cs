@@ -110,7 +110,7 @@ public sealed partial class StreamRedeliveryRequester(
   /// <summary>The most streams one request names.</summary>
   public const int MAX_STREAMS_PER_REQUEST = 500;
 
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
   /// <inheritdoc />

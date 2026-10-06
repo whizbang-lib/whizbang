@@ -81,7 +81,7 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
   internal static bool IsControlPlanePattern(string routingPattern) =>
     string.Equals(routingPattern, CONTROL_PLANE_NAMESPACE + ".#", StringComparison.Ordinal);
 
-  private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
+  private readonly string _inboxTopic = ArgumentGuard.NotNull(inboxTopic);
 
   /// <summary>
   /// Creates a shared topic inbox strategy with default topic name.

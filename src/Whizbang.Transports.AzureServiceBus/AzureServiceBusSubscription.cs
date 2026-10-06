@@ -30,16 +30,20 @@ public sealed class AzureServiceBusSubscription : ISubscription {
   /// Creates a subscription wrapping a standard (non-session) processor.
   /// </summary>
   public AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger logger) {
-    _processor = processor ?? throw new ArgumentNullException(nameof(processor));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(processor);
+    _processor = processor;
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
   }
 
   /// <summary>
   /// Creates a subscription wrapping a session processor for FIFO ordering.
   /// </summary>
   public AzureServiceBusSubscription(ServiceBusSessionProcessor sessionProcessor, ILogger logger) {
-    _sessionProcessor = sessionProcessor ?? throw new ArgumentNullException(nameof(sessionProcessor));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(sessionProcessor);
+    _sessionProcessor = sessionProcessor;
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
   }
 
   private bool _isProcessing => _processor?.IsProcessing ?? _sessionProcessor?.IsProcessing ?? false;

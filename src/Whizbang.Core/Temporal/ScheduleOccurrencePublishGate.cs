@@ -28,8 +28,8 @@ namespace Whizbang.Core.Temporal;
 public sealed partial class ScheduleOccurrencePublishGate(IServiceScopeFactory scopeFactory, ILogger<ScheduleOccurrencePublishGate> logger) : IOccurrencePublishGate {
   private const short RUN_SKIPPED = 2;
 
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly ILogger<ScheduleOccurrencePublishGate> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
+  private readonly ILogger<ScheduleOccurrencePublishGate> _logger = ArgumentGuard.NotNull(logger);
 
   /// <inheritdoc />
   public async ValueTask<OccurrencePublishDecision> EvaluateAsync(

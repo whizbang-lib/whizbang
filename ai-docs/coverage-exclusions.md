@@ -4,8 +4,8 @@ Read this before adding `[ExcludeFromCodeCoverage]`, and when the quality gate l
 cannot see how to reach.
 
 The target on new code is a **literal 100%**, of branches as well as lines: a fully executed line can
-still carry a condition nobody took, and the uncovered-new-lines gate counts only the lines, so its
-zero is necessary and not sufficient.
+still carry a condition nobody took. The PR gate counts both: uncovered new lines, and uncovered new
+hand-written branches (see "What 100% of branches means" below).
 
 There is no band of "close enough" to settle into. Every line is either covered by a test or
 deliberately outside the measurement for a reason someone wrote down, and telling those two apart is
@@ -81,6 +81,39 @@ is.
   AI-agent guide catalogs.
 - **Never treat the gate's list as the definition of done.** The gate counts lines. A line can be
   covered by a test that proves nothing, and a member can be fully covered and still wrong.
+
+---
+
+## What 100% of branches means
+
+The target is every **hand-written** decision, as `plans/mcdc-coverage-program.md` puts it ("hand-written
+code only"). The PR gate (`scripts/Find-UncoveredNewLines.ps1`) applies it to every line a branch adds:
+
+- **Uncovered new line**: the line never ran.
+- **Uncovered new branch**: the line ran, the collector recorded conditions on it, not every outcome
+  was taken, **and** the line's source contains a decision construct: `if` / `else if`, the conditional
+  `?:`, `??`, `??=`, `?.` or `?[`, `&&`, `||`, `switch` / `case` / a switch-expression arm, `when`,
+  `catch`, a `while` / `for` / `foreach` condition, or an `is` pattern test. Constructs inside string
+  literals and comments do not count; constructs inside interpolation holes do.
+
+Conditions on a line with none of those constructs are **compiler-generated** and the gate does not
+count them: the state-machine branches behind a bare `await`, the null checks of an object or collection
+initializer, and similar. No test can target them as such, and covering the code around them already
+proves what the author wrote. Counting them would make 100% unreachable for reasons that say nothing
+about the code. The line is still measured: if it never runs it is an uncovered line like any other.
+
+Two consequences worth knowing:
+
+- A defensive null guard is a hand-written decision. Write `ArgumentNullException.ThrowIfNull(x)` in a
+  statement, or `ArgumentGuard.NotNull(x)` in a Core field or property initializer, rather than
+  `x ?? throw new ArgumentNullException(nameof(x))`. The exception is the same and the branch lives in
+  the runtime, so it needs no per-constructor test.
+- The rule reads one line at a time. A decision split across lines is matched on the line that carries
+  the construct (`?` and `:` continuation lines count), which is also where the collector reports its
+  conditions.
+
+The rule and its fixtures are tested in `.github/scripts/tests/Find-UncoveredNewLines.Tests.ps1`. Change
+both together.
 
 ---
 

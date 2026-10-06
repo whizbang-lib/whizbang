@@ -55,8 +55,10 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
     int inventoryPerspectives,
     int bffPerspectives) {
 
-    _inventoryRegistry = inventoryRegistry ?? throw new ArgumentNullException(nameof(inventoryRegistry));
-    _bffRegistry = bffRegistry ?? throw new ArgumentNullException(nameof(bffRegistry));
+    ArgumentNullException.ThrowIfNull(inventoryRegistry);
+    _inventoryRegistry = inventoryRegistry;
+    ArgumentNullException.ThrowIfNull(bffRegistry);
+    _bffRegistry = bffRegistry;
     _inventoryPerspectives = inventoryPerspectives;
     _bffPerspectives = bffPerspectives;
 

@@ -50,8 +50,10 @@ public sealed class EFCoreLensQueryFactory<TDbContext> : ILensQueryFactory
 
     _context = dbContextFactory.CreateDbContext();
     _tableNames = tableNames;
-    _scopeContextAccessor = scopeContextAccessor ?? throw new ArgumentNullException(nameof(scopeContextAccessor));
-    _whizbangOptions = whizbangOptions ?? throw new ArgumentNullException(nameof(whizbangOptions));
+    ArgumentNullException.ThrowIfNull(scopeContextAccessor);
+    _scopeContextAccessor = scopeContextAccessor;
+    ArgumentNullException.ThrowIfNull(whizbangOptions);
+    _whizbangOptions = whizbangOptions;
   }
 
   /// <summary>

@@ -1506,4 +1506,23 @@ public class ScopeDeltaCoverageTests {
   };
 
   #endregion
+
+  /// <summary>
+  /// The scope is serialized by hand. The declared-unscoped marker after another property needs its
+  /// separating comma, or the stored delta is not valid JSON and the scope is lost on apply; alone,
+  /// it must not get a leading comma either.
+  /// </summary>
+  [Test]
+  public async Task FromPerspectiveScope_DeclaredUnscopedMarker_SurvivesWithAndWithoutAPrecedingPropertyAsync() {
+    var withTenant = ScopeDelta.FromPerspectiveScope(new PerspectiveScope { TenantId = "tenant-1", IsDeclaredUnscoped = true })!;
+    var markerOnly = ScopeDelta.FromPerspectiveScope(new PerspectiveScope { IsDeclaredUnscoped = true })!;
+
+    var appliedWithTenant = withTenant.ApplyTo(null).Scope;
+    var appliedMarkerOnly = markerOnly.ApplyTo(null).Scope;
+
+    await Assert.That(appliedWithTenant.TenantId).IsEqualTo("tenant-1");
+    await Assert.That(appliedWithTenant.IsDeclaredUnscoped).IsTrue();
+    await Assert.That(appliedMarkerOnly.TenantId).IsNull();
+    await Assert.That(appliedMarkerOnly.IsDeclaredUnscoped).IsTrue();
+  }
 }

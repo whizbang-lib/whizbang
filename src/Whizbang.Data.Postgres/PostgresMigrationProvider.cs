@@ -34,8 +34,10 @@ public class PostgresMigrationProvider : IMigrationProvider {
   /// <param name="assembly">Assembly containing embedded SQL resources</param>
   /// <param name="schemaName">PostgreSQL schema name to replace __SCHEMA__ placeholders with</param>
   public PostgresMigrationProvider(Assembly assembly, string schemaName = "public") {
-    _assembly = assembly ?? throw new ArgumentNullException(nameof(assembly));
-    _schemaName = schemaName ?? throw new ArgumentNullException(nameof(schemaName));
+    ArgumentNullException.ThrowIfNull(assembly);
+    _assembly = assembly;
+    ArgumentNullException.ThrowIfNull(schemaName);
+    _schemaName = schemaName;
     _resourcePrefix = $"{_assembly.GetName().Name}.Migrations.";
   }
 

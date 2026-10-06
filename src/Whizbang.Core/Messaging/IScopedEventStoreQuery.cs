@@ -68,14 +68,14 @@ public interface IEventStoreQueryFactory {
 /// <param name="scope">The service scope to manage.</param>
 /// <param name="eventStoreQuery">The scoped event store query instance.</param>
 public sealed class EventStoreQueryScope(IServiceScope scope, IEventStoreQuery eventStoreQuery) : IDisposable {
-  private readonly IServiceScope _scope = scope ?? throw new ArgumentNullException(nameof(scope));
+  private readonly IServiceScope _scope = ArgumentGuard.NotNull(scope);
 
   /// <summary>
   /// The scoped IEventStoreQuery instance.
   /// Valid until Dispose() is called.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs:EventStoreQueryScope_HasValuePropertyAsync</tests>
-  public IEventStoreQuery Value { get; } = eventStoreQuery ?? throw new ArgumentNullException(nameof(eventStoreQuery));
+  public IEventStoreQuery Value { get; } = ArgumentGuard.NotNull(eventStoreQuery);
 
   /// <summary>
   /// Disposes the service scope and releases the DbContext.

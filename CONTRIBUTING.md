@@ -260,8 +260,9 @@ pull request, and every pull request is reviewed against the same standard.
 - the solution builds in Release with every analyzer warning treated as an error;
 - the full test matrix passes (unit, generator, PostgreSQL, RabbitMQ, Azure Service Bus, Azure Blob,
   in-memory);
-- every added library line is executed by a test (100% of new lines), and SonarCloud reports zero
-  open findings on new code;
+- every added library line and hand-written branch is executed (100% of new lines, and every outcome
+  of every new hand-written decision; see `ai-docs/coverage-exclusions.md` for what counts as
+  hand-written), and SonarCloud reports zero open findings on new code;
 - CodeQL, secret scanning and the dependency vulnerability scan find nothing new;
 - `dotnet format` makes no changes, and every source file carries the copyright and license header;
 - every commit is signed off ([DCO](#developer-certificate-of-origin)), and lock files match the

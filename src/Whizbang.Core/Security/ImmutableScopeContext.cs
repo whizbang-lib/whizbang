@@ -26,7 +26,7 @@ namespace Whizbang.Core.Security;
 /// <param name="extraction">The security extraction to wrap</param>
 /// <param name="shouldPropagate">Whether to propagate to outgoing messages</param>
 public sealed class ImmutableScopeContext(SecurityExtraction extraction, bool shouldPropagate) : IScopeContext {
-  private readonly SecurityExtraction _extraction = extraction ?? throw new ArgumentNullException(nameof(extraction));
+  private readonly SecurityExtraction _extraction = ArgumentGuard.NotNull(extraction);
 
   /// <summary>
   /// Identifies the source of this context (which extractor created it).

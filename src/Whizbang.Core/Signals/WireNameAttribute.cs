@@ -24,5 +24,5 @@ namespace Whizbang.Core.Signals;
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, Inherited = false, AllowMultiple = false)]
 public sealed class WireNameAttribute(string wireName) : Attribute {
   /// <summary>The wire-name emitted on the NOTIFY payload.</summary>
-  public string WireName { get; } = wireName ?? throw new ArgumentNullException(nameof(wireName));
+  public string WireName { get; } = ArgumentGuard.NotNull(wireName);
 }

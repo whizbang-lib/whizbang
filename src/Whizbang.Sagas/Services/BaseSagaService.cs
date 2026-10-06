@@ -135,11 +135,13 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       ILogger logger) {
     ArgumentException.ThrowIfNullOrWhiteSpace(sagaName);
     _sagaName = sagaName;
-    _emitter = emitter ?? throw new ArgumentNullException(nameof(emitter));
+    ArgumentNullException.ThrowIfNull(emitter);
+    _emitter = emitter;
     _itemRepository = itemRepository;
     _terminalReader = terminalReader;
     _options = options ?? new SagaOptions();
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
   }
 
   // ── Factory methods (consumer or generator fills in) ─────────────────

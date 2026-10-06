@@ -51,11 +51,11 @@ public partial class HeartbeatWorker(
   TimeProvider? timeProvider = null,
   InstanceLivenessMetrics? metrics = null
 ) : BackgroundService {
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
+  private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
+  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly HeartbeatWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<HeartbeatWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILogger<HeartbeatWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly IPinnedConnectionPool _pinnedPool = pinnedPool;
   private readonly IInstanceAliveLockSource _aliveLockSource = aliveLockSource;
   private readonly ISignalBus _signalBus = signalBus;
@@ -63,8 +63,8 @@ public partial class HeartbeatWorker(
   // Required, not optional: the registry row these feed is what peers and operators read to tell a
   // live instance from a dead one, and an optional dependency is silently null wherever the worker
   // is hand-built. The worker pipeline registers defaults for both.
-  private readonly IWhizbangLifecycleState _lifecycleState = lifecycleState ?? throw new ArgumentNullException(nameof(lifecycleState));
-  private readonly ILibraryVersionProvider _libraryVersion = libraryVersion ?? throw new ArgumentNullException(nameof(libraryVersion));
+  private readonly IWhizbangLifecycleState _lifecycleState = ArgumentGuard.NotNull(lifecycleState);
+  private readonly ILibraryVersionProvider _libraryVersion = ArgumentGuard.NotNull(libraryVersion);
   private readonly InstanceLivenessMetrics? _metrics = metrics;
   private int _joinedAnnounced;
 

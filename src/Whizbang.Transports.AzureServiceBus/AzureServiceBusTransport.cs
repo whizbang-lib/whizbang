@@ -521,8 +521,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         // Serialize via the shared WireEnvelopeSerializer (one wire-serialization path). ASB
         // consumes a string body, so decode the bytes — symmetric with the pre-serialized hint
         // path above, which already GetStrings the hint bytes.
-        var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
-          ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+        var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType);
         var serialized = Whizbang.Core.Serialization.WireEnvelopeSerializer.Serialize(
           envelope, typeInfo, Whizbang.Core.Serialization.SerializationOptions.Default);
         json = Encoding.UTF8.GetString(serialized.Data.Span);
@@ -793,8 +792,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       json = Encoding.UTF8.GetString(hint.Span);
     } else {
       // Shared wire-serialization path; ASB consumes a string body (symmetric with the hint above).
-      var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
-        ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+      var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType);
       var serialized = Whizbang.Core.Serialization.WireEnvelopeSerializer.Serialize(
         envelope, typeInfo, Whizbang.Core.Serialization.SerializationOptions.Default);
       json = Encoding.UTF8.GetString(serialized.Data.Span);

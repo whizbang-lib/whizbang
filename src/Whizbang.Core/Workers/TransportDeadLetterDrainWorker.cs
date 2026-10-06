@@ -47,9 +47,9 @@ public partial class TransportDeadLetterDrainWorker(
 ) : BackgroundService {
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
 
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly TransportDeadLetterDrainWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<TransportDeadLetterDrainWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILogger<TransportDeadLetterDrainWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly PassiveCounter<long> _drained = _buildCounter(whizbangMetrics);
 
   private long _totalDrained;

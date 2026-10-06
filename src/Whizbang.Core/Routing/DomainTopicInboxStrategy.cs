@@ -20,7 +20,7 @@ namespace Whizbang.Core.Routing;
 /// </remarks>
 /// <param name="suffix">The suffix to append to domain names (e.g., ".inbox", ".in").</param>
 public sealed class DomainTopicInboxStrategy(string suffix) : IInboxRoutingStrategy {
-  private readonly string _suffix = suffix ?? throw new ArgumentNullException(nameof(suffix));
+  private readonly string _suffix = ArgumentGuard.NotNull(suffix);
 
   /// <summary>
   /// Creates a domain topic inbox strategy with default suffix.

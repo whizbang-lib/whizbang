@@ -33,10 +33,10 @@ public sealed class IdleActivityTouchHookBinder(
   HeartbeatWorker heartbeatWorker,
   IWorkNotificationListener notificationListener
 ) : IHostedService {
-  private readonly IIdleActivityTracker _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
-  private readonly ClaimWorker _claimWorker = claimWorker ?? throw new ArgumentNullException(nameof(claimWorker));
-  private readonly HeartbeatWorker _heartbeatWorker = heartbeatWorker ?? throw new ArgumentNullException(nameof(heartbeatWorker));
-  private readonly IWorkNotificationListener _notificationListener = notificationListener ?? throw new ArgumentNullException(nameof(notificationListener));
+  private readonly IIdleActivityTracker _tracker = ArgumentGuard.NotNull(tracker);
+  private readonly ClaimWorker _claimWorker = ArgumentGuard.NotNull(claimWorker);
+  private readonly HeartbeatWorker _heartbeatWorker = ArgumentGuard.NotNull(heartbeatWorker);
+  private readonly IWorkNotificationListener _notificationListener = ArgumentGuard.NotNull(notificationListener);
 
   private Action<Messaging.WorkBatch>? _onBatch;
   private Action? _onHeartbeat;

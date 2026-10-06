@@ -49,7 +49,7 @@ public sealed partial class ClaimedEmissionPruneStep(
   /// <summary>How long past its expiry a claim is kept before it is deleted.</summary>
   public static readonly TimeSpan Grace = TimeSpan.FromDays(1);
 
-  private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILogger _logger = ArgumentGuard.NotNull(logger);
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
   /// <inheritdoc />

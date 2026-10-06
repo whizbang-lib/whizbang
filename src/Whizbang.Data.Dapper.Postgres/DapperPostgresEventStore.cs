@@ -507,10 +507,7 @@ public class DapperPostgresEventStore(
   /// Deserializes event data from JSONB using the concrete type's JsonTypeInfo.
   /// </summary>
   private object _deserializeEventData(JsonbPersistenceModel jsonb, Type concreteType) {
-    var typeInfo = JsonOptions.GetTypeInfo(concreteType)
-      ?? throw new InvalidOperationException(
-        $"No JsonTypeInfo found for type {TypeNameFormatter.DisplayName(concreteType)}. " +
-        "Ensure the event type is registered in your JsonSerializerContext.");
+    var typeInfo = JsonOptions.GetTypeInfo(concreteType);
 
     return JsonSerializer.Deserialize(jsonb.DataJson, typeInfo)
       ?? throw new InvalidOperationException($"Failed to deserialize event of type {TypeNameFormatter.DisplayName(concreteType)}");
@@ -538,8 +535,7 @@ public class DapperPostgresEventStore(
   }
 
   private (Guid messageId, List<MessageHop> hops) _deserializeMetadataAndHops(JsonbPersistenceModel jsonb) {
-    var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>");
+    var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
     var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                        ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
 
@@ -549,8 +545,7 @@ public class DapperPostgresEventStore(
 
     List<MessageHop> hops;
     if (metadataDict.TryGetValue("hops", out var hopsElem)) {
-      var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>))
-                         ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>");
+      var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
       hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
     } else {
       hops = [];
@@ -578,8 +573,7 @@ public class DapperPostgresEventStore(
       });
     }
 
-    var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
-                            ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>");
+    var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>));
     if (JsonSerializer.Deserialize(scopeJson, scopeDictTypeInfo) is not Dictionary<string, JsonElement?> scopeDict) {
       return;
     }

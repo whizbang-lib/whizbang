@@ -55,10 +55,7 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
 
     // Convert the envelope to MessageEnvelope<JsonElement> for AOT-compatible storage
     // Get type info to serialize the payload to JsonElement
-    var payloadTypeInfo = _jsonOptions().GetTypeInfo(payloadType)
-      ?? throw new InvalidOperationException(
-        $"No JSON type info found for payload type '{TypeNameFormatter.DisplayName(payloadType)}'. " +
-        $"Ensure the type is registered in a JsonSerializerContext. MessageId: {envelope.MessageId}");
+    var payloadTypeInfo = _jsonOptions().GetTypeInfo(payloadType);
 
     // Serialize the payload to JsonElement
     var payloadJson = JsonSerializer.SerializeToElement(payload, payloadTypeInfo);

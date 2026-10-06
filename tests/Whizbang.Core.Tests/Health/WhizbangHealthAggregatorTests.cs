@@ -156,4 +156,19 @@ public class WhizbangHealthAggregatorTests {
       .Because("the liveness invariant covers every state, new members included — "
              + "an intentional state must never restart the pod");
   }
+
+  /// <summary>
+  /// A custom policy only states the pairs it cares about; any (state, probe) it leaves out reads
+  /// as Healthy, so a sparse map never fails a probe by omission.
+  /// </summary>
+  [Test]
+  public async Task HealthPolicy_UnmappedPair_IsHealthyAsync() {
+    var policy = new HealthPolicy(new Dictionary<(ComponentState, HealthProbe), HealthStatus> {
+      [(ComponentState.Faulted, HealthProbe.Readiness)] = HealthStatus.Unhealthy
+    });
+
+    await Assert.That(policy.Map(ComponentState.Faulted, HealthProbe.Readiness)).IsEqualTo(HealthStatus.Unhealthy);
+    await Assert.That(policy.Map(ComponentState.Faulted, HealthProbe.Liveness)).IsEqualTo(HealthStatus.Healthy);
+    await Assert.That(policy.Map(ComponentState.Degraded, HealthProbe.Readiness)).IsEqualTo(HealthStatus.Healthy);
+  }
 }

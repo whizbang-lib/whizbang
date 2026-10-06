@@ -19,13 +19,13 @@ namespace Whizbang.Core.Minting;
 public sealed class EventMint(ICompositeFactory composites, ICollectiveMint collective, ICheckpointMint checkpoints) : IEventMint {
 
   /// <inheritdoc />
-  public ICompositeFactory Composites { get; } = composites ?? throw new ArgumentNullException(nameof(composites));
+  public ICompositeFactory Composites { get; } = ArgumentGuard.NotNull(composites);
 
   /// <inheritdoc />
-  public ICollectiveMint Collective { get; } = collective ?? throw new ArgumentNullException(nameof(collective));
+  public ICollectiveMint Collective { get; } = ArgumentGuard.NotNull(collective);
 
   /// <inheritdoc />
-  public ICheckpointMint Checkpoints { get; } = checkpoints ?? throw new ArgumentNullException(nameof(checkpoints));
+  public ICheckpointMint Checkpoints { get; } = ArgumentGuard.NotNull(checkpoints);
 }
 
 /// <summary>

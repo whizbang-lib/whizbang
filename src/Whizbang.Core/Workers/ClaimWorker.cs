@@ -156,11 +156,15 @@ public sealed partial class ClaimWorker : BackgroundService {
     Whizbang.Core.Priority.PriorityHookChain? priorityHooks = null) {
     _priorityHooks = priorityHooks;
 #pragma warning restore S107
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-    _notificationListener = notificationListener ?? throw new ArgumentNullException(nameof(notificationListener));
+    ArgumentNullException.ThrowIfNull(scopeFactory);
+    _scopeFactory = scopeFactory;
+    ArgumentNullException.ThrowIfNull(instanceProvider);
+    _instanceProvider = instanceProvider;
+    ArgumentNullException.ThrowIfNull(notificationListener);
+    _notificationListener = notificationListener;
     _signalingGate = signalingGate;
-    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+    ArgumentNullException.ThrowIfNull(schemaReadyGate);
+    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _claimWindow = new AdaptiveClaimWindow(
       ceiling: _options.MaxStreamsPerBatch,
@@ -171,7 +175,8 @@ public sealed partial class ClaimWorker : BackgroundService {
       ceiling: _options.MaxOutstandingInboxRows,
       floor: _options.MinOutstandingInboxRows,
       safetyFactor: _options.OutstandingBudgetSafetyFactor);
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     _outboxChannel = outboxChannel;
     _inboxChannel = inboxChannel;
     _perspectiveChannel = perspectiveChannel;

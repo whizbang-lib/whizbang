@@ -62,6 +62,27 @@ public class WhizbangManagedHealthCheckTests {
     await Assert.That(result.Data.ContainsKey("schema")).IsTrue();
   }
 
+  /// <summary>
+  /// A component's detail, when it reports one, is what tells an operator why it is in that state,
+  /// so it rides along in the component's data entry; a component without one gets no empty
+  /// parentheses.
+  /// </summary>
+  [Test]
+  public async Task Result_ComponentDetail_AppearsInItsDataEntryOnlyWhenReportedAsync() {
+    var result = await _check(HealthProbe.Readiness,
+        new DetailSource("offload", new ComponentHealth(ComponentState.Faulted, "connection refused")),
+        new DetailSource("schema", new ComponentHealth(ComponentState.Operational)))
+      .CheckHealthAsync(new HealthCheckContext());
+
+    await Assert.That(result.Data["offload"]).IsEqualTo("Faulted => Unhealthy (connection refused)");
+    await Assert.That(result.Data["schema"]).IsEqualTo("Operational => Healthy");
+  }
+
+  private sealed class DetailSource(string component, ComponentHealth health) : IWhizbangHealthSource {
+    public string Component { get; } = component;
+    public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) => new(health);
+  }
+
   [Test]
   public async Task Result_DuplicateComponentNames_SurfacesEveryReportWithoutThrowingAsync() {
     // Sources sharing a component name (e.g. a per-context source registered by more than one

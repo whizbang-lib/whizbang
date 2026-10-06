@@ -42,8 +42,8 @@ public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingSt
   /// <summary>
   /// Gets the configured inbox topic name for this strategy instance.
   /// </summary>
-  public string InboxTopic { get; } = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
-  private readonly ITopicRoutingStrategy _topicResolver = topicResolver ?? throw new ArgumentNullException(nameof(topicResolver));
+  public string InboxTopic { get; } = ArgumentGuard.NotNull(inboxTopic);
+  private readonly ITopicRoutingStrategy _topicResolver = ArgumentGuard.NotNull(topicResolver);
 
   /// <summary>
   /// The command-inbox seam (topology arc phase 7): the shared-topic strategy's default is

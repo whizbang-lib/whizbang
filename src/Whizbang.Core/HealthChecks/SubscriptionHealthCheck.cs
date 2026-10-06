@@ -25,7 +25,7 @@ namespace Whizbang.Core.HealthChecks;
 /// <param name="states">The subscription states to monitor.</param>
 /// <exception cref="ArgumentNullException">Thrown when states is null.</exception>
 public class SubscriptionHealthCheck(IReadOnlyDictionary<TransportDestination, SubscriptionState> states) : IHealthCheck {
-  private readonly IReadOnlyDictionary<TransportDestination, SubscriptionState> _states = states ?? throw new ArgumentNullException(nameof(states));
+  private readonly IReadOnlyDictionary<TransportDestination, SubscriptionState> _states = ArgumentGuard.NotNull(states);
 
   /// <inheritdoc />
   public Task<HealthCheckResult> CheckHealthAsync(

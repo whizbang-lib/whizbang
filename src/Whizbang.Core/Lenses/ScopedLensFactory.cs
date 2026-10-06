@@ -27,10 +27,10 @@ public sealed class ScopedLensFactory(
     IScopeContextAccessor scopeContextAccessor,
     LensOptions lensOptions,
     ISystemEventEmitter eventEmitter) : IScopedLensFactory {
-  private readonly IServiceProvider _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor ?? throw new ArgumentNullException(nameof(scopeContextAccessor));
-  private readonly LensOptions _lensOptions = lensOptions ?? throw new ArgumentNullException(nameof(lensOptions));
-  private readonly ISystemEventEmitter _eventEmitter = eventEmitter ?? throw new ArgumentNullException(nameof(eventEmitter));
+  private readonly IServiceProvider _serviceProvider = ArgumentGuard.NotNull(serviceProvider);
+  private readonly IScopeContextAccessor _scopeContextAccessor = ArgumentGuard.NotNull(scopeContextAccessor);
+  private readonly LensOptions _lensOptions = ArgumentGuard.NotNull(lensOptions);
+  private readonly ISystemEventEmitter _eventEmitter = ArgumentGuard.NotNull(eventEmitter);
 
   // === Legacy API (string-based scope names) ===
 

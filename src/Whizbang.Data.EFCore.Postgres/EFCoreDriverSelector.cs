@@ -65,8 +65,10 @@ public sealed class EFCoreDriverSelector : IDriverOptions {
   /// from the [WhizbangDbContext] attribute on the DbContext class.
   /// </param>
   internal EFCoreDriverSelector(IServiceCollection services, Type dbContextType, string? connectionStringName) {
-    Services = services ?? throw new ArgumentNullException(nameof(services));
-    DbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
+    ArgumentNullException.ThrowIfNull(services);
+    Services = services;
+    ArgumentNullException.ThrowIfNull(dbContextType);
+    DbContextType = dbContextType;
     ConnectionStringName = connectionStringName;
   }
 

@@ -29,4 +29,18 @@ public class TypeFormatterCoverageTests {
 
     await Assert.That(result).IsEqualTo(string.Empty);
   }
+
+  /// <summary>
+  /// A strong-named assembly's token is rendered as lowercase hex, the form runtime type names use;
+  /// only an unsigned assembly reads "null".
+  /// </summary>
+  [Test]
+  public async Task FormatType_StrongNamedAssembly_RendersThePublicKeyTokenAsHexAsync() {
+    var expected = Convert.ToHexStringLower(typeof(string).Assembly.GetName().GetPublicKeyToken()!);
+
+    var result = TypeFormatter.FormatType(typeof(string), TypeQualifications.Assembly | TypeQualifications.PublicKeyToken);
+
+    await Assert.That(expected.Length).IsEqualTo(16).Because("the precondition: the core library is strong-named");
+    await Assert.That(result).EndsWith($", PublicKeyToken={expected}");
+  }
 }

@@ -37,7 +37,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     // 1. Event data: The actual event payload (AOT-compatible)
     var payload = source.Payload;
     var payloadType = payload.GetType();
-    var payloadTypeInfo = _jsonOptions.GetTypeInfo(payloadType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {payloadType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+    var payloadTypeInfo = _jsonOptions.GetTypeInfo(payloadType);
     var eventDataJson = JsonSerializer.Serialize(payload, payloadTypeInfo);
 
     // 2. Metadata: Correlation, Causation, Hops, Message ID (AOT-compatible with JsonElement)
@@ -45,8 +45,8 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     var causationId = source.GetCausationId();
 
     // Serialize individual values using JsonTypeInfo
-    var stringTypeInfo = _jsonOptions.GetTypeInfo(typeof(string)) ?? throw new InvalidOperationException("No JsonTypeInfo found for string");
-    var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>");
+    var stringTypeInfo = _jsonOptions.GetTypeInfo(typeof(string));
+    var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>));
 
     var messageIdJson = JsonSerializer.Serialize(source.MessageId.Value.ToString(), stringTypeInfo);
     var correlationIdJson = JsonSerializer.Serialize(correlationId?.Value.ToString() ?? string.Empty, stringTypeInfo);
@@ -64,7 +64,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       metadataDict["pri"] = JsonDocument.Parse(source.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture)).RootElement.Clone();
     }
 
-    var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>. Ensure the type is registered in WhizbangJsonContext.");
+    var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
     var metadataJson = JsonSerializer.Serialize(metadataDict, metadataDictTypeInfo);
 
     // 3. Scope: Extract from envelope's current scope (walks hops and merges deltas)
@@ -72,8 +72,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     string? scopeJson = null;
     var currentScope = source.GetCurrentScope();
     if (currentScope?.Scope != null) {
-      var perspectiveScopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope))
-        ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveScope. Ensure the type is registered in WhizbangJsonContext.");
+      var perspectiveScopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
       scopeJson = JsonSerializer.Serialize(currentScope.Scope, perspectiveScopeTypeInfo);
     }
 
@@ -103,7 +102,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     ArgumentNullException.ThrowIfNull(jsonb);
 
     // Deserialize metadata to extract envelope properties (AOT-compatible)
-    var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>. Ensure the type is registered in WhizbangJsonContext.");
+    var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
     var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                        ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
 
@@ -115,7 +114,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     // Deserialize Hops (AOT-compatible, using snake_case key)
     List<MessageHop> hops;
     if (metadataDict.TryGetValue("hops", out var hopsElem)) {
-      var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>. Ensure the type is registered in WhizbangJsonContext.");
+      var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>));
       hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
     } else {
       hops = [];
@@ -125,7 +124,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     _restoreScopeFromJson(jsonb.ScopeJson, hops);
 
     // Deserialize payload (event data) with concrete type - AOT-compatible
-    var payloadTypeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage)) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {TypeNameFormatter.DisplayName(typeof(TMessage))}. Ensure the type is registered in WhizbangJsonContext.");
+    var payloadTypeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage));
     var payload = JsonSerializer.Deserialize(jsonb.DataJson, payloadTypeInfo)
                   ?? throw new InvalidOperationException("Failed to deserialize event data");
 
@@ -210,8 +209,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
   /// Attempts to parse scope values from the legacy snake_case format (tenant_id, user_id).
   /// </summary>
   private (string? TenantId, string? UserId) _tryParseLegacyScope(string scopeJson) {
-    var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
-                            ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>.");
+    var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>));
 
     if (JsonSerializer.Deserialize(scopeJson, scopeDictTypeInfo) is not Dictionary<string, JsonElement?> scopeDict) {
       return (null, null);

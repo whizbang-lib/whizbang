@@ -35,11 +35,15 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     ILogger<InboxHandlerWorker> logger,
     IPinnedConnectionPool pinnedPool,
     Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
-    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+    ArgumentNullException.ThrowIfNull(scopeFactory);
+    _scopeFactory = scopeFactory;
+    ArgumentNullException.ThrowIfNull(failureChannel);
+    _failureChannel = failureChannel;
+    ArgumentNullException.ThrowIfNull(schemaReadyGate);
+    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     _pinnedPool = pinnedPool;
     _flusher = new BatchFlusher<HandlerCommitRequest>(_flushBatchAsync, _options.Flusher, _logger);
     // The queue depth is observable (#740): the one place dispatched-but-uncommitted work waits in memory.

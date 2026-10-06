@@ -51,4 +51,23 @@ public class CronExpressionCoverageTests {
       .Because("a field that reduces to zero terms matches no values at all — this must fail loud "
              + "at parse time, not produce a CronExpression that can never fire");
   }
+
+  /// <summary>
+  /// "a/step" without a range means a through the field maximum in steps (Vixie cron), not just a:
+  /// "5/20" in the minute field fires at :05, :25 and :45, then :05 of the next hour.
+  /// </summary>
+  [Test]
+  public async Task NextFireAfter_StartWithStepAndNoRange_StepsToTheFieldMaximumAsync() {
+    var cron = CronExpression.Parse("5/20 * * * *");
+
+    var first = cron.NextFireAfter(_utc(2026, 1, 1, 10, 0), _utcZone);
+    var second = cron.NextFireAfter(first!.Value, _utcZone);
+    var third = cron.NextFireAfter(second!.Value, _utcZone);
+    var wrapped = cron.NextFireAfter(third!.Value, _utcZone);
+
+    await Assert.That(first).IsEqualTo(_utc(2026, 1, 1, 10, 5));
+    await Assert.That(second).IsEqualTo(_utc(2026, 1, 1, 10, 25));
+    await Assert.That(third).IsEqualTo(_utc(2026, 1, 1, 10, 45));
+    await Assert.That(wrapped).IsEqualTo(_utc(2026, 1, 1, 11, 5));
+  }
 }

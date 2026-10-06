@@ -1,11 +1,11 @@
 ---
-description: Run the PR health recipe (checks, Sonar findings, uncovered new lines), read its saved report, and fix what it lists
+description: Run the PR health recipe (checks, Sonar findings, uncovered new lines and branches), read its saved report, and fix what it lists
 ---
 
 # /pr-health <pr-number>
 
 The standard for every pull request: all checks green, **zero open Sonar findings of any type on new
-code**, and **100% coverage of new lines**. One script runs the whole recipe and saves one report:
+code**, and **100% coverage of new lines and of every outcome of new hand-written decisions**. One script runs the whole recipe and saves one report:
 
 ```
 pwsh scripts/Invoke-PrHealth.ps1 -PullRequest <n>
@@ -13,7 +13,7 @@ pwsh scripts/Invoke-PrHealth.ps1 -PullRequest <n>
 
 It waits for the checks to settle (add `-Snapshot` for the current state), reads the SonarCloud gate
 and every open finding, downloads the CI run's coverage artifacts for the head commit and computes the
-uncovered new lines, then writes `.whizbang/cache/pr-health/pr-<n>-<timestamp>.md` with the raw JSON
+uncovered new lines and hand-written branches, then writes `.whizbang/cache/pr-health/pr-<n>-<timestamp>.md` with the raw JSON
 and text beside it. Exit code 0 means clean; 1 means the report lists what to fix.
 
 Read the report, then:

@@ -19,7 +19,7 @@ namespace Whizbang.Core.Lenses;
 /// <exception cref="ArgumentNullException">Thrown when factory is null.</exception>
 public sealed class FactoryOwnedLensQuery<TModel>(ILensQueryFactory factory) : ILensQuery<TModel>, IAsyncDisposable, IDisposable
     where TModel : class {
-  private readonly ILensQueryFactory _factory = factory ?? throw new ArgumentNullException(nameof(factory));
+  private readonly ILensQueryFactory _factory = ArgumentGuard.NotNull(factory);
   private readonly ILensQuery<TModel> _inner = factory.GetQuery<TModel>();
   private bool _disposed;
 

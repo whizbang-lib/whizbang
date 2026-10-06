@@ -31,8 +31,8 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
     Whizbang.Core.SystemEvents.SystemEventOptions? systemEventOptions = null,
     Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
 ) : IWorkCoordinatorStrategy, IWorkFlusher {
-  private readonly IWorkCoordinatorStrategy _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-  private readonly IOutboxBatchStrategy _outboxBatch = outboxBatch ?? throw new ArgumentNullException(nameof(outboxBatch));
+  private readonly IWorkCoordinatorStrategy _inner = ArgumentGuard.NotNull(inner);
+  private readonly IOutboxBatchStrategy _outboxBatch = ArgumentGuard.NotNull(outboxBatch);
   private readonly Whizbang.Core.SystemEvents.SystemEventOptions? _systemEventOptions = systemEventOptions;
   private readonly Microsoft.Extensions.Logging.ILogger _logger =
     logger;

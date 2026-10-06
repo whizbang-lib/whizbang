@@ -78,7 +78,8 @@ public sealed class ImpersonationDispatcherBuilder {
       string effectiveIdentity,
       string? actualPrincipal,
       string? ambientTenantId) {
-    _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+    ArgumentNullException.ThrowIfNull(dispatcher);
+    _dispatcher = dispatcher;
     ArgumentException.ThrowIfNullOrWhiteSpace(effectiveIdentity);
     _effectiveIdentity = effectiveIdentity;
     _actualPrincipal = actualPrincipal;

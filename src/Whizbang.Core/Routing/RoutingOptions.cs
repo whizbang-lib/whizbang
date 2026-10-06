@@ -510,14 +510,16 @@ public sealed class RoutingOptions {
   /// Sets the inbox routing strategy.
   /// </summary>
   internal void SetInboxStrategy(IInboxRoutingStrategy strategy) {
-    InboxStrategy = strategy ?? throw new ArgumentNullException(nameof(strategy));
+    ArgumentNullException.ThrowIfNull(strategy);
+    InboxStrategy = strategy;
   }
 
   /// <summary>
   /// Sets the outbox routing strategy.
   /// </summary>
   internal void SetOutboxStrategy(IOutboxRoutingStrategy strategy) {
-    OutboxStrategy = strategy ?? throw new ArgumentNullException(nameof(strategy));
+    ArgumentNullException.ThrowIfNull(strategy);
+    OutboxStrategy = strategy;
   }
 
   /// <summary>

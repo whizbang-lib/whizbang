@@ -56,7 +56,7 @@ public class SubscriptionState(TransportDestination destination) {
   /// <summary>
   /// The transport destination this state tracks.
   /// </summary>
-  public TransportDestination Destination { get; } = destination ?? throw new ArgumentNullException(nameof(destination));
+  public TransportDestination Destination { get; } = ArgumentGuard.NotNull(destination);
 
   /// <summary>
   /// Current status of the subscription.

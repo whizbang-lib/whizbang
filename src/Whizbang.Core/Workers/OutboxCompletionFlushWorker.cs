@@ -33,11 +33,14 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<OutboxCompletionFlushWorker> logger,
     IPinnedConnectionPool pinnedPool) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+    ArgumentNullException.ThrowIfNull(scopeFactory);
+    _scopeFactory = scopeFactory;
+    ArgumentNullException.ThrowIfNull(schemaReadyGate);
+    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     _pinnedPool = pinnedPool;
     _flusher = new BatchFlusher<Guid>(_flushBatchAsync, _options.Flusher, _logger);
   }

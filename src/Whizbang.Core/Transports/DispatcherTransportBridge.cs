@@ -46,9 +46,9 @@ public class DispatcherTransportBridge(
   IServiceInstanceProvider instanceProvider,
   CascadeContextFactory? cascadeContextFactory = null
   ) {
-  private readonly IDispatcher _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
-  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+  private readonly IDispatcher _dispatcher = ArgumentGuard.NotNull(dispatcher);
+  private readonly ITransport _transport = ArgumentGuard.NotNull(transport);
+  private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly CascadeContextFactory _cascadeContextFactory = cascadeContextFactory ?? new CascadeContextFactory(null);
 
   /// <summary>

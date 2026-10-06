@@ -54,7 +54,8 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
   /// <param name="options">Tag options containing hook registrations.</param>
   /// <param name="hookResolver">Optional resolver for hook instances. If null, hooks are not invoked.</param>
   public MessageTagProcessor(TagOptions options, Func<Type, object?>? hookResolver = null) {
-    _options = options ?? throw new ArgumentNullException(nameof(options));
+    ArgumentNullException.ThrowIfNull(options);
+    _options = options;
     _hookResolver = hookResolver;
   }
 
@@ -68,8 +69,10 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
   /// (e.g., for accessing DbContext). A new scope is created for each ProcessTagsAsync call.
   /// </remarks>
   public MessageTagProcessor(TagOptions options, IServiceScopeFactory scopeFactory) {
-    _options = options ?? throw new ArgumentNullException(nameof(options));
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+    ArgumentNullException.ThrowIfNull(options);
+    _options = options;
+    ArgumentNullException.ThrowIfNull(scopeFactory);
+    _scopeFactory = scopeFactory;
   }
 
   /// <summary>
@@ -88,8 +91,10 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       ILogger logger,
       Func<Type, object?>? hookResolver,
       IServiceScopeFactory? scopeFactory) {
-    _options = options ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentNullException.ThrowIfNull(options);
+    _options = options;
+    ArgumentNullException.ThrowIfNull(logger);
+    _logger = logger;
     _hookResolver = hookResolver;
     _scopeFactory = scopeFactory;
   }

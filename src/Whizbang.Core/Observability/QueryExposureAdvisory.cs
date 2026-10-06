@@ -54,9 +54,9 @@ public sealed partial class QueryExposureAdvisory(
     IAdvisoryLedger ledger,
     TimeProvider? timeProvider = null) {
   private readonly ILogger<QueryExposureAdvisory> _logger =
-    logger ?? throw new ArgumentNullException(nameof(logger));
+    ArgumentGuard.NotNull(logger);
   private readonly IAdvisoryLedger _ledger =
-    ledger ?? throw new ArgumentNullException(nameof(ledger));
+    ArgumentGuard.NotNull(ledger);
   private readonly TimeProvider _clock = timeProvider ?? TimeProvider.System;
 
   /// <summary>

@@ -60,7 +60,8 @@ public static class WhizbangIdProvider {
   /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs:SetProvider_WithValidProvider_ShouldUseCustomProviderAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs:SetProvider_WithNullProvider_ShouldThrowArgumentNullExceptionAsync</tests>
   public static void SetProvider(IWhizbangIdProvider provider) {
-    _provider = provider ?? throw new ArgumentNullException(nameof(provider));
+    ArgumentNullException.ThrowIfNull(provider);
+    _provider = provider;
   }
 
   /// <summary>

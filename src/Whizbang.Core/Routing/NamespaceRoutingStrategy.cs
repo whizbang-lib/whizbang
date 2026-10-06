@@ -27,7 +27,7 @@ namespace Whizbang.Core.Routing;
 /// Receives the full Type, allowing access to namespace, name, and attributes.</param>
 /// <exception cref="ArgumentNullException">Thrown when typeToTopic is null.</exception>
 public sealed class NamespaceRoutingStrategy(Func<Type, string> typeToTopic) : ITopicRoutingStrategy {
-  private readonly Func<Type, string> _typeToTopic = typeToTopic ?? throw new ArgumentNullException(nameof(typeToTopic));
+  private readonly Func<Type, string> _typeToTopic = ArgumentGuard.NotNull(typeToTopic);
 
   /// <summary>
   /// Creates a namespace routing strategy with default extraction.

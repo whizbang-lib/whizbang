@@ -87,8 +87,10 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     LifecycleMetrics? lifecycleMetrics = null) {
 #pragma warning restore S107
     _coordinator = coordinator;
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-    _options = options ?? throw new ArgumentNullException(nameof(options));
+    ArgumentNullException.ThrowIfNull(instanceProvider);
+    _instanceProvider = instanceProvider;
+    ArgumentNullException.ThrowIfNull(options);
+    _options = options;
     _logger = logger;
     _scopeFactory = scopeFactory;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;

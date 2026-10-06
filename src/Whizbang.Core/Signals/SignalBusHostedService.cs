@@ -43,10 +43,10 @@ public sealed partial class SignalBusHostedService(
   IOptions<SignalBusOptions> options,
   TimeProvider? timeProvider = null
 ) : IHostedService, IDisposable {
-  private readonly SignalBus _bus = bus ?? throw new ArgumentNullException(nameof(bus));
-  private readonly SignalBusLivenessState _liveness = liveness ?? throw new ArgumentNullException(nameof(liveness));
-  private readonly ISignalTransport[] _transports = [.. (transports ?? throw new ArgumentNullException(nameof(transports)))];
-  private readonly ILogger<SignalBusHostedService> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly SignalBus _bus = ArgumentGuard.NotNull(bus);
+  private readonly SignalBusLivenessState _liveness = ArgumentGuard.NotNull(liveness);
+  private readonly ISignalTransport[] _transports = [.. ArgumentGuard.NotNull(transports)];
+  private readonly ILogger<SignalBusHostedService> _logger = ArgumentGuard.NotNull(logger);
   private readonly SignalBusOptions _options = options?.Value ?? new SignalBusOptions();
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;

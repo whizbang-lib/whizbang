@@ -64,8 +64,10 @@ public sealed class LensQueryScope<TModel> : IDisposable where TModel : class {
   /// <param name="scope">The service scope to manage</param>
   /// <param name="lensQuery">The scoped lens query instance</param>
   internal LensQueryScope(IServiceScope scope, ILensQuery<TModel> lensQuery) {
-    _scope = scope ?? throw new ArgumentNullException(nameof(scope));
-    Value = lensQuery ?? throw new ArgumentNullException(nameof(lensQuery));
+    ArgumentNullException.ThrowIfNull(scope);
+    _scope = scope;
+    ArgumentNullException.ThrowIfNull(lensQuery);
+    Value = lensQuery;
   }
 
   /// <summary>

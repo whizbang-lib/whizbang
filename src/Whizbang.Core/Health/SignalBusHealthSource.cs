@@ -24,8 +24,8 @@ public sealed class SignalBusHealthSource(
   SignalBusLivenessState liveness,
   IWhizbangLifecycleState lifecycle
 ) : IWhizbangHealthSource {
-  private readonly SignalBusLivenessState _liveness = liveness ?? throw new ArgumentNullException(nameof(liveness));
-  private readonly IWhizbangLifecycleState _lifecycle = lifecycle ?? throw new ArgumentNullException(nameof(lifecycle));
+  private readonly SignalBusLivenessState _liveness = ArgumentGuard.NotNull(liveness);
+  private readonly IWhizbangLifecycleState _lifecycle = ArgumentGuard.NotNull(lifecycle);
 
   /// <inheritdoc />
   public string Component => "signal-bus";

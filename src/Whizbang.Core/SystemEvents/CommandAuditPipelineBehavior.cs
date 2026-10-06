@@ -41,7 +41,7 @@ public sealed class CommandAuditPipelineBehavior<TCommand, TResponse>(
     IOptions<SystemEventOptions> options,
     IMessageContext context) : PipelineBehavior<TCommand, TResponse>
     where TCommand : notnull {
-  private readonly ISystemEventEmitter _emitter = emitter ?? throw new ArgumentNullException(nameof(emitter));
+  private readonly ISystemEventEmitter _emitter = ArgumentGuard.NotNull(emitter);
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IMessageContext _context = context;
 

@@ -31,7 +31,7 @@ namespace Whizbang.Core.Resilience;
 #pragma warning disable CA1001 // CircuitBreaker is long-lived (app lifetime); disposing the semaphore is unnecessary
 public sealed partial class CircuitBreaker<TResult>(CircuitBreakerOptions options, ILogger logger) {
 #pragma warning restore CA1001
-  private readonly CircuitBreakerOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly CircuitBreakerOptions _options = ArgumentGuard.NotNull(options);
   private readonly ILogger _logger = logger;
   private readonly SemaphoreSlim _lock = new(1, 1);
 

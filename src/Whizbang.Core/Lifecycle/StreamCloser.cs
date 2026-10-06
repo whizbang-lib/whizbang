@@ -33,8 +33,8 @@ public interface IStreamCloser {
 /// <docs>fundamentals/events/ephemeral-events</docs>
 /// <remarks>Creates a closer over the coordinator, with its destruction hook; the default proceeds and observes nothing.</remarks>
 public sealed partial class StreamCloser(IWorkCoordinator coordinator, ILogger<StreamCloser> logger, IDestructionHook hook) : IStreamCloser {
-  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-  private readonly ILogger<StreamCloser> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
+  private readonly ILogger<StreamCloser> _logger = ArgumentGuard.NotNull(logger);
   private readonly IDestructionHook _hook = hook;
 
   /// <inheritdoc />

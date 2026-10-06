@@ -100,7 +100,8 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
       throw new InvalidOperationException("Cannot set exception on a completed source");
     }
 
-    _exception = exception ?? throw new ArgumentNullException(nameof(exception));
+    ArgumentNullException.ThrowIfNull(exception);
+    _exception = exception;
     _status = ValueTaskSourceStatus.Faulted;
     _signalCompletion();
   }
@@ -145,7 +146,8 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
       throw new InvalidOperationException("OnCompleted already called");
     }
 
-    _continuation = continuation ?? throw new ArgumentNullException(nameof(continuation));
+    ArgumentNullException.ThrowIfNull(continuation);
+    _continuation = continuation;
     _continuationState = state;
 
     OnContinuationRegistered?.Invoke();

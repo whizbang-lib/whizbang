@@ -30,7 +30,7 @@ public partial class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger) {
   /// </summary>
   private const int TOAST_EXTERNALIZATION_THRESHOLD = 7_000;
 
-  private readonly ILogger<JsonbSizeValidator> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILogger<JsonbSizeValidator> _logger = ArgumentGuard.NotNull(logger);
 
   /// <summary>
   /// Validates JSONB size and adds warning to metadata if threshold crossed.

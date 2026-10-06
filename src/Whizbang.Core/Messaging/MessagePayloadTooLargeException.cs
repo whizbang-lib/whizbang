@@ -31,7 +31,7 @@ public sealed class MessagePayloadTooLargeException(MessagePayloadSizeContext co
 
   // Initializers run before the base constructor's argument is built, so the first one validates.
   /// <summary>The message type.</summary>
-  public string MessageType { get; } = (context ?? throw new ArgumentNullException(nameof(context))).MessageType;
+  public string MessageType { get; } = ArgumentGuard.NotNull(context).MessageType;
 
   /// <summary>The error code: the application's, when a hook supplied one, otherwise <see cref="DEFAULT_ERROR_CODE"/>.</summary>
   public string ErrorCode { get; } = errorCode ?? DEFAULT_ERROR_CODE;
