@@ -359,7 +359,6 @@ project has today (see below).
 |---|---|---|---|
 | `achieve_silver` | MUST | Silver's last MUST, `access_continuity`. | owner |
 | `bus_factor`, `contributors_unassociated`, `two_person_review` | MUST | At least two significant contributors from different organizations, and a second person reviewing at least half of all changes before release. Structural: not reachable by documentation or tooling. | needs a second regular contributor |
-| `test_branch_coverage80` | MUST | CI instruments assemblies at build time (static instrumentation), which records lines only; the test platform's runtime collector records branches. Switching CI to it and measuring the result is in progress on a separate branch; then bring branch coverage to at least 80% (the project's own standard is 100%). | repo change |
 | `security_review` | MUST | A security review within the last five years that considers the security requirements and boundaries. The assurance case is the basis; the review itself must be carried out and recorded by a project member. | owner |
 
 ## Basics
@@ -391,7 +390,7 @@ project has today (see below).
 | `test_invocation` | Met | Tests run with the standard `dotnet test`. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/TEST-FILTERING.md> |
 | `test_continuous_integration` | Met | Every pull request is built and tested by the full matrix, and the merge queue re-tests each change on the latest `develop` before it lands. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
 | `test_statement_coverage90` | Met | Line coverage is 100% on SonarCloud. <https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang> |
-| `test_branch_coverage80` | Unmet | Branch coverage is not measured yet; the coverage collector reports line coverage only. |
+| `test_branch_coverage80` | Met | Branch coverage is 93.3% on SonarCloud, collected on every pull request; the merge gate also fails any pull request that adds an untested hand-written decision. <https://sonarcloud.io/component_measures?id=whizbang-lib_whizbang&metric=branch_coverage> |
 
 ## Security
 
