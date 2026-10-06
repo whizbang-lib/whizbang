@@ -453,10 +453,15 @@ jobs:
           UNCOVERED_BRANCHES: ${{ steps.uncovered.outputs.branches }}
           FINDINGS: ${{ steps.sonar-findings.outputs.count }}
           WHOLE_LIBRARY: ${{ steps.uncovered.outputs.whole }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           MARKER="<!-- pr-quality-gate -->"
+          CHECKED_AT=$(date -u '+%Y-%m-%d %H:%M UTC')
           BODY="${MARKER}
           ## PR quality gate
+
+          Checked commit \`${HEAD_SHA:0:9}\` at ${CHECKED_AT} ([run](${RUN_URL}))
 
           | Check | Result |
           |---|---|
@@ -497,12 +502,14 @@ jobs:
           fi
           BODY="${BODY}
           Reproduce locally: \`pwsh scripts/Invoke-PrHealth.ps1 -PullRequest ${{ github.event.pull_request.number }}\`"
-          EXISTING=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" --paginate --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | head -1)
-          if [ -n "${EXISTING}" ]; then
-            gh api --method PATCH "repos/${{ github.repository }}/issues/comments/${EXISTING}" -f body="${BODY}" >/dev/null
-          else
-            gh api --method POST "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f body="${BODY}" >/dev/null
-          fi
+          # Re-post rather than edit, so the latest result is always the newest comment in the thread (an
+          # edited comment keeps its original position and creation time, which reads as stale). Post the
+          # new one first, then delete every older gate comment, so the PR is never left without one.
+          OLD=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" --paginate --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id")
+          gh api --method POST "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f body="${BODY}" >/dev/null
+          for id in ${OLD}; do
+            gh api --method DELETE "repos/${{ github.repository }}/issues/comments/${id}" >/dev/null || echo "::warning::could not delete old gate comment ${id}"
+          done
 
       - name: Fail on PR Gate Violations
         if: github.event_name == 'pull_request' && (steps.uncovered.outputs.count != '0' || steps.uncovered.outputs.branches != '0' || steps.sonar-findings.outputs.count != '0')

@@ -4,10 +4,10 @@ coverage:
     project: off
     patch: off
 
-comment:
-  layout: "reach,diff,flags,tree"
-  behavior: new
-  require_changes: false
+# No PR comment: the PR quality-gate comment (reusable-quality.yml) reports new-line, new-branch and
+# whole-library coverage on every run, and Codecov's comment did not reliably refresh after later pushes,
+# so it showed stale results next to it. Coverage is still uploaded and visible on codecov.io.
+comment: false
 
 ignore:
   - "**/*.Generated.cs"
