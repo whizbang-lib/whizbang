@@ -60,6 +60,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private const bool _isEphemeralPerspective = false;
   #endregion
 
+  #region UNCONDITIONAL_PURGE
+  // Generated: true for an event whose Apply can do nothing but purge the row (#1151).
+  private static bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => false;
+  #endregion
+
   /// <summary>
   /// The event types this perspective folds. The resurrection-on-wake probe asks the event store
   /// about these only (issue #696): history of other contracts on a shared stream is not a reaped
@@ -491,6 +496,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var hasWrittenUpdate = modelLoadedFromDb;
     var pendingPurge = startedPurged;  // True while the stream is purged: the row is (to be) removed
     Guid? purgeEventId = null;  // The event whose Apply purged in this batch, if one did
+    string? purgeEventType = null;  // Its type, reported on the completion (#1151)
     var resurrected = false;  // An Apply returned Resurrect while the stream was purged
     var purgedEventsSkipped = 0;  // Events skipped because the stream was purged
     PerspectiveScope? lastScope = null;  // Track scope from last processed envelope
@@ -578,8 +584,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             typeof(__MODEL_TYPE_NAME__), events, cancellationToken);
       }
 
+      // A rebuild or rewind whose last event always purges the row (#1151) discards whatever the events before it
+      // fold, so they are not folded: they count as processed and only the purge is applied. The list is the row's
+      // merged, ordered set (collectives interleaved above), so "last" is last for the row, not for the stream.
+      var foldEvents = events;
+      if (events.Count > 1
+          && global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild or global::Whizbang.Core.Messaging.ProcessingMode.Replay
+          && IsUnconditionalPurge(events[^1].Payload)) {
+        foldEvents = [events[^1]];
+        processedEvents.AddRange(events.Take(events.Count - 1));
+        eventsProcessed += events.Count - 1;
+      }
+
       // Process all events in order
-      foreach (var envelope in events) {
+      foreach (var envelope in foldEvents) {
 
         // Phase H step 9 slice 4: cooperative cancellation between events. Apply itself is a
         // pure synchronous function and can't be canceled mid-call, but we check the lease
@@ -683,6 +701,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             // Hard delete: Mark for purge, skip upsert
             pendingPurge = true;
             purgeEventId = envelope.MessageId.Value;
+            purgeEventType = @event.GetType().FullName ?? eventTypeName;
             updatedModel = null;
             break;
           default:
@@ -893,7 +912,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
         Status = resultStatus,
         EventsProcessed = eventsProcessed,
-        ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
+        ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray(),
+        PurgedBy = pendingPurge && purgeEventId.HasValue ? purgeEventType : null
       };
 
     } catch (Exception ex) when (ex is not global::Whizbang.Core.Perspectives.PerspectiveRowConflictException) {
@@ -1434,8 +1454,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         }
       }
 
+      // A batch whose last event always purges the row (#1151) discards whatever the events before it fold: they
+      // move the frontier and count as processed, and only the purge is applied.
+      var foldFrom = 0;
+      if (events.Count > 1 && IsUnconditionalPurge(events[^1].Payload)) {
+        foldFrom = events.Count - 1;
+        foreach (var skipped in events.Take(foldFrom)) {
+          (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, skipped);
+          eventsProcessed++;
+        }
+      }
+
       // Apply all events in memory — no intermediate DB writes, no lifecycle hooks
-      foreach (var envelope in events) {
+      foreach (var envelope in events.Skip(foldFrom)) {
       var @event = envelope.Payload;
 
       // Track scope from envelope for perspective upsert

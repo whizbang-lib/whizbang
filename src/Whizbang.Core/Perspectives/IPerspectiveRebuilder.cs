@@ -82,16 +82,32 @@ public record RebuildResult(
     bool Success,
     string? Error) {
   /// <summary>
-  /// How many stream ids the caller named, when it named any.
+  /// How many stream ids the caller named, for a rebuild of selected streams; zero for a whole-perspective rebuild.
   /// </summary>
   /// <remarks>
-  /// <see cref="StreamsProcessed"/> alone cannot distinguish "I found none of the ids you gave me" from
-  /// "there was nothing to do" -- both report zero. A selected-streams rebuild was observed returning
-  /// success after discovering none of 32 explicitly requested streams, and no caller could have told.
-  /// An optional init-only property rather than a positional parameter, so existing construction sites and
-  /// deconstructions keep compiling.
+  /// <see cref="StreamsProcessed"/> alone cannot distinguish "none of the ids you named were rebuilt" from "there was
+  /// nothing to do": both report zero. A selected-streams rebuild was observed returning success after rebuilding
+  /// none of 32 explicitly requested streams, and no caller could have told (#1162).
   /// </remarks>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildStreamsAsync_ReportsHowManyRequestedStreamsItActuallyFoundAsync</tests>
   public int StreamsRequested { get; init; }
+
+  /// <summary>
+  /// How many of the streams were refused because they are state-based (ephemeral or compacted) and so not a
+  /// rebuildable source of truth. Their rows are left as they are.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs:RebuildStreamsAsync_WhenEveryNamedStreamIsRefused_ReportsTheRefusalsAsAFailureAsync</tests>
+  public int StreamsRefused { get; init; }
+
+  /// <summary>
+  /// How many rebuilt rows ended purged. A stream whose last event always purges the row is deleted without folding
+  /// the events before it (#1151); each purge is also logged with the event that ended the row.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#terminal-purges</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildStreamsAsync_WhenTheLastEventAlwaysPurges_DeletesTheRowWithoutFoldingTheStreamAsync</tests>
+  public int StreamsPurged { get; init; }
 }
 
 /// <summary>

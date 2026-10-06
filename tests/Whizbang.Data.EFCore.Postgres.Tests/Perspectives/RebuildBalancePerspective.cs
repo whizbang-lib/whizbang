@@ -20,7 +20,16 @@ public class RebuildBalancePerspective :
 
   public RebuildBalancePerspective() { }
 
+  private static int _creditsApplied;
+
+  /// <summary>How many credits were folded since <see cref="ResetCreditsApplied"/>: the evidence a replay was skipped.</summary>
+  public static int CreditsApplied => Volatile.Read(ref _creditsApplied);
+
+  /// <summary>Starts a count of folded credits.</summary>
+  public static void ResetCreditsApplied() => Interlocked.Exchange(ref _creditsApplied, 0);
+
   public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildCreditedEvent @event) {
+    Interlocked.Increment(ref _creditsApplied);
     return new RebuildBalanceModel {
       Id = @event.StreamId,
       Balance = currentData.Balance + @event.Amount

@@ -50,7 +50,8 @@ internal sealed record PerspectiveInfo(
     string? RowCapScopeKey = null,
     string? StreamGroupSpec = null,
     Whizbang.Generators.Shared.Models.ModelCopyInfo? ModelCopy = null,
-    string[]? MemberDefaults = null
+    string[]? MemberDefaults = null,
+    string[]? UnconditionalPurgeEventTypes = null
 );
 
 /// <summary>

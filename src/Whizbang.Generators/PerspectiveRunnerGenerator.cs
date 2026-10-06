@@ -6,6 +6,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Models;
 using Whizbang.Generators.Shared.Utilities;
@@ -196,6 +197,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     // Extract return types for each Apply method
     var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes);
+    var unconditionalPurges = _extractUnconditionalPurgeEventTypes(classSymbol, eventTypes);
 
     // Compute nested-aware simple name for unique hintNames
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
@@ -242,6 +244,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
             EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
+            UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null,
             PhysicalFields: physicalFields.Length > 0 ? physicalFields : null,
             StorageMode: storageMode,
             IsModelRecord: isModelRecord,
@@ -539,6 +542,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "SNAPSHOT_SETTINGS", perspective.IsEphemeral
         ? "var snapshotThreshold = _snapshotOptions.Value.EphemeralSnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.EphemeralMaxSnapshotsPerStream;"
         : "var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;");
+    result = TemplateUtilities.ReplaceRegion(result, "UNCONDITIONAL_PURGE",
+        perspective.UnconditionalPurgeEventTypes is { Length: > 0 } purgeTypes
+          ? $"private static bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => @event is {string.Join(" or ", purgeTypes)};"
+          : "private static bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => false;");
     result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
         $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};");
     // E2-4d: a TtlRow perspective registers its row TTL via a [ModuleInitializer] so the upsert stamps
@@ -1266,6 +1273,69 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     return [.. returnTypes];
   }
+
+  /// <summary>
+  /// The event types whose Apply can do nothing but purge the row (#1151): a body that is exactly
+  /// <c>ApplyResult&lt;T&gt;.Purge()</c>, <c>ModelAction.Purge</c> or <c>(null, ModelAction.Purge)</c>, as an expression body
+  /// or a block holding only that return. Anything else, a condition, another statement, is left out: a wrong call
+  /// deletes a row that should have survived, so the analysis only says yes when the body leaves no other outcome.
+  /// </summary>
+  private static string[] _extractUnconditionalPurgeEventTypes(INamedTypeSymbol classSymbol, List<string> eventTypes) {
+    var purges = new List<string>();
+    foreach (var method in classSymbol.GetAllMethodsByName("Apply")) {
+      if (method.Parameters.Length < 2) {
+        continue;
+      }
+      var eventType = TypeNameUtilities.FullyQualified(method.Parameters[1].Type);
+      if (eventTypes.Contains(eventType) && !purges.Contains(eventType)
+          && method.DeclaringSyntaxReferences.Length == 1
+          && method.DeclaringSyntaxReferences[0].GetSyntax() is MethodDeclarationSyntax declaration
+          && _onlyReturned(declaration) is { } returned
+          && _isPurge(returned)) {
+        purges.Add(eventType);
+      }
+    }
+    return [.. purges];
+  }
+
+  private static ExpressionSyntax? _onlyReturned(MethodDeclarationSyntax declaration) =>
+    declaration.ExpressionBody?.Expression
+      ?? (declaration.Body is { Statements.Count: 1 } body && body.Statements[0] is ReturnStatementSyntax { Expression: { } expression }
+        ? expression
+        : null);
+
+  private static bool _isPurge(ExpressionSyntax expression) {
+    while (expression is ParenthesizedExpressionSyntax parenthesized) {
+      expression = parenthesized.Expression;
+    }
+    return expression switch {
+      // ApplyResult<T>.Purge()
+      InvocationExpressionSyntax { ArgumentList.Arguments.Count: 0, Expression: MemberAccessExpressionSyntax access } =>
+        access.Name.Identifier.ValueText == "Purge" && _names(access.Expression, "ApplyResult"),
+      // ModelAction.Purge
+      MemberAccessExpressionSyntax access => _isModelActionPurge(access),
+      // (null, ModelAction.Purge)
+      TupleExpressionSyntax { Arguments.Count: 2 } tuple =>
+        tuple.Arguments[0].Expression is LiteralExpressionSyntax literal
+          && (literal.IsKind(SyntaxKind.NullLiteralExpression) || literal.IsKind(SyntaxKind.DefaultLiteralExpression))
+          && tuple.Arguments[1].Expression is MemberAccessExpressionSyntax second
+          && _isModelActionPurge(second),
+      _ => false,
+    };
+  }
+
+  private static bool _isModelActionPurge(MemberAccessExpressionSyntax access) =>
+    access.Name.Identifier.ValueText == "Purge" && _names(access.Expression, "ModelAction");
+
+  // The receiver is the named type, written bare, generic or qualified: ApplyResult<T>, Perspectives.ModelAction.
+  private static bool _names(ExpressionSyntax receiver, string typeName) => receiver switch {
+    IdentifierNameSyntax identifier => identifier.Identifier.ValueText == typeName,
+    GenericNameSyntax generic => generic.Identifier.ValueText == typeName,
+    MemberAccessExpressionSyntax qualified => _names(qualified.Name, typeName),
+    QualifiedNameSyntax qualified => _names(qualified.Right, typeName),
+    AliasQualifiedNameSyntax alias => _names(alias.Name, typeName),
+    _ => false,
+  };
 
   /// <summary>
   /// Classifies the return type of an Apply method.

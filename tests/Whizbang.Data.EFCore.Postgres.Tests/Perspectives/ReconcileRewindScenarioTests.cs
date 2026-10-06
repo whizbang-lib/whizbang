@@ -403,4 +403,42 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
                + "and regresses to 50, which is exactly the arrival-order failure the rewind "
                + "exists to correct");
   }
+
+  /// <summary>
+  /// A rewind whose replay ends in an event that always purges the row (#1151) deletes the row without folding the
+  /// events before it, and the frontier still moves past them, so the cursor does not re-flag them as stragglers.
+  /// </summary>
+  [Test]
+  public async Task RewindReplay_EndingInAnAlwaysPurgingEvent_DeletesTheRowWithoutFoldingAsync() {
+    var streamId = Guid.NewGuid();
+    var eventStore = new InMemoryEventStore();
+    var createdId = Guid.Parse("019e1000-0000-7000-8000-0000000000a1");
+    var updatedId = Guid.Parse("019e2000-0000-7000-8000-0000000000a2");
+    var purgedId = Guid.Parse("019e3000-0000-7000-8000-0000000000a3");
+    var stamped = new StampingEventStore(eventStore, new Dictionary<Guid, long?> {
+      [createdId] = 100,
+      [updatedId] = 200,
+      [purgedId] = 300,
+    });
+    await eventStore.AppendAsync(streamId, _envelope(createdId,
+      new ActionTestCreatedEvent { StreamId = streamId, Name = "Closing", Value = 1 }, 100));
+    await eventStore.AppendAsync(streamId, _envelope(updatedId,
+      new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 7 }, 200));
+    await eventStore.AppendAsync(streamId, _envelope(purgedId,
+      new ActionTestPurgedEvent { StreamId = streamId }, 300));
+
+    await using var ctx = CreateDbContext();
+    var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, TABLE);
+    var runner = await CreateRunnerAsync(stamped, ps);
+    ActionTestPerspective.ResetUpdatesApplied();
+
+    var result = await runner.RewindAndRunAsync(streamId, PERSPECTIVE, updatedId, 200, CancellationToken.None);
+
+    await Assert.That(result.EventsProcessed).IsEqualTo(3).Because("the skipped events still count as processed");
+    await Assert.That(result.LastEventId).IsEqualTo(purgedId);
+    await Assert.That(ActionTestPerspective.UpdatesApplied).IsEqualTo(0)
+      .Because("the replay ends in a purge, so folding the update before it is work the purge throws away");
+    await using var check = CreateDbContext();
+    await Assert.That(await check.Set<PerspectiveRow<ActionTestModel>>().AnyAsync(r => r.Id == streamId)).IsFalse();
+  }
 }

@@ -1858,4 +1858,63 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
   #endregion
 
+  #region A stream that ends in a purge (#1151)
+
+  /// <summary>
+  /// A stream whose last event always purges the row is deleted without folding the events before it: whatever they
+  /// fold, the last apply discards. The rebuild says so, rather than leaving a reader to infer it from a missing row.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheLastEventAlwaysPurges_DeletesTheRowWithoutFoldingTheStreamAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 50m });
+      await _appendEventAsync(eventStore, streamId, new RebuildClosedEvent { StreamId = streamId });
+    }
+    await _seedPreCutoverRowAsync(streamId, balance: 100m, version: 1);
+    RebuildBalancePerspective.ResetCreditsApplied();
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsPurged).IsEqualTo(1);
+    await Assert.That(RebuildBalancePerspective.CreditsApplied).IsEqualTo(0)
+      .Because("the stream ends in a purge, so folding its credits is work the last apply throws away");
+    await using var check = CreateDbContext();
+    await Assert.That(await check.Set<PerspectiveRow<RebuildBalanceModel>>().AnyAsync(r => r.Id == streamId)).IsFalse();
+  }
+
+  /// <summary>An event after the purge means the purge is not the last word, so the stream is replayed as before.</summary>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenAnEventFollowsThePurge_ReplaysTheStreamAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+      await _appendEventAsync(eventStore, streamId, new RebuildClosedEvent { StreamId = streamId });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 5m });
+    }
+    RebuildBalancePerspective.ResetCreditsApplied();
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsPurged).IsEqualTo(1).Because("the row still ends purged: a later credit does not resurrect it");
+    await Assert.That(RebuildBalancePerspective.CreditsApplied).IsEqualTo(2)
+      .Because("the purge was not the last event, so the stream is replayed as before: the first credit is folded "
+             + "and the one after the purge is offered to Apply to see whether it resurrects the row");
+  }
+
+  #endregion
+
 }

@@ -25,6 +25,14 @@ public class ActionTestPerspective :
   /// </summary>
   public ActionTestPerspective() { }
 
+  private static int _updatesApplied;
+
+  /// <summary>How many updates were folded since <see cref="ResetUpdatesApplied"/>: the evidence a replay was skipped.</summary>
+  public static int UpdatesApplied => Volatile.Read(ref _updatesApplied);
+
+  /// <summary>Starts a count of folded updates.</summary>
+  public static void ResetUpdatesApplied() => Interlocked.Exchange(ref _updatesApplied, 0);
+
   public ActionTestModel Apply(ActionTestModel currentData, ActionTestCreatedEvent @event) {
     return new ActionTestModel {
       Id = @event.StreamId,
@@ -35,6 +43,7 @@ public class ActionTestPerspective :
   }
 
   public ActionTestModel Apply(ActionTestModel currentData, ActionTestUpdatedEvent @event) {
+    Interlocked.Increment(ref _updatesApplied);
     return new ActionTestModel {
       Id = currentData.Id,
       Name = currentData.Name,
