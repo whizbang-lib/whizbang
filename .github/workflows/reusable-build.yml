@@ -130,6 +130,67 @@ jobs:
           # paths are obj/'s generated AssemblyAttributes sources.
           include-hidden-files: true
 
+      # Per-suite slices. Every test job downloaded the whole build above (about 2.4 GB) though an
+      # integration suite runs one or two projects, and the download took anywhere from 40 seconds
+      # to over 5 minutes. A test project's bin/Release holds its whole dependency closure, so each
+      # integration suite gets only its projects' output; the unit suite, which runs most projects,
+      # keeps the full build. The slices are derived from the projects' tags, the same way
+      # Run-Tests.ps1 selects them, and a slice missing a selected project fails that suite.
+      - name: Define per-suite build slices
+        id: slices
+        shell: pwsh
+        run: pwsh -NoProfile -File .github/scripts/Get-TestSlice.ps1 -GitHubOutput
+
+      - name: Upload build slice (postgres)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-postgres-${{ github.run_id }}
+          path: ${{ steps.slices.outputs.postgres }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
+
+      - name: Upload build slice (inmemory)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-inmemory-${{ github.run_id }}
+          path: ${{ steps.slices.outputs.inmemory }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
+
+      - name: Upload build slice (rabbitmq)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-rabbitmq-${{ github.run_id }}
+          path: ${{ steps.slices.outputs.rabbitmq }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
+
+      - name: Upload build slice (servicebus)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-servicebus-${{ github.run_id }}
+          path: ${{ steps.slices.outputs.servicebus }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
+
+      - name: Upload build slice (azureblob)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-azureblob-${{ github.run_id }}
+          path: ${{ steps.slices.outputs.azureblob }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
+
       # Guard: every packable output must still match the hash taken right after the build, so no
       # step in this job (today none does) rewrote what pack ships. A future step that instruments
       # or patches assemblies in place would quietly start shipping them to NuGet; this fails first.
