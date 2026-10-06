@@ -75,7 +75,8 @@ public class PgInstanceLifecycleMonitorBranchTests : EFCoreTestBase {
 
     await Assert.That(_sum(livenessMetrics.DeathsRetracted.Instrument, outcome: null)).IsEqualTo(1L)
       .Because("the instance heartbeat again, so its announced death is retracted and counted");
-    await Assert.That(bus.Published).IsEquivalentTo(new List<Type> { typeof(InstanceDiedSignal), typeof(InstanceJoinedSignal) });
+    List<Type> expected = [typeof(InstanceDiedSignal), typeof(InstanceJoinedSignal)];
+    await Assert.That(bus.Published).IsEquivalentTo(expected);
   }
 
   private static WhizbangMetrics _whizbangMetrics() =>

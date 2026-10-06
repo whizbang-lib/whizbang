@@ -82,7 +82,8 @@ public class RabbitMQTransportPoisonAndRoutingBranchTests {
       .Where(b => b.Queue == "test-subscriber-test-exchange")
       .Select(b => b.RoutingKey)
       .ToList();
-    await Assert.That(routingKeys).IsEquivalentTo(new List<string> { "payments.created" })
+    List<string> expected = ["payments.created"];
+    await Assert.That(routingKeys).IsEquivalentTo(expected)
       .Because("a RoutingPatterns value that is not a JSON array is not a pattern list");
   }
 
@@ -97,7 +98,8 @@ public class RabbitMQTransportPoisonAndRoutingBranchTests {
       .Where(b => b.Queue == "fixed-queue")
       .Select(b => b.RoutingKey)
       .ToList();
-    await Assert.That(routingKeys).IsEquivalentTo(new List<string> { "#" });
+    List<string> expected = ["#"];
+    await Assert.That(routingKeys).IsEquivalentTo(expected);
   }
 
   #endregion

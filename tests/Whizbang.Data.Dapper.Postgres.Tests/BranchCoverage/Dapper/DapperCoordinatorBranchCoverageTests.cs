@@ -44,7 +44,8 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
       "UPDATE wh_outbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
       new { i = instanceId, m = msgId });
 
-    var rows = await c.FetchOutboxBatchAsync(new[] { streamId }, instanceId, maxPerStream: 10);
+    Guid[] input1 = [streamId];
+    var rows = await c.FetchOutboxBatchAsync(input1, instanceId, maxPerStream: 10);
 
     await Assert.That(rows.Select(r => r.MessageId)).IsEquivalentTo([msgId]);
   }
@@ -60,7 +61,8 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
       "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
       new { i = instanceId, m = msgId });
 
-    var rows = await c.FetchInboxBatchAsync(new[] { streamId }, instanceId, maxPerStream: 10);
+    Guid[] input2 = [streamId];
+    var rows = await c.FetchInboxBatchAsync(input2, instanceId, maxPerStream: 10);
 
     await Assert.That(rows.Select(r => r.MessageId)).IsEquivalentTo([msgId]);
   }
@@ -79,7 +81,8 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
       """,
       new { id = eventId, stream = streamId });
 
-    var rows = await c.FetchEventsByIdsAsync(new[] { eventId });
+    Guid[] input3 = [eventId];
+    var rows = await c.FetchEventsByIdsAsync(input3);
 
     await Assert.That(rows.Select(r => r.EventId)).IsEquivalentTo([eventId]);
   }
@@ -90,7 +93,8 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
     var msgId = (Guid)TrackedGuid.New();
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.New())], partitionCount: 100);
 
-    var completed = await c.CompleteOutboxPublishedAsync(new[] { msgId }, debugMode: false);
+    Guid[] input4 = [msgId];
+    var completed = await c.CompleteOutboxPublishedAsync(input4, debugMode: false);
 
     await Assert.That(completed).IsGreaterThanOrEqualTo(1)
       .Because("the id handed in as an array reaches the completion function");
@@ -102,7 +106,8 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
     var msgId = (Guid)TrackedGuid.New();
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.New())], partitionCount: 100);
 
-    var renewed = await c.RenewLeasesAsync(WorkCategory.Outbox, new[] { msgId }, leaseSeconds: 120);
+    Guid[] input5 = [msgId];
+    var renewed = await c.RenewLeasesAsync(WorkCategory.Outbox, input5, leaseSeconds: 120);
 
     await Assert.That(renewed).IsEqualTo(1);
   }
@@ -117,7 +122,8 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
       _makeInbox(orphanId, (Guid)TrackedGuid.New(), "Test.Orphan, Test")
     ], partitionCount: 100);
 
-    var purged = await c.PurgeOrphanInboxAsync(new[] { "Test.Handled, Test" });
+    string[] input6 = ["Test.Handled, Test"];
+    var purged = await c.PurgeOrphanInboxAsync(input6);
 
     await Assert.That(purged.Select(p => p.MessageId)).IsEquivalentTo([orphanId]);
     await Assert.That(await _countAsync("SELECT COUNT(*) FROM wh_inbox WHERE message_id = @m", handledId)).IsEqualTo(1L);
@@ -133,9 +139,11 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
     var msgId = (Guid)TrackedGuid.New();
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.New())], partitionCount: 100);
 
+    Guid[] outboxIds = [msgId];
+    Guid[] perspectiveEventWorkIds = [];
     await c.FlushCompletionsAsync(new FlushCompletionsRequest(
-      OutboxIds: new[] { msgId },
-      PerspectiveEventWorkIds: Array.Empty<Guid>()));
+      OutboxIds: outboxIds,
+      PerspectiveEventWorkIds: perspectiveEventWorkIds));
 
     await Assert.That(await _countAsync("SELECT COUNT(*) FROM wh_outbox WHERE message_id = @m", msgId)).IsEqualTo(0L)
       .Because("production-mode outbox completion deletes the published row");

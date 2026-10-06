@@ -77,8 +77,10 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var (first, _) = await _seedLeasedOutboxAsync(connection, instanceId);
     var (second, _) = await _seedLeasedOutboxAsync(connection, instanceId);
 
-    await coordinator.CompleteOutboxPublishedAsync(new[] { first }, debugMode: false);
-    await coordinator.CompleteOutboxPublishedAsync(new List<Guid> { second }, debugMode: false);
+    Guid[] input1 = [first];
+    await coordinator.CompleteOutboxPublishedAsync(input1, debugMode: false);
+    List<Guid> input2 = [second];
+    await coordinator.CompleteOutboxPublishedAsync(input2, debugMode: false);
 
     await Assert.That(await _countAsync(connection, "SELECT count(*) FROM wh_outbox WHERE message_id = ANY(@ids)", [first, second]))
       .IsEqualTo(0L);
@@ -93,8 +95,10 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var (first, _) = await _seedLeasedOutboxAsync(connection, instanceId);
     var (second, _) = await _seedLeasedOutboxAsync(connection, instanceId);
 
-    var renewedFromArray = await coordinator.RenewLeasesAsync(WorkCategory.Outbox, new[] { first });
-    var renewedFromList = await coordinator.RenewLeasesAsync(WorkCategory.Outbox, new List<Guid> { second });
+    Guid[] input3 = [first];
+    var renewedFromArray = await coordinator.RenewLeasesAsync(WorkCategory.Outbox, input3);
+    List<Guid> input4 = [second];
+    var renewedFromList = await coordinator.RenewLeasesAsync(WorkCategory.Outbox, input4);
 
     await Assert.That(renewedFromArray).IsEqualTo(1);
     await Assert.That(renewedFromList).IsEqualTo(1);
@@ -109,8 +113,10 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var (first, _) = await _seedLeasedInboxAsync(connection, instanceId);
     var (second, _) = await _seedLeasedInboxAsync(connection, instanceId);
 
-    var fromArray = await coordinator.ReleaseUnprocessedInboxAsync(instanceId, new[] { first });
-    var fromList = await coordinator.ReleaseUnprocessedInboxAsync(instanceId, new List<Guid> { second });
+    Guid[] input5 = [first];
+    var fromArray = await coordinator.ReleaseUnprocessedInboxAsync(instanceId, input5);
+    List<Guid> input6 = [second];
+    var fromList = await coordinator.ReleaseUnprocessedInboxAsync(instanceId, input6);
 
     await Assert.That(fromArray).IsEqualTo(1);
     await Assert.That(fromList).IsEqualTo(1);
@@ -125,8 +131,12 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var (_, firstStream) = await _seedLeasedInboxAsync(connection, instanceId);
     var (_, secondStream) = await _seedLeasedInboxAsync(connection, instanceId);
 
-    var fromArrays = await coordinator.ReleaseUnstartedLeasesAsync(instanceId, new[] { firstStream }, Array.Empty<Guid>());
-    var fromLists = await coordinator.ReleaseUnstartedLeasesAsync(instanceId, new List<Guid> { secondStream }, new List<Guid>());
+    Guid[] input7 = [firstStream];
+    Guid[] input8 = [];
+    var fromArrays = await coordinator.ReleaseUnstartedLeasesAsync(instanceId, input7, input8);
+    List<Guid> input9 = [secondStream];
+    List<Guid> input10 = [];
+    var fromLists = await coordinator.ReleaseUnstartedLeasesAsync(instanceId, input9, input10);
 
     await Assert.That(fromArrays.InboxReleased).IsEqualTo(1);
     await Assert.That(fromLists.InboxReleased).IsEqualTo(1);
@@ -140,8 +150,10 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var instanceId = await _seedInstanceAsync(connection);
     var (messageId, streamId) = await _seedLeasedOutboxAsync(connection, instanceId);
 
-    var fromArray = await coordinator.FetchOutboxBatchAsync(new[] { streamId }, instanceId, maxPerStream: 100);
-    var fromList = await coordinator.FetchOutboxBatchAsync(new List<Guid> { streamId }, instanceId, maxPerStream: 100);
+    Guid[] input11 = [streamId];
+    var fromArray = await coordinator.FetchOutboxBatchAsync(input11, instanceId, maxPerStream: 100);
+    List<Guid> input12 = [streamId];
+    var fromList = await coordinator.FetchOutboxBatchAsync(input12, instanceId, maxPerStream: 100);
 
     await Assert.That(fromArray.Select(r => r.MessageId)).Contains(messageId);
     await Assert.That(fromList.Select(r => r.MessageId)).Contains(messageId);
@@ -155,8 +167,10 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var instanceId = await _seedInstanceAsync(connection);
     var (messageId, streamId) = await _seedLeasedInboxAsync(connection, instanceId);
 
-    var fromArray = await coordinator.FetchInboxBatchAsync(new[] { streamId }, instanceId, maxPerStream: 100);
-    var fromList = await coordinator.FetchInboxBatchAsync(new List<Guid> { streamId }, instanceId, maxPerStream: 100);
+    Guid[] input13 = [streamId];
+    var fromArray = await coordinator.FetchInboxBatchAsync(input13, instanceId, maxPerStream: 100);
+    List<Guid> input14 = [streamId];
+    var fromList = await coordinator.FetchInboxBatchAsync(input14, instanceId, maxPerStream: 100);
 
     await Assert.That(fromArray.Select(r => r.MessageId)).Contains(messageId);
     await Assert.That(fromList.Select(r => r.MessageId)).Contains(messageId);
@@ -169,8 +183,10 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var coordinator = _coordinator(dbContext);
     var (_, eventId) = await _seedEventAsync(connection, withBody: true);
 
-    var fromArray = await coordinator.FetchEventsByIdsAsync(new[] { eventId });
-    var fromList = await coordinator.FetchEventsByIdsAsync(new List<Guid> { eventId });
+    Guid[] input15 = [eventId];
+    var fromArray = await coordinator.FetchEventsByIdsAsync(input15);
+    List<Guid> input16 = [eventId];
+    var fromList = await coordinator.FetchEventsByIdsAsync(input16);
 
     await Assert.That(fromArray.Select(e => e.EventId)).Contains(eventId);
     await Assert.That(fromList.Select(e => e.EventId)).Contains(eventId);
@@ -184,8 +200,10 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var first = await _seedPerspectiveEventAsync(connection);
     var second = await _seedPerspectiveEventAsync(connection);
 
-    await coordinator.CompletePerspectiveAsync(cursors: [], eventWorkIds: new[] { first }, debugMode: false);
-    await coordinator.CompletePerspectiveAsync(cursors: [], eventWorkIds: new List<Guid> { second }, debugMode: false);
+    Guid[] input17 = [first];
+    await coordinator.CompletePerspectiveAsync(cursors: [], eventWorkIds: input17, debugMode: false);
+    List<Guid> input18 = [second];
+    await coordinator.CompletePerspectiveAsync(cursors: [], eventWorkIds: input18, debugMode: false);
 
     await Assert.That(await _countAsync(connection,
       "SELECT count(*) FROM wh_perspective_events WHERE event_work_id = ANY(@ids)", [first, second])).IsEqualTo(0L);
@@ -200,8 +218,10 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var (first, _) = await _seedLeasedOutboxAsync(connection, instanceId);
     var (second, _) = await _seedLeasedOutboxAsync(connection, instanceId);
 
-    await coordinator.CompleteCoalesceFoldAsync(new[] { first }, [], partitionCount: 4);
-    await coordinator.CompleteCoalesceFoldAsync(new List<Guid> { second }, [], partitionCount: 4);
+    Guid[] input19 = [first];
+    await coordinator.CompleteCoalesceFoldAsync(input19, [], partitionCount: 4);
+    List<Guid> input20 = [second];
+    await coordinator.CompleteCoalesceFoldAsync(input20, [], partitionCount: 4);
 
     await Assert.That(await _countAsync(connection,
       "SELECT count(*) FROM wh_outbox WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL", [first, second]))
@@ -219,7 +239,7 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var (messageId, _) = await _seedLeasedOutboxAsync(connection, instanceId);
 
     await _coordinator(dbContext).FlushCompletionsAsync(new FlushCompletionsRequest(
-      OutboxIds: new[] { messageId },
+      OutboxIds: [messageId],
       PerspectiveCursors: null,
       FailuresByCategory: [new CategoryFailures(WorkCategory.Outbox, [])]));
 
@@ -235,7 +255,7 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     var (messageId, _) = await _seedLeasedOutboxAsync(connection, instanceId);
 
     await _coordinator(dbContext).FlushCompletionsAsync(new FlushCompletionsRequest(
-      OutboxIds: new List<Guid> { messageId },
+      OutboxIds: [messageId],
       PerspectiveCursors: []));
 
     await Assert.That(await _countAsync(connection, "SELECT count(*) FROM wh_outbox WHERE message_id = ANY(@ids)", [messageId]))
