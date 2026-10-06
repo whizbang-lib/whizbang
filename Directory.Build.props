@@ -144,9 +144,9 @@
     <NoWarn>$(NoWarn)</NoWarn>
   </PropertyGroup>
 
-  <!-- CS1591 enforcement: Whizbang.Core and Whizbang.Generators enforce XML docs on all public members -->
+  <!-- CS1591 enforcement: these projects enforce XML docs on all public members -->
   <!-- Other source projects still suppress CS1591 until their docs are completed -->
-  <PropertyGroup Condition="'$(MSBuildProjectName)' != 'Whizbang.Core' and '$(MSBuildProjectName)' != 'Whizbang.Generators'">
+  <PropertyGroup Condition="'$(MSBuildProjectName)' != 'Whizbang.Core' and '$(MSBuildProjectName)' != 'Whizbang.Generators' and '$(MSBuildProjectName)' != 'Whizbang.Observability' and '$(MSBuildProjectName)' != 'Whizbang.Offloads.InMemory' and '$(MSBuildProjectName)' != 'Whizbang.SignalR'">
     <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
