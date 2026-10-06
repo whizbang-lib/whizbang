@@ -49,7 +49,7 @@ public class CascadeContextBranchCoverageTests {
     await Assert.That(result.Metadata["replaced"]).IsEqualTo("new")
       .Because("on a key collision the merged-in value wins");
     await Assert.That(result.Metadata["added"]).IsEqualTo(3);
-    await Assert.That(original.Metadata!["replaced"]).IsEqualTo("old")
+    await Assert.That(original.Metadata["replaced"]).IsEqualTo("old")
       .Because("the merge copies the dictionary rather than writing into the original's");
     await Assert.That(original.Metadata.Count).IsEqualTo(2);
   }

@@ -40,9 +40,9 @@ public class BacklogAgeWorkerBranchCoverageTests {
 
     await Assert.That(busyInterval).IsEqualTo(TimeSpan.FromMinutes(1))
       .Because("a zero interval is not a cadence (and not a valid backoff floor); the floor falls back to one minute");
-    await Assert.That(idleIntervals).IsEquivalentTo(new[] {
+    await Assert.That(idleIntervals).IsEquivalentTo([
       TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(4)
-    }).Because("the idle stretch starts at the fallback floor and doubles up to four times it");
+    ]).Because("the idle stretch starts at the fallback floor and doubles up to four times it");
   }
 
   [Test]

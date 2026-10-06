@@ -181,7 +181,7 @@ public class RepairDrainWorkerBranchCoverageTests {
 
   [Test]
   public async Task DrainTick_WithStreamIntegrityMetrics_CountsTheRowsRequestedPerOriginAsync() {
-    using var meterServices = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    await using var meterServices = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterServices.GetRequiredService<IMeterFactory>()));
     var readings = new List<(long Value, string? Source, string? Origin)>();
     using var listener = new MeterListener();

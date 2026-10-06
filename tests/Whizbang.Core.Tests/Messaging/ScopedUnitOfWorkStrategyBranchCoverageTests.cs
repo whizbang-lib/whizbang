@@ -40,7 +40,7 @@ public class ScopedUnitOfWorkStrategyBranchCoverageTests {
     // Disposal is the flush; the await using above makes the second dispose a guarded no-op.
     await strategy.DisposeAsync();
 
-    await Assert.That(flushed).IsEquivalentTo(new[] { freshUnitId })
+    await Assert.That(flushed).IsEquivalentTo([freshUnitId])
       .Because("only the fresh unit is flushed when the scope ends; the canceled one is gone for good");
   }
 }

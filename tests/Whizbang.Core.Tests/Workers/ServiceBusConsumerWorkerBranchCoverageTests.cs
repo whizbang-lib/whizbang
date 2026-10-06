@@ -241,7 +241,7 @@ public class ServiceBusConsumerWorkerBranchCoverageTests {
     };
     await transport.Deliver(new TransportMessage(envelope, JSON_ENVELOPE_TYPE)).WaitAsync(_signalTimeout);
 
-    await Assert.That(serializer.BoundTypes.Select(t => t.FullName)).IsEquivalentTo(new[] { typeof(object).FullName })
+    await Assert.That(serializer.BoundTypes.Select(t => t.FullName)).IsEquivalentTo([typeof(object).FullName])
       .Because("with no payload to inspect, the envelope is serialized under the object type rather than failing");
     await Assert.That(strategy.CapturedInboxMessages.Count).IsEqualTo(1);
     await Assert.That(strategy.CapturedInboxMessages[0].MessageId).IsEqualTo(messageId.Value);
@@ -333,7 +333,7 @@ public class ServiceBusConsumerWorkerBranchCoverageTests {
     public SpanCapture(string sourceName, ActivityTraceId traceId) {
       _listener = new ActivityListener {
         ShouldListenTo = source => source.Name == sourceName,
-        Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+        Sample = (ref _) => ActivitySamplingResult.AllData,
         ActivityStopped = activity => {
           if (activity.TraceId == traceId) {
             lock (_stopped) {

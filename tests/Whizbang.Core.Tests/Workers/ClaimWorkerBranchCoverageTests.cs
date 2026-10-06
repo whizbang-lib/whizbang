@@ -63,8 +63,9 @@ public class ClaimWorkerBranchCoverageTests {
   [Test]
   public async Task ListenerSignal_DeadLetterReadyWithoutBus_IsNotAWorkDoorbellAsync() {
     var listener = new ControllableListener();
-    var coord = new ScriptedCoordinator(_edgeScript());
-    coord.DuringFirstClaim = () => listener.Raise(WorkSignalCategory.DeadLetterReady);
+    var coord = new ScriptedCoordinator(_edgeScript()) {
+      DuringFirstClaim = () => listener.Raise(WorkSignalCategory.DeadLetterReady)
+    };
     var liveness = new SignalBusLivenessState();
     var judged = _judgement(liveness);
     using var harness = _startWorker(coord, listener, NullSignalBus.Instance, liveness, pollingIntervalMs: 50, pollingMaxMs: 100);
@@ -84,8 +85,9 @@ public class ClaimWorkerBranchCoverageTests {
   [Test]
   public async Task ListenerSignal_OutboxWithBusConfigured_IsLeftToTheBusAsync() {
     var listener = new ControllableListener();
-    var coord = new ScriptedCoordinator(_edgeScript());
-    coord.DuringFirstClaim = () => listener.Raise(WorkSignalCategory.Outbox);
+    var coord = new ScriptedCoordinator(_edgeScript()) {
+      DuringFirstClaim = () => listener.Raise(WorkSignalCategory.Outbox)
+    };
     var liveness = new SignalBusLivenessState();
     var judged = _judgement(liveness);
     using var harness = _startWorker(coord, listener, new ConfiguredSignalBus(), liveness, pollingIntervalMs: 50, pollingMaxMs: 100);
@@ -102,8 +104,9 @@ public class ClaimWorkerBranchCoverageTests {
   [Test]
   public async Task ListenerSignal_OutboxWithoutBus_RingsTheDoorbellAsync() {
     var listener = new ControllableListener();
-    var coord = new ScriptedCoordinator(_edgeScript());
-    coord.DuringFirstClaim = () => listener.Raise(WorkSignalCategory.Outbox);
+    var coord = new ScriptedCoordinator(_edgeScript()) {
+      DuringFirstClaim = () => listener.Raise(WorkSignalCategory.Outbox)
+    };
     var liveness = new SignalBusLivenessState();
     var judged = _judgement(liveness);
     // Polling parked far out: the second claim can only come from the doorbell.

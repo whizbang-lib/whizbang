@@ -45,7 +45,7 @@ public class MessageChangesBranchCoverageTests {
             DeclaringType = typeof(HandBuiltContractEvent),
             PropertyName = nameof(HandBuiltContractEvent.ClrName),
             JsonPropertyName = "clr_wire",
-            Getter = o => ((HandBuiltContractEvent)o!).ClrName,
+            Getter = o => ((HandBuiltContractEvent)o).ClrName,
             PropertyTypeInfo = stringInfo,
           });
           withMember.AttributeProvider = typeof(HandBuiltContractEvent).GetProperty(nameof(HandBuiltContractEvent.ClrName));
@@ -55,7 +55,7 @@ public class MessageChangesBranchCoverageTests {
             DeclaringType = typeof(HandBuiltContractEvent),
             PropertyName = nameof(HandBuiltContractEvent.Unmapped),
             JsonPropertyName = "unmapped_wire",
-            Getter = o => ((HandBuiltContractEvent)o!).Unmapped,
+            Getter = o => ((HandBuiltContractEvent)o).Unmapped,
             PropertyTypeInfo = stringInfo,
           });
           // No member metadata at all: the only name this property has is its serializer name.

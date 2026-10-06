@@ -112,7 +112,7 @@ public class PerspectiveMigrationWorkerBranchCoverageTests {
     await Assert.That(statuses[0].Status).IsEqualTo(-1).Because("a failed rebuild is recorded as failed");
     var failureLine = logger.Snapshot().SingleOrDefault(m => m.Contains("Migration rebuild failed for SilentPerspective", StringComparison.Ordinal));
     await Assert.That(failureLine).IsNotNull();
-    await Assert.That(failureLine!).EndsWith(": unknown")
+    await Assert.That(failureLine).EndsWith(": unknown")
       .Because("a failure with no error text still names a reason, rather than an empty one an operator cannot search for");
   }
 }

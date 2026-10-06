@@ -673,7 +673,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     await fx.Worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(fx.Worker.ExecuteTask!.IsFaulted).IsFalse()
+    await Assert.That(fx.Worker.ExecuteTask.IsFaulted).IsFalse()
       .Because("a host with no lifecycle coordinator has nothing stale to clean, which is not a failure");
     var pending = meters.GetByName("whizbang.perspective.pending_events");
     await Assert.That(pending).Count().IsEqualTo(1);

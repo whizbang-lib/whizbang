@@ -67,7 +67,9 @@ public class PerspectiveRebuilderBranchCoverageTests {
   public async Task ToListAsync_AsyncEnumerableSource_ReadsThroughTheAsyncEnumeratorAsync() {
     var source = new AsyncOnlyQueryable([1, 2, 3]);
 
-    var list = await Whizbang.Core.Perspectives.QueryableExtensions.ToListAsync(source, CancellationToken.None);
+    // Called statically: the source is both IQueryable and IAsyncEnumerable, so the extension form
+    // is ambiguous with System.Linq.AsyncEnumerable.ToListAsync.
+    var list = await QueryableExtensions.ToListAsync(source, CancellationToken.None);
 
     await Assert.That(list).IsEquivalentTo([1, 2, 3]);
     await Assert.That(source.AsyncEnumerations).IsEqualTo(1)
@@ -78,7 +80,7 @@ public class PerspectiveRebuilderBranchCoverageTests {
   public async Task ToListAsync_PlainQueryable_ReadsSynchronouslyAsync() {
     var source = _plainValues.AsQueryable();
 
-    var list = await Whizbang.Core.Perspectives.QueryableExtensions.ToListAsync(source, CancellationToken.None);
+    var list = await source.ToListAsync(CancellationToken.None);
 
     await Assert.That(list).IsEquivalentTo([4, 5]);
   }

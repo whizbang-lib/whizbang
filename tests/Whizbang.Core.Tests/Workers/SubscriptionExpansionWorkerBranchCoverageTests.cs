@@ -172,7 +172,7 @@ public class SubscriptionExpansionWorkerBranchCoverageTests {
 
   [Test]
   public async Task BackfillRequested_WithStreamIntegrityMetrics_CountsThePendingTypesAsync() {
-    using var meterServices = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    await using var meterServices = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterServices.GetRequiredService<IMeterFactory>()));
     var readings = new List<long>();
     using var listener = new MeterListener();

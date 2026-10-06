@@ -64,13 +64,13 @@ public class SystemEventEmitterBranchCoverageTests {
     public List<object> AppendedEnvelopes { get; } = [];
 
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
-      AppendedEnvelopes.Add(envelope!);
+      AppendedEnvelopes.Add(envelope);
       return Task.CompletedTask;
     }
 
     public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default)
         where TMessage : notnull {
-      AppendedEnvelopes.Add(message!);
+      AppendedEnvelopes.Add(message);
       return Task.CompletedTask;
     }
 

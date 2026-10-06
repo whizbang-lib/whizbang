@@ -376,7 +376,7 @@ public class PerspectiveWorkerDrainModeTests {
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
       .Because("every consumer loop ends by cancellation on shutdown, which is the normal way out, not a fault");
     await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
       .Because("the worker must finish once its loops and watchdog have ended, so a host's StopAsync returns");
@@ -454,7 +454,7 @@ public class PerspectiveWorkerDrainModeTests {
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
       .Because("a failed orphan disposal is a warning with the maintenance sweep as backstop, not a dead worker");
     (Guid InstanceId, List<Guid> StreamIds, int MaxAttempts)[] calls;
     lock (coordinator.ReapCalls) { calls = [.. coordinator.ReapCalls]; }

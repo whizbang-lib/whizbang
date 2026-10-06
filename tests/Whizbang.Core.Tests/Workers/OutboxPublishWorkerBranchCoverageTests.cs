@@ -579,7 +579,7 @@ public class OutboxPublishWorkerBranchCoverageTests {
     var tracingSourceName = WhizbangActivitySource.Tracing.Name;
     var listener = new ActivityListener {
       ShouldListenTo = source => source.Name == tracingSourceName,
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+      Sample = (ref _) => ActivitySamplingResult.AllData,
       ActivityStarted = started.Enqueue,
     };
     ActivitySource.AddActivityListener(listener);

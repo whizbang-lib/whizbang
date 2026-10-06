@@ -36,7 +36,7 @@ public class IntegrityAuditWorkerBranchCoverageTests {
   public async Task Constructor_NullOptions_ThrowsArgumentNullExceptionAsync() {
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
-    var act = () => new IntegrityAuditWorker(
+    IntegrityAuditWorker act() => new(
       sp.GetRequiredService<IServiceScopeFactory>(),
       SchemaReadyGate.AlreadyReady(),
       null!,
@@ -50,7 +50,7 @@ public class IntegrityAuditWorkerBranchCoverageTests {
   public async Task Constructor_OptionsWithNullValue_ThrowsArgumentNullExceptionAsync() {
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
-    var act = () => new IntegrityAuditWorker(
+    IntegrityAuditWorker act() => new(
       sp.GetRequiredService<IServiceScopeFactory>(),
       SchemaReadyGate.AlreadyReady(),
       new NullValueOptions(),

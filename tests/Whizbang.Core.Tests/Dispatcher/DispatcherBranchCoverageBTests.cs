@@ -184,7 +184,7 @@ public sealed class DispatcherBranchCoverageBTests {
     public SpanCapture() {
       _listener = new ActivityListener {
         ShouldListenTo = source => source.Name == "Whizbang.Execution" || source.Name == PARENT_SOURCE_NAME,
-        Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllDataAndRecorded,
+        Sample = (ref options) => ActivitySamplingResult.AllDataAndRecorded,
         ActivityStopped = activity => {
           if (activity.OperationName.StartsWith("Dispatch Bcb", StringComparison.Ordinal)) {
             lock (_stopped) {
@@ -699,9 +699,9 @@ public sealed class DispatcherBranchCoverageBTests {
 
     var receipts = overload switch {
       "send-generic" => await dispatcher.SendManyAsync<BcbOutboxCommand>(commands),
-      "send-object" => await dispatcher.SendManyAsync(commands.Cast<object>().ToList()),
+      "send-object" => await dispatcher.SendManyAsync([.. commands.Cast<object>()]),
       "publish-generic" => await dispatcher.PublishManyAsync<BcbOutboxEvent>(events),
-      _ => await dispatcher.PublishManyAsync(events.Cast<object>().ToList())
+      _ => await dispatcher.PublishManyAsync([.. events.Cast<object>()])
     };
 
     await Assert.That(receipts.Count()).IsEqualTo(2);

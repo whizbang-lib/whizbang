@@ -352,7 +352,7 @@ public class DispatcherBranchCoverageATests {
       Metrics = new MetricAssertionHelper([.. _meters.CreatedMeters]);
       _listener = new ActivityListener {
         ShouldListenTo = source => source.Name == "Whizbang.Execution" || source.Name == PARENT_SOURCE_NAME,
-        Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllDataAndRecorded,
+        Sample = (ref options) => ActivitySamplingResult.AllDataAndRecorded,
         ActivityStopped = activity => {
           if (activity.OperationName.StartsWith("Dispatch BranchA", StringComparison.Ordinal)) {
             lock (_spans) {

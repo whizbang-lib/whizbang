@@ -216,7 +216,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     };
 
     var anchor = PerspectiveWorker._findCursorInversionAnchorByCommitSequence(events, rawByEventId, cachedCommitSequence: 10);
-    var onlyUnmatched = PerspectiveWorker._findCursorInversionAnchorByCommitSequence(events.Take(1).ToList(), rawByEventId, cachedCommitSequence: 10);
+    var onlyUnmatched = PerspectiveWorker._findCursorInversionAnchorByCommitSequence([.. events.Take(1)], rawByEventId, cachedCommitSequence: 10);
 
     await Assert.That(anchor).IsEqualTo(violator)
       .Because("an event the lookup has no row for has no commit sequence to compare and is skipped, not fatal");

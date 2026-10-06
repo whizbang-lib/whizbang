@@ -406,8 +406,8 @@ public class InboxDispatchWorkerBranchCoverageTests {
     var work = _makeWork();
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
 
-    var move = store.Moves.Single();
-    await Assert.That(move.Reason).IsEqualTo(MessageFailureReason.SerializationError);
+    var (_, _, reason) = store.Moves.Single();
+    await Assert.That(reason).IsEqualTo(MessageFailureReason.SerializationError);
     await Assert.That(parts.HandlerCommit.All).IsEmpty()
       .Because("a refused payload is never completed; the move deleted the row");
     await Assert.That(parts.Failure.All).IsEmpty();

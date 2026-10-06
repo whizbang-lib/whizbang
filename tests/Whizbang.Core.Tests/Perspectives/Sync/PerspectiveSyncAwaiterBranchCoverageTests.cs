@@ -93,7 +93,7 @@ public class PerspectiveSyncAwaiterBranchCoverageTests {
     await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
     await Assert.That(result.EventsAwaited).IsEqualTo(2);
     await Assert.That(syncTracker.LastPerspectiveName).IsEqualTo(perspectiveName);
-    await Assert.That(syncTracker.LastEventIds).IsEquivalentTo(new[] { firstEvent, secondEvent });
+    await Assert.That(syncTracker.LastEventIds).IsEquivalentTo([firstEvent, secondEvent]);
 
     var span = capture.Single("PerspectiveSync BranchPerspective");
     await Assert.That(span.GetTagItem("whizbang.sync.outcome")).IsEqualTo("Synced");
@@ -228,7 +228,7 @@ public class PerspectiveSyncAwaiterBranchCoverageTests {
       var traceId = _parent.TraceId;
       _listener = new ActivityListener {
         ShouldListenTo = source => source.Name == TRACING_SOURCE,
-        Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+        Sample = (ref _) => ActivitySamplingResult.AllData,
         ActivityStopped = activity => {
           if (activity.TraceId == traceId) {
             lock (_stopped) {

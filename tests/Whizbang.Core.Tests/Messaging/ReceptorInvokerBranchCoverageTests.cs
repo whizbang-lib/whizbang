@@ -40,7 +40,7 @@ public class ReceptorInvokerBranchCoverageTests {
   private static ActivityListener _listen(List<Activity> stopped) {
     var listener = new ActivityListener {
       ShouldListenTo = source => source.Name == WhizbangActivitySource.Tracing.Name,
-      Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
+      Sample = (ref options) => ActivitySamplingResult.AllData,
       ActivityStopped = activity => {
         lock (stopped) {
           stopped.Add(activity);

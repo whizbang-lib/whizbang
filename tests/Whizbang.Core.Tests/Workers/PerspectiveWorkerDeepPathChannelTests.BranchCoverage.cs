@@ -677,7 +677,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     var tracingSourceName = WhizbangActivitySource.Tracing.Name;
     var listener = new ActivityListener {
       ShouldListenTo = source => source.Name == tracingSourceName,
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+      Sample = (ref _) => ActivitySamplingResult.AllData,
       ActivityStopped = stopped.Add,
     };
     ActivitySource.AddActivityListener(listener);

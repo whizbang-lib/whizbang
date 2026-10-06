@@ -160,7 +160,7 @@ public class MaintenanceWorkerBranchCoverageTests {
 
   [Test]
   public async Task MaintenanceCycle_WithMetrics_RecordsEachTaskDurationTaggedByTaskAsync() {
-    using var meterServices = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    await using var meterServices = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var metrics = new MaintenanceMetrics(new WhizbangMetrics(meterFactory: meterServices.GetRequiredService<IMeterFactory>()));
     var readings = new List<(double Value, string? TaskName)>();
     using var listener = new MeterListener();
