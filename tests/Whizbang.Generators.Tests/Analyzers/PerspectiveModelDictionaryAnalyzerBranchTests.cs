@@ -11,7 +11,7 @@ using Whizbang.Data.EFCore.Postgres.Generators;
 namespace Whizbang.Generators.Tests.Analyzers;
 
 /// <summary>
-/// WHIZ810 recognizes each dictionary shape a model can declare, the read-only interface included,
+/// WHIZ810 recognizes each dictionary shape a model can declare, both interfaces included,
 /// and does not mistake another two-argument generic, such as a key/value pair, for one.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/PerspectiveModelDictionaryAnalyzer.cs</code-under-test>
@@ -32,6 +32,7 @@ public class PerspectiveModelDictionaryAnalyzerBranchTests {
       public class ScoreModel {
         public Guid Id { get; set; }
         public IReadOnlyDictionary<string, int> Totals { get; set; } = new Dictionary<string, int>();
+        public IDictionary<string, int> Tallies { get; set; } = new Dictionary<string, int>();
         public KeyValuePair<string, int> Best { get; set; }
       }
 
@@ -44,7 +45,9 @@ public class PerspectiveModelDictionaryAnalyzerBranchTests {
     var whiz810 = diagnostics.Where(d => d.Id == "WHIZ810").Select(d => d.GetMessage(CultureInfo.InvariantCulture)).ToList();
 
     await Assert.That(whiz810).IsNotEmpty();
-    await Assert.That(whiz810.All(m => m.Contains("Totals", StringComparison.Ordinal))).IsTrue()
-      .Because("only the read-only dictionary is reported; the key/value pair is not a dictionary");
+    await Assert.That(whiz810).Contains(m => m.Contains("Totals", StringComparison.Ordinal));
+    await Assert.That(whiz810).Contains(m => m.Contains("Tallies", StringComparison.Ordinal));
+    await Assert.That(whiz810.All(m => m.Contains("Totals", StringComparison.Ordinal) || m.Contains("Tallies", StringComparison.Ordinal))).IsTrue()
+      .Because("only the dictionary interfaces are reported; the key/value pair is not a dictionary");
   }
 }
