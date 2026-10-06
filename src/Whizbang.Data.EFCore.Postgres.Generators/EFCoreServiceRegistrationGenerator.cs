@@ -2624,37 +2624,33 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // Or from "...Templates.Migrations.001_Name.sql" -> "001_Name.sql"
       var fileName = resourceName[resourcePrefix.Length..];
 
-      // Read content from embedded resource. The name came from GetManifestResourceNames, so the
-      // stream is there; guarding it keeps a name that stops resolving between the two calls from
-      // faulting the generator, and contributes no entry when it fires. Written as a block the
-      // resource enters rather than as a skip it leaves by, so the test runs on every resource.
-      using var stream = assembly.GetManifestResourceStream(resourceName);
-      if (stream is not null) {
-        using var reader = new System.IO.StreamReader(stream);
-        var content = reader.ReadToEnd();
+      // Non-null by contract, as in the bootstrap pass: the name came from GetManifestResourceNames
+      // on this same assembly, so a guard here would be a branch no input can reach.
+      using var stream = assembly.GetManifestResourceStream(resourceName)!;
+      using var reader = new System.IO.StreamReader(stream);
+      var content = reader.ReadToEnd();
 
-        // Escape the SQL content for C# verbatim string literal (@"...")
-        // In verbatim strings, only quotes need escaping (by doubling them)
-        // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
-        // IMPORTANT: Replace __SCHEMA__ with __MIGRATION_SCHEMA__ to prevent build-time replacement.
-        //            The runtime _transformMigrationSql function uses the schema parameter, not __SCHEMA__.
-        var escapedContent = content
-            .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")  // Preserve for runtime transformation
-            .Replace("\"", "\"\"")  // Escape quotes for verbatim string
-            .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
-            .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
+      // Escape the SQL content for C# verbatim string literal (@"...")
+      // In verbatim strings, only quotes need escaping (by doubling them)
+      // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
+      // IMPORTANT: Replace __SCHEMA__ with __MIGRATION_SCHEMA__ to prevent build-time replacement.
+      //            The runtime _transformMigrationSql function uses the schema parameter, not __SCHEMA__.
+      var escapedContent = content
+          .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")  // Preserve for runtime transformation
+          .Replace("\"", "\"\"")  // Escape quotes for verbatim string
+          .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
+          .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
 
-        sb.Append($"      (\"{fileName}\", @\"{escapedContent}\")");
+      sb.Append($"      (\"{fileName}\", @\"{escapedContent}\")");
 
-        if (i < migrationResources.Length - 1) {
-          sb.AppendLine(",");
-        }
+      if (i < migrationResources.Length - 1) {
+        sb.AppendLine(",");
       }
     }
 
-    // An empty resource set produces no entries, and the placeholder comment stands in for them so
-    // the generated array initializer still reads as deliberate rather than as a truncation.
-    return migrationResources.Length == 0 ? "// No migration files found in embedded resources" : sb.ToString();
+    // The migrations are this generator's own embedded resources, fixed when it is built, and the
+    // generator tests assert they are emitted; the set is never empty.
+    return sb.ToString();
   }
 
   /// <summary>
@@ -2897,8 +2893,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return false;
     }
 
-    var typeName = field.TypeName.Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
-    return typeName is "System.String" or "string";
+    // The field's type name is rendered fully qualified, which writes a special type as its keyword.
+    return field.TypeName.TrimEnd('?') == "string";
   }
 
   /// <summary>

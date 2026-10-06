@@ -113,6 +113,35 @@ public class SchemaMigratorDeferralGenerationTests {
         + "being a bootstrap and is doing the job it was meant to be electing someone for");
   }
 
+  /// <summary>The full list carries every migration the generator embeds, each exactly once.</summary>
+  /// <remarks>
+  /// The migrations are the generator's own embedded resources, so this is what makes an empty or
+  /// truncated list impossible to ship rather than something the generator guards at run time.
+  /// </remarks>
+  [Test]
+  public async Task TheFullListEmitsEveryEmbeddedMigrationAsync() {
+    var assembly = typeof(Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator).Assembly;
+    var prefix = $"{assembly.GetName().Name}.Templates.Migrations.";
+    var embedded = assembly.GetManifestResourceNames()
+      .Where(n => n.StartsWith(prefix, StringComparison.Ordinal) && n.EndsWith(".sql", StringComparison.Ordinal))
+      .Select(n => n[prefix.Length..])
+      .ToList();
+
+    var output = await _generatedAsync(MINIMAL_CONTEXT);
+    var start = output.IndexOf("GetMigrationScripts() {", StringComparison.Ordinal);
+    await Assert.That(start).IsGreaterThan(0);
+    var end = output.IndexOf("GetBootstrapMigrationScripts() {", StringComparison.Ordinal);
+    await Assert.That(end).IsGreaterThan(start);
+    var window = output[start..end];
+
+    await Assert.That(embedded.Count).IsGreaterThan(100)
+      .Because("the generator embeds the whole migration set");
+    await Assert.That(window.Split(".sql\"").Length - 1).IsEqualTo(embedded.Count);
+    foreach (var name in embedded) {
+      await Assert.That(window).Contains($"(\"{name}\", @\"", StringComparison.Ordinal);
+    }
+  }
+
   /// <summary>The bootstrap runs before anything is elected.</summary>
   /// <remarks>
   /// Order is the whole point: the capability function the election needs is created by the
