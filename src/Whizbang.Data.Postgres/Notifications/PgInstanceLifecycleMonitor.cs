@@ -142,7 +142,8 @@ public sealed partial class PgInstanceLifecycleMonitor(
   }
 
   /// <summary>Test hook: run one detection tick without the loop.</summary>
-  public Task TickForTestsAsync(CancellationToken cancellationToken) => _tickOnceAsync(cancellationToken);
+  /// <returns>The delay the loop would wait before the next tick, so a test can assert the cadence a tick chose.</returns>
+  public Task<TimeSpan> TickForTestsAsync(CancellationToken cancellationToken) => _tickOnceAsync(cancellationToken);
 
   private async Task<TimeSpan> _tickOnceAsync(CancellationToken ct) {
     var threshold = StaleThreshold;
