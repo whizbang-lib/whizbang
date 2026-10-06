@@ -694,6 +694,11 @@ jobs:
         shell: pwsh
         run: ./scripts/Lint-MigrationSql.ps1
 
+      # A test project outside Whizbang.slnx is never built, so its tests never run and nothing says so (#1160).
+      - name: Every test project is in the solution
+        shell: pwsh
+        run: ./scripts/Test-SolutionTestProjects.ps1
+
   build:
     name: Build · Compile
     needs: [version, changes, release-pr, ff-validated]

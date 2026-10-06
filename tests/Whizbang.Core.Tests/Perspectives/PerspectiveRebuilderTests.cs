@@ -94,6 +94,33 @@ public class PerspectiveRebuilderTests {
     await Assert.That(result.Success).IsTrue();
     await Assert.That(result.StreamsProcessed).IsEqualTo(2).Because("Only the two Sourced streams are rebuilt.");
     await Assert.That(runner.RunCount).IsEqualTo(2).Because("The ephemeral stream is never replayed — no corruption from reaped bodies.");
+    await Assert.That(result.StreamsRequested).IsEqualTo(3);
+    await Assert.That(result.StreamsRefused).IsEqualTo(1).Because("The refusal is counted, not only logged (#1162).");
+  }
+
+  /// <summary>
+  /// Every named stream refused is not a success (#1162): 32 ephemeral streams named explicitly came back Success with
+  /// nothing rebuilt, and no caller could tell that from a correct no-op.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenEveryNamedStreamIsRefused_ReportsTheRefusalsAsAFailureAsync() {
+    var runner = new FakePerspectiveRunner();
+    var ephemeral = Guid.NewGuid();
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new FakePerspectiveRunnerRegistry(runner));
+    services.AddSingleton<IEventStoreQuery>(new FakeEventStoreQuery([]));
+    services.AddSingleton<IWorkCoordinator>(new FakeEphemeralCoordinator(ephemeral));
+    var sp = services.BuildServiceProvider();
+    var rebuilder = new PerspectiveRebuilder(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<PerspectiveRebuilder>.Instance);
+
+    var result = await rebuilder.RebuildStreamsAsync("TestPerspective", [ephemeral]);
+
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.StreamsRequested).IsEqualTo(1);
+    await Assert.That(result.StreamsRefused).IsEqualTo(1);
+    await Assert.That(result.StreamsProcessed).IsEqualTo(0);
+    await Assert.That(result.Error).Contains("state-based");
+    await Assert.That(runner.RunCount).IsEqualTo(0);
   }
 
   private sealed class FakeEphemeralCoordinator(Guid ephemeralStream) : IWorkCoordinator {

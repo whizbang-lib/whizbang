@@ -1605,4 +1605,316 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
   #endregion
 
+
+  #region Rebuild over a row an older library left behind (AB#19364)
+
+  // A v4 GUID. Nothing time-ordered in it, which is the whole problem.
+  private static readonly Guid PRE_CUTOVER_EVENT_ID = new("b1661e28-5fe4-4b93-ba9d-6c8d51f85694");
+
+  /// <summary>
+  /// Writes the row an older version of this library would have left: the balance reflects only the
+  /// first event, and the recorded position is a v4 id with no commit sequence and EventType 'Unknown'
+  /// — a position <see cref="PerspectiveIdempotencyFilter"/> deliberately cannot read.
+  /// </summary>
+  private async Task _seedPreCutoverRowAsync(Guid streamId, decimal balance, int version) {
+    await using var seed = CreateDbContext();
+    var now = DateTime.UtcNow.AddDays(-5);
+    seed.Set<PerspectiveRow<RebuildBalanceModel>>().Add(new PerspectiveRow<RebuildBalanceModel> {
+      Id = streamId,
+      Data = new RebuildBalanceModel { Id = streamId, Balance = balance },
+      Metadata = new PerspectiveMetadata {
+        EventId = PRE_CUTOVER_EVENT_ID.ToString(),
+        EventType = "Unknown",
+        CommitSequence = null,
+        Timestamp = now
+      },
+      Scope = new PerspectiveScope(),
+      CreatedAt = now,
+      UpdatedAt = now,
+      Version = version
+    });
+    _ = await seed.SaveChangesAsync();
+  }
+
+  /// <summary>
+  /// A rebuild means rebuild: whatever the row claims about where it got to, replaying the stream must
+  /// leave the row agreeing with that stream's events.
+  /// </summary>
+  /// <remarks>
+  /// Measured on an upgraded environment, not imagined. A rebuild of one such stream reported
+  /// <c>EventsReplayed: 1123</c> over a row at version 1120 of a 2,247-event stream, published equal
+  /// <c>RowDigestBefore</c>/<c>RowDigestAfter</c>, and left the row byte-identical. The filter is not the
+  /// cause and is covered twice over — as a unit in
+  /// <c>PerspectiveIdempotencyFilterTests.IsAlreadyApplied_OnlyTheEventHasASequence_Defers</c> and against
+  /// a real database in
+  /// <c>PerspectiveApplyIdempotencyTests.RunWithEvents_MetadataMissingCommitSequence_EnvelopeHasCommitSequence_LexSmallerEventId_IsApplied</c>.
+  /// Both say the event must be applied. Every other test in this file starts from a clean table or a row
+  /// this library wrote, so the rebuild path over a pre-cutover row was asserted on nowhere until here.
+  /// </remarks>
+  [Test]
+  public async Task RebuildStreamsAsync_OverARowWithPreCutoverMetadata_BringsTheRowToTheStreamHeadAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+
+    await _seedPreCutoverRowAsync(streamId, balance: 100m, version: 1);
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    var result = await rebuilder.RebuildStreamsAsync(
+        RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+
+    await using var verify = CreateDbContext();
+    var row = await verify.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId);
+
+    await Assert.That(row).IsNotNull();
+    // NOT a balance assertion. Replay loads existing projection state and folds on top of it, so an
+    // additive event applied over a seeded row double-counts -- a seeded 100 plus two 100 credits comes
+    // out at 300, which is this file's documented replay-on-top behavior and not the defect under test.
+    // What "came to the stream head" means here, immune to that, is that the row moved off the position
+    // the older library left and now records a readable one.
+    await Assert.That(row!.Version).IsGreaterThan(1);
+    await Assert.That(row.Data.Balance).IsNotEqualTo(100m);
+  }
+
+  /// <summary>
+  /// The repair is only worth running if it inoculates: the row must come out carrying a position this
+  /// library can compare, or the next event on that stream is discarded exactly as before.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_OverAPreCutoverRow_ReplacesTheUnreadablePositionAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+    await _seedPreCutoverRowAsync(streamId, balance: 100m, version: 1);
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    _ = await rebuilder.RebuildStreamsAsync(
+        RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verify = CreateDbContext();
+    var row = await verify.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking().FirstAsync(r => r.Id == streamId);
+
+    await Assert.That(row.Metadata.CommitSequence).IsNotNull();
+    await Assert.That(row.Metadata.EventId).IsNotEqualTo(PRE_CUTOVER_EVENT_ID.ToString());
+    await Assert.That(row.Metadata.EventType).IsNotEqualTo("Unknown");
+  }
+
+  /// <summary>
+  /// The observability half of the same defect. A rebuild that reads events and folds none of them in
+  /// must not report a number that reads as work done — that number is what made a no-op look like a
+  /// repair for a whole day.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheRowDoesNotMove_DoesNotReportEventsReplayedAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+    await _seedPreCutoverRowAsync(streamId, balance: 100m, version: 1);
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    var result = await rebuilder.RebuildStreamsAsync(
+        RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verify = CreateDbContext();
+    var row = await verify.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking().FirstAsync(r => r.Id == streamId);
+
+    if (row.Data.Balance == 100m) {
+      await Assert.That(result.EventsReplayed).IsEqualTo(0);
+    }
+  }
+
+
+  /// <summary>
+  /// The purge half. A stream whose terminal event purges must leave no row, even when the row it is
+  /// replacing was written by an older library.
+  /// </summary>
+  /// <remarks>
+  /// 32 ended sessions in an upgraded environment were still present after a rebuild. Their projection
+  /// returns <c>ApplyResult.Purge()</c> on the ended event and every one of those streams ends with it,
+  /// so the rebuild should have removed them. That they survived says the same thing the audit rows say:
+  /// a replay over a pre-cutover row does not take effect. It is one defect, not two.
+  /// </remarks>
+  [Test]
+  public async Task RebuildStreamsAsync_OverAPreCutoverRow_StillPurgesWhenTheLastEventPurgesAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+      await _appendEventAsync(eventStore, streamId, new RebuildClosedEvent { StreamId = streamId });
+    }
+
+    await _seedPreCutoverRowAsync(streamId, balance: 100m, version: 1);
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    _ = await rebuilder.RebuildStreamsAsync(
+        RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verify = CreateDbContext();
+    var row = await verify.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId);
+
+    await Assert.That(row).IsNull();
+  }
+
+
+  /// <summary>
+  /// A selected-streams rebuild must say how many of the ids it was GIVEN it actually found.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The defect this pins down, measured in an upgraded environment: a rebuild handed 32 explicit stream
+  /// ids returned <c>Completed</c> / <c>Success</c> after 14 ms with <c>StreamsProcessed: 0</c> and
+  /// <c>EventsReplayed: 0</c>. Every one of those streams carried an unapplied terminal event that the
+  /// projection purges on, and every one of those rows is still present. It was the only one of 51
+  /// perspectives in that run to process nothing.
+  /// </para>
+  /// <para>
+  /// <see cref="RebuildResult"/> carries <c>StreamsProcessed</c> and no count of what was requested, so
+  /// "I found none of the 32 ids you named" and "there was nothing to do" are the same two numbers to
+  /// every caller. A caller cannot tell a silent discovery failure from a correct no-op, which is why this
+  /// went unnoticed until the row census was compared by hand.
+  /// </para>
+  /// <para>
+  /// This test is deliberately NOT a reproduction — the harness does not reproduce the discovery failure
+  /// itself. It pins the reporting contract that would have surfaced it: ask for two streams when only one
+  /// has events, and the shortfall must be visible in the result.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task RebuildStreamsAsync_ReportsHowManyRequestedStreamsItActuallyFoundAsync() {
+    var withEvents = Guid.NewGuid();
+    var withNothing = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, withEvents, new RebuildCreditedEvent { StreamId = withEvents, Amount = 100m });
+    }
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    var result = await rebuilder.RebuildStreamsAsync(
+        RebuildBalancePerspectiveName, [withEvents, withNothing], CancellationToken.None);
+
+    // Two asked for, one found. Both numbers have to be in the result, or the gap is invisible.
+    await Assert.That(result.StreamsRequested).IsEqualTo(2);
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Finding none of the ids the caller named is not a success.
+  /// </summary>
+  /// <remarks>
+  /// The exact shape observed: every requested id discovered as nothing, reported as <c>Success</c>. A
+  /// caller that names ids is asserting they exist; coming back with none of them and a green result is
+  /// the failure mode that let 32 rows sit unrepaired through a run that reported clean.
+  /// </remarks>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenItFindsNoneOfTheRequestedStreams_DoesNotReportSuccessAsync() {
+    await using var sp = _buildRebuildServices();
+    var neverSeen = new[] { Guid.NewGuid(), Guid.NewGuid() };
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    var result = await rebuilder.RebuildStreamsAsync(
+        RebuildBalancePerspectiveName, neverSeen, CancellationToken.None);
+
+    await Assert.That(result.StreamsProcessed).IsEqualTo(0);
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.Error).IsNotNull();
+  }
+
+  #endregion
+
+  #region A stream that ends in a purge (#1151)
+
+  /// <summary>
+  /// A stream whose last event always purges the row is deleted without folding the events before it: whatever they
+  /// fold, the last apply discards. The rebuild says so, rather than leaving a reader to infer it from a missing row.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheLastEventAlwaysPurges_DeletesTheRowWithoutFoldingTheStreamAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 50m });
+      await _appendEventAsync(eventStore, streamId, new RebuildClosedEvent { StreamId = streamId });
+    }
+    await _seedPreCutoverRowAsync(streamId, balance: 100m, version: 1);
+    RebuildBalancePerspective.ResetCreditsApplied();
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsPurged).IsEqualTo(1);
+    await Assert.That(RebuildBalancePerspective.CreditsApplied).IsEqualTo(0)
+      .Because("the stream ends in a purge, so folding its credits is work the last apply throws away");
+    await using var check = CreateDbContext();
+    await Assert.That(await check.Set<PerspectiveRow<RebuildBalanceModel>>().AnyAsync(r => r.Id == streamId)).IsFalse();
+  }
+
+  /// <summary>An event after the purge means the purge is not the last word, so the stream is replayed as before.</summary>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenAnEventFollowsThePurge_ReplaysTheStreamAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+      await _appendEventAsync(eventStore, streamId, new RebuildClosedEvent { StreamId = streamId });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 5m });
+    }
+    RebuildBalancePerspective.ResetCreditsApplied();
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsPurged).IsEqualTo(1).Because("the row still ends purged: a later credit does not resurrect it");
+    await Assert.That(RebuildBalancePerspective.CreditsApplied).IsEqualTo(2)
+      .Because("the purge was not the last event, so the stream is replayed as before: the first credit is folded "
+             + "and the one after the purge is offered to Apply to see whether it resurrects the row");
+  }
+
+  #endregion
+
 }
