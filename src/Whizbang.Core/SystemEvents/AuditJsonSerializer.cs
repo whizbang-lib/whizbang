@@ -35,10 +35,8 @@ internal static partial class AuditJsonSerializer {
 
     try {
       var typeInfo = options.GetTypeInfo(typeof(T));
-      if (typeInfo is not null) {
-        var json = JsonSerializer.Serialize(value, typeInfo);
-        return JsonDocument.Parse(json).RootElement.Clone();
-      }
+      var json = JsonSerializer.Serialize(value, typeInfo);
+      return JsonDocument.Parse(json).RootElement.Clone();
     } catch (NotSupportedException) {
       // Type not registered with JsonContextRegistry — fall through to fallback
     }
@@ -46,10 +44,8 @@ internal static partial class AuditJsonSerializer {
     try {
       // Fallback: try the runtime type (may differ from compile-time type)
       var typeInfo = options.GetTypeInfo(value.GetType());
-      if (typeInfo is not null) {
-        var json = JsonSerializer.Serialize(value, typeInfo);
-        return JsonDocument.Parse(json).RootElement.Clone();
-      }
+      var json = JsonSerializer.Serialize(value, typeInfo);
+      return JsonDocument.Parse(json).RootElement.Clone();
     } catch (NotSupportedException) {
       // Type not registered — return empty object (logged below).
     }

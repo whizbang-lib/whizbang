@@ -226,8 +226,9 @@ public sealed class HousekeepingCoordinator {
     if (_settings.SettledCooldown <= TimeSpan.Zero) {
       return true;
     }
-    return _settledSince is { } since
-      && _timeProvider.GetUtcNow() - since >= _settings.SettledCooldown;
+    // Reached only for a quiescent reading, which _trackSettled recorded first under the same
+    // lock (_tryBeginCore), so the dwell has started.
+    return _timeProvider.GetUtcNow() - _settledSince!.Value >= _settings.SettledCooldown;
   }
 
   /// <summary>

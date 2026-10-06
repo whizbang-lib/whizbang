@@ -386,8 +386,8 @@ public sealed partial class InboxDrainWorker(
           break;
         }
         try {
-          var hasRows = perStream.TryGetValue(sid, out var rows) && rows is { Count: > 0 };
-          if (!hasRows) {
+          // A stream with rows has a grouped list of at least one (GroupBy yields no empty group).
+          if (!perStream.TryGetValue(sid, out var rows)) {
             continue;
           }
 
@@ -395,7 +395,7 @@ public sealed partial class InboxDrainWorker(
           // were consumed at the SQL level, so they won't reappear in the inner-loop fetch.
           var seen = new HashSet<Guid>();
           var hadAnyNew = false;
-          foreach (var row in rows!) {
+          foreach (var row in rows) {
             if (!seen.Add(row.MessageId)) {
               continue;
             }

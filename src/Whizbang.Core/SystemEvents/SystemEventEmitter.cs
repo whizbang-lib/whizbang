@@ -76,10 +76,10 @@ public sealed class SystemEventEmitter(
 
     // Build scope dictionary from scope context
     var scope = new Dictionary<string, string?>();
-    if (scopeContext?.Scope?.TenantId != null) {
+    if (scopeContext?.Scope.TenantId != null) {
       scope[SCOPE_TENANT_ID] = scopeContext.Scope.TenantId;
     }
-    if (scopeContext?.Scope?.UserId != null) {
+    if (scopeContext?.Scope.UserId != null) {
       scope["UserId"] = scopeContext.Scope.UserId;
     }
     if (correlationId != null) {

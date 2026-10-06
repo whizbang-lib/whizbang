@@ -31,8 +31,10 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
 
   private readonly Lock _lock = new();
   private List<T> _pending = [];
-  private Timer? _slideTimer;
-  private Timer? _hardMaxTimer;
+  // Never nulled: Change on a disposed timer returns false and does nothing, which is exactly what a
+  // late enqueue or the final flush during DisposeAsync needs.
+  private readonly Timer _slideTimer;
+  private readonly Timer _hardMaxTimer;
   private bool _disposed;
 
   /// <summary>
@@ -74,7 +76,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
 
       // Start hard max timer on first message in batch
       if (_pending.Count == 1) {
-        _hardMaxTimer?.Change(_options.MaxWaitMs, Timeout.Infinite);
+        _hardMaxTimer.Change(_options.MaxWaitMs, Timeout.Infinite);
       }
 
       // Check batch size trigger
@@ -82,7 +84,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
 
       if (!shouldFlushNow) {
         // Reset sliding window timer
-        _slideTimer?.Change(_options.SlideMs, Timeout.Infinite);
+        _slideTimer.Change(_options.SlideMs, Timeout.Infinite);
       }
     }
 
@@ -101,14 +103,8 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
 
     _disposed = true;
 
-    if (_slideTimer is not null) {
-      await _slideTimer.DisposeAsync();
-      _slideTimer = null;
-    }
-    if (_hardMaxTimer is not null) {
-      await _hardMaxTimer.DisposeAsync();
-      _hardMaxTimer = null;
-    }
+    await _slideTimer.DisposeAsync();
+    await _hardMaxTimer.DisposeAsync();
 
     // Flush any remaining pending messages
     await _flushBatchAsync();
@@ -147,8 +143,8 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
       _pending = [];
 
       // Stop both timers
-      _slideTimer?.Change(Timeout.Infinite, Timeout.Infinite);
-      _hardMaxTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+      _slideTimer.Change(Timeout.Infinite, Timeout.Infinite);
+      _hardMaxTimer.Change(Timeout.Infinite, Timeout.Infinite);
     }
 
     try {
@@ -161,7 +157,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
         _pending = batch;
 
         // Restart slide timer so the batch gets retried
-        _slideTimer?.Change(_options.SlideMs, Timeout.Infinite);
+        _slideTimer.Change(_options.SlideMs, Timeout.Infinite);
       }
 
       throw;

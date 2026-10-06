@@ -67,6 +67,17 @@ public static class TypeNameFormatter {
     return type.AssemblyQualifiedName;
   }
 
+  /// <summary>
+  /// The versioned assembly-qualified form, or the display name for a type that has none (an open
+  /// generic parameter). A lookup key for the priority and type registries, which every runtime
+  /// message type, being closed, answers with its assembly-qualified name.
+  /// </summary>
+  /// <param name="type">The type to name.</param>
+  public static string AssemblyQualifiedNameOrDisplay(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.AssemblyQualifiedName ?? DisplayName(type);
+  }
+
   /// <summary>Display text for an assembly (its full display name, else its simple name).</summary>
   /// <param name="assembly">The assembly to describe.</param>
   public static string AssemblyDisplayName(System.Reflection.Assembly assembly) {

@@ -35,6 +35,23 @@ public class TypeNameFormatterBranchCoverageTests {
   }
 
   [Test]
+  public async Task AssemblyQualifiedNameOrDisplay_ClosedType_IsTheAssemblyQualifiedNameAsync() {
+    var name = TypeNameFormatter.AssemblyQualifiedNameOrDisplay(typeof(List<int>));
+
+    await Assert.That(name).IsEqualTo(TypeNameFormatter.AssemblyQualifiedName(typeof(List<int>)));
+  }
+
+  [Test]
+  public async Task AssemblyQualifiedNameOrDisplay_TypeWithNoAssemblyQualifiedName_IsItsDisplayNameAsync() {
+    var genericParameter = typeof(List<>).GetGenericArguments()[0];
+
+    await Assert.That(TypeNameFormatter.AssemblyQualifiedNameOrNull(genericParameter)).IsNull()
+      .Because("the setup must present a type with no assembly-qualified name");
+
+    await Assert.That(TypeNameFormatter.AssemblyQualifiedNameOrDisplay(genericParameter)).IsEqualTo("T");
+  }
+
+  [Test]
   public async Task AssemblyDisplayName_NoFullName_FallsBackToSimpleNameAsync() {
     var assembly = new NamelessAssembly(new AssemblyName("Probe.Assembly"));
 

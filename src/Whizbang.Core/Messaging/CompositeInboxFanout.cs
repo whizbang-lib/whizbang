@@ -440,7 +440,7 @@ public static partial class CompositeInboxFanout {
     // The child's type, rendered the way the serializer renders MessageType (the same helper), so the
     // derived id and the stored message_type agree.
     var innerType = inner.GetType();
-    var childTypeName = TypeNameFormatter.AssemblyQualifiedNameOrNull(innerType) ?? TypeNameFormatter.DisplayName(innerType);
+    var childTypeName = TypeNameFormatter.AssemblyQualifiedNameOrDisplay(innerType);
     var childEnvelope = new MessageEnvelope<IMessage> {
       Version = source.Version,
       DispatchContext = source.DispatchContext,

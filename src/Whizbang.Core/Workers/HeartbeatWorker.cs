@@ -154,9 +154,10 @@ public partial class HeartbeatWorker(
       return new HeartbeatTickPlan(true, TimeSpan.Zero, HeartbeatBeatReason.Regular);
     }
 
-    var untilCadence = cadence - elapsed;
-    var untilDeadline = deadline - elapsed;
-    var wait = untilCadence < untilDeadline ? untilCadence : untilDeadline;
+    // The cadence boundary always precedes the watchdog deadline: the deadline is two of the slowest
+    // cadence (HeartbeatLivenessThreshold: threshold minus lead), and the cadence in force is never
+    // slower than the slowest one.
+    var wait = cadence - elapsed;
     if (wait > lead) {
       wait = lead;
     }

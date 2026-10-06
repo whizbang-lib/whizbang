@@ -1327,6 +1327,9 @@ public partial class PerspectiveWorker(
             // handlers for. When not registered, we fall back to the narrow trigger-only
             // lookup so existing deployments keep working.
             if (processingMode == ProcessingMode.Replay) {
+              // Replay is returned only for a checkpoint that carries a rewind trigger
+              // (_executePerspectiveRunnerAsync).
+              var triggerId = checkpoint!.RewindTriggerEventId!.Value;
               var replayReader = groupScope.ServiceProvider.GetService<Whizbang.Core.Perspectives.IPerspectiveReplayReader>();
               if (replayReader is not null && _eventTypeProvider.IsAvailable) {
                 var eventTypes = _eventTypeProvider.GetEventTypes();
@@ -1337,8 +1340,7 @@ public partial class PerspectiveWorker(
                     processedEvents.Insert(0, annotated.Envelope);
                   }
                 }
-              } else if (checkpoint?.RewindTriggerEventId is { } triggerId
-                         && eventStore is not null
+              } else if (eventStore is not null
                          && _eventTypeProvider.IsAvailable
                          && !processedEvents.Any(e => e.MessageId.Value == triggerId)) {
                 var envelopesUpToTrigger = await eventStore.GetEventsBetweenPolymorphicAsync(
@@ -1367,7 +1369,7 @@ public partial class PerspectiveWorker(
             _markAffinityPhase(streamId, perspectiveName, "post-lifecycle");
             await _invokePostPerspectiveLifecycleAsync(
               processedEvents, groupReceptorInvoker, streamCtx, result,
-              new PostPerspectiveLifecycleOptions(enableLifecycleSpans, processingMode, IsNewByEventId: null), ct);
+              new PostPerspectiveLifecycleOptions(enableLifecycleSpans, processingMode), ct);
             _bufferCompletionsAndUpdateCache(group, processedEvents, groupLifecycleCoordinator, perspectiveName);
 
             if (processedEvents.Count > 0) {
@@ -4286,8 +4288,7 @@ public partial class PerspectiveWorker(
   /// </summary>
   private readonly record struct PostPerspectiveLifecycleOptions(
     bool EnableLifecycleSpans,
-    ProcessingMode? ProcessingMode,
-    IReadOnlyDictionary<Guid, bool>? IsNewByEventId);
+    ProcessingMode? ProcessingMode);
 
   /// <summary>
   /// Phase 3d: Invokes PostPerspective lifecycle receptors and processes tags.
@@ -4307,7 +4308,7 @@ public partial class PerspectiveWorker(
       if (processedEvents.Count > 0 && receptorInvoker is not null) {
         LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, streamCtx.PerspectiveName, streamCtx.StreamId);
 
-        var replayOpts = new LifecycleReplayOptions(options.ProcessingMode, options.IsNewByEventId);
+        var replayOpts = new LifecycleReplayOptions(options.ProcessingMode);
         await _invokeLifecycleReceptorsForEventsAsync(
           processedEvents, streamCtx, result.PerspectiveType, result.LastEventId,
           LifecycleStage.PostPerspectiveInline, replayOpts, cancellationToken);
@@ -4735,8 +4736,7 @@ public partial class PerspectiveWorker(
   /// through lifecycle receptor invocation without inflating the parameter list.
   /// </summary>
   private readonly record struct LifecycleReplayOptions(
-    ProcessingMode? ProcessingMode,
-    IReadOnlyDictionary<Guid, bool>? IsNewByEventId) {
+    ProcessingMode? ProcessingMode) {
     public static LifecycleReplayOptions None => default;
   }
 
@@ -4762,14 +4762,10 @@ public partial class PerspectiveWorker(
     }
 
     try {
-      // Invoke receptors for each event. IsNewEvent defaults to true (live processing,
-      // trigger events, and freshly-arrived post-rewind events are all "new"). The
-      // rewind path overrides per-event via isNewByEventId when it replays already-
-      // processed events for [ReceptorIdempotent(AlwaysFire = true)] receptors.
+      // Invoke receptors for each event. Every event reaching this path is new (live processing,
+      // trigger events, freshly-arrived post-rewind events); replayed already-processed events
+      // carry their per-event flag through the batch path (batchIsNewByEventId) instead.
       foreach (var envelope in processedEvents) {
-        var isNew = replayOptions.IsNewByEventId is null
-          || !replayOptions.IsNewByEventId.TryGetValue(envelope.MessageId.Value, out var flag)
-          || flag;
         var context = new LifecycleExecutionContext {
           CurrentStage = stage,
           StreamId = streamCtx.StreamId,
@@ -4778,7 +4774,7 @@ public partial class PerspectiveWorker(
           MessageSource = MessageSource.Local,
           AttemptNumber = 1,
           ProcessingMode = replayOptions.ProcessingMode,
-          IsNewEvent = isNew
+          IsNewEvent = true
         };
 
         await _establishSecurityContextAsync(envelope, streamCtx.ScopedProvider, cancellationToken);

@@ -187,8 +187,9 @@ public sealed partial class PerspectiveSyncAwaiter(
     // DEBUG: Log the expected event IDs we're waiting for
     if (_logger.IsEnabled(LogLevel.Debug)) {
       foreach (var inquiry in inquiries) {
-        var eventIdsStr = string.Join(", ", inquiry.EventIds ?? []);
-        LogSyncDebugWaiting(_logger, inquiry.StreamId, inquiry.PerspectiveName ?? perspectiveName, eventIdsStr);
+        // _buildSyncInquiries sets EventIds on every inquiry it builds; PerspectiveName is required.
+        var eventIdsStr = string.Join(", ", inquiry.EventIds!);
+        LogSyncDebugWaiting(_logger, inquiry.StreamId, inquiry.PerspectiveName, eventIdsStr);
       }
     }
 

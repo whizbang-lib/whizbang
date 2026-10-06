@@ -280,7 +280,7 @@ public sealed class StartupPipelineRunner {
         // fast under test intervals, never a per-second drumbeat.
         nextNarration = nextNarration switch { 3 => 10, 10 => 30, _ => nextNarration + 60 };
         var detail = transient is null
-          ? attempt?.Detail
+          ? attempt!.Detail
           : $"{transient.GetType().Name}: {transient.Message}";
         await _notifyAsync(o => o.OnStepWaitingAsync(
           new StartupStepWaitContext(descriptor, descriptor.RequiredCapability, waited, detail),

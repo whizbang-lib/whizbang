@@ -65,7 +65,7 @@ public sealed class DefaultMessageSecurityContextProvider(
     // decision below — the exempt-type set, the control-plane and system-event carve-outs, and the
     // type named in the exception — sees the message the caller actually sent.
     var payloadType = _resolveEffectivePayloadType(envelope.Payload);
-    if (_options.ExemptMessageTypes?.Contains(payloadType) == true) {
+    if (_options.ExemptMessageTypes.Contains(payloadType)) {
       return default;
     }
 
