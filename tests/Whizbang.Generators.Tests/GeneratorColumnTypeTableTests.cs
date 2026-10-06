@@ -170,6 +170,14 @@ public class GeneratorColumnTypeTableTests {
       .Because("only an exact, ordinal match is a mapped type; anything else is the text default");
   }
 
+  /// <summary>A missing name matches no mapped type, so each table gives its default.</summary>
+  [Test]
+  public async Task NoName_IsTheDefaultInEveryTableAsync() {
+    await Assert.That(EFCoreServiceRegistrationGenerator.PostgresColumnTypeFor(null!)).IsEqualTo("TEXT");
+    await Assert.That(PerspectiveSchemaGenerator.PostgresTypeFor(null!)).IsEqualTo("TEXT");
+    await Assert.That(EFCorePerspectiveConfigurationGenerator.EFCoreColumnTypeFor(null!)).IsEqualTo("text");
+  }
+
   [Test]
   public async Task BackfillExtraction_ReadsEveryKnownScalarAsync() {
     var wrong = _mismatches(_backfillTable.Select(r => (r.Name, (string?)r.Read)), _backfill);

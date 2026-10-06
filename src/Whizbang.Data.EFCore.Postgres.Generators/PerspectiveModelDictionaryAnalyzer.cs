@@ -146,8 +146,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// </summary>
   private static bool _isPromotedToJsonb(IPropertySymbol member) {
     var attribute = member.GetAttributes().FirstOrDefault(a =>
-      a.AttributeClass is { } attributeClass
-      && TypeNameUtilities.Display(attributeClass) == "Whizbang.Core.Perspectives.PhysicalFieldAttribute");
+      TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PhysicalFieldAttribute"));
     if (attribute is null) {
       return false;
     }
