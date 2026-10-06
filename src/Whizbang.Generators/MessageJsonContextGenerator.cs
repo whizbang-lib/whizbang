@@ -1512,14 +1512,32 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       Assembly assembly,
       ImmutableArray<JsonMessageTypeInfo> allTypes,
       ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
-    if (!polymorphicTypes.IsEmpty) {
+    var hasEvents = allTypes.Any(t => t.IsEvent);
+    var hasCommands = allTypes.Any(t => t.IsCommand);
+
+    // A Whizbang interface that the registry dispatch below covers must not be answered by this
+    // context's own polymorphic factory first: that factory has no quarantine, so one derived type
+    // whose property graph cannot configure would fail every serialize reaching the interface.
+    var dispatchedToRegistry = new HashSet<string>(StringComparer.Ordinal);
+    if (hasEvents || hasCommands) {
+      dispatchedToRegistry.Add(GLOBAL_WHIZBANG_CORE_IMESSAGE);
+    }
+    if (hasEvents) {
+      dispatchedToRegistry.Add(GLOBAL_WHIZBANG_CORE_IEVENT);
+    }
+    if (hasCommands) {
+      dispatchedToRegistry.Add(GLOBAL_WHIZBANG_CORE_ICOMMAND);
+    }
+
+    var ownPolymorphicTypes = polymorphicTypes.Where(p => !dispatchedToRegistry.Contains(p.BaseTypeName)).ToList();
+    if (ownPolymorphicTypes.Count > 0) {
       var polymorphicCheckSnippet = TemplateUtilities.ExtractSnippet(
           assembly,
           TEMPLATE_SNIPPET_FILE,
           "GET_TYPE_INFO_POLYMORPHIC");
 
       sb.AppendLine("  // Polymorphic base types");
-      foreach (var polyType in polymorphicTypes) {
+      foreach (var polyType in ownPolymorphicTypes) {
         var check = polymorphicCheckSnippet
             .Replace("__BASE_TYPE__", polyType.BaseTypeName)
             .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, polyType.UniqueIdentifier);
@@ -1527,9 +1545,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         sb.AppendLine();
       }
     }
-
-    var hasEvents = allTypes.Any(t => t.IsEvent);
-    var hasCommands = allTypes.Any(t => t.IsCommand);
 
     if (hasEvents || hasCommands) {
       _appendInterfaceTypeChecks(sb, assembly, hasEvents, hasCommands);
