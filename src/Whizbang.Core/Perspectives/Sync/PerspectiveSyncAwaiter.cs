@@ -67,6 +67,13 @@ public sealed partial class PerspectiveSyncAwaiter(
   private readonly ILifecycleContextAccessor _lifecycleContextAccessor = lifecycleContextAccessor;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
+  /// <summary>
+  /// The source the sync span is started on. Internal so a test can hand in a source no listener
+  /// samples: the shared source has a listener whenever any test in the process is capturing spans,
+  /// so whether the span exists would otherwise depend on what else is running.
+  /// </summary>
+  internal global::System.Diagnostics.ActivitySource ActivitySource { get; init; } = WhizbangActivitySource.Tracing;
+
   /// <summary>The first re-read of the applied-event ledger follows the first read by this long.</summary>
   private static readonly TimeSpan _firstLedgerReread = TimeSpan.FromMilliseconds(50);
 
@@ -148,7 +155,7 @@ public sealed partial class PerspectiveSyncAwaiter(
       PerspectiveSyncOptions options,
       CancellationToken ct) {
     // Create span for perspective sync wait - shows blocking time in traces
-    using var syncActivity = WhizbangActivitySource.Tracing.StartActivity(
+    using var syncActivity = ActivitySource.StartActivity(
       $"PerspectiveSync {perspectiveType.Name}",
       ActivityKind.Internal);
     syncActivity?.SetTag("whizbang.sync.perspective", TypeNameFormatter.DisplayName(perspectiveType));
@@ -234,7 +241,7 @@ public sealed partial class PerspectiveSyncAwaiter(
       TimeSpan timeout,
       Guid? eventIdToAwait,
       CancellationToken ct) {
-    using var syncActivity = WhizbangActivitySource.Tracing.StartActivity(
+    using var syncActivity = ActivitySource.StartActivity(
       $"PerspectiveSync {perspectiveType.Name} Stream",
       ActivityKind.Internal);
     _setStreamSyncActivityTags(syncActivity, perspectiveType, streamId, timeout, eventIdToAwait);
@@ -316,7 +323,7 @@ public sealed partial class PerspectiveSyncAwaiter(
   /// <param name="ct">The caller's cancellation.</param>
   private async Task<SyncResult?> _waitForAppliedCoreAsync(
       AppliedEventInquiry inquiry, TimeSpan timeout, bool requireLedger, CancellationToken ct) {
-    using var syncActivity = WhizbangActivitySource.Tracing.StartActivity(
+    using var syncActivity = ActivitySource.StartActivity(
       $"PerspectiveSync {inquiry.PerspectiveName} Applied",
       ActivityKind.Internal);
     syncActivity?.SetTag("whizbang.sync.perspective", inquiry.PerspectiveName);

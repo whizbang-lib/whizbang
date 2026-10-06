@@ -32,8 +32,10 @@ public class CorrelationIdW3CTests {
   [Test]
   public async Task NewRootAligned_WithActiveTrace_AdoptsTheTraceIdAsync() {
     using var source = new ActivitySource("Whizbang.Core.Tests.Correlation");
+    // Its own source only: a listener for every source would sample the private sources other tests
+    // rely on nobody listening to.
     using var listener = new ActivityListener {
-      ShouldListenTo = _ => true,
+      ShouldListenTo = s => s.Name == "Whizbang.Core.Tests.Correlation",
       Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
     };
     ActivitySource.AddActivityListener(listener);
