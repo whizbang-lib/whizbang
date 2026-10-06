@@ -56,7 +56,9 @@ jobs:
           git config user.email "ci@whizba.ng"
           git checkout -B "$BRANCH"
           git add README.md
-          git commit -m "docs(readme): refresh the published test count and coverage"
+          # -s: the DCO sign-off check requires it on every pull request commit, and this identity
+          # is not a GitHub bot account, so it is not exempt.
+          git commit -s -m "docs(readme): refresh the published test count and coverage"
           git push --force origin "$BRANCH"
           EXISTING=$(gh pr list --repo "$REPO" --head "$BRANCH" --base "$BASE" --state open --json number --jq '.[0].number // ""')
           if [ -z "$EXISTING" ]; then
