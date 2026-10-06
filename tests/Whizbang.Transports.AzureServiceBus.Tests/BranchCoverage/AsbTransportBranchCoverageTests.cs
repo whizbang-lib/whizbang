@@ -469,7 +469,7 @@ file sealed class ActivityCapture : IDisposable {
 
 /// <summary>An administration client whose every operation fails with the given message.</summary>
 file sealed class FailingAdminClient(string message) : IServiceBusAdminClient {
-  private Exception _failure() => new InvalidOperationException(message);
+  private InvalidOperationException _failure() => new InvalidOperationException(message);
 
   public Task<NamespaceProperties> GetNamespacePropertiesAsync(CancellationToken cancellationToken = default) =>
     Task.FromException<NamespaceProperties>(_failure());

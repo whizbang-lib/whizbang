@@ -14,6 +14,7 @@ using Whizbang.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.AzureServiceBus.Tests.BranchCoverage;
 
