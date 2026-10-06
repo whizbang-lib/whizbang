@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Transports;
@@ -108,4 +109,13 @@ public record BulkPublishItemResult {
   /// Error message if Success is false. Null if successful.
   /// </summary>
   public string? Error { get; init; }
+
+  /// <summary>
+  /// Why the item failed, classified by the transport from the exception it caught (#1167); null when it succeeded or
+  /// the transport cannot say. A batch whose every item is <see cref="MessageFailureReason.Throttled"/> is retried in
+  /// memory with backoff, the same as a batch call that throws a throttle.
+  /// </summary>
+  /// <docs>messaging/transports/transports</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyThrottleRetryTests.cs:PublishBatchAsync_EveryItemThrottled_RetriesTheBatchAsync</tests>
+  public MessageFailureReason? Reason { get; init; }
 }

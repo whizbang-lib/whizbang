@@ -112,8 +112,31 @@ public class RabbitMQTransportBatchPathTests {
     await Assert.That(results[1].Success).IsFalse();
     await Assert.That(results[1].Error).Contains("InvalidOperationException");
     await Assert.That(results[1].Error).Contains("broker rejected");
+    await Assert.That(results[0].Reason).IsNull();
+    await Assert.That(results[1].Reason).IsEqualTo(MessageFailureReason.Unknown)
+      .Because("the transport classifies the item's own exception (#1167)");
     await Assert.That(channel.Published).Count().IsEqualTo(1)
       .Because("Only the successful item reaches the wire; the failing item is reported per-item.");
+  }
+
+  /// <summary>
+  /// An item refused by broker flow control is reported as throttled, so a batch the broker throttles item by item
+  /// is retried by the outbox (#1167).
+  /// </summary>
+  [Test]
+  public async Task PublishBatchAsync_ItemRefusedByFlowControl_ReportsItThrottledAsync() {
+    var channel = new RecordingChannel {
+      PublishExceptionSelector = _ => new OperationInterruptedException(
+        new ShutdownEventArgs(ShutdownInitiator.Peer, 406, "flow-control"))
+    };
+    var connection = new FakeConnection(() => Task.FromResult<IChannel>(channel));
+    var transport = await RabbitTestWire.NewInitializedTransportAsync(connection);
+
+    var results = await transport.PublishBatchAsync(
+      [_newItem(RabbitTestWire.NewEnvelope("one"))], new TransportDestination("batch-exchange"));
+
+    await Assert.That(results[0].Success).IsFalse();
+    await Assert.That(results[0].Reason).IsEqualTo(MessageFailureReason.Throttled);
   }
 
   [Test]
@@ -135,6 +158,8 @@ public class RabbitMQTransportBatchPathTests {
     await Assert.That(results[1].Error).Contains("AlreadyClosedException");
     await Assert.That(results[0].MessageId).IsEqualTo(items[0].MessageId);
     await Assert.That(results[1].MessageId).IsEqualTo(items[1].MessageId);
+    await Assert.That(results.All(r => r.Reason == MessageFailureReason.TransportException)).IsTrue()
+      .Because("the closed channel's exception is classified for every remaining item (#1167)");
   }
 
   [Test]
@@ -155,6 +180,7 @@ public class RabbitMQTransportBatchPathTests {
     await Assert.That(results.All(r => !r.Success)).IsTrue();
     await Assert.That(results[0].Error).Contains("InvalidOperationException");
     await Assert.That(results[0].Error).Contains("declare failed");
+    await Assert.That(results.All(r => r.Reason == MessageFailureReason.Unknown)).IsTrue();
     await Assert.That(channel.Published).IsEmpty();
   }
 

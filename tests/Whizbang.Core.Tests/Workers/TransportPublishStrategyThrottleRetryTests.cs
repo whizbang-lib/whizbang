@@ -341,4 +341,96 @@ public class TransportPublishStrategyThrottleRetryTests {
     await Assert.That(transport.BatchCalls).IsEqualTo(5)
       .Because("budget=5 → exactly 5 batch attempts");
   }
+
+  // Answers each batch call with per-item results: the first throttledCalls calls fail every item with Reason=Throttled,
+  // the rest succeed. Item-level throttling, not an exception from the batch call.
+  private sealed class PerItemResultsTransport(Func<int, IReadOnlyList<BulkPublishItem>, IReadOnlyList<BulkPublishItemResult>> answer) : ITransport {
+    private int _batchCalls;
+    public int BatchCalls => _batchCalls;
+    public bool IsInitialized => true;
+    public TransportCapabilities Capabilities => TransportCapabilities.BulkPublish;
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<IReadOnlyList<BulkPublishItemResult>> PublishBatchAsync(IReadOnlyList<BulkPublishItem> items, TransportDestination destination, CancellationToken cancellationToken = default) =>
+      Task.FromResult(answer(Interlocked.Increment(ref _batchCalls), items));
+
+    public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default)
+      => throw new NotSupportedException();
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default)
+      where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
+  }
+
+  private static IReadOnlyList<BulkPublishItemResult> _throttledItems(IReadOnlyList<BulkPublishItem> items) =>
+    [.. items.Select(i => new BulkPublishItemResult {
+      MessageId = i.MessageId, Success = false, Reason = MessageFailureReason.Throttled,
+      Error = "ServiceBusException: namespace is being throttled. Error code : 50009. (ServiceBusy)",
+    })];
+
+  private static IReadOnlyList<BulkPublishItemResult> _succeededItems(IReadOnlyList<BulkPublishItem> items) =>
+    [.. items.Select(i => new BulkPublishItemResult { MessageId = i.MessageId, Success = true })];
+
+  private static TransportPublishStrategy _strategy(ITransport transport, int maxAttempts = 5) => new(
+    transport: transport,
+    readinessCheck: new DefaultTransportReadinessCheck(),
+    inboxTopic: "inbox",
+    loggerFactory: NullLoggerFactory.Instance,
+    namespaceRouting: NullCommandInboxAddressResolver.Instance,
+    throttleRetryOptions: _fastOpts(maxAttempts));
+
+  private static List<OutboxWork> _batch(int count) {
+    var streamId = Guid.CreateVersion7();
+    return [.. Enumerable.Range(0, count).Select(_ => _work() with { StreamId = streamId })];
+  }
+
+  /// <summary>
+  /// A batch the broker throttles item by item is retried in memory, as a throttle thrown by the batch call is (#1167).
+  /// It never was: each item's error was wrapped in an exception the classifier cannot recognize.
+  /// </summary>
+  [Test]
+  public async Task PublishBatchAsync_EveryItemThrottled_RetriesTheBatchAsync() {
+    var transport = new PerItemResultsTransport((call, items) => call <= 2 ? _throttledItems(items) : _succeededItems(items));
+
+    var results = await _strategy(transport).PublishBatchAsync(_batch(3), CancellationToken.None);
+
+    await Assert.That(transport.BatchCalls).IsEqualTo(3).Because("two throttled answers, then the retry goes through");
+    await Assert.That(results.All(r => r.Success)).IsTrue();
+  }
+
+  /// <summary>A batch still throttled item by item when the budget runs out reports each item as throttled.</summary>
+  [Test]
+  public async Task PublishBatchAsync_EveryItemThrottledPastTheBudget_ReportsEachItemThrottledAsync() {
+    var transport = new PerItemResultsTransport((_, items) => _throttledItems(items));
+
+    var results = await _strategy(transport, maxAttempts: 3).PublishBatchAsync(_batch(2), CancellationToken.None);
+
+    await Assert.That(transport.BatchCalls).IsEqualTo(3);
+    await Assert.That(results.All(r => !r.Success && r.Reason == MessageFailureReason.Throttled)).IsTrue()
+      .Because("the item's own reason reaches the failure channel");
+  }
+
+  /// <summary>An empty answer is not a throttle: nothing was refused, so there is nothing to retry.</summary>
+  [Test]
+  public async Task PublishBatchAsync_AnEmptyAnswer_IsNotRetriedAsync() {
+    var transport = new PerItemResultsTransport((_, _) => []);
+
+    await _strategy(transport).PublishBatchAsync(_batch(2), CancellationToken.None);
+
+    await Assert.That(transport.BatchCalls).IsEqualTo(1);
+  }
+
+  /// <summary>One throttled item among successes is a per-message condition, not a broker pause, and is not retried.</summary>
+  [Test]
+  public async Task PublishBatchAsync_SomeItemsThrottled_IsNotRetriedAsync() {
+    var transport = new PerItemResultsTransport((_, items) => [
+      .. _throttledItems([items[0]]),
+      .. _succeededItems([.. items.Skip(1)]),
+    ]);
+
+    var results = await _strategy(transport).PublishBatchAsync(_batch(3), CancellationToken.None);
+
+    await Assert.That(transport.BatchCalls).IsEqualTo(1);
+    await Assert.That(results.Count(r => r.Success)).IsEqualTo(2);
+  }
 }
