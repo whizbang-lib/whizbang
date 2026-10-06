@@ -1,0 +1,57 @@
+name: Test Shard Report
+
+# The test suites run in parallel, so a pull request waits for the slowest one. Shards drift out of
+# balance as tests are added, and nothing else notices. Once a month this measures every suite and
+# the EFCore shards (scripts/Measure-TestShards.ps1) and posts the report on one tracking issue, so
+# the review in ai-docs/test-sharding.md happens on a schedule rather than when someone remembers.
+# It never changes code: acting on a proposed rebalance is a pull request a person opens.
+
+on:
+  schedule:
+    - cron: '0 13 1 * *'   # the 1st of each month, 13:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-shard-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Report · Test shard balance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read   # run, job and artifact listings; TRX downloads
+      issues: write   # the tracking issue
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Measure suites and shards
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/Measure-TestShards.ps1 -Repository $env:GITHUB_REPOSITORY -OutFile shard-report.md
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-Content shard-report.md | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+      - name: Post the report on the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: Test shard balance (monthly report)
+        run: |
+          set -euo pipefail
+          ISSUE=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" \
+            --json number,title --jq ".[] | select(.title == env.TITLE) | .number" | head -1)
+          if [ -z "$ISSUE" ]; then
+            ISSUE=$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --body "Monthly measurements from .github/workflows/test-shard-report.yml. How to read them and when to act: ai-docs/test-sharding.md, \"Keeping shards balanced\"." \
+              | sed -E 's#.*/issues/([0-9]+).*#\1#')
+          fi
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file shard-report.md
+          echo "Posted to #$ISSUE"

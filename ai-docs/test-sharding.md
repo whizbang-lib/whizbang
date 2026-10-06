@@ -31,10 +31,13 @@ Both are driven from `ci.yml` via a `strategy.matrix`, calling the same reusable
 
 1. Give every test class exactly one `[Category("ShardN")]`. It composes with existing categories —
    a class can carry `[Category("Integration")]` and `[Category("Shard2")]` together.
-2. Balance by test count, not class count. Greedy longest-processing-time bin-packing over per-class
-   `[Test]` counts gets within a few tests per shard.
+2. Balance by **measured cost**, not test count or class count. Run `scripts/Measure-TestShards.ps1`
+   (see [Keeping shards balanced](#keeping-shards-balanced)); test counts mislead badly here, because a
+   2,259-case matrix that needs no database finishes in under a minute while a 16-test class that
+   provisions one per test takes 90 seconds.
 3. **Add the coverage guard** (see below). This is not optional.
-4. Add the matrix entries to `ci.yml` and bump `coverage-artifact-count`.
+4. Add the matrix entries to `ci.yml`. `.github/scripts/tests/Measure-TestShards.Tests.ps1` fails if a
+   shard category has no matrix leg, or a leg has no classes.
 
 ## The guard is the whole safety story
 
@@ -55,19 +58,8 @@ classes the tagging script had missed (it tagged only the first class per file),
 Shards run concurrently and upload artifacts, so names must be unique or they clobber each other.
 The reusable workflows suffix both TRX and coverage artifacts with `shard-name`.
 
-`reusable-quality.yml` waits for exactly `coverage-artifact-count` artifacts before running analysis.
-**Every shard added must increment it**, and the count must equal the number of shards that actually
-produce coverage. Current expectation:
-
-| job | shards |
-|---|---|
-| Unit | 1 |
-| PostgreSQL | 5 (efcore ×4, dapper) |
-| InMemory | 1 |
-| RabbitMQ | 3 |
-| Service Bus | 2 |
-| AzureBlob | 1 |
-| **total** | **13** |
+`reusable-quality.yml` waits for one coverage artifact per suite leg. The count is **derived** from
+the run's own jobs (every leg is a job named `Test · …`), so adding a shard needs no count to bump.
 
 A shard that runs zero tests emits no coverage file, so the gate waits for an artifact that never
 arrives and the job times out. `Whizbang.Soak.Tests` is Postgres-tagged but is not an
@@ -98,3 +90,62 @@ is mostly artifact download, container startup or instrumentation gets slower wh
 every shard re-pays that cost while only the test portion divides. RabbitMQ is deliberately left
 unsharded for this reason: at 4m52 it is no longer the critical path, and three shards would buy
 ~2.6 minutes for three extra runners.
+
+## Keeping shards balanced
+
+Shards drift as tests are added, so balance is a routine, not a one-off. The 2026-10 review found
+efcore-1 and efcore-3 the slowest suite in 23 of 25 runs, 9 minutes apart from the lightest shard, and,
+behind that, an unneeded solution rebuild costing every suite about 8 minutes (#1159).
+
+### The routine
+
+`.github/workflows/test-shard-report.yml` runs on the 1st of each month and posts a report on the
+**Test shard balance (monthly report)** issue. Run it by hand any time:
+
+```bash
+pwsh scripts/Measure-TestShards.ps1                       # report only
+pwsh scripts/Measure-TestShards.ps1 -ShardCount 6 -Apply  # rebalance across six shards and re-tag classes
+```
+
+The report has two tables:
+
+- **Suites:** median, p90, max and coefficient of variation of every test job over the last 25
+  full-matrix runs, its test-step time, and how often it was the slowest. The slowest suite sets how
+  long every pull request waits.
+- **Shards:** each shard's measured test window, its load by attributed class cost, the proposed load,
+  and the class moves that get there.
+
+### When to act
+
+Act on the report when **either** holds:
+
+1. A sharded suite is the slowest in most runs **and** its shards are more than **2 minutes** apart.
+   Rebalance: `-Apply` at the current count, open a PR.
+2. Even balanced, the shards' proposed load still leaves them the slowest suite by more than
+   **3 minutes**. Add a shard: `-ShardCount <n+1> -Apply`, plus the matrix leg in `ci.yml`.
+
+Also check **job time minus test-step time, and test-step time minus the shard's test window**. Those
+are setup: downloads, containers, and anything the runner does before the first test. If it grows,
+fix it before resharding, since every shard pays it again. The 8-minute rebuild was found exactly this
+way: a test step of 23 minutes around a test window of 15.
+
+After merging a rebalance, the next report should show the shards within tolerance. If it doesn't,
+the cost model has drifted from reality; re-check it before moving more classes.
+
+### Why cost is measured, not summed
+
+A shard's time is not the sum of its test durations. In the EFCore shards the test bodies account for
+only 17-47% of the window. Each test that needs a database creates one by copying a template, Postgres
+serializes those copies on the template's lock, and each shard's container therefore takes roughly
+one such test per second while its CPU sits mostly idle.
+
+So the script charges each test the gap from its start to the next test's start. Those gaps sum
+exactly to the shard's test window, and a class's cost is the median of its sums over the last five
+runs. Rebalancing starts from the current assignment and moves the class that best closes the gap
+between the heaviest and lightest shard, never one larger than half of it, so each rebalance is a
+small diff of `[Category("ShardN")]` changes rather than a reshuffle.
+
+The serialized database copies are the real ceiling, and sharding only works around them. A pool of
+templates, or reusing databases between tests, would raise every shard's throughput and is the next
+lever after balance.
+
