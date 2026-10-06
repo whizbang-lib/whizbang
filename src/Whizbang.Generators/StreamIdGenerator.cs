@@ -221,8 +221,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
   /// </summary>
   private static bool _hasStreamIdAttributeOnParameter(IParameterSymbol parameter) {
     return parameter.GetAttributes().Any(a =>
-        a.AttributeClass is not null &&
-        TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, StandardInterfaceNames.STREAM_ID_ATTRIBUTE));
   }
 
   /// <summary>
@@ -232,8 +231,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
       IParameterSymbol parameter,
       INamedTypeSymbol typeSymbol) {
     var hasGenerateOnParam = parameter.GetAttributes().Any(a =>
-        a.AttributeClass is not null &&
-        TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE));
 
     var (hasGenerateOnClass, classOnlyIfEmpty) = _extractGenerateStreamIdFromClass(typeSymbol);
     var hasGenerate = hasGenerateOnParam || hasGenerateOnClass;
@@ -276,8 +274,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     var hasStreamIdOnParameter = typeSymbol.Constructors.Any(ctor =>
         ctor.Parameters.Any(param =>
             param.GetAttributes().Any(a =>
-                a.AttributeClass is not null &&
-                TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE)));
+                TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, StandardInterfaceNames.STREAM_ID_ATTRIBUTE))));
 
     if (hasStreamIdOnParameter) {
       return null;
@@ -952,8 +949,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
       INamedTypeSymbol typeSymbol) {
     // Check for [GenerateStreamId] on the property itself
     var propertyAttr = property.GetAttributes().FirstOrDefault(a =>
-        a.AttributeClass is not null &&
-        TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE));
 
     if (propertyAttr is not null) {
       var onlyIfEmpty = _extractOnlyIfEmptyFromAttribute(propertyAttr);
@@ -969,8 +965,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
   /// </summary>
   private static (bool HasGenerate, bool OnlyIfEmpty) _extractGenerateStreamIdFromClass(INamedTypeSymbol typeSymbol) {
     var classAttr = typeSymbol.GetAttributes().FirstOrDefault(a =>
-        a.AttributeClass is not null &&
-        TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE));
 
     if (classAttr is not null) {
       var onlyIfEmpty = _extractOnlyIfEmptyFromAttribute(classAttr);
@@ -998,8 +993,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
   private static bool _extractOnlyIfEmptyFromAttributes(
       System.Collections.Immutable.ImmutableArray<AttributeData> attributes) {
     var attr = attributes.FirstOrDefault(a =>
-        a.AttributeClass is not null &&
-        TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE));
 
     return attr is not null && _extractOnlyIfEmptyFromAttribute(attr);
   }

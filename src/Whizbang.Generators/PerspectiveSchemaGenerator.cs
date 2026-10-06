@@ -193,7 +193,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     const string PERSPECTIVE_STORAGE_ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveStorageAttribute";
 
     foreach (var attribute in modelType.GetAttributes()) {
-      var attrClassName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
+      var attrClassName = TypeNameUtilities.DisplayOrNull(attribute.AttributeClass);
       if (attrClassName == PERSPECTIVE_STORAGE_ATTRIBUTE && attribute.ConstructorArguments.Length > 0) {
         var modeArg = attribute.ConstructorArguments[0];
         if (modeArg.Value is int modeValue) {
@@ -217,7 +217,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
     foreach (var property in properties) {
       foreach (var attribute in property.GetAttributes()) {
-        var attrClassName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
+        var attrClassName = TypeNameUtilities.DisplayOrNull(attribute.AttributeClass);
 
         if (attrClassName == PHYSICAL_FIELD_ATTRIBUTE) {
           var fieldInfo = _extractPhysicalFieldInfo(property, attribute);

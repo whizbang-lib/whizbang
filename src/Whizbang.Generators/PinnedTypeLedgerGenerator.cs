@@ -73,8 +73,7 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
     }
 
     var pinnedIdAttribute = type.GetAttributes().FirstOrDefault(attr =>
-      attr.AttributeClass is not null &&
-      TypeNameHelper.GetFullyQualifiedName(attr.AttributeClass) == StandardInterfaceNames.PINNED_ID_ATTRIBUTE);
+      TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
     if (pinnedIdAttribute is null ||
         pinnedIdAttribute.ConstructorArguments.Length == 0 ||
         pinnedIdAttribute.ConstructorArguments[0].Value is not string idValue ||

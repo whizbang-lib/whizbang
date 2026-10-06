@@ -73,7 +73,7 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
 
     AttributeData? inheritScopeAttr = null;
     foreach (var attr in attrs) {
-      var name = attr.AttributeClass?.Name;
+      var name = TypeNameUtilities.SimpleNameOrNull(attr.AttributeClass);
       if (name == "InheritScopeAttribute" || name == "InheritScope") {
         inheritScopeAttr = attr;
         break;

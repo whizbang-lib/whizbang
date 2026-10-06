@@ -212,8 +212,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     var compilation = context.SemanticModel.Compilation;
     return compilation.Assembly.GetAttributes().Any(attr =>
         TypeNameUtilities.IsNamed(attr.AttributeClass, SUPPRESS_ATTRIBUTE) ||
-        attr.AttributeClass?.Name == SUPPRESS_ATTRIBUTE_NAME ||
-        attr.AttributeClass?.Name == SUPPRESS_SHORT_NAME)
+        TypeNameUtilities.SimpleNameOrNull(attr.AttributeClass) is SUPPRESS_ATTRIBUTE_NAME or SUPPRESS_SHORT_NAME)
       ? "SuppressGuidInterceptionAttribute on assembly"
       : null;
   }

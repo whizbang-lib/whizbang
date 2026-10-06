@@ -127,8 +127,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
   /// </summary>
   private static bool _hasDangerousMixOptIn(INamedTypeSymbol perspective) =>
     perspective.GetAttributes().Any(a =>
-      a.AttributeClass?.Name == DANGEROUS_MIX_OPT_IN
-      || a.AttributeClass?.Name == "DangerouslyAllowMixedEphemeralAndSourcedEvents");
+      TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is DANGEROUS_MIX_OPT_IN or "DangerouslyAllowMixedEphemeralAndSourcedEvents");
 
   /// <summary>
   /// The distinct event types a perspective applies — the type arguments (from index 1) of every

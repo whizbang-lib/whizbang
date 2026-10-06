@@ -254,8 +254,29 @@ public static class TypeNameUtilities {
   }
 
   /// <summary>Whether the symbol's display form equals a known display name, ordinal.</summary>
+  /// <remarks>
+  /// This and the null-tolerant helpers below exist for <see cref="AttributeData.AttributeClass"/>, which
+  /// Roslyn declares nullable although it binds an unresolved C# attribute to an error type rather than to
+  /// null. Owning that guard here, once, keeps a branch no compilation can take out of every call site.
+  /// </remarks>
   public static bool IsNamed(ISymbol? symbol, string displayName) =>
     symbol != null && string.Equals(symbol.ToDisplayString(), displayName, StringComparison.Ordinal);
+
+  /// <summary>
+  /// Whether the symbol's fully qualified form (<see cref="FullyQualified"/>, <c>global::</c> prefix included)
+  /// equals a known one, ordinal. False for no symbol.
+  /// </summary>
+  public static bool IsFullyQualifiedNamed(ISymbol? symbol, string fullyQualifiedName) =>
+    symbol != null && string.Equals(symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), fullyQualifiedName, StringComparison.Ordinal);
+
+  /// <summary>The symbol's simple name (<see cref="ISymbol.Name"/>), or null for no symbol.</summary>
+  public static string? SimpleNameOrNull(ISymbol? symbol) => symbol?.Name;
+
+  /// <summary>The display form (<see cref="Display"/>), or null for no symbol.</summary>
+  public static string? DisplayOrNull(ISymbol? symbol) => symbol?.ToDisplayString();
+
+  /// <summary>The display form (<see cref="Display"/>), or an empty string for no symbol.</summary>
+  public static string DisplayOrEmpty(ISymbol? symbol) => symbol is null ? string.Empty : symbol.ToDisplayString();
 
   /// <summary>
   /// The namespace as it appears in source, or an empty string for the global namespace (Roslyn

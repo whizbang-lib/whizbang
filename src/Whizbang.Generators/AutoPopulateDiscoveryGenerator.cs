@@ -141,7 +141,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
     foreach (var property in properties) {
       foreach (var attribute in property.GetAttributes()) {
-        var attributeName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
+        var attributeName = TypeNameUtilities.DisplayOrNull(attribute.AttributeClass);
         if (attributeName is null) {
           continue;
         }

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
@@ -85,8 +86,7 @@ public class TopicRegistryGenerator : IIncrementalGenerator {
   private static string? _resolveBaseTopic(INamedTypeSymbol typeSymbol) {
     var topicAttribute = typeSymbol.GetAttributes()
         .FirstOrDefault(attr =>
-            attr.AttributeClass is not null &&
-            TypeNameHelper.GetFullyQualifiedName(attr.AttributeClass) == StandardInterfaceNames.TOPIC_ATTRIBUTE);
+            TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.TOPIC_ATTRIBUTE));
 
     if (topicAttribute is not null) {
       if (topicAttribute.ConstructorArguments.Length > 0 &&

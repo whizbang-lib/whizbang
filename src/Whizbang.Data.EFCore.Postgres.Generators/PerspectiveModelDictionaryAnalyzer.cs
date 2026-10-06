@@ -267,7 +267,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// </remarks>
   private static bool _isPropertyIgnored(IPropertySymbol property) {
     foreach (var attr in property.GetAttributes()) {
-      var attrName = attr.AttributeClass is { } attributeClass ? TypeNameUtilities.Display(attributeClass) : null;
+      var attrName = TypeNameUtilities.DisplayOrNull(attr.AttributeClass);
       if (attrName == null) {
         continue;
       }

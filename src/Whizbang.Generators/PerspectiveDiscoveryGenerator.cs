@@ -213,7 +213,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     // Get all properties with [StreamId] from the type hierarchy
     var streamKeyProperties = namedType.GetAllProperties()
         .Where(p => p.GetAttributes().Any(a =>
-            a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE))
+            TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, StandardInterfaceNames.STREAM_ID_ATTRIBUTE)))
         .Select(p => p.Name)
         .ToList();
 

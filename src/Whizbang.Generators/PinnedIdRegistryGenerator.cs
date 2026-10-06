@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
@@ -74,8 +75,7 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
 
     var pinnedIdAttribute = typeSymbol.GetAttributes()
         .FirstOrDefault(attr =>
-            attr.AttributeClass is not null &&
-            TypeNameHelper.GetFullyQualifiedName(attr.AttributeClass) == StandardInterfaceNames.PINNED_ID_ATTRIBUTE);
+            TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
 
     if (pinnedIdAttribute is null) {
       return null;

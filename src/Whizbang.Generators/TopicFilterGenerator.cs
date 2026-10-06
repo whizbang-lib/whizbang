@@ -159,8 +159,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
 
       // Try to extract Description attribute
       var descriptionAttr = enumField.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass is not null &&
-            TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == DESCRIPTION_ATTRIBUTE);
+          .FirstOrDefault(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, DESCRIPTION_ATTRIBUTE));
 
       if (descriptionAttr?.ConstructorArguments is { Length: > 0 }) {
         var descriptionValue = descriptionAttr.ConstructorArguments[0].Value;

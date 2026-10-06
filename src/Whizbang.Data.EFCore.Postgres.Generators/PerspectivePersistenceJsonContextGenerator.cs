@@ -47,7 +47,6 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator {
 #pragma warning restore S1144
 
-  private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
   private const string CLOSE_BRACE_INDENT_4 = "    }";
   private const string CLOSE_BRACE_INDENT_6 = "      }";
 
@@ -131,10 +130,9 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     // carries no attributes, so it fails the same test without ever being dereferenced.
     if (context.SemanticModel.GetDeclaredSymbol(structDecl, ct) is not { } structSymbol
         || !structSymbol.GetAttributes().Any(static a =>
-            a.AttributeClass?.Name == "WhizbangIdAttribute" ||
-            a.AttributeClass?.Name == "WhizbangId" ||
-            TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANG_ID_ATTRIBUTE) ||
-            (a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_ID_ATTRIBUTE}"))) {
+            // Matched by simple name, which any class named WhizbangIdAttribute satisfies; a display-name or fully
+            // qualified comparison could only agree with it, since Whizbang.Core.WhizbangIdAttribute has that name.
+            TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "WhizbangIdAttribute" or "WhizbangId")) {
       return null;
     }
 

@@ -172,7 +172,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // closing event — the A1 close guard refuses a discard-close of any stream it consumes. Resolved at compile
     // time; the generator registers the perspective's name so the runtime guard can key off it.
     var isFullHistory = classSymbol.GetAttributes().Any(
-        static a => a.AttributeClass?.Name is "FullHistoryAttribute" or "FullHistory");
+        static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "FullHistoryAttribute" or "FullHistory");
 
     // Find StreamId property on model
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
@@ -313,7 +313,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// </summary>
   private static int _resolveExplicitRowTtlSeconds(INamedTypeSymbol classSymbol) {
     var rowTtlAttribute = classSymbol.GetAttributes().FirstOrDefault(
-        static a => a.AttributeClass?.Name is "RowTtlAttribute" or "RowTtl");
+        static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "RowTtlAttribute" or "RowTtl");
     if (rowTtlAttribute is null) {
       return -1;
     }
@@ -341,7 +341,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// </summary>
   private static (int PerScope, string? ScopeKey) _resolveRowCap(INamedTypeSymbol classSymbol) {
     var rowCapAttribute = classSymbol.GetAttributes().FirstOrDefault(
-        static a => a.AttributeClass?.Name is "RowCapAttribute" or "RowCap");
+        static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "RowCapAttribute" or "RowCap");
     if (rowCapAttribute is null) {
       return (-1, null);
     }
@@ -370,7 +370,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string? _buildStreamGroupSpec(INamedTypeSymbol classSymbol) {
     var streamGroupParts = new List<string>();
     foreach (var groupAttribute in classSymbol.GetAttributes().Where(
-        static a => a.AttributeClass?.Name is "StreamGroupAttribute" or "StreamGroup")) {
+        static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "StreamGroupAttribute" or "StreamGroup")) {
       var encoded = _encodeStreamGroupMembership(groupAttribute);
       if (encoded is not null) {
         streamGroupParts.Add(encoded);
@@ -413,7 +413,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static int _extractInheritScopeOnCreate(ITypeSymbol modelType) {
     const int defaultAll = 63;
     foreach (var attr in modelType.GetAttributes()) {
-      var name = attr.AttributeClass?.Name;
+      var name = TypeNameUtilities.SimpleNameOrNull(attr.AttributeClass);
       if (name != "InheritScopeAttribute" && name != "InheritScope") {
         continue;
       }
@@ -1389,7 +1389,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// </summary>
   private static int _extractStorageMode(INamedTypeSymbol modelType) {
     foreach (var attribute in modelType.GetAttributes()) {
-      if (attribute.AttributeClass?.Name == "PerspectiveStorageAttribute" &&
+      if (TypeNameUtilities.SimpleNameOrNull(attribute.AttributeClass) == "PerspectiveStorageAttribute" &&
           attribute.ConstructorArguments.Length > 0 &&
           attribute.ConstructorArguments[0].Value is int mode) {
         return mode;
@@ -1506,7 +1506,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
 
     foreach (var attribute in property.GetAttributes()) {
-      var attrClassName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
+      var attrClassName = TypeNameUtilities.DisplayOrNull(attribute.AttributeClass);
 
       if (attrClassName != PHYSICAL_FIELD_ATTRIBUTE && attrClassName != VECTOR_FIELD_ATTRIBUTE) {
         continue;

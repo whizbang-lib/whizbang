@@ -3,6 +3,7 @@
 
 using System.Linq;
 using Microsoft.CodeAnalysis;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Shared.Models;
 
@@ -56,9 +57,7 @@ public static class PhysicalFieldScalar {
   public static bool IsFlagsEnum(ITypeSymbol type) {
     type = _unwrapNullable(type);
     return type.TypeKind == TypeKind.Enum
-      && type.GetAttributes().Any(a => a.AttributeClass is {
-        Name: "FlagsAttribute", ContainingNamespace: { Name: "System", ContainingNamespace.IsGlobalNamespace: true },
-      });
+      && type.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, "System.FlagsAttribute"));
   }
 
   /// <summary>The column type a promoted object, collection or dictionary gets when the author declares none.</summary>

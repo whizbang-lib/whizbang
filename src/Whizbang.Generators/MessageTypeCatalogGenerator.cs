@@ -109,8 +109,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var kind = isPerspective ? "perspective" : messageKind;
 
     var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
-        attr.AttributeClass is not null &&
-        TypeNameHelper.GetFullyQualifiedName(attr.AttributeClass) == StandardInterfaceNames.PINNED_ID_ATTRIBUTE);
+        TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
 
     string? pinnedId = null;
     if (pinnedIdAttribute?.ConstructorArguments.Length > 0 &&
@@ -161,7 +160,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   private static long? _maxPayloadBytes(INamedTypeSymbol typeSymbol) {
     for (var type = typeSymbol; type is not null; type = type.BaseType) {
       var attribute = type.GetAttributes().FirstOrDefault(a =>
-        a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == MAX_PAYLOAD_SIZE_ATTRIBUTE);
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, MAX_PAYLOAD_SIZE_ATTRIBUTE));
       if (attribute?.ConstructorArguments.FirstOrDefault().Value is { } value) {
         return System.Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
       }
