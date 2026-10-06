@@ -54,6 +54,9 @@ namespace TestNamespace {
   [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) { return ApplyResult<AccountModel>.Purge(); }")]
   [Arguments("public ModelAction Apply(AccountModel currentData, ClosedEvent @event) => ModelAction.Purge;")]
   [Arguments("public (AccountModel?, ModelAction) Apply(AccountModel currentData, ClosedEvent @event) => (null, ModelAction.Purge);")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => (ApplyResult<AccountModel>.Purge());")]
+  [Arguments("public ModelAction Apply(AccountModel currentData, ClosedEvent @event) => Whizbang.Core.Perspectives.ModelAction.Purge;")]
+  [Arguments("public ApplyResult<AccountModel> Apply(AccountModel currentData, ClosedEvent @event) => global::Whizbang.Core.Perspectives.ApplyResult<AccountModel>.Purge();")]
   public async Task AnApplyThatCanOnlyPurge_IsATerminalPurgeAsync(string closedApply) {
     var runner = _runnerFor(closedApply);
 

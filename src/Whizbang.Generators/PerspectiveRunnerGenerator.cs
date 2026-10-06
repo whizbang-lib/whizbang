@@ -244,7 +244,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
             EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
-            UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null,
             PhysicalFields: physicalFields.Length > 0 ? physicalFields : null,
             StorageMode: storageMode,
             IsModelRecord: isModelRecord,
@@ -258,7 +257,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             RowCapScopeKey: rowCapScopeKey,
             StreamGroupSpec: streamGroupSpec,
             ModelCopy: modelCopy,
-            MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null),
+            MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null,
+            UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null),
         Warning: null
     );
   }
@@ -1327,15 +1327,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static bool _isModelActionPurge(MemberAccessExpressionSyntax access) =>
     access.Name.Identifier.ValueText == "Purge" && _names(access.Expression, "ModelAction");
 
-  // The receiver is the named type, written bare, generic or qualified: ApplyResult<T>, Perspectives.ModelAction.
-  private static bool _names(ExpressionSyntax receiver, string typeName) => receiver switch {
-    IdentifierNameSyntax identifier => identifier.Identifier.ValueText == typeName,
-    GenericNameSyntax generic => generic.Identifier.ValueText == typeName,
-    MemberAccessExpressionSyntax qualified => _names(qualified.Name, typeName),
-    QualifiedNameSyntax qualified => _names(qualified.Right, typeName),
-    AliasQualifiedNameSyntax alias => _names(alias.Name, typeName),
-    _ => false,
-  };
+  // The receiver is the named type, written bare, generic or qualified (ApplyResult<T>, Perspectives.ModelAction,
+  // global::…ApplyResult<T>): a qualified name is a member access whose last name is the type.
+  private static bool _names(ExpressionSyntax receiver, string typeName) =>
+    (receiver is MemberAccessExpressionSyntax qualified ? qualified.Name : receiver as SimpleNameSyntax)?.Identifier.ValueText
+      == typeName;
 
   /// <summary>
   /// Classifies the return type of an Apply method.
