@@ -127,4 +127,19 @@ public class StoredFormDiscoveryBranchTests {
     await Assert.That(error[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("not a property key");
     await Assert.That(code).DoesNotContain($"{STEP}Remove(");
   }
+
+  /// <summary>
+  /// A removal with no path does not bind (the attribute's constructor takes one), as source an
+  /// analyzer sees mid-edit; it is refused the same way as an empty path, not read as removing the model.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task RemovalThatDoesNotBind_IsWHIZ830Async() {
+    var (code, diagnostics) = await _runAsync("[StoredFormRemoved]", "");
+
+    var error = diagnostics.Where(d => d.Id == "WHIZ830").ToList();
+    await Assert.That(error).Count().IsEqualTo(1);
+    await Assert.That(error[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("not a property key");
+    await Assert.That(code).DoesNotContain($"{STEP}Remove(");
+  }
 }

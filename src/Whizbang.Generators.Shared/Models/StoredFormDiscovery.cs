@@ -111,7 +111,7 @@ public static class StoredFormDiscovery {
     }
 
     var walk = new Walk(TypeNameUtilities.Display(model), model.GetAttributes().Any(a =>
-      TypeNameUtilities.IsNamed(a.AttributeClass, STORAGE) && a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is SPLIT));
+      TypeNameUtilities.IsNamed(a.AttributeClass, STORAGE) && a.ConstructorArguments.Length > 0 && (int)a.ConstructorArguments[0].Value! == SPLIT));
     _walk(walk, model, "", 0, null);
 
     var ordered = walk.Migrations.Select((m, i) => (m, i)).OrderBy(x => x.m.Order).ThenBy(x => x.i).Select(x => x.m);

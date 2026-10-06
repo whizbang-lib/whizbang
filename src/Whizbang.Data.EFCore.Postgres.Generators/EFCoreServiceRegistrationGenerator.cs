@@ -701,7 +701,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // FieldStorageMode.Split is 2.
     var isSplit = modelType.GetAttributes().Any(a =>
         TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PerspectiveStorageAttribute") &&
-        a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is 2);
+        a.ConstructorArguments.Length > 0 && (int)a.ConstructorArguments[0].Value! == 2);
     var properties = modelType.GetMembers()
         .OfType<IPropertySymbol>()
         .Where(p => !p.IsStatic);
