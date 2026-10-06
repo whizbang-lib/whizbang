@@ -92,6 +92,29 @@ public class TypeNameHandlingAnalyzerBranchTests {
   }
 
   /// <summary>
+  /// A call on any other receiver is not a type-name value: a type named bare that is not a helper,
+  /// or a receiver that is itself a call.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task CallOnANonHelperReceiver_IsNotATypeNameValueAsync() {
+    var bareType = await _idsAsync("""
+      public class Sample {
+        public bool Same(Type a, Type b) => string.Equals(Convert.ToString(a), Convert.ToString(b));
+      }
+      """);
+    var chained = await _idsAsync("""
+      public class Sample {
+        private static string Make() => "";
+        public bool Same() => string.Equals(Make().Trim(), Make().Trim());
+      }
+      """);
+
+    await Assert.That(bareType).DoesNotContain("WHIZ162");
+    await Assert.That(chained).DoesNotContain("WHIZ162");
+  }
+
+  /// <summary>
   /// <c>FullName</c> is a type-name value only when read from <see cref="System.Type"/>: a type
   /// named <c>Type</c> in another namespace, and a person's full name, are not.
   /// </summary>
