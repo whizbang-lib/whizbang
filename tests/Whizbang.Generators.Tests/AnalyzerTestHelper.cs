@@ -91,7 +91,7 @@ public static class AnalyzerTestHelper {
   [RequiresAssemblyFiles()]
   public static async Task<ImmutableArray<Diagnostic>> GetDiagnosticsAsync<TAnalyzer>(
       string source,
-      (string path, string content)[]? additionalFiles = null,
+      (string path, string? content)[]? additionalFiles = null,
       Dictionary<string, string>? globalOptions = null)
       where TAnalyzer : DiagnosticAnalyzer, new() {
 
@@ -146,9 +146,9 @@ public static class AnalyzerTestHelper {
   }
 
   /// <summary>Minimal in-memory <see cref="AdditionalText"/> for supplying AdditionalFiles content in tests.</summary>
-  private sealed class TestAdditionalText(string path, string content) : AdditionalText {
+  private sealed class TestAdditionalText(string path, string? content) : AdditionalText {
     public override string Path { get; } = path;
-    public override SourceText GetText(System.Threading.CancellationToken cancellationToken = default)
-      => SourceText.From(content);
+    public override SourceText? GetText(System.Threading.CancellationToken cancellationToken = default)
+      => content is null ? null : SourceText.From(content);
   }
 }

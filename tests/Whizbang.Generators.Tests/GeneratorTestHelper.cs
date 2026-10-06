@@ -26,7 +26,7 @@ public static class GeneratorTestHelper {
   /// <returns>The generator driver result containing generated sources and diagnostics</returns>
   [RequiresAssemblyFiles()]
   public static GeneratorDriverRunResult RunGenerator<TGenerator>(
-      string source, (string path, string content)[]? additionalFiles = null)
+      string source, (string path, string? content)[]? additionalFiles = null)
       where TGenerator : IIncrementalGenerator, new() {
 
     // Parse the source code
@@ -211,10 +211,10 @@ public static class GeneratorTestHelper {
   }
 
   /// <summary>Minimal in-memory <see cref="AdditionalText"/> for supplying AdditionalFiles content in tests.</summary>
-  private sealed class TestAdditionalText(string path, string content) : AdditionalText {
+  private sealed class TestAdditionalText(string path, string? content) : AdditionalText {
     public override string Path { get; } = path;
-    public override SourceText GetText(System.Threading.CancellationToken cancellationToken = default)
-      => SourceText.From(content);
+    public override SourceText? GetText(System.Threading.CancellationToken cancellationToken = default)
+      => content is null ? null : SourceText.From(content);
   }
 
   /// <summary>
@@ -291,6 +291,30 @@ public static class GeneratorTestHelper {
   }
 
   /// <summary>
+  /// Runs a generator over a compilation that has no assembly name, against the full set of
+  /// references the test process carries (framework, EF Core, Whizbang).
+  /// </summary>
+  /// <remarks>
+  /// <see cref="Compilation.AssemblyName"/> is nullable: a host can create a compilation without
+  /// one, and every generator that derives a namespace or a type key from it carries a fallback.
+  /// The ordinary helpers always name the assembly, so only this one reaches those fallbacks.
+  /// </remarks>
+  [RequiresAssemblyFiles()]
+  public static GeneratorDriverRunResult RunGeneratorOnUnnamedAssembly(IIncrementalGenerator generator, string source) {
+    ArgumentNullException.ThrowIfNull(generator);
+    var compilation = CSharpCompilation.Create(
+        assemblyName: null,
+        syntaxTrees: [CSharpSyntaxTree.ParseText(source)],
+        references: _fullFrameworkReferences(),
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+    );
+    var driver = CSharpGeneratorDriver.Create(generator);
+    var result = driver.RunGenerators(compilation).GetRunResult();
+    _throwIfAnyGeneratorFailed(result);
+    return result;
+  }
+
+  /// <summary>
   /// Runs a source generator and returns the ERROR diagnostics of the resulting compilation
   /// (original source + every generated tree). Unlike <see cref="GeneratorDriverRunResult.Diagnostics"/>,
   /// which only carries the generator's own diagnostics, this surfaces downstream compile errors in the
@@ -300,7 +324,7 @@ public static class GeneratorTestHelper {
   /// </summary>
   [RequiresAssemblyFiles()]
   public static ImmutableArray<Diagnostic> GetGeneratedCompilationErrors<TGenerator>(
-      string source, (string path, string content)[]? additionalFiles = null)
+      string source, (string path, string? content)[]? additionalFiles = null)
       where TGenerator : IIncrementalGenerator, new() =>
     GetGeneratedCompilationErrors([new TGenerator()], source, additionalFiles);
 
@@ -317,7 +341,7 @@ public static class GeneratorTestHelper {
   public static ImmutableArray<Diagnostic> GetGeneratedCompilationErrors(
       IReadOnlyList<IIncrementalGenerator> generators,
       string source,
-      (string path, string content)[]? additionalFiles = null) {
+      (string path, string? content)[]? additionalFiles = null) {
     ArgumentNullException.ThrowIfNull(generators);
 
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
