@@ -297,6 +297,71 @@ public record TaggedEvent : MarkerHost.INestedTag, IEvent {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task MessageJsonContextGenerator_ConstructedGenericBase_StillRegistersPolymorphicFactoryAsync() {
+    // A constructed generic base has no metadata name to look up ("EventBase<int>" is a display
+    // form), so the by-name check that skips [JsonPolymorphic], non-public and abstract bases cannot
+    // see it. The base name is still emitted as source text, so the shared base must still become a
+    // polymorphic factory over its message types rather than vanish because it could not be inspected.
+    const string source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public class EventBase<T> : IEvent {
+  public T? Value { get; init; }
+}
+
+public class CountedEvent : EventBase<int> {
+  public string Label { get; init; } = "";
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("Create_TestApp_CountedEvent");
+    await Assert.That(code).Contains("typeof(global::TestApp.EventBase<int>)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task MessageJsonContextGenerator_AbstractAndInternalDerivedTypes_AreLeftOutOfTheBasesFactoryAsync() {
+    // A polymorphic base's factory instantiates its derived types, so only concrete public ones may
+    // be listed: an abstract intermediate cannot be constructed and an internal one cannot be named
+    // from the generated public context.
+    const string source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public record BaseNotice : IEvent {
+  public string Value { get; init; } = "";
+}
+
+public abstract record IntermediateNotice : BaseNotice;
+
+public record LeafNotice : IntermediateNotice;
+
+internal record HiddenNotice : BaseNotice;
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("CreatePolymorphic_TestApp_BaseNotice");
+    await Assert.That(code).Contains("typeof(global::TestApp.LeafNotice)");
+    await Assert.That(code).DoesNotContain("typeof(global::TestApp.IntermediateNotice)");
+    await Assert.That(code).DoesNotContain("HiddenNotice");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task MessageJsonContextGenerator_InternalInterfaceAsSharedBase_ExcludedFromPolymorphicRegistryAsync() {
     // An internal marker interface implemented by a public event is a legal, ordinary C# shape.
     // If the generator registered it as a polymorphic base anyway, the generated (public) context

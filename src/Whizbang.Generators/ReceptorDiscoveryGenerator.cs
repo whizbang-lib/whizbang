@@ -453,7 +453,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-        .FirstOrDefault(f => f.ConstantValue is int val && val == stageValue);
+        .FirstOrDefault(f => Equals(f.ConstantValue, stageValue));
 
     if (enumMember is null) {
       return null;
@@ -702,7 +702,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-        .FirstOrDefault(f => f.ConstantValue is int val && val == modeValue);
+        .FirstOrDefault(f => Equals(f.ConstantValue, modeValue));
 
     if (enumMember is null) {
       return null;
@@ -818,9 +818,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         return true;
       }
       if (TypeNameUtilities.IsNamed(attribute.AttributeClass, RECEPTOR_IDEMPOTENT_ATTRIBUTE)) {
-        // Treat [ReceptorIdempotent] as replay-safe only when AlwaysFire = true.
+        // Treat [ReceptorIdempotent] as replay-safe only when AlwaysFire = true. AlwaysFire is the
+        // attribute's only settable member (pinned by a test), and a named argument naming anything
+        // else does not bind and never reaches here, so every named argument is AlwaysFire; a value
+        // of the wrong type is not true.
         foreach (var arg in attribute.NamedArguments) {
-          if (arg.Key == "AlwaysFire" && arg.Value.Value is bool b && b) {
+          if (arg.Value.Value is true) {
             return true;
           }
         }

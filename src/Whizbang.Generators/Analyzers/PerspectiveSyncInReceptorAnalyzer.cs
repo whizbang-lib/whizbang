@@ -158,7 +158,7 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
 
         if (stageType is INamedTypeSymbol enumType) {
           var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-              .FirstOrDefault(f => f.ConstantValue is int val && val == stageValue);
+              .FirstOrDefault(f => Equals(f.ConstantValue, stageValue));
 
           if (enumMember is not null) {
             fireAtStages.Add(enumMember.Name);
