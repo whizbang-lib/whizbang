@@ -86,7 +86,8 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
 
     // Exemption 2 — the Whizbang.Core assembly: the framework's registered producers
     // (CoalesceShipWorker's default factory, RedeliveryPump's builder) ARE the factory path.
-    if (string.Equals(context.ContainingSymbol.ContainingAssembly?.Name, CORE_ASSEMBLY, System.StringComparison.Ordinal)) {
+    // An object creation sits inside a member, and every member belongs to an assembly.
+    if (string.Equals(context.ContainingSymbol.ContainingAssembly!.Name, CORE_ASSEMBLY, System.StringComparison.Ordinal)) {
       return;
     }
 
@@ -154,12 +155,11 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
 
   /// <summary>True when <paramref name="property"/> is one of the sanctioned builder seams.</summary>
   /// <remarks>
-  /// A property with no containing type has no name to match, so it is given the empty string and
-  /// fails both comparisons — the same answer a guard on its own line gave.
+  /// Every property is declared on a type, which is what its name is matched within.
   /// </remarks>
   private static bool _isBuilderSeam(IPropertySymbol property) {
-    var containingType = property.ContainingType?.OriginalDefinition;
-    var containingDisplay = containingType is null ? string.Empty : $"{TypeNameUtilities.Display(containingType.ContainingNamespace)}.{containingType.Name}";
+    var containingType = property.ContainingType!.OriginalDefinition;
+    var containingDisplay = $"{TypeNameUtilities.Display(containingType.ContainingNamespace)}.{containingType.Name}";
     return (property.Name == MINT_REQUEST_BUILDER && containingDisplay == MINT_REQUEST_TYPE)
         || (property.Name == COALESCE_POLICY_BUILDER && containingDisplay == COALESCE_POLICY_OPTIONS_TYPE);
   }

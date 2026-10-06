@@ -501,7 +501,8 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return (null, null);
     }
 
-    return (row.TypeArguments.Length == 1 ? row.TypeArguments[0] as INamedTypeSymbol : null, document.Name);
+    // PerspectiveRow<TModel> has exactly one type argument.
+    return (row.TypeArguments[0] as INamedTypeSymbol, document.Name);
   }
 
   /// <summary>
@@ -528,7 +529,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
 
   private static bool _feedsRowSelectingOperator(LambdaExpressionSyntax lambda) {
     if (lambda.Parent is not ArgumentSyntax argument ||
-        argument.Parent?.Parent is not InvocationExpressionSyntax invocation ||
+        argument.Parent!.Parent is not InvocationExpressionSyntax invocation ||
         invocation.Expression is not MemberAccessExpressionSyntax invoked) {
       return false;
     }

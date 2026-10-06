@@ -529,6 +529,8 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [Arguments("r.Data.JsonOnly.Contains(\"ab\")")]
   [Arguments("r.Data.JsonOnly.StartsWith(\"ab\")")]
   [Arguments("r.Data.JsonOnly.Equals(\"x\", System.StringComparison.OrdinalIgnoreCase)")]
+  // The static object.Equals, called unqualified, is not the instance Equals containment reproduces.
+  [Arguments("Equals(r.Data.JsonOnly, \"x\")")]
   [Arguments("r.Data.WhenOffset == offset")]
   [Arguments("r.Data.When > when")]
   // Equality on the date family moved to this side when its stored form became a number. The value
@@ -549,6 +551,26 @@ public class PerspectiveFilterIndexAnalyzerTests {
             var clock = new System.TimeOnly(5, 6, 7);
             var elapsed = System.TimeSpan.FromMinutes(3);
             return _rows.Where(r => {predicate}).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsNotEmpty();
+  }
+
+  /// <summary>
+  /// A field handed to a constructor inside a query-syntax filter is not an equality containment can
+  /// serve. A query expression is not a call, so a query held in a variable has no call around the
+  /// filter at all, and the field still forces a scan.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task FieldPassedToAConstructorInAQueryExpression_IsReportedAsync() {
+    var source = _repositoryOver("""
+            var query = from r in _rows
+                        where new System.Text.StringBuilder(r.Data.JsonOnly).Length > 0
+                        select r;
+            return query.ToList();
       """);
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
