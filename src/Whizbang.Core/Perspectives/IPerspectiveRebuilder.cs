@@ -80,7 +80,19 @@ public record RebuildResult(
     int EventsReplayed,
     TimeSpan Duration,
     bool Success,
-    string? Error);
+    string? Error) {
+  /// <summary>
+  /// How many stream ids the caller named, when it named any.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="StreamsProcessed"/> alone cannot distinguish "I found none of the ids you gave me" from
+  /// "there was nothing to do" -- both report zero. A selected-streams rebuild was observed returning
+  /// success after discovering none of 32 explicitly requested streams, and no caller could have told.
+  /// An optional init-only property rather than a positional parameter, so existing construction sites and
+  /// deconstructions keep compiling.
+  /// </remarks>
+  public int StreamsRequested { get; init; }
+}
 
 /// <summary>
 /// Status of an in-progress rebuild operation.
