@@ -52,6 +52,10 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
+    // One walk per model, shared by every interface: a perspective implementing two interfaces over the same model
+    // reported each property once per interface (#1179).
+    var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+
     // Find IPerspectiveFor<TModel, ...> interfaces
     foreach (var iface in typeSymbol.AllInterfaces) {
       // Must be IPerspectiveFor with at least 2 type arguments (TModel + at least one TEvent)
@@ -67,7 +71,6 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
       }
 
       // Check model for polymorphic properties (recursive with cycle detection)
-      var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
       _checkForPolymorphicTypes(context, modelType, visited);
     }
   }
