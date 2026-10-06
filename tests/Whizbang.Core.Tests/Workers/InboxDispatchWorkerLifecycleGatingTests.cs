@@ -63,9 +63,13 @@ public class InboxDispatchWorkerLifecycleGatingTests {
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<HandlerCommitRequest> All { get; } = [];
+    public TaskCompletionSource Second { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       All.Add(request);
       First.TrySetResult(request);
+      if (All.Count >= 2) {
+        Second.TrySetResult();
+      }
       return ValueTask.CompletedTask;
     }
   }
@@ -84,9 +88,18 @@ public class InboxDispatchWorkerLifecycleGatingTests {
         ILifecycleContext? context = null,
         CancellationToken cancellationToken = default) {
       Invocations.Add(stage);
+      _fired(stage).TrySetResult();
       return ValueTask.CompletedTask;
     }
     public bool HasStage(LifecycleStage stage) => Invocations.Any(s => s == stage);
+
+    /// <summary>Completes once every given stage has been invoked: the worker's own signal, no polling.</summary>
+    public Task WaitForStagesAsync(params LifecycleStage[] stages) =>
+      Task.WhenAll(stages.Select(stage => _fired(stage).Task)).WaitAsync(TimeSpan.FromSeconds(30));
+
+    private readonly ConcurrentDictionary<LifecycleStage, TaskCompletionSource> _stageSignals = new();
+    private TaskCompletionSource _fired(LifecycleStage stage) =>
+      _stageSignals.GetOrAdd(stage, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
   }
 
   /// <summary>Counts deserialize calls so tests can prove the gate skipped the payload work.</summary>
@@ -276,10 +289,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     await harness.Inbox.WriteAsync(work, cts.Token);
 
     await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-    while (!harness.Invoker.HasStage(LifecycleStage.PreInboxInline) && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await harness.Invoker.WaitForStagesAsync(LifecycleStage.PreInboxInline);
     for (var i = 0; i < 50; i++) {
       await Task.Yield();
     }
@@ -306,10 +316,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     await harness.Inbox.WriteAsync(work, cts.Token);
 
     await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-    while (!harness.Invoker.HasStage(LifecycleStage.PostInboxInline) && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await harness.Invoker.WaitForStagesAsync(LifecycleStage.PostInboxInline);
     for (var i = 0; i < 50; i++) {
       await Task.Yield();
     }
@@ -334,11 +341,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     await harness.Inbox.WriteAsync(work, cts.Token);
 
     await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-    while ((!harness.Invoker.HasStage(LifecycleStage.PreInboxInline) || !harness.Invoker.HasStage(LifecycleStage.PostInboxInline))
-           && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await harness.Invoker.WaitForStagesAsync(LifecycleStage.PreInboxInline, LifecycleStage.PostInboxInline);
 
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PreInboxInline)).IsTrue();
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PostInboxInline)).IsTrue();
@@ -369,10 +372,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     await harness.Inbox.WriteAsync(work, cts.Token);
 
     await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-    while (!harness.Invoker.HasStage(LifecycleStage.PostAllPerspectivesInline) && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await harness.Invoker.WaitForStagesAsync(LifecycleStage.PostAllPerspectivesInline, LifecycleStage.PostLifecycleInline);
 
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue()
       .Because("PostAllPerspectives MUST fire even when the registry reports false for it — the registry doesn't track that stage. A generic gate would silently break tag notifications for cross-service events.");
@@ -440,14 +440,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     await harness.Inbox.WriteAsync(work, cts.Token);
 
     await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-    while ((!harness.Invoker.HasStage(LifecycleStage.PreInboxInline)
-            || !harness.Invoker.HasStage(LifecycleStage.PostInboxInline)
-            || !harness.Invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)
-            || !harness.Invoker.HasStage(LifecycleStage.PostLifecycleInline))
-           && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await harness.Invoker.WaitForStagesAsync(LifecycleStage.PreInboxInline, LifecycleStage.PostInboxInline, LifecycleStage.PostAllPerspectivesInline, LifecycleStage.PostLifecycleInline);
 
     await Assert.That(harness.Deserializer.CallCount).IsEqualTo(1)
       .Because("Slice 15 invariant: payload must deserialize exactly once per dispatch even when all 4 lifecycle stages fire.");
@@ -478,10 +471,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     // shares the message id so the cache key collides.
     var redelivery = work with { Attempts = 1 };
     await harness.Inbox.WriteAsync(redelivery, cts.Token);
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-    while (harness.HandlerCommit.All.Count < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await harness.HandlerCommit.Second.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
     await Assert.That(harness.HandlerCommit.All.Count).IsEqualTo(2)
       .Because("Both dispatches should reach completion.");
@@ -539,12 +529,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     await harness.Inbox.WriteAsync(work, cts.Token);
 
     await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-    while ((!harness.Invoker.HasStage(LifecycleStage.PreInboxDetached)
-            || !harness.Invoker.HasStage(LifecycleStage.PostInboxDetached))
-           && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await harness.Invoker.WaitForStagesAsync(LifecycleStage.PreInboxDetached, LifecycleStage.PostInboxDetached);
 
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PreInboxDetached)).IsTrue()
       .Because("With a registered detached receptor, the spawn must still happen.");
@@ -584,10 +569,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     await harness.Inbox.WriteAsync(work, cts.Token);
 
     await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-    while (!harness.Invoker.HasStage(LifecycleStage.PreInboxDetached) && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await harness.Invoker.WaitForStagesAsync(LifecycleStage.PreInboxDetached);
 
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PreInboxDetached)).IsTrue()
       .Because("Gate must consult the runtime registry too — without this, every runtime-registered receptor (integration test waits, dynamic registrations) silently fails to fire.");
@@ -610,11 +592,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     await harness.Inbox.WriteAsync(work, cts.Token);
 
     await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-    while ((!harness.Invoker.HasStage(LifecycleStage.PreInboxInline) || !harness.Invoker.HasStage(LifecycleStage.PostInboxInline))
-           && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await harness.Invoker.WaitForStagesAsync(LifecycleStage.PreInboxInline, LifecycleStage.PostInboxInline);
 
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PreInboxInline)).IsTrue()
       .Because("With null registry, lifecycle stages must still fire (legacy behavior).");
