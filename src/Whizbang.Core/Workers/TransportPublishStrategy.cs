@@ -412,8 +412,9 @@ public partial class TransportPublishStrategy(
 
         var batchThrottled = caught is not null
           ? TransportFailureClassifier.Classify(caught) == MessageFailureReason.Throttled
-          : batchResults!.All(r => !r.Success
-              && TransportFailureClassifier.Classify(new InvalidOperationException(r.Error ?? "")) == MessageFailureReason.Throttled);
+          // The transport classifies each item from the exception it caught (#1167). An empty answer refused
+          // nothing, so it is not a throttle.
+          : batchResults!.Count > 0 && batchResults.All(r => !r.Success && r.Reason == MessageFailureReason.Throttled);
 
         if (batchThrottled && batchAttempt < _throttleRetry.MaxAttempts) {
           // The batch group is keyed by namespace already, so the shared destination names exactly
@@ -452,7 +453,8 @@ public partial class TransportPublishStrategy(
               MessageId = batchResult.MessageId,
               Success = batchResult.Success,
               CompletedStatus = batchResult.Success ? MessageProcessingStatus.Published : originalWork.Status,
-              Error = batchResult.Error
+              Error = batchResult.Error,
+              Reason = batchResult.Reason ?? MessageFailureReason.Unknown,
             });
           }
         }

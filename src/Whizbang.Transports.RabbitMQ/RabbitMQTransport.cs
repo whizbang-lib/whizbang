@@ -10,6 +10,7 @@ using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using RabbitMQ.Client.Exceptions;
 using Whizbang.Core;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
@@ -422,14 +423,15 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
           results.Add(new BulkPublishItemResult {
             MessageId = item.MessageId,
             Success = false,
-            Error = $"{ex.GetType().Name}: {ex.Message}"
+            Error = $"{ex.GetType().Name}: {ex.Message}",
+            Reason = TransportFailureClassifier.Classify(ex),
           });
         }
       }
     } catch (AlreadyClosedException ex) {
-      _failRemainingItems(items, results, $"AlreadyClosedException: {ex.Message}");
+      _failRemainingItems(items, results, $"AlreadyClosedException: {ex.Message}", TransportFailureClassifier.Classify(ex));
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _failRemainingItems(items, results, $"{ex.GetType().Name}: {ex.Message}");
+      _failRemainingItems(items, results, $"{ex.GetType().Name}: {ex.Message}", TransportFailureClassifier.Classify(ex));
     }
 
     return results;
@@ -556,14 +558,16 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private static void _failRemainingItems(
     IReadOnlyList<BulkPublishItem> items,
     List<BulkPublishItemResult> results,
-    string error
+    string error,
+    MessageFailureReason reason
   ) {
     var failedIds = items.Select(i => i.MessageId).Except(results.Select(r => r.MessageId)).ToList();
     foreach (var id in failedIds) {
       results.Add(new BulkPublishItemResult {
         MessageId = id,
         Success = false,
-        Error = error
+        Error = error,
+        Reason = reason,
       });
     }
   }

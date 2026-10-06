@@ -735,7 +735,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
             localResults.Add(new BulkPublishItemResult {
               MessageId = item.MessageId,
               Success = false,
-              Error = $"{ex.GetType().Name}: {ex.Message}"
+              Error = $"{ex.GetType().Name}: {ex.Message}",
+              Reason = TransportFailureClassifier.Classify(ex),
             });
           }
         }
@@ -769,11 +770,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         results.Add(new BulkPublishItemResult { MessageId = id, Success = true });
       }
     } catch (Exception ex) {
+      // A throttled send fails every item in the batch, and says so: the outbox retries a batch whose every item is
+      // throttled (#1167).
+      var reason = TransportFailureClassifier.Classify(ex);
       foreach (var id in batchItemIds) {
         results.Add(new BulkPublishItemResult {
           MessageId = id,
           Success = false,
-          Error = $"{ex.GetType().Name}: {ex.Message}"
+          Error = $"{ex.GetType().Name}: {ex.Message}",
+          Reason = reason,
         });
       }
     }
