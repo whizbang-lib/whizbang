@@ -47,6 +47,21 @@ public class TypeNameFormatterBranchCoverageTests {
     await Assert.That(names).IsEquivalentTo(["System.String", "System.Int32"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
+  /// <summary>
+  /// A type matches a CLR name only when it has exactly that name; a type with no full name matches
+  /// nothing, not even a name its simple name would suggest.
+  /// </summary>
+  [Test]
+  public async Task HasClrTypeName_MatchesOnlyTheExactFullNameAsync() {
+    var genericParameter = typeof(List<>).GetGenericArguments()[0];
+
+    await Assert.That(TypeNameFormatter.HasClrTypeName(typeof(string), "System.String")).IsTrue();
+    await Assert.That(TypeNameFormatter.HasClrTypeName(typeof(string), "System.string")).IsFalse()
+      .Because("the comparison is ordinal");
+    await Assert.That(TypeNameFormatter.HasClrTypeName(genericParameter, "T")).IsFalse()
+      .Because("a type with no full name has no CLR name to match");
+  }
+
   [Test]
   public async Task AssemblyQualifiedNameOrDisplay_ClosedType_IsTheAssemblyQualifiedNameAsync() {
     var name = TypeNameFormatter.AssemblyQualifiedNameOrDisplay(typeof(List<int>));

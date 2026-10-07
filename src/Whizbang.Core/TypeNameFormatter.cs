@@ -145,6 +145,19 @@ public static class TypeNameFormatter {
   }
 
   /// <summary>
+  /// Whether the type's CLR full name is exactly this one; a type with no full name matches nothing.
+  /// </summary>
+  /// <param name="type">The type to test.</param>
+  /// <param name="clrTypeName">The CLR full type name to match, compared ordinally.</param>
+  /// <returns>True when the type has that CLR full name.</returns>
+  /// <remarks>
+  /// The lookup a registry walk makes to find a perspective's model by its name. Registered models
+  /// are always named, so the no-name side is asserted here rather than through a walk.
+  /// </remarks>
+  internal static bool HasClrTypeName(Type type, string clrTypeName) =>
+    TryFormatClrTypeName(type, out var name) && string.Equals(name, clrTypeName, StringComparison.Ordinal);
+
+  /// <summary>
   /// The CLR full type names of the types that have one, in order, skipping any that do not (see
   /// <see cref="TryFormatClrTypeName"/>).
   /// </summary>

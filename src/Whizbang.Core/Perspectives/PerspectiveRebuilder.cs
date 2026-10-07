@@ -424,7 +424,7 @@ public sealed partial class PerspectiveRebuilder(
   private static async Task _streamGroupPresenceReconcileAsync(
       string perspectiveName, IServiceProvider sp, CancellationToken ct) {
     var model = PerspectiveStreamGroupRegistry.RegisteredModels()
-      .FirstOrDefault(m => TypeNameFormatter.TryFormatClrTypeName(m, out var clr) && string.Equals(clr, perspectiveName, StringComparison.Ordinal));
+      .FirstOrDefault(m => TypeNameFormatter.HasClrTypeName(m, perspectiveName));
     if (model is null) {
       return; // not a group member — nothing to reconcile.
     }

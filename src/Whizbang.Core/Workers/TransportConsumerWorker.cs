@@ -874,7 +874,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       }
     }
 
-    var inboxActivity = _startInboxActivity(envelope, messageType);
+    var inboxActivity = StartInboxActivity(envelope, messageType);
     try {
       _populateDeliveredAtTimestamp(envelope, envelopeType);
       var inboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
@@ -1034,7 +1034,15 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     }
   }
 
-  private static Activity? _startInboxActivity(IMessageEnvelope envelope, string messageType) {
+  /// <summary>
+  /// Starts the receive span for an inbox message under the producer's trace, or returns null when the
+  /// message carries no usable trace parent or nothing is listening to the transport source.
+  /// </summary>
+  /// <remarks>
+  /// Internal so both outcomes of the listener check can be pinned directly: whether a span starts
+  /// depends on the process-wide listeners, which a test of the whole receive path does not control.
+  /// </remarks>
+  internal static Activity? StartInboxActivity(IMessageEnvelope envelope, string messageType) {
     var traceParent = envelope.Hops?
       .Where(h => h.Type == HopType.Current)
       .Select(h => h.TraceParent)
@@ -1046,10 +1054,13 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
     var activity = WhizbangActivitySource.Transport.StartActivity(
       $"Inbox {messageType}", ActivityKind.Consumer, parentContext);
-    activity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
-    activity?.SetTag("messaging.operation", "receive");
+    if (activity is null) {
+      return null;
+    }
+    activity.SetTag("messaging.message_id", envelope.MessageId.ToString());
+    activity.SetTag("messaging.operation", "receive");
     // Reached only with a trace parent, which was read from the hops above, so they exist.
-    activity?.SetTag("whizbang.hop_count", envelope.Hops!.Count);
+    activity.SetTag("whizbang.hop_count", envelope.Hops!.Count);
     return activity;
   }
 
