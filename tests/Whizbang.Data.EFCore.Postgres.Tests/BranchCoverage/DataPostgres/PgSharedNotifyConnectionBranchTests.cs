@@ -89,6 +89,37 @@ public class PgSharedNotifyConnectionBranchTests : EFCoreTestBase {
       .Because("the caller canceled; naming it a self-test timeout would send an operator after a slow database that does not exist");
   }
 
+  // The recorded reason tells an operator where to look. Only a cancellation nobody asked for is a
+  // timeout; the caller's own cancellation and an ordinary failure are named by what happened.
+  [Test]
+  public async Task ProbeFailureReason_NamesOnlyAnUnaskedCancellationATimeoutAsync() {
+    using var canceled = new CancellationTokenSource();
+    await canceled.CancelAsync();
+    var failure = new InvalidOperationException("connection refused");
+
+    await Assert.That(PgSharedNotifyConnection.ProbeFailureReason(new OperationCanceledException(), CancellationToken.None))
+      .IsEqualTo("ProbeNowAsync timed out");
+    await Assert.That(PgSharedNotifyConnection.ProbeFailureReason(new OperationCanceledException("stopped"), canceled.Token))
+      .IsEqualTo("stopped");
+    await Assert.That(PgSharedNotifyConnection.ProbeFailureReason(failure, CancellationToken.None))
+      .IsEqualTo("connection refused");
+  }
+
+  // The dispatch loop waits again only on an open connection the host has not asked to stop. Through
+  // the loop both ways out leave by exception first (a stop cancels the wait, a dropped connection
+  // fails it), so the guard for the moment between is asserted here rather than raced for.
+  [Test]
+  public async Task KeepListening_OnlyOnAnOpenConnectionNotAskedToStopAsync() {
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(PgSharedNotifyConnection.KeepListening(System.Data.ConnectionState.Open, CancellationToken.None)).IsTrue();
+    await Assert.That(PgSharedNotifyConnection.KeepListening(System.Data.ConnectionState.Broken, CancellationToken.None)).IsFalse()
+      .Because("a dropped connection goes back to the reconnect loop rather than waiting on nothing");
+    await Assert.That(PgSharedNotifyConnection.KeepListening(System.Data.ConnectionState.Open, stopping.Token)).IsFalse()
+      .Because("a stop ends the loop even on a healthy connection");
+  }
+
   // A resync pass runs on every subscribe and every reconnect. A channel already listened, and still
   // wanted, must be left alone: re-issuing LISTEN or UNLISTEN for it is a round trip per channel per
   // pass, and on a connection that has just died each one would log a spurious failure.
