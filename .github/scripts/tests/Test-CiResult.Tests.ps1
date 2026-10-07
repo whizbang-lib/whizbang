@@ -184,3 +184,55 @@ Describe 'yielded (release-pr)' {
     (Get-CiVerdict -NeedsTable $n -EventName push -CoveringGate success).Pass | Should -BeFalse
   }
 }
+
+Describe 'release-branch push (#1208)' {
+  BeforeEach {
+    $script:ReleaseRef = 'refs/heads/release/v0.2613.0'
+    # The shape that shipped no packages: an empty fix merged into the release branch, so the push run
+    # reused the tested results (queue-validated) and, finding no code, built and packed nothing.
+    $script:n = Get-GreenNeed
+    $n['queue-validated'] = @{ result = 'success'; outputs = @{ validated = 'true' } }
+    $n['verify-rebuild'].result = 'success'
+    $n['reupload-reports'].result = 'success'
+    $n['changes'].outputs.code = 'false'
+    Skip-Job $n (@('build', 'pack', 'quality') + $AllSuites)
+  }
+
+  It 'fails a reused run that built and packed nothing' {
+    $v = Get-CiVerdict -NeedsTable $n -EventName push -Ref $ReleaseRef
+    $v.Path | Should -Be 'reused'
+    $v.Pass | Should -BeFalse
+    $v.Problems | Should -Contain 'build is skipped, but a release-branch run is what the stable publish promotes and the release PR takes coverage from'
+    $v.Problems | Should -Contain 'pack is skipped, but a release-branch run is what the stable publish promotes and the release PR takes coverage from'
+  }
+
+  It 'passes a reused run that built and packed' {
+    $n['changes'].outputs.code = 'true'; $n['build'].result = 'success'; $n['pack'].result = 'success'
+    (Get-CiVerdict -NeedsTable $n -EventName push -Ref $ReleaseRef).Pass | Should -BeTrue
+  }
+
+  It 'fails a docs-only verdict on a release branch' {
+    $n['queue-validated'] = @{ result = 'skipped'; outputs = @{} }
+    $v = Get-CiVerdict -NeedsTable $n -EventName push -Ref $ReleaseRef
+    $v.Path | Should -Be 'docs-only'
+    $v.Pass | Should -BeFalse
+  }
+
+  It 'reports a skipped build once on the tested-here path' {
+    $n['queue-validated'] = @{ result = 'skipped'; outputs = @{} }; $n['changes'].outputs.code = 'true'
+    $v = Get-CiVerdict -NeedsTable $n -EventName push -Ref $ReleaseRef
+    @($v.Problems | Where-Object { $_ -like 'build is *' }).Count | Should -Be 1
+  }
+
+  It 'still passes a docs-only push to <ref>' -ForEach @(@{ ref = 'refs/heads/develop' }, @{ ref = 'refs/heads/main' }, @{ ref = '' }) {
+    $n['queue-validated'] = @{ result = 'skipped'; outputs = @{} }
+    (Get-CiVerdict -NeedsTable $n -EventName push -Ref $ref).Pass | Should -BeTrue
+  }
+
+  It 'does not apply to a release PR, which yields its build to the push run' {
+    $p = Get-GreenNeed
+    $p['release-pr'] = @{ result = 'success'; outputs = @{ skip = 'true'; 'coverage-run-id' = '123' } }
+    Skip-Job $p (@('format', 'build', 'pack') + $AllSuites)
+    (Get-CiVerdict -NeedsTable $p -EventName pull_request -Ref 'refs/pull/1205/merge' -CoveringGate success).Pass | Should -BeTrue
+  }
+}
