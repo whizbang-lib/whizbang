@@ -15,16 +15,14 @@ namespace Whizbang.Generators.Tests;
 /// </summary>
 /// <remarks>
 /// The generator builds each registry entry by lifting the <c>ReceptorInfo(...)</c> constructor
-/// call out of an embedded snippet and substituting placeholders into it. When that lift fails it
-/// falls back to a hand-rolled StringBuilder that emits the same call from scratch — a second,
-/// independent copy of the entry shape that no snippet edit ever updates.
+/// call out of an embedded snippet and substituting placeholders into it, and it relies on the lift
+/// succeeding: it used to fall back to a hand-rolled StringBuilder, a second copy of the entry shape
+/// that no snippet edit ever updated, and that silent fork is gone.
 ///
 /// <para>
-/// So the fallback is not a safety net so much as a silent fork: a snippet edited to drop or rename
-/// the marker would keep compiling and keep generating, but every receptor entry would come from
-/// the stale hand-rolled version instead, and the divergence would only surface as wrong runtime
-/// behavior in a consumer's dispatch. These tests pin the marker in each of the four snippets so
-/// that edit fails here, loudly, instead.
+/// These tests are therefore the guard: a snippet edited to drop, rename or unbalance the marker
+/// fails here, loudly, instead of the generator emitting a broken or drifted entry for every
+/// receptor in a consumer's build.
 /// </para>
 /// </remarks>
 public class ReceptorRegistrySnippetInvariantTests {
@@ -69,8 +67,7 @@ public class ReceptorRegistrySnippetInvariantTests {
   [MethodDataSource(nameof(SnippetRegions))]
   public async Task EverySnippet_ClosesTheReceptorInfoCallAsync(string regionName) {
     // The lift matches parentheses from the marker forward. An unbalanced call would run off the
-    // end of the snippet and return null, dropping the generator onto the fallback just as a
-    // missing marker would.
+    // end of the snippet and find no entry, just as a missing marker would.
     var snippet = TemplateUtilities.ExtractSnippet(_generatorsAssembly, SNIPPET_FILE, regionName);
     var start = snippet.IndexOf(RECEPTOR_INFO_MARKER, StringComparison.Ordinal);
 
