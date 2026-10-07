@@ -84,18 +84,101 @@ public class PerspectiveIdempotencyFilterTests {
   // case that lost data on a consumer's cutover (#1054).
   // ---------------------------------------------------------------------------------------------- #
 
+  /// <summary>
+  /// Two time-ordered ids no longer decide anything, because an id's order is not the stream's order.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This asserted the opposite until a consuming deployment lost a batch to it. The comparison was kept
+  /// when the v4 case was fixed (#1054), on the reasoning that two UUIDv7s from one generator order by
+  /// time — which is true, and not the question. The stream is what has to be ordered, and a stream that
+  /// several services feed stores ids that were minted elsewhere, in an order of their own.
+  /// </para>
+  /// <para>
+  /// Only the ORDERING comparison goes. Equality stays, because it infers no order: the row's own event
+  /// is applied by definition, and that is what keeps a re-read a no-op. The ordinary case compares
+  /// commit sequences, which the stream's own store assigns in its own order and which cannot invert.
+  /// </para>
+  /// </remarks>
   [Test]
-  public async Task IsAlreadyApplied_NeitherStamped_BothIdsTimeOrdered_ComparesThemAsync() {
+  public async Task IsAlreadyApplied_NeitherStamped_BothIdsTimeOrdered_DeferAnywayAsync() {
     var first = TrackedGuid.New().Value;
     var second = TrackedGuid.New().Value;
 
     await Assert.That(PerspectiveIdempotencyFilter.IsAlreadyApplied(second.ToString("D"), null, first, null))
-      .IsTrue().Because("Two UUIDv7s from this generator order by time, so an earlier id really was "
-        + "applied already. Keeping this case working is why the comparison is narrowed rather than removed.");
+      .IsFalse().Because("an id that sorts low is an inversion for the worker to rewind to, not proof "
+        + "that the event was applied here.");
     await Assert.That(PerspectiveIdempotencyFilter.IsAlreadyApplied(first.ToString("D"), null, second, null))
       .IsFalse();
     await Assert.That(PerspectiveIdempotencyFilter.IsAlreadyApplied(first.ToString("D"), null, first, null))
-      .IsTrue().Because("The row's own event is applied by definition.");
+      .IsTrue().Because("an id EQUAL to the row's is that row's own event, applied by definition. "
+        + "Equality infers no ordering, so it survives where the comparison did not, and it is what "
+        + "keeps a re-read of the same event a no-op.");
+  }
+
+  // ---------------------------------------------------------------------------------------------- #
+  // Neither side stamped, both ids time-ordered, and the ids were NOT minted by one writer.
+  //
+  // The comparison above is sound only while one writer mints every id in the order the stream stores
+  // them. A stream fed by more than one service breaks that: a UUIDv7 orders by the moment it was
+  // minted, on the service that minted it, which is not where it lands in another service's stream.
+  //
+  // Observed on a consuming deployment during a bulk import. An event minted LAST by the service that
+  // owns it (its version 24 there) is stored FIRST in a downstream service's stream (version 1 here),
+  // so its id sorts above all twenty-three events that follow it:
+  //
+  //   v1  01a10db8-41dc-7353-99d8-70889923a9a9   <- highest id, lowest version
+  //   v2  01a10db8-41d7-706a-8ace-000280b19c8f
+  //   v3  01a10db8-41d7-706a-8ace-00153129429b
+  //
+  // One inversion in twenty-four, and it discarded the whole batch: every later event compared against
+  // the row's version 1 id and read as already applied. The diagnostic logged every event of a batch as
+  // filtered, repeatedly, across minutes, each line showing no persisted commit sequence.
+  //
+  // Nothing was out of order in transit. The stream's versions are 1..24 and its commit sequences are
+  // monotonic; only the ids are inverted, because they were minted elsewhere. Ordering therefore cannot
+  // be established from ids here, which is the case this filter says it defers on.
+  // ---------------------------------------------------------------------------------------------- #
+
+  /// <summary>The id of the event stored first in this stream, minted last by another service.</summary>
+  private const string CROSS_SOURCE_ROW_ID = "01a10db8-41dc-7353-99d8-70889923a9a9";
+
+  /// <summary>The id of the event stored second, minted earlier by the service that owns the record.</summary>
+  private const string CROSS_SOURCE_INCOMING_ID = "01a10db8-41d7-706a-8ace-000280b19c8f";
+
+  [Test]
+  public async Task IsAlreadyApplied_NeitherStamped_IdsMintedByAnotherSource_DefersAsync() {
+    // Both are valid UUIDv7s, so every guard above passes and only the comparison decides.
+    await Assert.That(TrackedGuid.FromExternal(Guid.Parse(CROSS_SOURCE_ROW_ID)).IsTimeOrdered).IsTrue();
+    await Assert.That(TrackedGuid.FromExternal(Guid.Parse(CROSS_SOURCE_INCOMING_ID)).IsTimeOrdered).IsTrue();
+
+    await Assert.That(PerspectiveIdempotencyFilter.IsAlreadyApplied(
+        CROSS_SOURCE_ROW_ID, null, Guid.Parse(CROSS_SOURCE_INCOMING_ID), null))
+      .IsFalse()
+      .Because("the incoming event is version 2 of this stream and has never been applied. Its id sorts "
+        + "below the row's only because the row's event was minted last by a different service, which "
+        + "says nothing about this stream's order.");
+  }
+
+  [Test]
+  public async Task IsAlreadyApplied_NeitherStamped_AnInversionIsNotEvidenceOfApplicationAsync() {
+    // The whole batch, as it arrived. Every event after the first sorts below the row's id, and not one
+    // of them had been applied. Any true here is a silent, permanent loss of that event.
+    string[] batch = [
+      "01a10db8-41d7-706a-8ace-000280b19c8f",
+      "01a10db8-41d7-706a-8ace-00153129429b",
+      "01a10db8-41d7-706a-8ace-00248d33dc56",
+      "01a10db8-41d7-706a-8ace-003970ab218e",
+    ];
+
+    foreach (var incoming in batch) {
+      await Assert.That(PerspectiveIdempotencyFilter.IsAlreadyApplied(
+          CROSS_SOURCE_ROW_ID, null, Guid.Parse(incoming), null))
+        .IsFalse()
+        .Because($"{incoming} was never applied; an id that sorts low is an inversion to be rewound, "
+          + "not proof of prior application. Discarding it leaves the read model permanently wrong, "
+          + "which is the asymmetry this filter exists to respect.");
+    }
   }
 
   [Test]
