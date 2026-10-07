@@ -51,6 +51,20 @@ Describe 'the suite slices in this repository' {
     }
   }
 
+  It 'leaves no integration project without a suite that runs it' {
+    # #1196: five projects carried only a tag no suite selected, so 214 tests never ran in CI and
+    # nothing said so. Every integration project in the solution must carry a suite's tag.
+    $suiteTags = @($script:Suites.Values | ForEach-Object { $_.Tag })
+    $solution = Get-Content (Join-Path -Path $Root -ChildPath 'Whizbang.slnx') -Raw
+    $orphans = foreach ($relative in [regex]::Matches($solution, '<Project Path="([^"]+\.csproj)"') | ForEach-Object { $_.Groups[1].Value }) {
+      $content = Get-Content (Join-Path -Path $Root -ChildPath $relative) -Raw -ErrorAction SilentlyContinue
+      if ($content -notmatch '<WhizbangTestType>Integration</WhizbangTestType>') { continue }
+      $tags = if ($content -match '<WhizbangTestTags>([^<]+)</WhizbangTestTags>') { $Matches[1] -split ';' | ForEach-Object { $_.Trim() } } else { @() }
+      if (-not ($tags | Where-Object { $suiteTags -contains $_ })) { $relative }
+    }
+    @($orphans) | Should -BeNullOrEmpty -Because 'an integration project no suite selects never runs in CI'
+  }
+
   It 'points each integration suite in ci.yml at its own slice' {
     $ci = Get-Content (Join-Path -Path $Root -ChildPath '.github/workflows/ci.yml') -Raw
     foreach ($suite in $script:Suites.Keys) {

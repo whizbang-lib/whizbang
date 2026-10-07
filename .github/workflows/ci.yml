@@ -836,6 +836,15 @@ jobs:
     uses: ./.github/workflows/reusable-test-azureblob.yml
     with:
       artifact-name: build-azureblob-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+  general-integration:
+    name: Test · Integration (general)
+    needs: [build, queue-validated, ff-validated, release-pr]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-test-integration.yml
+    with:
+      artifact-name: build-integration-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
 
   quality:
     name: Analyze · Quality
@@ -914,7 +923,7 @@ jobs:
     # On queue-validated develop pushes the suites skip, but reupload-reports republishes
     # the queue run's TRX into this run (as trx-queue) — so the upload still happens,
     # under the develop branch context Codecov's flake baseline needs.
-    needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, reupload-reports]
+    needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, reupload-reports]
     if: ${{ !cancelled() && (needs.unit-tests.result != 'skipped' || needs.reupload-reports.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1044,7 +1053,7 @@ jobs:
     # no such proof fails, which is what a release PR once got through with no suite results (#905).
     # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
     # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
-    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco]
+    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco]
     if: always()
     runs-on: ubuntu-latest
     # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has
@@ -1161,7 +1170,7 @@ jobs:
 
   prerelease-publish:
     name: Publish · Alpha (develop)
-    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, queue-validated, verify-rebuild, alpha-floor]
+    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, queue-validated, verify-rebuild, alpha-floor]
     # The explicit per-suite results replace the old implicit success() (which a
     # skipped suite would poison). Publish requires pack + format green AND either
     # the full same-run matrix or the queue-validated + verified-rebuild pair, AND a version that
@@ -1173,7 +1182,7 @@ jobs:
       needs.alpha-floor.result == 'success' &&
       ((needs.unit-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
         needs.inmemory-integration.result == 'success' && needs.rabbitmq-integration.result == 'success' &&
-        needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success') ||
+        needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success' && needs.general-integration.result == 'success') ||
        (needs.queue-validated.outputs.validated == 'true' && needs.verify-rebuild.result == 'success'))
     permissions:
       contents: read
@@ -1305,7 +1314,7 @@ jobs:
 
   release-publish:
     name: Publish · Hotfix (older line)
-    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, release-guard]
+    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, release-guard]
     # EXPLICIT gate, mirroring prerelease-publish. GitHub applies success() implicitly only while an
     # `if` contains no status-check function, so the old plain `if` gated on every need implicitly
     # — and adding the `!failure() && !cancelled()` every other job opens with would have silently
@@ -1319,7 +1328,7 @@ jobs:
       needs.version.result == 'success' && needs.pack.result == 'success' && needs.format.result == 'success' &&
       needs.unit-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
       needs.inmemory-integration.result == 'success' && needs.rabbitmq-integration.result == 'success' &&
-      needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success'
+      needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success' && needs.general-integration.result == 'success'
     permissions:
       contents: write       # nuget-publish creates the tag + GitHub release
       id-token: write       # NuGet OIDC trusted publishing
@@ -1400,7 +1409,7 @@ jobs:
 
   notify-cancelled:
     name: Notify · Canceled
-    needs: [build, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
+    needs: [build, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality]
     permissions:
       contents: read
     # merge_group is excluded for a different reason than success: the queue cancels its own runs
@@ -1423,7 +1432,7 @@ jobs:
     # or when suites were skipped (docs-only pushes produce no TRX).
     # reupload-reports is in needs purely for ordering: on queue-validated pushes it
     # republishes the queue run's TRX as trx-queue before this job downloads trx-*.
-    needs: [version, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, reupload-reports]
+    needs: [version, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, reupload-reports]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
       !contains(needs.*.result, 'cancelled')

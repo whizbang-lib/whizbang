@@ -181,6 +181,16 @@ jobs:
           compression-level: 1
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
+      - name: Upload build slice (integration)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-integration-${{ github.run_id }}
+          path: ${{ steps.slices.outputs.integration }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
+
       - name: Upload build slice (azureblob)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

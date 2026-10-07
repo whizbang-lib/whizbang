@@ -57,7 +57,7 @@ $ErrorActionPreference = 'Stop'
 # The suites whose results the gate stands for. A job renamed here without the workflow (or the other way
 # round) reads as "missing", which fails every path that requires it: loud, not silent.
 $script:Suites = @('unit-tests', 'postgres-integration', 'inmemory-integration', 'rabbitmq-integration',
-    'servicebus-integration', 'azureblob-integration')
+    'servicebus-integration', 'azureblob-integration', 'general-integration')
 
 # The gate job's name in the run a release PR yields to. Same workflow, so the same name.
 $script:GateJobName = "Gate $([char]0x00B7) CI result"   # the middle dot, kept ASCII-only in source

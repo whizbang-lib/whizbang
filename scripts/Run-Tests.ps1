@@ -1722,7 +1722,7 @@ try {
     if ($Tag) {
         Ensure-BuildExists
         # Find all test DLLs and filter by tag
-        $tagFilteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+        $tagFilteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { $_.Name -notmatch $excludePattern } |
@@ -1759,8 +1759,11 @@ try {
     } elseif ($ProjectFilter) {
         Ensure-BuildExists
         # Find DLLs matching the filter, excluding AppHost and ensuring they're primary test DLLs
-        # IMPORTANT: Only match *.Tests.dll to avoid picking up non-test DLLs like Whizbang.Data.EFCore.Postgres.dll
-        $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*.Tests.dll" -ErrorAction SilentlyContinue |
+        # IMPORTANT: Only match *Tests.dll to avoid picking up non-test DLLs like Whizbang.Data.EFCore.Postgres.dll.
+        # "*Tests.dll", not "*.Tests.dll": a project named ...IntegrationTests (no dot) was invisible to
+        # every pattern here and never ran (#1196). Every match is still checked against its project's
+        # declared test type, so the wider pattern admits no assembly that is not a test project.
+        $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { $_.Name -notmatch "AppHost" } |
             Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
@@ -1782,7 +1785,7 @@ try {
         # Run ONLY integration tests (WhizbangTestType=Integration)
         Ensure-BuildExists
         # Filter by WhizbangTestType property in .csproj files
-        $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+        $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
@@ -1807,7 +1810,7 @@ try {
         # Run only unit tests (WhizbangTestType=Unit)
         Ensure-BuildExists
         # Filter by WhizbangTestType property - only include Unit tests
-        $unitTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+        $unitTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
@@ -1832,7 +1835,7 @@ try {
         # Include ALL test projects (Unit + Integration, excludes Benchmark)
         Ensure-BuildExists
         # Filter to projects with WhizbangTestType of Unit or Integration (not Benchmark)
-        $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+        $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
