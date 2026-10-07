@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -30,5 +31,28 @@ public class ReceivedInboxMessageBuilderBranchCoverageTests {
 
     await Assert.That(streamId).IsEqualTo(messageId.Value)
       .Because("every received message needs a stream, so a missing hop list means the message is its own stream");
+  }
+
+  private sealed class ByMessageIdHook(MessageId expected) : Whizbang.Core.Priority.IPriorityReceiveHook {
+    public int Order => 0;
+    public int Classify(Whizbang.Core.Priority.PriorityReceiveContext context) =>
+      context.Envelope.MessageId == expected ? 42 : context.Declared;
+  }
+
+  /// <summary>
+  /// A receive hook classifies the message actually received: it is shown that envelope, so a rule that
+  /// reads the payload or the hops decides by this message and not by its type alone.
+  /// </summary>
+  [Test]
+  public async Task Classify_WithAReceiveHook_ShowsItTheReceivedEnvelopeAsync() {
+    var messageId = MessageId.New();
+    var envelope = new MessageEnvelope<JsonElement>(messageId, JsonDocument.Parse("{}").RootElement, hops: []);
+    using var scope = new ServiceCollection()
+      .AddSingleton(new Whizbang.Core.Priority.PriorityHookChain([], [new ByMessageIdHook(messageId)], []))
+      .BuildServiceProvider();
+
+    var classified = ReceivedInboxMessageBuilder.Classify(scope, envelope, "Probe.Event");
+
+    await Assert.That(classified).IsEqualTo(42);
   }
 }
