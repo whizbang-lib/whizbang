@@ -427,9 +427,11 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     // Generate a populator for records (immutable 'with' expression) AND for classes with settable
     // properties (in-place assignment). Class properties that are init-only/read-only cannot be assigned
     // outside an object initializer, so they are excluded (records reach init-only members via 'with').
+    // The extractor yields only the infos it built, so none is null; the element type is nullable
+    // only because of how the pipeline collects them.
     var populatableInfos = infos
-        .Where(i => i is not null && (i.IsRecord || i.IsSettable))
         .Select(i => i!)
+        .Where(i => i.IsRecord || i.IsSettable)
         .ToList();
     if (populatableInfos.Count == 0) {
       return;

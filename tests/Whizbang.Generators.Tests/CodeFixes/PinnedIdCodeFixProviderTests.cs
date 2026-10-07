@@ -125,6 +125,25 @@ public class PinnedIdCodeFixProviderTests {
     await Assert.That(count).IsEqualTo(1);
   }
 
+  /// <summary>
+  /// A type-alias using (<c>using Point = (int X, int Y);</c>) names no namespace, so it is not mistaken
+  /// for the attribute's namespace: the using the fix needs is still added.
+  /// </summary>
+  [Test]
+  public async Task CodeFix_WithATypeAliasUsing_StillAddsTheAttributeNamespaceAsync() {
+    const string source = """
+        using Whizbang.Core;
+        using Point = (int X, int Y);
+        namespace TestApp;
+        public record OrderPlacedEvent : IEvent;
+        """;
+
+    var fixedSource = await _applyCodeFixAsync(source);
+
+    await Assert.That(fixedSource).Contains("using Whizbang.Core.Attributes;");
+    await Assert.That(fixedSource).Contains("using Point = (int X, int Y);");
+  }
+
   [SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Document APIs need ad-hoc workspace setup.")]
   private static async Task<string> _applyCodeFixAsync(string source, string? diagnosticId = null) {
     var syntaxTree = CSharpSyntaxTree.ParseText(source);

@@ -63,13 +63,12 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
   private static AccessorModel? _extract(GeneratorSyntaxContext context, System.Threading.CancellationToken cancellationToken) {
     cancellationToken.ThrowIfCancellationRequested();
 
-    // Cast rather than tested: the answer for a class declaration is the class, and a null or an
-    // unexpected symbol falls into the interface check below rather than into a guard of its own
-    // that nothing can reach.
-    var declared = context.SemanticModel.GetDeclaredSymbol(
-      (ClassDeclarationSyntax)context.Node, cancellationToken) as INamedTypeSymbol;
+    // The predicate admits only class declarations, and a class declaration in its own compilation
+    // always has its symbol.
+    var declared = (INamedTypeSymbol)context.SemanticModel.GetDeclaredSymbol(
+      (ClassDeclarationSyntax)context.Node, cancellationToken)!;
 
-    var perspective = declared?.AllInterfaces.FirstOrDefault(
+    var perspective = declared.AllInterfaces.FirstOrDefault(
       i => i.Name == "IPerspectiveFor" && i.TypeArguments.Length > 0);
 
     if (perspective?.TypeArguments[0] is not INamedTypeSymbol model) {

@@ -50,9 +50,10 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
 
   /// <summary>Discovers a single <c>[PinnedId]</c> message/perspective type, or null if the node is neither.</summary>
   private static DiscoveredPinnedType? _tryDiscover(GeneratorSyntaxContext context, CancellationToken ct) {
-    if (context.Node is not TypeDeclarationSyntax typeDeclaration ||
-        context.SemanticModel.GetDeclaredSymbol(typeDeclaration, ct) is not INamedTypeSymbol type ||
-        type.IsAbstract ||
+    // The predicate admits only type declarations, and a type declaration in its own compilation always
+    // has its symbol.
+    var type = (INamedTypeSymbol)context.SemanticModel.GetDeclaredSymbol((TypeDeclarationSyntax)context.Node, ct)!;
+    if (type.IsAbstract ||
         type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) {
       return null;
     }

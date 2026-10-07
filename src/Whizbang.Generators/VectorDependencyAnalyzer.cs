@@ -49,15 +49,10 @@ public class VectorDependencyAnalyzer : DiagnosticAnalyzer {
   }
 
   private static bool _hasPgvectorReference(Compilation compilation) {
-    // Check if any referenced assembly is Pgvector.EntityFrameworkCore
-    foreach (var reference in compilation.References) {
-      var assemblySymbol = compilation.GetAssemblyOrModuleSymbol(reference) as IAssemblySymbol;
-      if (assemblySymbol?.Name.Equals(PGVECTOR_ASSEMBLY_NAME, StringComparison.Ordinal) == true) {
-        return true;
-      }
-    }
-
-    return false;
+    // Check if any referenced assembly is Pgvector.EntityFrameworkCore. A module reference is not an
+    // assembly and never was a match, so only the referenced assemblies are asked.
+    return compilation.ReferencedAssemblyNames
+      .Any(assembly => assembly.Name.Equals(PGVECTOR_ASSEMBLY_NAME, StringComparison.Ordinal));
   }
 
   private static void _analyzeProperty(SymbolAnalysisContext context) {

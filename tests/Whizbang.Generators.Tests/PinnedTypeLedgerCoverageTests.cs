@@ -100,6 +100,32 @@ public class PinnedTypeLedgerCoverageTests {
       .Because("a ledger whose \"types\" array is explicitly null carries no usable entries and must be treated the same as an absent ledger");
   }
 
+  // ==================== TryParse: unusable entries ====================
+
+  /// <summary>
+  /// A hand-edited ledger can carry a null entry, or an entry missing its id or its type name. Each is
+  /// dropped and the usable entries are kept: an entry without an id cannot be looked up, one without a
+  /// name cannot be matched, and a null one is neither.
+  /// </summary>
+  [Test]
+  public async Task TryParse_NullAndIncompleteEntries_AreDroppedAndTheRestKeptAsync() {
+    const string json = """
+      {"version": 1, "types": [
+        null,
+        {"pinnedId": "", "clrTypeName": "App.NoId"},
+        {"pinnedId": "pin-no-name", "clrTypeName": " "},
+        {"pinnedId": "pin-kept", "clrTypeName": "App.Kept"}
+      ]}
+      """;
+
+    var ledger = _tryParse(json);
+
+    await Assert.That(ledger).IsNotNull();
+    var types = (IList)_ledgerType.GetProperty("Types")!.GetValue(ledger)!;
+    await Assert.That(types.Count).IsEqualTo(1);
+    await Assert.That(_findByPinnedId(ledger!, "pin-kept")).IsNotNull();
+  }
+
   // ==================== ToRenameAliases: no-op alias skip ====================
 
   /// <summary>

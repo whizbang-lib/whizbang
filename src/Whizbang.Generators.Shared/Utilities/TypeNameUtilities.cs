@@ -182,7 +182,8 @@ public static class TypeNameUtilities {
       var typesPart = string.Join("+", typeChain);
 
       // Get namespace
-      var ns = namedType.ContainingNamespace?.ToDisplayString();
+      // Every named type sits in a namespace, the global one at least.
+      var ns = namedType.ContainingNamespace!.ToDisplayString();
       if (!string.IsNullOrEmpty(ns) && ns != "<global namespace>") {
         return $"{ns}.{typesPart}";
       }
