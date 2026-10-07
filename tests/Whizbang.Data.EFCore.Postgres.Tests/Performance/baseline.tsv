@@ -238,3 +238,47 @@ idle_band.control_poll.blocks_per_call	3713	blocks/call		the same poll with no i
 idle_band.busy_poll.seq_scans_per_call	2	scans/call	10	a sequential scan of wh_inbox_state on the claim path is a plan defect on any machine
 idle_band.busy_poll.seq_tuples_per_call	2	tuples/call	500	THE gate here, verified to fire: reverting the probe to MAX(an expression) read 20,502 and failed the run
 idle_band.withheld_backlog.extra_blocks_per_call	125	blocks/call	800	what a withheld band of 20,000 rows adds to a poll refusing to touch it; a loose backstop only -- the same regression reached 398 and stayed under it, which is why the tuple count above is the real gate
+
+# --- Claim poll, backlog owned by a live peer -------------------------------------------------
+# 100 streams a live peer owns, with 100 and then 400 unleased rows behind each, polled by another
+# instance that may take none of them. The outbox acquisition used to choose its heads by walking
+# every pending row in arrival order and testing each for ownership, so this poll walked the peer's
+# whole backlog to find nothing: 726 and 2,673 blocks a poll before 194, growing with the depth.
+# A deployed database captured the same shape at 79,590,235 shared buffers for 13 rows.
+#
+# The ceiling is on outbox blocks per poll at every depth, and it is a property of the design: the
+# acquisition examines a window of eight times the heads it chooses, so a poll's cost is set by the
+# batch it asked for. 105 at both depths after 194. The scan counts are recorded without a ceiling:
+# they are the claim's orphan guards stopping at their first row, not reads of the backlog.
+#
+# The liveness round (one heartbeat, one role vote, one due-schedule claim) is recorded against the
+# same loaded database, without a ceiling. These calls were reported at 8 to 16 seconds on average;
+# what they do is a few dozen blocks, so their seconds were spent waiting, not working.
+claim.peer_backlog.wh_outbox.blocks_per_poll.depth_100	105	blocks/poll	400	GATED: was 726 before 194; the window fixes a poll's cost by its batch
+claim.peer_backlog.wh_outbox.blocks_per_poll.depth_400	105	blocks/poll	400	GATED: was 2,673 before 194; four times the backlog must not cost more
+claim.peer_backlog.wh_outbox.seq_scans_per_poll.depth_100	2	scans/poll		recorded, not gated: the orphan guards' LIMIT 1 probes, unchanged by 194
+claim.peer_backlog.wh_outbox.seq_scans_per_poll.depth_400	2	scans/poll		recorded, not gated: same reason
+liveness.heartbeat_vote_schedule.blocks_per_round	36.8	blocks/round		recorded, not gated: the evidence that the reported waits were not work
+
+# --- Event-store reads, by store size ---------------------------------------------------------
+# A settled store of 20,000 and then 80,000 events: half local, half received from two origins,
+# 50 tenants, about one event in a hundred a collective.
+#
+# digest_close: close_digest_epochs with nothing left to close. It found its lanes with SELECT
+# DISTINCT over the whole event store on every call: one sequential scan per call, 664 and 2,594
+# blocks before 193. It now reads its lanes one index entry per lane: 24 and 22 blocks.
+#
+# collective_positions: a collective replay's read of every collective of a few types in one
+# tenant. No index covered either key, so each read scanned the store: 162 blocks per row returned
+# before 195, at both sizes. It is now an index range per type: 2.5 and 1.7 blocks per row.
+#
+# The ceilings are on sequential scans of the event store, and they are design properties: neither
+# read has any reason to visit a row it does not return. Blocks are recorded beside them.
+collective_positions.wh_event_store.blocks_per_row.events_20000	2.5	blocks/row		recorded: was 162 before 195
+collective_positions.wh_event_store.blocks_per_row.events_80000	1.7	blocks/row		recorded: was 161.4 before 195
+collective_positions.wh_event_store.seq_scans_per_read.events_20000	0	scans/read	0	GATED: was 1 per read before 195
+collective_positions.wh_event_store.seq_scans_per_read.events_80000	0	scans/read	0	GATED: was 1 per read before 195
+digest_close.idle.wh_event_store.blocks_per_call.events_20000	24.2	blocks/call		recorded: was 664.2 before 193
+digest_close.idle.wh_event_store.blocks_per_call.events_80000	22	blocks/call		recorded: was 2,594 before 193
+digest_close.idle.wh_event_store.seq_scans_per_call.events_20000	0	scans/call	0	GATED: was 1 per call before 193
+digest_close.idle.wh_event_store.seq_scans_per_call.events_80000	0	scans/call	0	GATED: was 1 per call before 193
