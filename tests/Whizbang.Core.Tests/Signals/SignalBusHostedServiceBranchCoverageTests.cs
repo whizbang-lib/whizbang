@@ -65,6 +65,27 @@ public class SignalBusHostedServiceBranchCoverageTests {
     await Assert.That(transport.Targets[0].InstanceId).IsEqualTo(instanceId);
   }
 
+  /// <summary>
+  /// A service the host stops before it starts never probes: the loop sees the stop already requested
+  /// and ends before its first iteration, leaving the route unverified rather than racing the shutdown.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task Probe_StoppedBeforeItStarts_NeverProbesAsync(CancellationToken testToken) {
+    var transport = new RecordingLoopbackTransport();
+    var liveness = new SignalBusLivenessState();
+    using var hosted = _hosted(transport, liveness, new FixedInstanceProvider(Guid.NewGuid()), Options.Create(new SignalBusOptions()));
+
+    await hosted.StopAsync(CancellationToken.None);
+    await hosted.StartAsync(CancellationToken.None);
+    await hosted.StopAsync(testToken);   // waits for the loop, which has nothing to do
+
+    await Assert.That(transport.Targets).IsEmpty()
+      .Because("the stop was requested before the loop began, so no probe was published");
+    await Assert.That(liveness.FirstProbe.IsCompleted).IsFalse()
+      .Because("no probe result was ever recorded");
+  }
+
   private static SignalBusHostedService _hosted(
       RecordingLoopbackTransport transport, SignalBusLivenessState liveness,
       IServiceInstanceProvider instanceProvider, IOptions<SignalBusOptions> options) =>

@@ -85,10 +85,11 @@ public class OptionalInjectedParameterAnalyzer : DiagnosticAnalyzer {
         continue;
       }
 
-      var location = p.Locations.Length > 0 ? p.Locations[0] : method.ContainingType.Locations[0];
+      // Symbol actions run on the compilation's own source symbols, and a source constructor's
+      // parameters are declared in its source, so each has a location.
       context.ReportDiagnostic(Diagnostic.Create(
         DiagnosticDescriptors.OptionalInjectedParameter,
-        location,
+        p.Locations[0],
         p.Name,
         method.ContainingType.Name));
     }

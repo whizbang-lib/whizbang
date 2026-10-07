@@ -55,7 +55,7 @@ public static class CompileTimeMessageClassification {
       var arg = attr.ConstructorArguments[0];
       if (arg.Type is INamedTypeSymbol enumType && arg.Value is int v) {
         var member = enumType.GetMembers().OfType<IFieldSymbol>()
-          .FirstOrDefault(f => f.HasConstantValue && System.Convert.ToInt32(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture) == v);
+          .FirstOrDefault(f => Equals(f.ConstantValue, v));
         if (member is not null) {
           return member.Name;
         }
@@ -134,7 +134,7 @@ public static class CompileTimeMessageClassification {
           && enumType.Name == "LifecycleStage"
           && arg.Value is int v) {
         var member = enumType.GetMembers().OfType<IFieldSymbol>()
-          .FirstOrDefault(f => f.HasConstantValue && System.Convert.ToInt32(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture) == v);
+          .FirstOrDefault(f => Equals(f.ConstantValue, v));
         if (member is not null) {
           stages.Add(member.Name);
         }

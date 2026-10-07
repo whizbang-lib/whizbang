@@ -111,6 +111,42 @@ public class EFCoreEventStoreCoverageTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A stored envelope whose hop list is a JSON null (an older writer, or a hand repair) still reads:
+  /// its envelope carries an empty hop list rather than the read failing on the null.
+  /// </summary>
+  [Test]
+  public async Task ReadAsync_StoredMetadataWithNullHops_ReadsWithNoHopsAsync() {
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+    var streamId = Guid.NewGuid();
+    var appended = await _appendOrderAsync(eventStore, streamId, "NullHops");
+
+    await using (var conn = new Npgsql.NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync();
+      await using var cmd = conn.CreateCommand();
+      cmd.CommandText = """
+        UPDATE wh_event_body
+        SET metadata = (SELECT jsonb_object_agg(key, CASE WHEN lower(key) = 'hops' THEN 'null'::jsonb ELSE value END)
+                        FROM jsonb_each(metadata))
+        WHERE event_id = @id
+        """;
+      cmd.Parameters.AddWithValue("id", appended.MessageId.Value);
+      await Assert.That(await cmd.ExecuteNonQueryAsync()).IsEqualTo(1).Because("the setup nulls this row's hops");
+    }
+
+    await using var readContext = CreateDbContext();
+    var readStore = new EFCoreEventStore<WorkCoordinationDbContext>(readContext);
+    var events = new List<MessageEnvelope<OrderCreatedEvent>>();
+    await foreach (var evt in readStore.ReadAsync<OrderCreatedEvent>(streamId, fromSequence: 0)) {
+      events.Add(evt);
+    }
+
+    await Assert.That(events.Count).IsEqualTo(1);
+    await Assert.That(events[0].Payload.CustomerName).IsEqualTo("NullHops");
+    await Assert.That(events[0].Hops).IsEmpty();
+  }
+
+  /// <summary>
   /// If this skip regressed to a throw, a single reaped (consumed, snapshot-covered) row anywhere
   /// in a stream would abort the ENTIRE sequence-ordered read mid-iteration — every event after it
   /// would silently never reach the caller, not just the reaped one.

@@ -509,8 +509,9 @@ public partial class TransportPublishStrategy(
     // This applies whether or not WithRouting() was explicitly called
     if (messageKind == MessageKind.Command) {
       // Commands go to shared inbox topic (configured via constructor)
-      // Parse the type name to get the routing key for filtering
-      var typeName = _extractTypeName(work.MessageType)?.ToLowerInvariant() ?? work.Destination;
+      // Parse the type name to get the routing key for filtering. A message is classified a
+      // command only when it has a type name (_detectMessageKindFromTypeName), so it is there.
+      var typeName = _extractTypeName(work.MessageType)!.ToLowerInvariant();
       var ns = _extractNamespace(work.MessageType)?.ToLowerInvariant() ?? "";
       var routingKey = string.IsNullOrEmpty(ns) ? typeName : $"{ns}.{typeName}";
 

@@ -86,10 +86,8 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
 
     return new LensInfo(
         LensTypeName: lensFullName,
-        LensTypeShortName: typeSymbol.Name,
         IsInterface: typeSymbol.TypeKind == TypeKind.Interface,
         ModelTypeName: modelFullName,
-        ModelTypeShortName: modelType.Name,
         ScopeProperties: scopeProperties,
         ImplementsTenantScoped: implementsTenantScoped,
         ImplementsUserScoped: implementsUserScoped
@@ -209,10 +207,8 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
 /// </summary>
 internal sealed record LensInfo(
     string LensTypeName,
-    string LensTypeShortName,
     bool IsInterface,
     string ModelTypeName,
-    string ModelTypeShortName,
     string[] ScopeProperties,
     bool ImplementsTenantScoped,
     bool ImplementsUserScoped

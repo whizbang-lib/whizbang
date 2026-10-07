@@ -518,7 +518,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelClrTypeName: TypeNameUtilities.BuildClrTypeName(modelType),
         DbSetPropertyName: dbSetPropertyName,
         TableBaseName: tableBaseName,
-        NamespaceHint: TypeNameUtilities.Display(symbol.ContainingNamespace),
         Keys: keys,
         PhysicalFields: physicalFields,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
@@ -630,7 +629,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelClrTypeName: candidate.ModelClrTypeName,
         DbSetPropertyName: candidate.DbSetPropertyName,
         TableName: tableName,
-        NamespaceHint: candidate.NamespaceHint,
         Keys: candidate.Keys,
         PhysicalFields: candidate.PhysicalFields,
         JsonIndexes: candidate.JsonIndexes,
@@ -775,7 +773,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // FieldStorageMode.Split is 2.
     var isSplit = modelType.GetAttributes().Any(a =>
         TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PerspectiveStorageAttribute") &&
-        a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is 2);
+        a.ConstructorArguments.Length > 0 && (int)a.ConstructorArguments[0].Value! == 2);
     var properties = modelType.GetMembers()
         .OfType<IPropertySymbol>()
         .Where(p => !p.IsStatic);
@@ -2698,37 +2696,33 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // Or from "...Templates.Migrations.001_Name.sql" -> "001_Name.sql"
       var fileName = resourceName[resourcePrefix.Length..];
 
-      // Read content from embedded resource. The name came from GetManifestResourceNames, so the
-      // stream is there; guarding it keeps a name that stops resolving between the two calls from
-      // faulting the generator, and contributes no entry when it fires. Written as a block the
-      // resource enters rather than as a skip it leaves by, so the test runs on every resource.
-      using var stream = assembly.GetManifestResourceStream(resourceName);
-      if (stream is not null) {
-        using var reader = new System.IO.StreamReader(stream);
-        var content = reader.ReadToEnd();
+      // Non-null by contract, as in the bootstrap pass: the name came from GetManifestResourceNames
+      // on this same assembly, so a guard here would be a branch no input can reach.
+      using var stream = assembly.GetManifestResourceStream(resourceName)!;
+      using var reader = new System.IO.StreamReader(stream);
+      var content = reader.ReadToEnd();
 
-        // Escape the SQL content for C# verbatim string literal (@"...")
-        // In verbatim strings, only quotes need escaping (by doubling them)
-        // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
-        // IMPORTANT: Replace __SCHEMA__ with __MIGRATION_SCHEMA__ to prevent build-time replacement.
-        //            The runtime _transformMigrationSql function uses the schema parameter, not __SCHEMA__.
-        var escapedContent = content
-            .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")  // Preserve for runtime transformation
-            .Replace("\"", "\"\"")  // Escape quotes for verbatim string
-            .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
-            .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
+      // Escape the SQL content for C# verbatim string literal (@"...")
+      // In verbatim strings, only quotes need escaping (by doubling them)
+      // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
+      // IMPORTANT: Replace __SCHEMA__ with __MIGRATION_SCHEMA__ to prevent build-time replacement.
+      //            The runtime _transformMigrationSql function uses the schema parameter, not __SCHEMA__.
+      var escapedContent = content
+          .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")  // Preserve for runtime transformation
+          .Replace("\"", "\"\"")  // Escape quotes for verbatim string
+          .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
+          .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
 
-        sb.Append($"      (\"{fileName}\", @\"{escapedContent}\")");
+      sb.Append($"      (\"{fileName}\", @\"{escapedContent}\")");
 
-        if (i < migrationResources.Length - 1) {
-          sb.AppendLine(",");
-        }
+      if (i < migrationResources.Length - 1) {
+        sb.AppendLine(",");
       }
     }
 
-    // An empty resource set produces no entries, and the placeholder comment stands in for them so
-    // the generated array initializer still reads as deliberate rather than as a truncation.
-    return migrationResources.Length == 0 ? "// No migration files found in embedded resources" : sb.ToString();
+    // The migrations are this generator's own embedded resources, fixed when it is built, and the
+    // generator tests assert they are emitted; the set is never empty.
+    return sb.ToString();
   }
 
   /// <summary>
@@ -2971,8 +2965,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return false;
     }
 
-    var typeName = field.TypeName.Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
-    return typeName is "System.String" or "string";
+    // The field's type name is rendered fully qualified, which writes a special type as its keyword.
+    return field.TypeName.TrimEnd('?') == "string";
   }
 
   /// <summary>
@@ -3870,7 +3864,6 @@ internal sealed record DbContextInfo(
 /// <c>TypeNameFormatter.FormatClrTypeName</c></param>
 /// <param name="DbSetPropertyName">Property name for DbSet (e.g., "ActiveJobTemplateModels" for nested Model classes)</param>
 /// <param name="TableName">Snake_case table name</param>
-/// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective. Empty = default context only</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model (for DDL generation)</param>
 /// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
@@ -3891,7 +3884,6 @@ internal sealed record PerspectiveModelInfo(
     string ModelClrTypeName,
     string DbSetPropertyName,
     string TableName,
-    string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
@@ -3917,7 +3909,6 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="ModelClrTypeName">The model's CLR type name (<c>Outer+Model</c> for nested types), the registry key</param>
 /// <param name="DbSetPropertyName">Property name for DbSet</param>
 /// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
-/// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
@@ -3939,7 +3930,6 @@ internal sealed record PerspectiveModelCandidate(
     string ModelClrTypeName,
     string DbSetPropertyName,
     string TableBaseName,
-    string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,

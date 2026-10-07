@@ -145,8 +145,9 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
     }
 
     // Get the namespace
-    var containingNamespace = messageType.ContainingNamespace;
-    if (containingNamespace?.IsGlobalNamespace != false) {
+    // A type that implements IEvent is a named type or a type parameter, and both sit in a namespace.
+    var containingNamespace = messageType.ContainingNamespace!;
+    if (containingNamespace.IsGlobalNamespace) {
       return null;
     }
 

@@ -116,8 +116,8 @@ public sealed partial class CircuitBreaker<TResult>(CircuitBreakerOptions option
         // Another call during half-open — return fallback (only one probe allowed)
         return fallbackValue;
 
-      case CircuitBreakerState.Closed:
       default:
+        // Closed: the only state left.
         return await _tryExecuteAsync(operation, fallbackValue, cancellationToken);
     }
   }

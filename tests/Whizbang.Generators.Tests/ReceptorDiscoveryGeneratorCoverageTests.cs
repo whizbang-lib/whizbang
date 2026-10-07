@@ -740,6 +740,57 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
     await Assert.That(registry).Contains("IsIdempotent: true");
   }
 
+  /// <summary>
+  /// A named argument that does not bind, either a member the attribute does not declare or a value
+  /// of the wrong type, is not a request to fire during replay: source an IDE hands the generator
+  /// mid-edit reads as a plain [ReceptorIdempotent].
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Arguments("Bogus = true")]
+  [Arguments("AlwaysFire = \"yes\"")]
+  public async Task Generator_WithReceptorIdempotentArgumentThatDoesNotBind_SetsIdempotentOnlyAsync(string argument) {
+    var source = $$"""
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Whizbang.Core;
+      using Whizbang.Core.Messaging;
+
+      namespace MyApp.Receptors;
+
+      public sealed class CacheRefreshed : IEvent { }
+
+      [ReceptorIdempotent({{argument}})]
+      public class IdempotentReceptor : IReceptor<CacheRefreshed> {
+        public ValueTask HandleAsync(CacheRefreshed message, CancellationToken ct = default) => ValueTask.CompletedTask;
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry).Contains("FireDuringReplay: false");
+    await Assert.That(registry).Contains("IsIdempotent: true");
+  }
+
+  /// <summary>
+  /// The generator reads every named argument of [ReceptorIdempotent] as AlwaysFire, which holds
+  /// because AlwaysFire is the attribute's only settable member. A second one would be misread as
+  /// AlwaysFire, so this pins the invariant: adding a member fails here, next to the reason.
+  /// </summary>
+  [Test]
+  public async Task ReceptorIdempotentAttribute_DeclaresAlwaysFireAsItsOnlySettableMemberAsync() {
+    var settable = typeof(Whizbang.Core.Messaging.ReceptorIdempotentAttribute)
+      .GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+      .Where(p => p.CanWrite)
+      .Select(p => p.Name)
+      .ToList();
+
+    await Assert.That(settable).IsEquivalentTo(["AlwaysFire"])
+      .Because("ReceptorDiscoveryGenerator._hasFireDuringReplayAttribute reads any named argument as AlwaysFire");
+  }
+
   // ==================== Tuple with a RoutedNone element ====================
 
   /// <summary>

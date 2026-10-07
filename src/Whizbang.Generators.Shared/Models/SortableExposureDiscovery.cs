@@ -128,7 +128,9 @@ public static class SortableExposureDiscovery {
       }
     }
 
-    var marker = attribute.AttributeClass?.GetAttributes()
+    // Roslyn gives every attribute a class, an error type when the name does not bind, and an error
+    // type carries no attributes, so an unbound attribute finds no marker.
+    var marker = attribute.AttributeClass!.GetAttributes()
         .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, MARKER));
 
     if (marker is null) {
@@ -223,10 +225,9 @@ public static class SortableExposureDiscovery {
   /// the comparison say what it looks like it says.
   /// </remarks>
   private static string _definitionName(INamedTypeSymbol type) {
+    // Both callers pass a generic type, whose display always carries its parameter list.
     var display = TypeNameUtilities.Display(type.OriginalDefinition);
-    var bracket = display.IndexOf('<');
-
-    return bracket < 0 ? display : display[..bracket];
+    return display[..display.IndexOf('<')];
   }
 
   /// <summary>

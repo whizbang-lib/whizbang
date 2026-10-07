@@ -160,6 +160,63 @@ Describe 'Read-CoberturaCoverage, per-condition union' {
   }
 }
 
+Describe 'Read-CoberturaCoverage, if-body evidence' {
+  BeforeAll {
+    $script:IfFile = 'src/P/If.cs'
+    $script:IfSource = @(
+      'void M(int x) {',          # 1
+      '  if (x > 0) {',           # 2  the decision
+      '    Positive();',          # 3  its body: entered only through the true outcome
+      '  }',                      # 4
+      '  After();',               # 5
+      '  if (x > 9) { Big(); }',  # 6  body on the decision's own line: no evidence
+      '  if (x < 0) {',           # 7
+      '  }',                      # 8  empty body: no evidence
+      '}')
+    $script:IfRead = { param($p) if ($p -eq $script:IfFile) { $script:IfSource } else { $null } }
+  }
+
+  It 'counts both outcomes when one process ran the body and another ran the line without it' {
+    $a = New-Report $TestDrive 'ifa.cobertura.xml' $script:IfFile @(@{ n = 2; hits = 1; cov = '1/2' }, @{ n = 3; hits = 1; cov = $null }, @{ n = 5; hits = 1; cov = $null })
+    $b = New-Report $TestDrive 'ifb.cobertura.xml' $script:IfFile @(@{ n = 2; hits = 1; cov = '1/2' }, @{ n = 3; hits = 0; cov = $null }, @{ n = 5; hits = 1; cov = $null })
+
+    $coverage = Read-CoberturaCoverage @($a, $b) -ReadSource $script:IfRead
+
+    $coverage[$script:IfFile].Conditions[2] | Should -Be @(2, 2)
+  }
+
+  It 'claims nothing when every process took the same outcome' {
+    $a = New-Report $TestDrive 'ifc.cobertura.xml' $script:IfFile @(@{ n = 2; hits = 1; cov = '1/2' }, @{ n = 3; hits = 1; cov = $null })
+    $b = New-Report $TestDrive 'ifd.cobertura.xml' $script:IfFile @(@{ n = 2; hits = 1; cov = '1/2' }, @{ n = 3; hits = 1; cov = $null })
+
+    $coverage = Read-CoberturaCoverage @($a, $b) -ReadSource $script:IfRead
+
+    $coverage[$script:IfFile].Conditions[2] | Should -Be @(1, 2)
+  }
+
+  It 'takes no evidence from a body on the decision line or an empty body' {
+    $a = New-Report $TestDrive 'ife.cobertura.xml' $script:IfFile @(@{ n = 6; hits = 1; cov = '1/2' }, @{ n = 7; hits = 1; cov = '1/2' }, @{ n = 9; hits = 1; cov = $null })
+    $b = New-Report $TestDrive 'iff.cobertura.xml' $script:IfFile @(@{ n = 6; hits = 1; cov = '1/2' }, @{ n = 7; hits = 1; cov = '1/2' }, @{ n = 9; hits = 0; cov = $null })
+
+    $coverage = Read-CoberturaCoverage @($a, $b) -ReadSource $script:IfRead
+
+    $coverage[$script:IfFile].Conditions[6] | Should -Be @(1, 2)
+    $coverage[$script:IfFile].Conditions[7] | Should -Be @(1, 2)
+      # Line 9 is past the body's closing brace, so whether it ran says nothing about the decision.
+  }
+
+  It 'proves the real collector output: each process taking one outcome of the same if' {
+    $reports = @((Join-Path $script:Fixture 'A/A.cobertura.xml'), (Join-Path $script:Fixture 'B/B.cobertura.xml'))
+    $source = Get-Content (Join-Path $script:Fixture 'Calc.cs.txt')
+
+    $coverage = Read-CoberturaCoverage $reports -ReadSource { param($p) $source }
+
+    $coverage[$script:FixturePath].Conditions[5] | Should -Be @(2, 2)
+    $coverage[$script:FixturePath].Conditions[12] | Should -Be @(2, 2)
+    $coverage[$script:FixturePath].Conditions[15] | Should -Be @(1, 2)
+  }
+}
+
 Describe 'Read-BlockCoverage' {
   It 'sorts each line into the functions every block of which ran, and the functions some block of which did not' {
     $blocks = Read-BlockCoverage (Join-Path $script:Fixture 'merged-blocks.xml')
@@ -251,6 +308,34 @@ Describe 'Write-MergedCobertura' {
   }
 }
 
+Describe 'Read-CoberturaCoverage, one source line compiled into several assemblies' {
+  # Shared source compiled into several assemblies (the generators' shared code) reports the same line
+  # once per copy, and the copies' IL can differ, so one line can arrive with different outcome totals.
+  It 'never counts more outcomes covered than the line has, and keeps the copy with the larger gap' {
+    $wide = New-Report $TestDrive 'wide.cobertura.xml' 'src/P/Shared.cs' @(@{ n = 7; hits = 1; cov = '4/4' })
+    $narrow = New-Report $TestDrive 'narrow.cobertura.xml' 'src/P/Shared.cs' @(@{ n = 7; hits = 1; cov = '1/2' })
+
+    foreach ($order in @(@($wide, $narrow), @($narrow, $wide))) {
+      $coverage = Read-CoberturaCoverage $order
+      $pair = $coverage['src/P/Shared.cs'].Conditions[7]
+
+      $pair[0] | Should -BeLessOrEqual $pair[1]
+      $pair | Should -Be @(1, 2)
+    }
+  }
+
+  It 'gives a whole-library count that is never negative' {
+    $wide = New-Report $TestDrive 'wide2.cobertura.xml' 'src/P/Shared.cs' @(@{ n = 1; hits = 1; cov = '4/4' })
+    $narrow = New-Report $TestDrive 'narrow2.cobertura.xml' 'src/P/Shared.cs' @(@{ n = 1; hits = 1; cov = '1/2' })
+    $source = @{ 'src/P/Shared.cs' = @('if (a && b) {') }
+
+    $whole = Get-WholeLibraryCoverage -Coverage (Read-CoberturaCoverage @($wide, $narrow)) -ReadSource { param($p) $source[$p] }
+
+    $whole.CoveredOutcomes | Should -BeLessOrEqual $whole.Outcomes
+    (Get-WholeLibraryGateResult $whole).Untested | Should -Be 1
+  }
+}
+
 Describe 'Get-WholeLibraryCoverage' {
   It 'counts every hand-written library line and decision outcome, and nothing else' {
     $report = New-Report $TestDrive 'whole.cobertura.xml' 'src/P/A.cs' @(
@@ -271,6 +356,21 @@ Describe 'Get-WholeLibraryCoverage' {
     $whole.CoveredLines | Should -Be 3
     $whole.Outcomes | Should -Be 6
     $whole.CoveredOutcomes | Should -Be 5
+  }
+
+  It 'lists every uncovered library line and every hand-written decision with an untaken outcome, as the gap' {
+    $report = New-Report $TestDrive 'gap.cobertura.xml' 'src/P/A.cs' @(
+      @{ n = 1; hits = 1; cov = '1/2' },  # if: one outcome untested, listed
+      @{ n = 2; hits = 1; cov = '1/2' },  # await: the compiler's, not listed
+      @{ n = 3; hits = 1; cov = '4/4' },  # complete, not listed
+      @{ n = 4; hits = 0; cov = $null })  # never ran, listed
+    $coverage = Read-CoberturaCoverage @($report)
+    $coverage['src/Whizbang.Testing/T.cs'] = @{ Hits = @{ 1 = 0 }; Conditions = @{} }
+    $source = @{ 'src/P/A.cs' = @('if (x) {', 'await store.SaveAsync(item);', 'var size = kind switch {', 'Do();') }
+
+    $whole = Get-WholeLibraryCoverage -Coverage $coverage -ReadSource { param($p) $source[$p] }
+
+    $whole.Gap | Should -Be @('src/P/A.cs:1: (1/2 conditions) if (x) {', 'src/P/A.cs:4: (never ran) Do();')
   }
 
   It 'skips a library file it cannot read, rather than counting lines it cannot classify' {
@@ -301,6 +401,46 @@ Describe 'Format-WholeLibraryLine' {
   }
 }
 
+Describe 'Get-WholeLibraryGateResult' {
+  # The whole-library gate: every hand-written decision in the library is covered, or the job fails.
+  It 'passes when no hand-written outcome is untested' {
+    $summary = [pscustomobject]@{ Lines = 50; CoveredLines = 49; Outcomes = 7; CoveredOutcomes = 7; BlockUnion = $true }
+
+    $gate = Get-WholeLibraryGateResult $summary
+
+    $gate.Passed | Should -BeTrue
+    $gate.Untested | Should -Be 0
+  }
+
+  It 'fails on a single untested hand-written outcome, and says how many' {
+    $summary = [pscustomobject]@{ Lines = 50; CoveredLines = 50; Outcomes = 7; CoveredOutcomes = 6; BlockUnion = $true }
+
+    $gate = Get-WholeLibraryGateResult $summary
+
+    $gate.Passed | Should -BeFalse
+    $gate.Untested | Should -Be 1
+    $gate.Message | Should -Match '1 hand-written decision outcome'
+  }
+
+  It 'does not count a member excluded from coverage' {
+    # [ExcludeFromCodeCoverage] keeps a member out of the collector's reports entirely, so its lines carry
+    # no data here and its decisions are not outcomes: the untested `if` on line 4 is not counted.
+    $report = New-Report $TestDrive 'excluded.cobertura.xml' 'src/P/A.cs' @(
+      @{ n = 1; hits = 1; cov = '2/2' })
+    $source = @{ 'src/P/A.cs' = @(
+      'if (ready) {',
+      '}',
+      '[ExcludeFromCodeCoverage(Justification = "unreachable until the issue is fixed")]',
+      'void Excluded() { if (never) { Do(); } }') }
+
+    $whole = Get-WholeLibraryCoverage -Coverage (Read-CoberturaCoverage @($report)) -ReadSource { param($p) $source[$p] }
+    $gate = Get-WholeLibraryGateResult $whole
+
+    $whole.Outcomes | Should -Be 2
+    $gate.Passed | Should -BeTrue
+  }
+}
+
 Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
   It 'merges the per-process reports and their block data, and summarizes the whole library' {
     $sourceRoot = Join-Path $TestDrive 'repo'
@@ -308,19 +448,37 @@ Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
     Copy-Item (Join-Path $script:Fixture 'Calc.cs.txt') (Join-Path $sourceRoot $script:FixturePath)
     $summaryFile = Join-Path $TestDrive 'whole.json'
     $merged = Join-Path $TestDrive 'out/merged.cobertura.xml'
+    $gapFile = Join-Path $TestDrive 'out/library-gap.txt'
     $scriptPath = Join-Path -Path $PSScriptRoot -ChildPath '../../../scripts/Find-UncoveredNewLines.ps1'
 
     $pwsh = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-    & $pwsh -NoProfile -File $scriptPath -CoverageRoot $script:Fixture -SourceRoot $sourceRoot -SummaryOutFile $summaryFile -MergedOutFile $merged | Out-Null
+    & $pwsh -NoProfile -File $scriptPath -CoverageRoot $script:Fixture -SourceRoot $sourceRoot -SummaryOutFile $summaryFile -MergedOutFile $merged -LibraryGapOutFile $gapFile | Out-Null
     $LASTEXITCODE | Should -Be 0
+    Get-Content $gapFile | Should -Be @(
+      "${script:FixturePath}:15: (1/2 conditions) if (x < -5) {",
+      "${script:FixturePath}:16: (never ran) return 2;")
 
     $summary = Get-Content $summaryFile -Raw | ConvertFrom-Json
     $summary.Lines | Should -Be 8
     $summary.CoveredLines | Should -Be 7
     $summary.Outcomes | Should -Be 6
-    $summary.CoveredOutcomes | Should -Be 4
+    $summary.CoveredOutcomes | Should -Be 5
     $summary.BlockUnion | Should -BeTrue
-    $summary.Text | Should -Be 'Whole library: lines 87.5%, hand-written branches 66.6% (2 outcomes untested)'
+    $summary.Text | Should -Be 'Whole library: lines 87.5%, hand-written branches 83.3% (1 outcome untested)'
+    $summary.Untested | Should -Be 1
     (Read-CoberturaCoverage @($merged))[$script:FixturePath].Conditions[5] | Should -Be @(2, 2)
+  }
+
+  It 'fails with -FailOnWholeLibrary while any hand-written outcome in the library is untested' {
+    $sourceRoot = Join-Path $TestDrive 'repo-gate'
+    New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'src/Whizbang.Exp') -Force | Out-Null
+    Copy-Item (Join-Path $script:Fixture 'Calc.cs.txt') (Join-Path $sourceRoot $script:FixturePath)
+    $scriptPath = Join-Path -Path $PSScriptRoot -ChildPath '../../../scripts/Find-UncoveredNewLines.ps1'
+
+    $pwsh = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    $output = & $pwsh -NoProfile -File $scriptPath -CoverageRoot $script:Fixture -SourceRoot $sourceRoot -FailOnWholeLibrary
+
+    $LASTEXITCODE | Should -Be 1
+    ($output -join "`n") | Should -Match '1 hand-written decision outcome'
   }
 }

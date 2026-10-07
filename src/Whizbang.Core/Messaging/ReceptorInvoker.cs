@@ -123,7 +123,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Resolve owned domains for lifecycle stage filtering (AOT-safe, no reflection)
     var routingOptions = scopedProvider.GetService<Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>>()?.Value;
-    _ownedDomains = routingOptions?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+    _ownedDomains = routingOptions?.OwnedDomains.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
 
     // Resolve service name for source-service filtering (PostInbox: only fire for other services)
     _serviceName = scopedProvider.GetService<Observability.IServiceInstanceProvider>()?.ServiceName;
@@ -858,7 +858,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return;
     }
 
-    _logger ??= _scopedProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Messaging.ReceptorInvoker");
+    _ensureLogger();
     if (_logger is not null) {
       var callerInfoString = callerInfo.ToString();
       Log.ReceptorInvokedFromCaller(_logger, receptor.ReceptorId, callerInfoString);

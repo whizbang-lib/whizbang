@@ -84,6 +84,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private readonly TDbContext _dbContext = _initDbContext(dbContext);
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
+  // The integrity paths' fail-open warnings, written to a logger that is always there: a coordinator built
+  // without one discards them, exactly as the null-conditional calls it replaces did.
+  private readonly ILogger _log = (ILogger?)logger ?? NullLogger.Instance;
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly WorkCoordinatorGate? _gate = gate;
   private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
@@ -388,7 +391,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("staleSeconds", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)request.StaleThresholdSeconds ?? DBNull.Value });
 
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    return result is bool accepted && accepted;
+    return ScalarResult.IsTrue(result);
   }
 
   /// <inheritdoc />
@@ -411,7 +414,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = sql;
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    var due = result is int n ? n : 0;
+    var due = ScalarResult.IntOrZero(result);
     if (due > 0) {
       // #720: the probe queued a doorbell per due stream; ring them after its commit.
       await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
@@ -680,7 +683,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = (object?)declaration.CapScopeKey ?? DBNull.Value
       });
       var matched = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      var matchedRows = matched is int n ? n : 0;
+      var matchedRows = ScalarResult.IntOrZero(matched);
       if (matchedRows == 0) {
         if (_logger is not null) {
           EFCoreWorkCoordinatorLog.RetentionDeclarationMatchedNoRegistryRow(_logger, declaration.ClrTypeName);
@@ -820,7 +823,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; falls back to the single-key functions.
-      _logger?.LogWarning(ex,
+      _log.LogWarning(ex,
         "Integrity ledger batch {Function} failed; falling back to single-key calls for this chunk.", fn);
 #pragma warning restore CA1848
       return null;
@@ -899,7 +902,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; the drain derives a coarser window instead.
-      _logger?.LogWarning(ex, "Integrity window stamp failed; the drain will derive a coarser range for these buckets.");
+      _log.LogWarning(ex, "Integrity window stamp failed; the drain will derive a coarser range for these buckets.");
 #pragma warning restore CA1848
     }
   }
@@ -945,7 +948,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; the drain simply waits for the next pass.
-      _logger?.LogWarning(ex, "Integrity repair-drain claim failed; nothing dispatched this pass.");
+      _log.LogWarning(ex, "Integrity repair-drain claim failed; nothing dispatched this pass.");
 #pragma warning restore CA1848
       return [];
     }
@@ -986,7 +989,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; falls back to the single-key functions.
-      _logger?.LogWarning(ex,
+      _log.LogWarning(ex,
         "Integrity ledger batch wh_integrity_mark_healed_batch failed; falling back to single-key calls for this chunk.");
 #pragma warning restore CA1848
       return null;
@@ -1041,7 +1044,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; a source-generated message would require making this type partial.
-      _logger?.LogWarning(ex,
+      _log.LogWarning(ex,
         "Integrity ledger summary failed; convergence gauges will read as healthy until this is resolved.");
 #pragma warning restore CA1848
       return Whizbang.Core.Observability.LedgerGaugeSnapshot.Empty;
@@ -1092,7 +1095,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Never silent: a swallowed failure here degrades convergence invisibly, which is exactly
       // how a broken ledger would masquerade as a working one.
 #pragma warning disable CA1848 // Rare error path; a source-generated message would require making this type partial.
-      _logger?.LogWarning(ex,
+      _log.LogWarning(ex,
         "Integrity ledger call {Function} failed; continuing with failOpen={FailOpen}. " +
         "Convergence bounding is degraded until this is resolved.", fn, failOpen);
 #pragma warning restore CA1848
@@ -1242,7 +1245,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.AddWithValue("phase", lifecyclePhase);
     cmd.Parameters.AddWithValue("version", (object?)libraryVersion ?? DBNull.Value);
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    return result is true;
+    return ScalarResult.IsTrue(result);
   }
 
   /// <inheritdoc />
@@ -1376,7 +1379,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     pMax.Value = maxEpochs;
     cmd.Parameters.Add(pMax);
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    return result is int closed ? closed : 0;
+    return ScalarResult.IntOrZero(result);
   }
 
   /// <inheritdoc />
@@ -1401,7 +1404,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.CommandText =
         $"SELECT COALESCE((SELECT setting_value::bigint FROM {settings} WHERE setting_key = 'integrity_origin_generation'), 0)";
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return result is long generation ? generation : 0L;
+      return ScalarResult.LongOrZero(result);
     }, cancellationToken);
 
   /// <inheritdoc />
@@ -1414,7 +1417,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, originServiceId));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_generation", generation));
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return result is bool coherent && coherent;
+      return ScalarResult.IsTrue(result);
     }, cancellationToken);
 
   /// <inheritdoc />
@@ -1481,7 +1484,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.CommandText = $"SELECT sealed_through FROM {schema}.wh_integrity_seals WHERE origin_service_id = @p_origin";
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, originServiceId));
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return result is long sealedThrough ? sealedThrough : 0L;
+      return ScalarResult.LongOrZero(result);
     }, cancellationToken);
 
   /// <inheritdoc />
@@ -2884,7 +2887,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore S2077
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("c", clrTypeName));
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return result is long count ? count : 0L;
+      return ScalarResult.LongOrZero(result);
     }, cancellationToken);
 
   /// <inheritdoc />
@@ -3000,7 +3003,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("ids",
         NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = rowIds.ToArray() });
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return result is int deleted ? deleted : 0;
+      return ScalarResult.IntOrZero(result);
     }, cancellationToken);
   }
 
@@ -3015,7 +3018,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("idle", (long)idleWindow.TotalSeconds));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("lim", limit));
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return result is int folded ? folded : 0;
+      return ScalarResult.IntOrZero(result);
     }, cancellationToken);
 
   /// <inheritdoc />
@@ -3041,7 +3044,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("ids",
         NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamIds.ToArray() });
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return result is int folded ? folded : 0;
+      return ScalarResult.IntOrZero(result);
     }, cancellationToken);
   }
 
@@ -3685,7 +3688,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .SqlQueryRaw<WorkCoordinatorStatistics>(sql)
       .ToListAsync(cancellationToken);
 
-    return result.FirstOrDefault() ?? new WorkCoordinatorStatistics();
+    // Scalar subqueries with no FROM of their own: always exactly one row.
+    return result.Single();
   }
 
   /// <summary>
@@ -4168,7 +4172,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Value = streamIds.ToArray(),
     });
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
-    return result is int evicted ? evicted : 0;
+    return ScalarResult.IntOrZero(result);
   }
 
   public async Task ReportPerspectiveCompletionAsync(
@@ -4715,7 +4719,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.CommandText = $"SELECT {qualified}(@p_dead_letter_id,@p_message_id,@p_stream_id,@p_message_type,@p_destination,@p_envelope_json,@p_broker_reason,@p_broker_description,@p_enqueued_at,@p_delivery_count,@p_instance_id,@p_generation)";
 #pragma warning restore S2077
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      return result is bool imported && imported;
+      return ScalarResult.IsTrue(result);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Throw, never return: FALSE means "duplicate — custody already exists, safe to settle at the
       // broker". A failed import must NOT look like a duplicate, or the drainer would complete the
@@ -4805,7 +4809,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_debug_mode", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = debugMode });
 
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
-    return result is int count ? count : 0;
+    return ScalarResult.IntOrZero(result);
   }
 
   /// <summary>
@@ -4844,7 +4848,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore RCS1130
     cmd.Parameters.Add(new NpgsqlParameter(P_MAX_ATTEMPTS, maxAttempts));
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
-    return result is int i ? i : 0;
+    return ScalarResult.IntOrZero(result);
   }
 
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reads the event rows column by column, and each optional column is read through its own catch so a provider that omits it yields the default rather than failing the whole read.")]

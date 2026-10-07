@@ -180,6 +180,22 @@ public class ContainmentEmissionGuardTests {
         + "return nothing, where the extraction it replaced returns the right rows");
   }
 
+  /// <summary>
+  /// A member that carries no type mapping of its own falls back too. The mapping is where a converter
+  /// shows, so without one there is no telling whether the document holds the natural form, and a
+  /// containment test built on a guess could return nothing.
+  /// </summary>
+  [Test]
+  public async Task AMemberWithNoMappingOfItsOwnFallsBackToEqualityAsync() {
+    var unmapped = new JsonScalarExpression(
+      _dataColumn(_jsonMapping), [new PathSegment("Rank")], typeof(int), typeMapping: null, nullable: true);
+
+    var emitted = JsonbContainment.Emit([unmapped, _value(7)]);
+
+    await Assert.That(emitted).IsTypeOf<SqlBinaryExpression>()
+      .Because("only a member known to hold its natural form may be compared as a document");
+  }
+
   // ============================================================
   // JsonbContainment.EmitSet — reached only by the rewriter, so it fails loudly
   // ============================================================

@@ -282,6 +282,31 @@ public class PgSharedNotifyConnectionMetricsTests {
       .Because("a dropped connection steps the up-down counter back so the sum across pods counts only live LISTEN/NOTIFY connections");
   }
 
+  /// <summary>
+  /// The metrics are reporting only: a connection built without them still announces an availability
+  /// transition to its subscribers.
+  /// </summary>
+  [Test]
+  public async Task AvailabilityTransition_WithoutMetrics_IsStillAnnouncedAsync() {
+    var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var conn = new PgSharedNotifyConnection(
+      Options.Create(new WhizbangNotificationOptions { SignalingMode = WorkSignalingMode.Polling }),
+      cfg,
+      new ServiceInstanceProvider(cfg),
+      NullLogger<PgSharedNotifyConnection>.Instance,
+      connectionStringFallback: null,
+      timeProvider: null,
+      notificationDataSource: null,
+      metrics: null);
+    var seen = new List<bool>();
+    conn.OnAvailabilityChanged += seen.Add;
+
+    _invokeSetAvailable(conn, true, null);
+
+    await Assert.That(seen).IsEquivalentTo([true]);
+    await Assert.That(conn.IsAvailable).IsTrue();
+  }
+
   [Test]
   public async Task SignalingMode_AvailableTransition_TaggedListenNotifyAsync() {
     var (conn, metrics) = _build();

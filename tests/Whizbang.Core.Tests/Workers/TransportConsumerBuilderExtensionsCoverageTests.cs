@@ -437,6 +437,52 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     await Assert.That(result.Description).Contains("No subscriptions");
   }
 
+  [Test]
+  public async Task AddTransportConsumer_HealthCheckFactory_ReportsTheWorkersSubscriptionsAsync() {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    _registerRequiredServices(services);
+    _registerWorkerResolutionDependencies(services);
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
+
+    builder.AddTransportConsumer();
+
+    await _assertHealthCheckReadsTheWorkerAsync(services.BuildServiceProvider());
+  }
+
+  [Test]
+  public async Task AddTransportConsumer_PerspectiveBuilder_HealthCheckFactory_ReportsTheWorkersSubscriptionsAsync() {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    _registerRequiredServices(services);
+    _registerWorkerResolutionDependencies(services);
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
+
+    new WhizbangPerspectiveBuilder(services).AddTransportConsumer();
+
+    await _assertHealthCheckReadsTheWorkerAsync(services.BuildServiceProvider());
+  }
+
+  // The health check built from a provider with the worker reports the worker's own subscriptions
+  // (pending before it starts), not the empty fallback a provider without one gets.
+  private static async Task _assertHealthCheckReadsTheWorkerAsync(ServiceProvider provider) {
+    var worker = provider.GetRequiredService<TransportConsumerWorker>();
+    await Assert.That(worker.SubscriptionStates.Count).IsGreaterThan(0)
+      .Because("the setup must give the worker at least one subscription to report");
+    var registration = provider.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value
+      .Registrations.Single(r => r.Name == "subscriptions");
+
+    var healthCheck = registration.Factory(provider);
+    var result = await healthCheck.CheckHealthAsync(new HealthCheckContext {
+      Registration = new HealthCheckRegistration("subscriptions", healthCheck, HealthStatus.Degraded, null)
+    });
+
+    await Assert.That(result.Description).DoesNotContain("No subscriptions")
+      .Because("the worker's pending subscriptions are what the check reports");
+  }
+
   // ========================================
   // _getServiceName assembly-name fallback (no IServiceInstanceProvider registered)
   // (targets: TransportConsumerBuilderExtensions.cs lines 424-426, 430)

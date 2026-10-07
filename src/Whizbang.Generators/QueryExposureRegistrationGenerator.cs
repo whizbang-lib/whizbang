@@ -66,12 +66,11 @@ public sealed class QueryExposureRegistrationGenerator : IIncrementalGenerator {
   };
 
   private static ExposedModel? _extract(GeneratorSyntaxContext context, CancellationToken ct) {
-    // Null-tolerant rather than guarded: every node shape the predicate yields is a declaration, so
-    // a null symbol is not a case this has seen, and a guard for it would be a line no test could
-    // honestly cover. An empty attribute list reaches the same answer by the same path.
-    var symbol = context.SemanticModel.GetDeclaredSymbol(context.Node, ct);
+    // Every node shape the predicate yields is a declaration, and a declaration in its own
+    // compilation always has its symbol.
+    var symbol = context.SemanticModel.GetDeclaredSymbol(context.Node, ct)!;
 
-    var exposure = SortableExposureDiscovery.ExposureOf(symbol?.GetAttributes() ?? [], []);
+    var exposure = SortableExposureDiscovery.ExposureOf(symbol.GetAttributes(), []);
     if (exposure == 0) {
       return null;
     }
@@ -150,7 +149,7 @@ public sealed class QueryExposureRegistrationGenerator : IIncrementalGenerator {
     if ((exposure & 1) != 0) { names.Add("Filtering"); }
     if ((exposure & 2) != 0) { names.Add("Ordering"); }
     if ((exposure & 4) != 0) { names.Add("Expression"); }
-    if (names.Count == 0) { names.Add("None"); }
+    // A model is registered only for a non-zero exposure (see _extract), so at least one name is set.
 
     return string.Join(" | ", names.Select(static n => "global::Whizbang.Core.Perspectives.QueryExposures." + n));
   }

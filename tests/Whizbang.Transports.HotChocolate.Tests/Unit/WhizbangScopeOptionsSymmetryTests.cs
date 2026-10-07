@@ -258,6 +258,29 @@ public class WhizbangScopeOptionsSymmetryTests {
     await Assert.That(perms[0]).IsEqualTo("shared");
   }
 
+  /// <summary>
+  /// An empty claim value grants nothing: aggregation skips it rather than adding a permission whose
+  /// value is the empty string.
+  /// </summary>
+  [Test]
+  public async Task Permissions_Aggregate_SkipsAnEmptyClaimValueAsync() {
+    var opts = new WhizbangScopeOptions {
+      PermissionsClaimTypes = ["perms", "permissions"],
+      PermissionsAggregation = ClaimAggregation.Aggregate
+    };
+    var accessor = new TestScopeContextAccessor();
+    var middleware = new WhizbangScopeMiddleware(_ => Task.CompletedTask, opts);
+    var context = _createContextWithClaims(
+      ("perms", ""),
+      ("permissions", "p1"));
+
+    await middleware.InvokeAsync(context, accessor);
+
+    var ctx = accessor.Current as ImmutableScopeContext;
+    var perms = ctx!.Permissions.Select(p => p.Value).ToList();
+    await Assert.That(perms).IsEquivalentTo(["p1"]);
+  }
+
   // ===== Groups aggregation =====
 
   [Test]

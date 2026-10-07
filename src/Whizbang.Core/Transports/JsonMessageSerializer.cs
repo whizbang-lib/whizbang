@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -94,11 +95,20 @@ public class JsonMessageSerializer : IMessageSerializer {
     return options.Converters.Any(c => c.CanConvert(typeof(T)));
   }
 
+  /// <summary>
+  /// The type info for <paramref name="envelopeType"/>. Exactly one of the two sources is set, one per
+  /// constructor: options throw <see cref="NotSupportedException"/> for an unregistered type, a context
+  /// answers null, which is reported here.
+  /// </summary>
+  private JsonTypeInfo _typeInfoFor(Type envelopeType) =>
+    (_options is not null ? _options.GetTypeInfo(envelopeType) : _context!.GetTypeInfo(envelopeType))
+      ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+
   /// <inheritdoc />
   public Task<byte[]> SerializeAsync(IMessageEnvelope envelope) {
     // Get JsonTypeInfo from options or context - fully AOT-compatible
     var envelopeType = envelope.GetType();
-    var typeInfo = (_options?.GetTypeInfo(envelopeType) ?? _context?.GetTypeInfo(envelopeType)) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+    var typeInfo = _typeInfoFor(envelopeType);
     var json = JsonSerializer.Serialize(envelope, typeInfo);
     return Task.FromResult(System.Text.Encoding.UTF8.GetBytes(json));
   }
@@ -109,7 +119,7 @@ public class JsonMessageSerializer : IMessageSerializer {
     var envelopeType = typeof(MessageEnvelope<TMessage>);
 
     // Get JsonTypeInfo from options or context - fully AOT-compatible
-    var typeInfo = (_options?.GetTypeInfo(envelopeType) ?? _context?.GetTypeInfo(envelopeType)) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+    var typeInfo = _typeInfoFor(envelopeType);
     var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope ?? throw new InvalidOperationException($"Failed to deserialize envelope for message type {typeof(TMessage).Name}");
     return Task.FromResult(envelope);
   }
@@ -180,7 +190,7 @@ internal class MetadataConverter : JsonConverter<IReadOnlyDictionary<string, Jso
         throw new JsonException($"Expected PropertyName token, got {reader.TokenType}");
       }
 
-      var key = reader.GetString() ?? throw new JsonException("Property name cannot be null");
+      var key = reader.GetString()!;
 
       // Read the value as a JsonElement to preserve its type
       reader.Read();

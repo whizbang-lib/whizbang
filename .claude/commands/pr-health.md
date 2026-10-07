@@ -16,7 +16,8 @@ and every open finding, downloads the CI run's coverage artifacts for the head c
 uncovered new lines and hand-written branches, then writes `.whizbang/cache/pr-health/pr-<n>-<timestamp>.md` with the raw JSON
 and text beside it. Exit code 0 means clean; 1 means the report lists what to fix. The report also
 carries the whole-library line the PR comment shows ("Whole library: lines 99.9%, hand-written branches
-98.6% (382 outcomes untested)"); it is informational and does not affect the verdict. Merging the
+98.6% (382 outcomes untested)"); it is gated at 100% like the quality job, so any untested hand-written
+outcome anywhere in the library makes the verdict "not yet". Merging the
 coverage across test processes reads the binary reports with `dotnet-coverage`
 (`dotnet tool install --global dotnet-coverage --version 18.12.0`).
 

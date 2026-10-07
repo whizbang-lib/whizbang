@@ -97,9 +97,8 @@ public class PinnedIdCodeFixProvider : CodeFixProvider {
       .WithAdditionalAnnotations(Formatter.Annotation);
 
     var newTypeDeclaration = typeDeclaration.AddAttributeLists(attributeList);
-    // A document whose language has no syntax trees answers null for its root; there is nothing to
-    // rewrite, so the document goes back unchanged through the same exit the rewrite uses.
-    var newRoot = root?.ReplaceNode(typeDeclaration, newTypeDeclaration);
+    // This action is registered only after RegisterCodeFixesAsync found a root for this same document.
+    var newRoot = root!.ReplaceNode(typeDeclaration, newTypeDeclaration);
 
     if (newRoot is CompilationUnitSyntax compilationUnit && !_hasUsing(compilationUnit, PINNED_ID_ATTRIBUTE_NAMESPACE)) {
       var usingDirective = SyntaxFactory.UsingDirective(SyntaxFactory.ParseName(PINNED_ID_ATTRIBUTE_NAMESPACE))
@@ -107,7 +106,7 @@ public class PinnedIdCodeFixProvider : CodeFixProvider {
       newRoot = compilationUnit.AddUsings(usingDirective);
     }
 
-    return newRoot is null ? document : document.WithSyntaxRoot(newRoot);
+    return document.WithSyntaxRoot(newRoot);
   }
 
   private static bool _hasUsing(CompilationUnitSyntax compilationUnit, string namespaceName) {

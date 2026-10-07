@@ -129,7 +129,7 @@ internal static class EphemeralResolver {
           && na.Value.Value is not null) {
         var member = enumType.GetMembers()
           .OfType<IFieldSymbol>()
-          .FirstOrDefault(f => f.HasConstantValue && Equals(f.ConstantValue, na.Value.Value));
+          .FirstOrDefault(f => Equals(f.ConstantValue, na.Value.Value));
         if (member is not null) {
           return member.Name;
         }

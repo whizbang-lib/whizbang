@@ -453,7 +453,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-        .FirstOrDefault(f => f.ConstantValue is int val && val == stageValue);
+        .FirstOrDefault(f => Equals(f.ConstantValue, stageValue));
 
     if (enumMember is null) {
       return null;
@@ -702,7 +702,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-        .FirstOrDefault(f => f.ConstantValue is int val && val == modeValue);
+        .FirstOrDefault(f => Equals(f.ConstantValue, modeValue));
 
     if (enumMember is null) {
       return null;
@@ -818,9 +818,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         return true;
       }
       if (TypeNameUtilities.IsNamed(attribute.AttributeClass, RECEPTOR_IDEMPOTENT_ATTRIBUTE)) {
-        // Treat [ReceptorIdempotent] as replay-safe only when AlwaysFire = true.
+        // Treat [ReceptorIdempotent] as replay-safe only when AlwaysFire = true. AlwaysFire is the
+        // attribute's only settable member (pinned by a test), and a named argument naming anything
+        // else does not bind and never reaches here, so every named argument is AlwaysFire; a value
+        // of the wrong type is not true.
         foreach (var arg in attribute.NamedArguments) {
-          if (arg.Key == "AlwaysFire" && arg.Value.Value is bool b && b) {
+          if (arg.Value.Value is true) {
             return true;
           }
         }
@@ -2005,10 +2008,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     var snippet = _selectSnippet(receptor, responseSnippet, voidSnippet, tracedResponseSnippet, tracedVoidSnippet);
 
-    // Every shipped snippet carries the ReceptorInfo constructor, so the manual build is the safety
-    // net for a snippet edited out of shape rather than a path today's templates take.
-    var entryTemplate = _extractReceptorInfoFromSnippet(snippet);
-    return entryTemplate is null ? _generateReceptorInfoEntryManually(receptor, syncAttributesCode) : _applyReceptorReplacements(entryTemplate, receptor, syncAttributesCode, handlerCount);
+    // Every shipped snippet carries the ReceptorInfo constructor, which ReceptorRegistrySnippetInvariantTests
+    // pins for all four snippets _selectSnippet can return, so extraction always finds it. A manual
+    // fallback used to stand here; it was a second copy of the entry shape that no snippet change
+    // updated, so it would have emitted drifted entries had it ever run, and the test is the guard.
+    var entryTemplate = _extractReceptorInfoFromSnippet(snippet)!;
+    return _applyReceptorReplacements(entryTemplate, receptor, syncAttributesCode, handlerCount);
   }
 
   /// <summary>
@@ -2081,53 +2086,6 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     return result;
-  }
-
-  /// <summary>
-  /// Fallback method to generate ReceptorInfo entry manually if snippet extraction fails.
-  /// </summary>
-  /// <remarks>
-  /// Unreachable in practice: extraction fails only when a snippet has lost the
-  /// <c>new global::Whizbang.Core.Messaging.ReceptorInfo(</c> marker, and
-  /// <c>ReceptorRegistrySnippetInvariantTests</c> pins that marker in all four snippets
-  /// <c>_selectSnippet</c> can return. Kept as the safety net for that edit, but it is a second
-  /// copy of the entry shape that no snippet change updates — so if it ever does run, the entries
-  /// it emits will have drifted from the template's.
-  /// </remarks>
-  // Justification lives in the remarks above: netstandard2.0's ExcludeFromCodeCoverageAttribute
-  // has no Justification property (it arrived in .NET 5), so generator projects carry it in prose.
-  [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
-  private static string _generateReceptorInfoEntryManually(
-      ReceptorInfo receptor,
-      string syncAttributesCode) {
-
-    var sb = new StringBuilder();
-    sb.AppendLine("new global::Whizbang.Core.Messaging.ReceptorInfo(");
-    sb.AppendLine($"  MessageType: typeof({receptor.MessageType}),");
-    sb.AppendLine($"  ReceptorId: \"{receptor.ClassName}\",");
-    sb.AppendLine("  InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {");
-
-    if (receptor.IsVoid) {
-      sb.AppendLine($"    var receptor = sp.GetRequiredService<{StandardInterfaceNames.I_RECEPTOR}<{receptor.MessageType}>>();");
-      sb.AppendLine($"    await receptor.HandleAsync(({receptor.MessageType})msg, ct);");
-      sb.AppendLine("    return null;");
-    } else {
-      sb.AppendLine($"    var receptor = sp.GetRequiredService<{StandardInterfaceNames.I_RECEPTOR}<{receptor.MessageType}, {receptor.ResponseType}>>();");
-      sb.AppendLine($"    var result = await receptor.HandleAsync(({receptor.MessageType})msg, ct);");
-      sb.AppendLine("    if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult) {");
-      sb.AppendLine("      return routedResult.Value;");
-      sb.AppendLine("    }");
-      sb.AppendLine("    return result;");
-    }
-
-    sb.AppendLine("  },");
-    sb.AppendLine($"  SyncAttributes: {syncAttributesCode},");
-    sb.AppendLine($"  FireDuringReplay: {(receptor.HasFireDuringReplayAttribute ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)},");
-    sb.AppendLine($"  IsIdempotent: {(receptor.IsIdempotent ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)},");
-    sb.AppendLine($"  IsOnceAcrossServices: {(receptor.IsOnceAcrossServices ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)}");
-    sb.Append(')');
-
-    return sb.ToString();
   }
 
   /// <summary>

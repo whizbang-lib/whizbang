@@ -75,6 +75,25 @@ public class CollectiveSettersShapeTests {
     await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(method)).Throws<NotSupportedException>();
   }
 
+  // A computed comparison reads the same kinds of member as a selector: only a property the model
+  // itself declares, read straight off the parameter. A constant on the left, a nested member, a field
+  // or a base-declared property is refused rather than compiled into a comparison on the wrong value.
+  [Test]
+  public async Task ComputedComparisonShapes_OnlyAModelPropertyIsComparedAsync() {
+#pragma warning disable RCS1098 // The constant on the left is the shape under test.
+    Expression<Action<ICollectiveSetters<ShapeModel>>> constantLeft = s => s.SetProperty(j => j.IsActive, j => 5 == j.Count);
+#pragma warning restore RCS1098
+    Expression<Action<ICollectiveSetters<ShapeModel>>> nested = s => s.SetProperty(j => j.IsActive, j => j.Name.Length == 3);
+    Expression<Action<ICollectiveSetters<ShapeModel>>> field = s => s.SetProperty(j => j.IsActive, j => j.Marker == 1);
+    Expression<Action<ICollectiveSetters<ShapeModel>>> inherited = s => s.SetProperty(j => j.IsActive, j => j.Inherited == "base");
+
+    await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(constantLeft)).Throws<NotSupportedException>();
+    await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(nested)).Throws<NotSupportedException>();
+    await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(field)).Throws<NotSupportedException>();
+    await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(inherited)).Throws<NotSupportedException>()
+      .Because("a property declared on a base type is not one of the model's own document members");
+  }
+
   internal class ShapeBase {
     public string Inherited { get; set; } = string.Empty;
   }

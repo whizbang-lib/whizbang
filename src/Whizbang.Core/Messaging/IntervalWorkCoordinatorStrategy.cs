@@ -231,10 +231,10 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     // IntervalWorkCoordinatorStrategy handles outbox work only — skip inbox claiming
     // to prevent stealing inbox messages from WorkCoordinatorPublisherWorker
-    return _flushCoreAsync(flags | WorkBatchOptions.SkipInboxClaiming, trigger: "api", skipLifecycle: false, ct);
+    return _flushCoreAsync(trigger: "api", skipLifecycle: false, ct);
   }
 
-  private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, string trigger, bool skipLifecycle, CancellationToken ct) {
+  private async Task<WorkBatch> _flushCoreAsync(string trigger, bool skipLifecycle, CancellationToken ct) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
       new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
@@ -270,12 +270,12 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
       var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
         new FlushContext(
-          _coordinator, _scopeFactory, _instanceProvider, _options, STRATEGY_NAME,
+          _coordinator, _scopeFactory, _instanceProvider, _options,
           snapshot.OutboxMessages, snapshot.InboxMessages,
           snapshot.OutboxCompletions, snapshot.InboxCompletions,
           snapshot.OutboxFailures, snapshot.InboxFailures,
-          flags, _lifecycleMessageDeserializer,
-          _logger, _tracingOptions, _metrics, _lifecycleMetrics,
+          _lifecycleMessageDeserializer,
+          _logger, _tracingOptions, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: null,
           SkipLifecycle: skipLifecycle),
         ct
@@ -386,7 +386,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     // from its envelope and reads no ambient state, so the old background-thread skip was stale.
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, trigger: "timer", skipLifecycle: false, ct: default);
+        await _flushCoreAsync(trigger: "timer", skipLifecycle: false, ct: default);
       } catch (Exception ex) {
         LogErrorDuringIntervalFlush(_logger, ex);
       }
@@ -428,7 +428,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     try {
       // Disposal is the ONE deliberate lifecycle skip (issue #485 kept it): a shutdown drain's
       // backgrounded stage halves would race process exit.
-      await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, trigger: "disposal", skipLifecycle: true, ct: default);
+      await _flushCoreAsync(trigger: "disposal", skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       LogErrorFlushingOnDisposal(_logger, ex);
     }

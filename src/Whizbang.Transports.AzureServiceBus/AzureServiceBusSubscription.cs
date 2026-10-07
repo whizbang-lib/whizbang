@@ -46,7 +46,9 @@ public sealed class AzureServiceBusSubscription : ISubscription {
     _logger = logger;
   }
 
-  private bool _isProcessing => _processor?.IsProcessing ?? _sessionProcessor?.IsProcessing ?? false;
+  // Each constructor sets exactly one of the two processors, so when there is no standard processor
+  // there is a session processor.
+  private bool _isProcessing => _processor?.IsProcessing ?? _sessionProcessor!.IsProcessing;
 
   /// <inheritdoc />
   /// <remarks>
@@ -132,14 +134,14 @@ public sealed class AzureServiceBusSubscription : ISubscription {
       if (_processor is not null) {
         _processor.StopProcessingAsync().GetAwaiter().GetResult();
       } else {
-        _sessionProcessor?.StopProcessingAsync().GetAwaiter().GetResult();
+        _sessionProcessor!.StopProcessingAsync().GetAwaiter().GetResult();
       }
     }
 
     if (_processor is not null) {
       _processor.DisposeAsync().AsTask().GetAwaiter().GetResult();
     } else {
-      _sessionProcessor?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+      _sessionProcessor!.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
     _logger.LogInformation("Disposed Service Bus subscription");

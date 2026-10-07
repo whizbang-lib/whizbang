@@ -653,8 +653,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         continue;
       }
 
-      var typeName = field.TypeName.Replace("global::", "").TrimEnd('?');
-      if (typeName is not ("System.String" or "string")) {
+      // The field's type name is rendered fully qualified, which writes a special type as its keyword.
+      if (field.TypeName.TrimEnd('?') != "string") {
         continue;
       }
 

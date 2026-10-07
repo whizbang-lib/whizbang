@@ -1168,7 +1168,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       } catch (Exception ex) when (attempt < CONTINUATION_TRANSIENT_ATTEMPTS
                                    && TransientDatabaseFailure.TryClassify(ex, out var transient)
                                    && transient.Reason is TransientDatabaseFailure.DEADLOCK or TransientDatabaseFailure.SERIALIZATION_FAILURE) {
-        LogContinuationRetried(_logger, transient.Reason, transient.SqlState ?? "none", cursors.Count, attempt, ex);
+        LogContinuationRetried(_logger, transient.Reason, transient.SqlState, cursors.Count, attempt, ex);
         attempt++;
       }
     }
@@ -1614,7 +1614,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     Message = "OutboxDrainWorker: continuing {Streams} stream(s) lost a {Reason} (SQLSTATE {SqlState}) on attempt {Attempt}; "
             + "retrying at once from the same cursors")]
   static partial void LogContinuationRetried(
-    ILogger logger, string reason, string sqlState, int streams, int attempt, Exception exception);
+    ILogger logger, string reason, string? sqlState, int streams, int attempt, Exception exception);
 
   [LoggerMessage(EventId = BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
     Message = "Outbox drain batch failed; the streams re-offer via the claim backstop, but this failure "

@@ -87,15 +87,9 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var messageKind = TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_COMMAND)
-        ? "command"
-        : "event";
-    var kind = isPerspective ? "perspective" : messageKind;
-
     return new PinnedIdInfo(
         TypeName: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-        PinnedId: pinnedId,
-        Kind: kind
+        PinnedId: pinnedId
     );
   }
 
@@ -195,6 +189,5 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
 /// </summary>
 internal sealed record PinnedIdInfo(
     string TypeName,
-    string PinnedId,
-    string Kind
+    string PinnedId
 );

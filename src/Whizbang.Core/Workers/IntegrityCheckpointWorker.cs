@@ -183,7 +183,7 @@ public sealed partial class IntegrityCheckpointWorker(
     var lookup = EventTypeMatchingHelper.BuildTypeLookup(
       [.. catalog.GetAll().Where(e => e.Kind == "event").Select(e => e.Type)]);
     var ownedDomains = services.GetService<IOptions<RoutingOptions>>()?.Value
-      .OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+      .OwnedDomains.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     var topicStrategy = services.GetService<ITopicRoutingStrategy>();
     var destinations = new Dictionary<string, TransportDestination>(StringComparer.Ordinal);
     foreach (var typeName in typeNames) {

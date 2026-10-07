@@ -510,7 +510,8 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return (null, null);
     }
 
-    return (row.TypeArguments.Length == 1 ? row.TypeArguments[0] as INamedTypeSymbol : null, document.Name);
+    // PerspectiveRow<TModel> has exactly one type argument.
+    return (row.TypeArguments[0] as INamedTypeSymbol, document.Name);
   }
 
   /// <summary>
@@ -537,7 +538,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
 
   private static bool _feedsRowSelectingOperator(LambdaExpressionSyntax lambda) {
     if (lambda.Parent is not ArgumentSyntax argument ||
-        argument.Parent?.Parent is not InvocationExpressionSyntax invocation ||
+        argument.Parent!.Parent is not InvocationExpressionSyntax invocation ||
         invocation.Expression is not MemberAccessExpressionSyntax invoked) {
       return false;
     }
@@ -853,9 +854,10 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return true;
     }
 
-    var owning = model.ContainingAssembly;
-    return owning is not null &&
-           !SymbolEqualityComparer.Default.Equals(owning, compiling) &&
+    // Every caller found the field on the model, so the model is a real type with members, and a real
+    // type belongs to an assembly.
+    var owning = model.ContainingAssembly!;
+    return !SymbolEqualityComparer.Default.Equals(owning, compiling) &&
            HasReasonedSuppression(owning.GetAttributes());
   }
 

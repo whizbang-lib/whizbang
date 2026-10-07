@@ -157,7 +157,7 @@ public sealed class RedeliveryPump(
     var published = 0;
     foreach (var plan in plans) {
       // Scope-uniform by construction (see GroupKey), so any constituent answers for the bundle.
-      var scope = _scopeDeltaFor(plan.Constituents.Count > 0 ? plan.Constituents[0].Scope : null);
+      var scope = _scopeDeltaFor(plan.Constituents[0].Scope);
       await _publishPlanAsync((RedeliveryComposite)plan.Composite, topic, target, stateOnly, scope, cancellationToken).ConfigureAwait(false);
       published++;
     }

@@ -202,6 +202,36 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
     }
   }
 
+  /// <summary>
+  /// A region whose statement reports SQL NULL, or returns no row at all, has nothing left to do: it
+  /// is sent once and the migration completes. Reading either as a count would fail the cast on the
+  /// NULL and stop startup on a migration that had finished.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task InitializeSchemaAsync_BatchedRegionReportingNullOrNoRow_IsDoneAfterOnePassAsync() {
+    var quiet = new MigrationScript("913_coverage_quiet_regions", $"""
+      {MigrationBatchRegions.BEGIN}
+      SELECT NULL::BIGINT WHERE {MigrationBatchRegions.SIZE_TOKEN} > 0;
+      {MigrationBatchRegions.END}
+
+      {MigrationBatchRegions.BEGIN}
+      SELECT 1::BIGINT WHERE {MigrationBatchRegions.SIZE_TOKEN} < 0;
+      {MigrationBatchRegions.END}
+      """);
+
+    var provider = new CustomMigrationProvider("9.9.23-coverage", [_realBootstrapForBatch(), quiet]);
+    await new PostgresSchemaInitializer(_testConnectionString, perspectiveSchemaSql: null, migrationProvider: provider)
+      .InitializeSchemaAsync();
+
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    await connection.OpenAsync();
+    var status = await connection.ExecuteScalarAsync<int>(
+      "SELECT status FROM wh_schema_migrations WHERE file_name = '913_coverage_quiet_regions'");
+    await Assert.That(status).IsEqualTo(1)
+      .Because("a region that reports NULL or no row is finished, so the migration completes");
+  }
+
   private static MigrationScript _realBootstrapForBatch() =>
     new PostgresMigrationProvider().GetMigrations()
       .First(m => m.Name.StartsWith("000", StringComparison.Ordinal));

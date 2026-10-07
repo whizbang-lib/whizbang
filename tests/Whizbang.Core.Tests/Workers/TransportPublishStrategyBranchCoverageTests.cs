@@ -65,6 +65,19 @@ public class TransportPublishStrategyBranchCoverageTests {
   }
 
   [Test]
+  public async Task ResolveEntityDestination_RowWithNoMessageType_PublishesToItsDestinationWithAnEmptyKeyAsync() {
+    // A row whose type name is missing classifies as neither command nor event; it is published to the
+    // destination it carries, keyed by nothing rather than failing on a name it does not have.
+    var strategy = _strategy(new BulkCaptureTransport(maxMessageSizeBytes: null));
+    var work = _work() with { MessageType = null!, Destination = "orders-topic" };
+
+    var destination = strategy.ResolveEntityDestination(work);
+
+    await Assert.That(destination.Address).IsEqualTo("orders-topic");
+    await Assert.That(destination.RoutingKey).IsEqualTo(string.Empty);
+  }
+
+  [Test]
   public async Task ResolveEntityDestination_EventWithoutNamespace_KeysByBareTypeNameAsync() {
     var strategy = _strategy(new BulkCaptureTransport(maxMessageSizeBytes: null));
     var work = _work() with { MessageType = "OrderCreated, BranchAssembly", Destination = "orders-topic" };

@@ -63,6 +63,32 @@ public class RegistrationAndOptionsBranchTests {
     await Assert.That(services.Any(d => d.ServiceType == typeof(PgRoleElector))).IsTrue();
   }
 
+  // A host's own elector is left in place however it was registered. Registered by type, its type
+  // is checked and is not the null default; registered by factory, there is no type to check.
+  // Either way, adding the role elector over it would replace the host's choice.
+  [Test]
+  public async Task RoleAssignmentByDefault_WithTheHostsElectorRegisteredByType_LeavesItInPlaceAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IDutyElector, PgDutyElector>();
+
+    services.AddWhizbangRoleAssignmentByDefault();
+
+    await Assert.That(services.Any(d => d.ServiceType == typeof(PgRoleElector))).IsFalse();
+    await Assert.That(services.Single(d => d.ServiceType == typeof(IDutyElector)).ImplementationType)
+      .IsEqualTo(typeof(PgDutyElector));
+  }
+
+  [Test]
+  public async Task RoleAssignmentByDefault_WithTheHostsElectorRegisteredByFactory_LeavesItInPlaceAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IDutyElector>(sp => sp.GetRequiredService<PgDutyElector>());
+
+    services.AddWhizbangRoleAssignmentByDefault();
+
+    await Assert.That(services.Any(d => d.ServiceType == typeof(PgRoleElector))).IsFalse();
+    await Assert.That(services.Single(d => d.ServiceType == typeof(IDutyElector)).ImplementationFactory).IsNotNull();
+  }
+
   [Test]
   public async Task DutyElector_PollingIntervalBelowTheFloor_UsesTheFloorAsTheCeilingAsync() {
     var elector = _elector(TimeSpan.FromMilliseconds(500));

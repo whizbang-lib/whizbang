@@ -166,6 +166,10 @@ public class CanonicalTemporalRewriteTests {
       found.Add($"{path}.{property.Name}");
     }
     foreach (var nested in complex.ComplexType.GetComplexProperties()) {
+      // A nested object is a key in the document too, and the walk reads its stored name the same way.
+      if (nested.GetJsonPropertyName() is null) {
+        found.Add($"{path}.{nested.Name}");
+      }
       _collectUnnamed(nested, $"{path}.{nested.Name}", found);
     }
   }
@@ -230,6 +234,23 @@ public class CanonicalTemporalRewriteTests {
       + "metadata:Timestamp:Instant")
       .Because("a positional record's constructor parameter inside a collection is a placement the "
         + "serializer reads, so it is one the rewrite converts");
+  }
+
+  /// <summary>
+  /// Options with no resolver describe no type, so an opaque document read with them has no
+  /// placements to name: the walk asks the resolver, never the options, and finds nothing.
+  /// </summary>
+  [Test]
+  public async Task OptionsWithoutAResolverNameNoOpaquePlacementAsync() {
+    await using var context = _context();
+    var row = context.Model.FindEntityType(typeof(PerspectiveRow<OpaqueDocument>))!;
+    var bare = new System.Text.Json.JsonSerializerOptions();
+
+    var paths = CanonicalTemporalRewrite.PathsOf(row, bare);
+
+    await Assert.That(bare.TypeInfoResolver).IsNull().Because("the setup is options with no resolver");
+    await Assert.That(_rendered(paths)).DoesNotContain("data:")
+      .Because("nothing describes the document's type, so the serializer would not read it either");
   }
 
   /// <summary>

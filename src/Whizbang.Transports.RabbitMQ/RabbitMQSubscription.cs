@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using Whizbang.Core.Transports;
@@ -18,7 +19,9 @@ public sealed class RabbitMQSubscription : ISubscription {
   private readonly IChannel _channel;
   private readonly string _queueName;
   private readonly string? _consumerTag;
-  private readonly ILogger? _logger;
+  // Always present: a subscription built without a logger discards through NullLogger, exactly as the
+  // null-conditional calls it replaces did, and the fire-and-forget dispose then has no branch on it.
+  private readonly ILogger _logger;
   private bool _isActive = true;
   private bool _disposed;
 
@@ -44,7 +47,7 @@ public sealed class RabbitMQSubscription : ISubscription {
     _channel = channel;
     _queueName = queueName;
     _consumerTag = consumerTag;
-    _logger = logger;
+    _logger = logger ?? NullLogger.Instance;
 
     // Subscribe to channel closed event to detect disconnections
     _channel.ChannelShutdownAsync += _onChannelShutdownAsync;
@@ -62,7 +65,7 @@ public sealed class RabbitMQSubscription : ISubscription {
     var isApplicationInitiated = args.Initiator == ShutdownInitiator.Application;
     var reason = args.ReplyText ?? $"Code: {args.ReplyCode}";
 
-    _logger?.LogWarning(
+    _logger.LogWarning(
       "RabbitMQ channel shutdown for queue {QueueName}: {Reason} (Initiator: {Initiator})",
       _queueName,
       reason,
@@ -93,7 +96,7 @@ public sealed class RabbitMQSubscription : ISubscription {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     if (!_isActive) {
-      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      if (_logger.IsEnabled(LogLevel.Debug)) {
         var queueName = _queueName;
         _logger.LogDebug("Subscription for queue {QueueName} already paused, skipping", queueName);
       }
@@ -101,7 +104,7 @@ public sealed class RabbitMQSubscription : ISubscription {
     }
 
     _isActive = false;
-    if (_logger?.IsEnabled(LogLevel.Information) == true) {
+    if (_logger.IsEnabled(LogLevel.Information)) {
       var queueName = _queueName;
       _logger.LogInformation("Paused subscription for queue {QueueName}", queueName);
     }
@@ -114,7 +117,7 @@ public sealed class RabbitMQSubscription : ISubscription {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     if (_isActive) {
-      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      if (_logger.IsEnabled(LogLevel.Debug)) {
         var queueName = _queueName;
         _logger.LogDebug("Subscription for queue {QueueName} already active, skipping", queueName);
       }
@@ -122,7 +125,7 @@ public sealed class RabbitMQSubscription : ISubscription {
     }
 
     _isActive = true;
-    if (_logger?.IsEnabled(LogLevel.Information) == true) {
+    if (_logger.IsEnabled(LogLevel.Information)) {
       var queueName = _queueName;
       _logger.LogInformation("Resumed subscription for queue {QueueName}", queueName);
     }
@@ -149,7 +152,7 @@ public sealed class RabbitMQSubscription : ISubscription {
         // Use noWait: true to avoid waiting for server confirmation
         if (_consumerTag != null) {
           await _channel.BasicCancelAsync(_consumerTag, noWait: true);
-          if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+          if (_logger.IsEnabled(LogLevel.Debug)) {
             var consumerTag = _consumerTag;
             var queueName = _queueName;
             _logger.LogDebug("Canceled consumer {ConsumerTag} for queue {QueueName}", consumerTag, queueName);
@@ -158,12 +161,12 @@ public sealed class RabbitMQSubscription : ISubscription {
 
         // Dispose channel - disposing automatically closes the channel
         _channel.Dispose();
-        if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+        if (_logger.IsEnabled(LogLevel.Debug)) {
           var queueName = _queueName;
           _logger.LogDebug("Disposed channel for queue {QueueName}", queueName);
         }
       } catch (Exception ex) {
-        _logger?.LogError(ex, "Error disposing subscription for queue {QueueName}", _queueName);
+        _logger.LogError(ex, "Error disposing subscription for queue {QueueName}", _queueName);
         // Ignore errors during async disposal
       }
     }, CancellationToken.None);

@@ -255,7 +255,7 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
     document = value;
 
     var overload = JsonbDocument.ValueOverloadFor(memberType);
-    if (overload is null || _references(value, null)) {
+    if (overload is null || _readsAParameter(value)) {
       return false;
     }
 
@@ -314,7 +314,7 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
     switch (current) {
       // The root is found first, so the serializer is only asked about members under a jsonb column.
       case MemberExpression { Expression: { } owner, Member: PropertyInfo property }:
-        if (!_path(owner, isRoot, steps) || _storedName(owner.Type, property.Name) is not { } name) {
+        if (!_path(owner, isRoot, steps) || StoredNameFor(owner.Type, property.Name) is not { } name) {
           return false;
         }
 
@@ -322,7 +322,7 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
         return true;
 
       case MethodCallExpression { Object: { } dictionary, Method.Name: "get_Item", Arguments: [var key] }
-          when key.Type == typeof(string) && !_references(key, null):
+          when key.Type == typeof(string) && !_readsAParameter(key):
         if (!_path(dictionary, isRoot, steps)) {
           return false;
         }
@@ -339,7 +339,11 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
   /// The name a member is stored under, from the serializer's metadata for its declaring type under the
   /// persistence profile, which is what wrote the column. Null when the metadata does not know it.
   /// </summary>
-  private static string? _storedName(Type owner, string member) {
+  /// <remarks>
+  /// Internal so its fallback for metadata without attribute providers can be asserted directly: the
+  /// documents the rewriter's own tests query all carry providers, so no query reaches that branch.
+  /// </remarks>
+  internal static string? StoredNameFor(Type owner, string member) {
     if (!PerspectiveDocumentSerialization.Options.TryGetTypeInfo(owner, out var info)
         || info.Kind != JsonTypeInfoKind.Object) {
       return null;
@@ -386,11 +390,10 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
     source is MethodCallExpression { Method.Name: "op_Implicit", Arguments: [var inner] } ? inner : source;
 
   /// <summary>
-  /// Whether the subtree reads a parameter: any parameter when <paramref name="parameter"/> is null,
-  /// which makes it something other than a value.
+  /// Whether the subtree reads any parameter, which makes it something other than a value.
   /// </summary>
-  private static bool _references(Expression expression, ParameterExpression? parameter) {
-    var finder = new ParameterFinder(parameter);
+  private static bool _readsAParameter(Expression expression) {
+    var finder = new ParameterFinder();
     finder.Visit(expression);
     return finder.Found;
   }
@@ -404,11 +407,11 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
     return current;
   }
 
-  private sealed class ParameterFinder(ParameterExpression? target) : ExpressionVisitor {
+  private sealed class ParameterFinder : ExpressionVisitor {
     public bool Found { get; private set; }
 
     protected override Expression VisitParameter(ParameterExpression node) {
-      Found |= target is null || node == target;
+      Found = true;
       return node;
     }
   }

@@ -129,20 +129,33 @@ with a block no test ran keeps the reports' count: which of its outcomes is miss
 without the IL, so nothing is claimed. A decision whose two outcomes run in two different suites is
 therefore covered as soon as the rest of its function is.
 
+One more piece of evidence is exact without the IL: an `if (...) {` whose body sits on lines of its
+own. C# cannot jump into a block from outside it, so the body is entered only through the true
+outcome: a report that ran any line inside the braces took true, and one that ran the decision with
+one outcome and none of the body took false. Seen both ways across reports, the decision is covered.
+
 The merged report is also what Sonar reads, so Sonar, the gate and the whole-library row agree.
 Codecov still receives the per-process reports and merges them its own way.
 
-### The whole-library row
+### The whole-library gate
 
-The PR comment's last row, **Whole library (informational, not gated)**, shows the coverage of all
-hand-written library code on every PR, so the remaining gap is visible until it is zero: lines over
+The PR comment's last row, **Whole library (gated)**, shows the coverage of all hand-written library
+code on every PR, and the quality job fails while it is not 100%: every hand-written decision in the
+library is covered, not only the ones a PR adds, so the library stays at 100% once it is there and any
+gap a change uncovers (a refactor that splits a decision, a test removed) is fixed in that change. Lines over
 everything under `src/` that is instrumented and not generated (`src/Whizbang.Testing` is not
 instrumented; `*.g.cs`, `obj/` and the `.whizbang` cache are generated), and outcomes of hand-written
 decisions by the same rule as above. For example, "Whole library: lines 99.9%, hand-written branches
 98.6% (382 outcomes untested)", and once nothing is left, "Whole library: lines 100%, hand-written
 branches 100%, every hand-written decision in the library is covered". Percentages are truncated, so a
-gap never reads as 100%. The row never fails the job; new code is what the gate enforces.
-`/pr-health` prints the same line.
+gap never reads as 100%. The gate counts untested outcomes of hand-written decisions; a line no test
+runs is listed in the gap and counted by the new-code gate, and a member excluded with
+`[ExcludeFromCodeCoverage]` is absent from the reports, so it is not counted. That makes every exclusion
+a decision someone has to defend: follow the procedure above, put the reason in the attribute's
+`Justification` and a comment, and, when the reason is an open issue, name the issue so the exclusion
+goes with its fix. The list of what is left is `library-gap.txt` in the `pr-quality-gate` artifact
+(`-LibraryGapOutFile`), and `pwsh scripts/Find-UncoveredNewLines.ps1 -FailOnWholeLibrary` runs the same
+gate locally. `/pr-health` prints the same line and reports a gap as a failure.
 
 ---
 

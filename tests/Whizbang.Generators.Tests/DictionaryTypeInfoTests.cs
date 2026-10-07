@@ -125,7 +125,7 @@ public class DictionaryTypeInfoTests {
       "global::System.String",
       "string[]",
       "String");
-    var jagged = new ArrayTypeInfo("int[][]", "int[]", "Int32");
+    var jagged = new ArrayTypeInfo("int[]", "Int32");
     var list = new ListTypeInfo("global::System.Collections.Generic.List<int[,]>", "int[,]", "Int32");
     var readOnly = new ReadOnlyListTypeInfo("global::System.Collections.Generic.IReadOnlyList<string[]>", "string[]", "String");
 

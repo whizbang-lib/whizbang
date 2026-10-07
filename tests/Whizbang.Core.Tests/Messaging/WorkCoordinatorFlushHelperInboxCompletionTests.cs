@@ -60,10 +60,10 @@ public class WorkCoordinatorFlushHelperInboxCompletionTests {
     new() { MessageId = (Guid)TrackedGuid.New(), Status = status };
 
   private static FlushContext _ctx(IWorkCoordinator? coordinator, IServiceScopeFactory? scopeFactory, IServiceInstanceProvider instance, MessageCompletion[] inboxCompletions) => new(
-    coordinator, scopeFactory, instance, new WorkCoordinatorOptions { DebugMode = true }, "test",
+    coordinator, scopeFactory, instance, new WorkCoordinatorOptions { DebugMode = true },
     OutboxMessages: [], InboxMessages: [], OutboxCompletions: [], InboxCompletions: inboxCompletions,
-    OutboxFailures: [], InboxFailures: [], Flags: WorkBatchOptions.None,
-    LifecycleMessageDeserializer: null, Logger: null, TracingOptions: null, Metrics: null, LifecycleMetrics: null,
+    OutboxFailures: [], InboxFailures: [],
+    LifecycleMessageDeserializer: null, Logger: null, TracingOptions: null, LifecycleMetrics: null,
     WorkChannelWriter: null, PendingAuditMessages: null, SkipLifecycle: true);
 
   [Test]

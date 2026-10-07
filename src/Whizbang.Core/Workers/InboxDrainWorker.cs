@@ -386,8 +386,8 @@ public sealed partial class InboxDrainWorker(
           break;
         }
         try {
-          var hasRows = perStream.TryGetValue(sid, out var rows) && rows is { Count: > 0 };
-          if (!hasRows) {
+          // A stream with rows has a grouped list of at least one (GroupBy yields no empty group).
+          if (!perStream.TryGetValue(sid, out var rows)) {
             continue;
           }
 
@@ -395,7 +395,7 @@ public sealed partial class InboxDrainWorker(
           // were consumed at the SQL level, so they won't reappear in the inner-loop fetch.
           var seen = new HashSet<Guid>();
           var hadAnyNew = false;
-          foreach (var row in rows!) {
+          foreach (var row in rows) {
             if (!seen.Add(row.MessageId)) {
               continue;
             }
@@ -527,13 +527,19 @@ public sealed partial class InboxDrainWorker(
     _logPerfIfInteresting(streamId, enqueued, fetchCount, totalDeserMs, totalWriteMs, drainStartTicks);
   }
 
+  /// <summary>
+  /// Whether a stream's drain is worth a debug perf line: five or more rows enqueued, or more than
+  /// 100 ms spent. Internal so the rule can be asserted without real elapsed time.
+  /// </summary>
+  internal static bool IsInterestingDrain(int enqueued, double totalMs) => enqueued >= 5 || totalMs > 100;
+
   private void _logPerfIfInteresting(Guid streamId, int enqueued, int fetches, double deserMs, double writeMs, long startTicks) {
     if (!_logger.IsEnabled(LogLevel.Debug)) {
       return;
     }
     var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - startTicks)
       * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-    if (enqueued >= 5 || totalMs > 100) {
+    if (IsInterestingDrain(enqueued, totalMs)) {
 #pragma warning disable CA1848
       _logger.LogDebug(
         "PERF InboxDrain stream {StreamId}: enqueued={Enqueued} fetches={Fetches} total={TotalMs:F0}ms deser={DeserMs:F0}ms write={WriteMs:F0}ms other={OtherMs:F0}ms",

@@ -249,15 +249,13 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
       }
     }
 
-    // A bare lambda is still accepted, but it cannot arrive: SetProperty's parameter is
-    // Expression<Func<...>>, so both C# lambda syntax and Expression.Call quote it. Folding that
-    // arm into the fallback keeps the tolerance without a line no caller can reach.
+    // Only the quoted form arrives: SetProperty's parameter is Expression<Func<...>>, so both C# lambda
+    // syntax and Expression.Call quote the selector. Anything else is not a selector at all.
     private static LambdaExpression _unwrapLambda(Expression e) =>
-      e switch {
-        UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression inner } => inner,
-        _ => e as LambdaExpression ?? throw new InvalidOperationException(
-          $"Expected a lambda expression for the SetProperty selector; got {e.NodeType} of type {e.Type}. The spec's SetProperty calls must pass a property-selector lambda as the first argument.")
-      };
+      e is UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression inner }
+        ? inner
+        : throw new InvalidOperationException(
+          $"Expected a lambda expression for the SetProperty selector; got {e.NodeType} of type {e.Type}. The spec's SetProperty calls must pass a property-selector lambda as the first argument.");
 
     private static bool _isLambda(Expression e) =>
       e is UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression } ||

@@ -244,7 +244,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InterfaceTypeArguments: typeArguments,
             EventTypes: [.. eventTypes],
             MessageTypeNames: messageTypeNames,
-            StreamIdPropertyName: streamKeyPropertyName,
             EmptyModelInitializer: emptyModelInitializer,
             EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
