@@ -27,6 +27,32 @@ internal static class DiagnosticDescriptors {
   );
 
   /// <summary>
+  /// WHIZ811: Warning - a perspective model declares a JSON converter that nothing will consult.
+  /// </summary>
+  /// <remarks>
+  /// A perspective's document is stored with <c>ComplexProperty().ToJson()</c> and read by Entity
+  /// Framework's own materializer, which never consults a <see cref="System.Text.Json.Serialization.JsonConverterAttribute"/>.
+  /// Declaring one is therefore silent: no error, no effect, and a value whose stored shape changed stays
+  /// unreadable. One consumer declared a converter to keep pre-upgrade rows readable, documented it as the
+  /// fix, and it had never run.
+  /// <para>
+  /// A changed stored shape is what <c>[StoredForm]</c> is for: it rewrites the stored documents in place
+  /// at startup, journaled, which also repairs the form for anything reading the column directly.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/stored-form-migrations#json-converter</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/DeclaredJsonConverterIgnoredTests.cs</tests>
+  public static readonly DiagnosticDescriptor PerspectiveModelJsonConverterIgnored = new(
+      id: "WHIZ811",
+      title: "Perspective model declares a JSON converter that is never consulted",
+      messageFormat: "Property '{0}' on perspective model '{1}' declares [JsonConverter(typeof({2}))], which a stored document never consults: the document is read by Entity Framework's JSON materializer, not by the serializer. If the stored shape changed, declare [StoredForm(Previously = typeof(...))] instead, which rewrites the stored documents in place.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A JsonConverterAttribute on a perspective model property has no effect on the mapped read path. Use [StoredForm] to convert a changed stored shape, or IStoredFormMigration for a conversion it does not cover."
+  );
+
+  /// <summary>
   /// WHIZ070: Error - Vector field requires Pgvector.EntityFrameworkCore package.
   /// </summary>
   /// <docs>operations/diagnostics/whiz070</docs>
