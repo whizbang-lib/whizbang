@@ -7,6 +7,7 @@
 
 using HotChocolate;
 using HotChocolate.Data;
+using HotChocolate.Execution.Configuration;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Lenses;
@@ -23,6 +24,10 @@ public sealed class WhizbangLensQueryTypeExtension {
   // Lens query methods will be generated here
   #endregion
 }
+
+#region LENS_ROW_TYPES
+// Per-lens row, filter and sort types will be generated here
+#endregion
 
 /// <summary>
 /// Extension methods for registering generated Whizbang lens types with HotChocolate.

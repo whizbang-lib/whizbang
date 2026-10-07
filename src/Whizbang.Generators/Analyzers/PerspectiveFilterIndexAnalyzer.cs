@@ -134,7 +134,9 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
                    "attribute also stands down the runtime index advisory raised by the maintenance cycle. A declaration " +
                    "counts for the comparison it matches rather than for every query on the field: the capability has to " +
                    "answer the shape, and the index has to be built over the expression the comparison produces, so a " +
-                   "comparison folding case with ToLower() is answered only by [Indexed(caseInsensitive: true)]. A model holding " +
+                   "comparison folding case with ToLower() is answered only by [Indexed(caseInsensitive: true)]. An equality " +
+                   "against another row, as in a correlated lookup or a join, is a join key rather than a lookup and is never " +
+                   "rewritten to containment, so it is reported on the side that decides which rows are read. A model holding " +
                    "a polymorphic member is stored as one serialized value rather than as mapped properties, so an index " +
                    "over a field inside it cannot be reached at all; there the message offers only the column, because " +
                    "taking the other advice would land on WHIZ304."
@@ -168,6 +170,12 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
+    // Inside a correlated lookup, the outer row's member is the value each lookup is made with, as is
+    // a member of a row held in a variable. Neither narrows the rows the predicate reads.
+    if (!_isOnTheFilteredRow(context, node)) {
+      return;
+    }
+
     if (string.Equals(document, METADATA_PROPERTY, StringComparison.Ordinal)) {
       _checkMetadataMatch(context, node, field, model);
       return;
@@ -177,7 +185,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    if (_containmentCanServe(node, field) || _isSetMembership(context, node, field)) {
+    if (_containmentCanServe(context, node, field) || _isSetMembership(context, node, field)) {
       _checkWholeDocumentMatch(context, node, field, model);
       return;
     }
@@ -414,7 +422,8 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       2 when arguments.Arguments[1] == argument => arguments.Arguments[0].Expression,
       _ => null,
     };
-    if (candidates is null) {
+    // A set read off another row is a join, and the lens rewrites only a set it was handed.
+    if (candidates is null || _referencesARow(context, candidates)) {
       return false;
     }
 
@@ -460,7 +469,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   private static void _checkMetadataMatch(
       SyntaxNodeAnalysisContext context, MemberAccessExpressionSyntax node, IPropertySymbol field, INamedTypeSymbol model) {
     if (!_decidesWhichRowsAreRead(node)
-        || !_containmentCanServe(node, field)
+        || !_containmentCanServe(context, node, field)
         || PerspectiveQueriesDiscovery.From(model).BuildsMetadataIndex
         || IsSuppressed(field, model, context.Compilation.Assembly)) {
       return;
@@ -501,7 +510,8 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return (null, null);
     }
 
-    return (row.TypeArguments.Length == 1 ? row.TypeArguments[0] as INamedTypeSymbol : null, document.Name);
+    // PerspectiveRow<TModel> has exactly one type argument.
+    return (row.TypeArguments[0] as INamedTypeSymbol, document.Name);
   }
 
   /// <summary>
@@ -528,7 +538,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
 
   private static bool _feedsRowSelectingOperator(LambdaExpressionSyntax lambda) {
     if (lambda.Parent is not ArgumentSyntax argument ||
-        argument.Parent?.Parent is not InvocationExpressionSyntax invocation ||
+        argument.Parent!.Parent is not InvocationExpressionSyntax invocation ||
         invocation.Expression is not MemberAccessExpressionSyntax invoked) {
       return false;
     }
@@ -565,7 +575,8 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// are quality faults rather than wrong answers.
   /// </para>
   /// </remarks>
-  private static bool _containmentCanServe(MemberAccessExpressionSyntax node, IPropertySymbol field) {
+  private static bool _containmentCanServe(
+      SyntaxNodeAnalysisContext context, MemberAccessExpressionSyntax node, IPropertySymbol field) {
     if (!_isContainmentEligibleType(field.Type) || _isUnderNegation(node)) {
       return false;
     }
@@ -576,19 +587,20 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
           continue;
 
         case BinaryExpressionSyntax binary when binary.IsKind(SyntaxKind.EqualsExpression):
-          // Comparing against null is the one equality containment cannot reproduce.
+          // Comparing against null is the one equality containment cannot reproduce, and comparing
+          // against a row is a join, which the lens leaves as an extraction.
           var other = binary.Left == current ? binary.Right : binary.Left;
-          return !other.IsKind(SyntaxKind.NullLiteralExpression);
+          return !other.IsKind(SyntaxKind.NullLiteralExpression) && !_referencesARow(context, other);
 
         case BinaryExpressionSyntax:
           // Any other binary operator: a range, an inequality, or a logical join of them.
           return false;
 
         case ArgumentSyntax argument when _isOrdinalEqualsCall(argument):
-          return true;
+          return !_comparesAgainstARow(context, current);
 
         case MemberAccessExpressionSyntax member when member.Expression == current:
-          return _isOrdinalEqualsCall(member);
+          return _isOrdinalEqualsCall(member) && !_comparesAgainstARow(context, current);
 
         case LambdaExpressionSyntax:
         case ArgumentSyntax:
@@ -600,6 +612,84 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
     }
 
     return false;
+  }
+
+  /// <summary>
+  /// Whether an operand reads a row rather than a value: a lambda parameter or a query range
+  /// variable, this row's or another's.
+  /// </summary>
+  /// <remarks>
+  /// Mirrors the guard in <c>JsonbContainmentRewriter</c>, which rewrites a comparison to containment
+  /// only when the other side holds no query parameter. A captured local or method parameter is a
+  /// value there: the expression tree carries it as a closure field, not as a parameter, so it is
+  /// not a row here either.
+  /// </remarks>
+  private static bool _referencesARow(SyntaxNodeAnalysisContext context, SyntaxNode operand) =>
+    operand.DescendantNodesAndSelf()
+      .OfType<IdentifierNameSyntax>()
+      .Any(identifier => _rowDeclaration(context, identifier) is not null);
+
+  /// <summary>
+  /// Whether the ordinal <c>Equals</c> call that holds <paramref name="field"/> compares it against a
+  /// row: its receiver or any argument other than the field itself.
+  /// </summary>
+  /// <remarks>
+  /// Reached only once <c>_isOrdinalEqualsCall</c> has matched that call, so the nearest enclosing
+  /// invocation is it and its target is a member access.
+  /// </remarks>
+  private static bool _comparesAgainstARow(SyntaxNodeAnalysisContext context, SyntaxNode field) {
+    var call = field.Ancestors().OfType<InvocationExpressionSyntax>().First();
+    var receiver = ((MemberAccessExpressionSyntax)call.Expression).Expression;
+
+    return call.ArgumentList.Arguments
+      .Select(argument => argument.Expression)
+      .Prepend(receiver)
+      .Any(operand => operand != field && _referencesARow(context, operand));
+  }
+
+  /// <summary>
+  /// Where the row an expression names is declared, when it names one: a lambda parameter or a query
+  /// range variable. Anything else (a local, a field, a call's result) is a value to the query.
+  /// </summary>
+  private static SyntaxNode? _rowDeclaration(SyntaxNodeAnalysisContext context, ExpressionSyntax expression) =>
+    context.SemanticModel.GetSymbolInfo(expression, context.CancellationToken).Symbol switch {
+      IRangeVariableSymbol range => range.DeclaringSyntaxReferences[0].GetSyntax(context.CancellationToken),
+      IParameterSymbol { ContainingSymbol: IMethodSymbol { MethodKind: MethodKind.AnonymousFunction } } parameter =>
+        parameter.DeclaringSyntaxReferences[0].GetSyntax(context.CancellationToken),
+      _ => null,
+    };
+
+  /// <summary>
+  /// Whether this reference reads the rows of the predicate that holds it, as opposed to the outer
+  /// row of a correlated lookup or a row held in a variable.
+  /// </summary>
+  /// <remarks>
+  /// A lambda predicate filters its own parameter's rows; a query clause filters the rows its own
+  /// query expression ranges over, including each row of a join reached through the pair it built.
+  /// Outside a row-selecting predicate the question does not arise,
+  /// and the caller's own check of where the reference sits decides. The analyzer only reaches here
+  /// for <c>&lt;row&gt;.Data.&lt;Field&gt;</c> or <c>&lt;row&gt;.Metadata.&lt;Field&gt;</c>, so the
+  /// expression to the left of the member is always a member access.
+  /// </remarks>
+  private static bool _isOnTheFilteredRow(SyntaxNodeAnalysisContext context, MemberAccessExpressionSyntax node) {
+    // A joined row is reached through the pair the join built, as `pair.o.Data`, so the row is the
+    // name the chain starts from.
+    var row = ((MemberAccessExpressionSyntax)node.Expression).Expression;
+    while (row is MemberAccessExpressionSyntax step) {
+      row = step.Expression;
+    }
+
+    if (_rowDeclaration(context, row) is not { } declaration) {
+      return false;
+    }
+
+    // The nearest ancestor with an opinion on row selection. When it is a projection or a member
+    // declaration rather than a predicate, the caller's own check stands the reference down, so the
+    // comparison only has to be right for a predicate.
+    var decider = node.Ancestors().First(ancestor => _rowSelectionVerdict(ancestor).HasValue);
+    return decider is WhereClauseSyntax or OrderingSyntax
+      ? declaration.FirstAncestorOrSelf<QueryExpressionSyntax>() == decider.FirstAncestorOrSelf<QueryExpressionSyntax>()
+      : declaration.FirstAncestorOrSelf<LambdaExpressionSyntax>() == decider;
   }
 
   /// <summary>
@@ -698,7 +788,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// </summary>
   internal static bool IsIndexBacked(IPropertySymbol property) {
     foreach (var attribute in property.GetAttributes()) {
-      var name = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
+      var name = TypeNameUtilities.DisplayOrNull(attribute.AttributeClass);
 
       switch (name) {
         case STREAM_ID_ATTRIBUTE:
@@ -764,9 +854,10 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return true;
     }
 
-    var owning = model.ContainingAssembly;
-    return owning is not null &&
-           !SymbolEqualityComparer.Default.Equals(owning, compiling) &&
+    // Every caller found the field on the model, so the model is a real type with members, and a real
+    // type belongs to an assembly.
+    var owning = model.ContainingAssembly!;
+    return !SymbolEqualityComparer.Default.Equals(owning, compiling) &&
            HasReasonedSuppression(owning.GetAttributes());
   }
 

@@ -3,6 +3,9 @@ name: Git Flow Check
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
+  # A required check has to report on the merge queue's runs too, or the queue waits for it forever. The direction
+  # was decided on the pull request; the queue entry only confirms it.
+  merge_group:
 
 # The repository default is read-only; stated here so no job can silently gain more.
 permissions:
@@ -14,7 +17,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Direction already checked on the pull request
+        if: github.event_name == 'merge_group'
+        run: echo "Merge queue entry — the branch direction was validated on the pull request."
+
       - name: Check Git Flow Rules
+        if: github.event_name == 'pull_request'
         env:
           HEAD_REF: ${{ github.head_ref }}
           BASE_REF: ${{ github.base_ref }}

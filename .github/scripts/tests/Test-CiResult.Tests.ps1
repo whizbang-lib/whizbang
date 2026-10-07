@@ -7,7 +7,7 @@ BeforeAll {
   function Get-GreenNeed {
     $needs = @{}
     foreach ($job in @('changes', 'format', 'build', 'unit-tests', 'postgres-integration', 'inmemory-integration',
-        'rabbitmq-integration', 'servicebus-integration', 'azureblob-integration', 'quality', 'pack')) {
+        'rabbitmq-integration', 'servicebus-integration', 'azureblob-integration', 'general-integration', 'quality', 'pack')) {
       $needs[$job] = @{ result = 'success'; outputs = @{} }
     }
     $needs['changes'].outputs = @{ code = 'true' }
@@ -22,7 +22,7 @@ BeforeAll {
   }
 
   $script:AllSuites = @('unit-tests', 'postgres-integration', 'inmemory-integration', 'rabbitmq-integration',
-    'servicebus-integration', 'azureblob-integration')
+    'servicebus-integration', 'azureblob-integration', 'general-integration')
 }
 
 Describe 'tested here' {
@@ -34,7 +34,7 @@ Describe 'tested here' {
 
   It 'fails when <suite> is skipped with nothing proving the tree was tested elsewhere' -ForEach @(
       @{ suite = 'unit-tests' }, @{ suite = 'postgres-integration' }, @{ suite = 'inmemory-integration' },
-      @{ suite = 'rabbitmq-integration' }, @{ suite = 'servicebus-integration' }, @{ suite = 'azureblob-integration' }) {
+      @{ suite = 'rabbitmq-integration' }, @{ suite = 'servicebus-integration' }, @{ suite = 'azureblob-integration' }, @{ suite = 'general-integration' }) {
     $n = Get-GreenNeed; Skip-Job $n @($suite)
     $v = Get-CiVerdict -NeedsTable $n -EventName pull_request
     $v.Pass | Should -BeFalse
@@ -50,7 +50,7 @@ Describe 'tested here' {
     $n = Get-GreenNeed; Skip-Job $n (@('build') + $AllSuites)
     $v = Get-CiVerdict -NeedsTable $n -EventName pull_request
     $v.Pass | Should -BeFalse
-    $v.Problems.Count | Should -Be 7
+    $v.Problems.Count | Should -Be (1 + $AllSuites.Count) -Because 'the build and every suite are each reported'
   }
 
   It 'fails when Quality is skipped on an ordinary PR' {

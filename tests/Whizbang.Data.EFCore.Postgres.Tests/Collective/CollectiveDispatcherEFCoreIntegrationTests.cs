@@ -719,6 +719,33 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("The override sets updated_at but does not BumpVersion, so version stays 1 — the default bump was replaced.");
   }
 
+  /// <summary>
+  /// A hook may clear a nullable store column: the null is bound as SQL NULL, so the column ends up
+  /// NULL rather than the bind failing on a parameter with no value.
+  /// </summary>
+  [Test]
+  public async Task Hook_SetColumnToNull_ClearsANullableStoreColumnAsync() {
+    var job = Guid.NewGuid();
+    await _seedJobAsync(job, tenantId: "t-A", status: "Active");
+    await using (var seed = new NpgsqlConnection(_connectionString)) {
+      await seed.OpenAsync();
+      await seed.ExecuteAsync("UPDATE wh_per_collective_job SET sys_created_at = NOW() WHERE id = @job", new { job });
+    }
+
+    var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
+      .Register<JobModel>(new CollectiveHook<JobModel>((b, _) => b.SetColumn("sys_created_at", null)));
+
+    await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
+
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    var cleared = await conn.ExecuteScalarAsync<bool>(
+      "SELECT sys_created_at IS NULL FROM wh_per_collective_job WHERE id = @job", new { job });
+    await Assert.That(cleared).IsTrue();
+    await Assert.That(await _readStatusAsync(job)).IsEqualTo("Archived")
+      .Because("the spec still applies alongside the hook's column");
+  }
+
   [Test]
   public async Task Hook_RemoveSetter_DropsASpecFieldSetterAsync() {
     var job = Guid.NewGuid();

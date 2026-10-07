@@ -321,7 +321,7 @@ public partial class ServiceBusConsumerWorker(
       $"Inbox {messageType}", ActivityKind.Consumer, parentContext);
     activity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
     activity?.SetTag("messaging.operation", "receive");
-    activity?.SetTag("whizbang.hop_count", envelope.Hops?.Count ?? 0);
+    activity?.SetTag("whizbang.hop_count", envelope.Hops.Count);
     return activity;
   }
 
@@ -367,7 +367,7 @@ public partial class ServiceBusConsumerWorker(
       // silently fail to fire runtime-registered receptors (integration-test waits,
       // dynamic registrations). Mirrors the InboxDispatchWorker gate fix; null
       // registries preserve legacy fire-unconditionally behavior for test harnesses.
-      var runtimeMessageType = typedEnvelope.Payload?.GetType();
+      var runtimeMessageType = typedEnvelope.Payload.GetType();
       if (!_receptorRegistry.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType)
           && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
           && !RuntimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxDetached)

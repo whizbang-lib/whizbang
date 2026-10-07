@@ -361,15 +361,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // Detect polymorphic properties in model type
     var hasPolymorphicProperties = _hasPolymorphicProperties(modelType as INamedTypeSymbol);
 
-    // Detect Split storage mode on model type
-    var isSplitMode = _isSplitStorageMode(modelType as INamedTypeSymbol);
-
     return new PerspectiveCandidate(
         ModelTypeName: TypeNameUtilities.FullyQualified(modelType),
         TableBaseName: tableBaseName,
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
-        IsSplitMode: isSplitMode,
         BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex
     );
   }
@@ -389,12 +385,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableName: tableName,
         PhysicalFields: candidate.PhysicalFields,
         HasPolymorphicProperties: candidate.HasPolymorphicProperties,
-        BuildsDataIndex: candidate.BuildsDataIndex
-,
-        IsSplitMode: candidate.IsSplitMode);
+        BuildsDataIndex: candidate.BuildsDataIndex);
   }
 
-  private const string PERSPECTIVE_STORAGE_ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveStorageAttribute";
   private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE = "Whizbang.Core.Perspectives.PolymorphicDiscriminatorAttribute";
@@ -614,31 +607,6 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Checks if a model type contains any polymorphic properties (abstract types or [JsonPolymorphic] types).
-  /// </summary>
-  /// <summary>
-  /// Detects if the model type has [PerspectiveStorage(FieldStorageMode.Split)] attribute.
-  /// Split models use Property().HasColumnType("jsonb") instead of ComplexProperty().ToJson()
-  /// because ToJson() crashes on null values for stripped physical fields.
-  /// </summary>
-  private static bool _isSplitStorageMode(INamedTypeSymbol? modelType) {
-    if (modelType is null) {
-      return false;
-    }
-
-    var storageAttr = modelType.GetAttributes()
-        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, PERSPECTIVE_STORAGE_ATTRIBUTE));
-    if (storageAttr is null) {
-      return false;
-    }
-
-    // FieldStorageMode.Split == 2
-    return storageAttr.ConstructorArguments.Length > 0 &&
-        storageAttr.ConstructorArguments[0].Value is int mode &&
-        mode == 2;
-  }
-
-  /// <summary>
   /// Whether the model has to be stored as one opaque value rather than as a mapped complex
   /// property.
   /// </summary>
@@ -770,6 +738,25 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         .Replace("global::", "")
         .TrimEnd('?');
 
+    return EFCoreColumnTypeFor(typeName);
+  }
+
+  /// <summary>
+  /// The PostgreSQL column type the EF Core model claims gives a physical field whose CLR type renders as
+  /// <paramref name="typeName"/> (no <c>global::</c> prefix, no nullable suffix). The match is
+  /// exact and ordinal: a name that is not one of the mapped types, however close, is
+  /// <c>text</c>.
+  /// </summary>
+  /// <remarks>
+  /// Public rather than private so a test can pin the whole table, including the names the
+  /// generator rarely or never renders (most CLR spellings of the keyword types) and the near misses that
+  /// must fall through to the default. Not internal because InternalsVisibleTo on this assembly
+  /// exposes its polyfills to the test project. This assembly ships as an analyzer, so its public
+  /// surface is not a consumer API.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/GeneratorColumnTypeTableTests.cs:EFCoreColumnType_MapsEveryKnownNameAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/GeneratorColumnTypeTableTests.cs:EFCoreColumnType_NearMissNames_FallBackToDefaultAsync</tests>
+  public static string EFCoreColumnTypeFor(string typeName) {
     return typeName switch {
       // A declared length is carried by a check constraint rather than by the column's type, so the
       // column is text here as it is in the table. Claiming a limited type while the table holds

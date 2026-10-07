@@ -49,15 +49,10 @@ public class VectorDependencyAnalyzer : DiagnosticAnalyzer {
   }
 
   private static bool _hasPgvectorReference(Compilation compilation) {
-    // Check if any referenced assembly is Pgvector.EntityFrameworkCore
-    foreach (var reference in compilation.References) {
-      var assemblySymbol = compilation.GetAssemblyOrModuleSymbol(reference) as IAssemblySymbol;
-      if (assemblySymbol?.Name.Equals(PGVECTOR_ASSEMBLY_NAME, StringComparison.Ordinal) == true) {
-        return true;
-      }
-    }
-
-    return false;
+    // Check if any referenced assembly is Pgvector.EntityFrameworkCore. A module reference is not an
+    // assembly and never was a match, so only the referenced assemblies are asked.
+    return compilation.ReferencedAssemblyNames
+      .Any(assembly => assembly.Name.Equals(PGVECTOR_ASSEMBLY_NAME, StringComparison.Ordinal));
   }
 
   private static void _analyzeProperty(SymbolAnalysisContext context) {
@@ -67,9 +62,7 @@ public class VectorDependencyAnalyzer : DiagnosticAnalyzer {
     foreach (var attribute in propertySymbol.GetAttributes()) {
       if (TypeNameUtilities.IsNamed(attribute.AttributeClass, VECTOR_FIELD_ATTRIBUTE)) {
         // Found [VectorField] but package is not referenced - report diagnostic
-        var location = attribute.ApplicationSyntaxReference?.GetSyntax(context.CancellationToken).GetLocation() ??
-                       propertySymbol.Locations.FirstOrDefault() ??
-                       Location.None;
+        var location = LocationUtilities.ApplicationOrFallback(attribute, LocationUtilities.FirstOrNone(propertySymbol), context.CancellationToken);
 
         context.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.VectorFieldMissingPackage,

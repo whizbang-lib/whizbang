@@ -24,18 +24,15 @@ internal readonly record struct FlushContext(
   IServiceScopeFactory? ScopeFactory,
   IServiceInstanceProvider InstanceProvider,
   WorkCoordinatorOptions Options,
-  string StrategyName,
   OutboxMessage[] OutboxMessages,
   InboxMessage[] InboxMessages,
   MessageCompletion[] OutboxCompletions,
   MessageCompletion[] InboxCompletions,
   MessageFailure[] OutboxFailures,
   MessageFailure[] InboxFailures,
-  WorkBatchOptions Flags,
   ILifecycleMessageDeserializer? LifecycleMessageDeserializer,
   ILogger? Logger,
   IOptionsMonitor<TracingOptions>? TracingOptions,
-  WorkCoordinatorMetrics? Metrics,
   LifecycleMetrics? LifecycleMetrics,
   IWorkChannelWriter? WorkChannelWriter,
   OutboxMessage[]? PendingAuditMessages,
@@ -101,7 +98,9 @@ internal static class WorkCoordinatorFlushHelper {
       var partitionCount = _resolvePartitionCount(scopedProvider, ctx.Options);
 
       var enableLifecycleTracing = ctx.TracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-      var lifecycleScopeFactory = ctx.ScopeFactory ?? scopedProvider?.GetService<IServiceScopeFactory>();
+      // The coordinator-supplied path has no scope factory, and scopedProvider exists only on the
+      // ScopeFactory path, so the factory itself is the only source.
+      var lifecycleScopeFactory = ctx.ScopeFactory;
 
       var distributeContext = new DistributeLifecycleContext(
         ctx.OutboxMessages,

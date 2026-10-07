@@ -341,14 +341,16 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
   /// the only depth the set-membership helper can express.
   /// </summary>
   /// <remarks>
-  /// Written as one condition rather than a switch over the node type. Only a member that
-  /// <see cref="_isJsonMember"/> has already accepted reaches here, and that leaves exactly these two
-  /// shapes: the row's <c>Data</c> immediately to the left, or the range variable of a projected
-  /// model. A third arm would be one nothing can take.
+  /// Written as one test of the node type rather than a switch over it. Only a member that
+  /// <see cref="_isJsonMember"/> has already accepted reaches here, and that leaves exactly two
+  /// shapes to the left of it: another member, which is top level only when it is the row's
+  /// <c>Data</c>, or the range variable of a projected model. A third arm would be one nothing can
+  /// take, so the second shape is the answer rather than another branch.
   /// </remarks>
   private static bool _isTopLevel(MemberExpression member) =>
-    member.Expression is ParameterExpression
-    || (member.Expression is MemberExpression inner && _isDocumentRoot(inner.Member.Name));
+    member.Expression is MemberExpression inner
+      ? _isDocumentRoot(inner.Member.Name)
+      : member.Expression is ParameterExpression;
 
   private bool _tryRewrite(
       Expression comparison, Expression candidateMember, Expression candidateValue, out Expression rewritten) {
@@ -452,11 +454,13 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
     string? document = null;
     Type? rowType = null;
 
+    // Only a member _isJsonMember accepted reaches here, and its chain ends at a row's document or at a
+    // range variable, so every link in it is read from an expression; none is static.
     for (Expression? current = member; current is MemberExpression link; current = link.Expression) {
-      if (_isDocumentRoot(link.Member.Name) && _isPerspectiveRow(link.Expression?.Type)) {
+      if (_isDocumentRoot(link.Member.Name) && _isPerspectiveRow(link.Expression!.Type)) {
         rootModel = link.Type;
         document = link.Member.Name;
-        rowType = link.Expression!.Type;
+        rowType = link.Expression.Type;
         break;
       }
 

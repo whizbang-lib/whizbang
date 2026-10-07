@@ -52,7 +52,8 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
   // Test-only accessor used by PinnedPoolRegistrationTests to verify which connection-string
   // source won (ConnectionStringName-via-IConfiguration vs inline ConnectionString). Internal
   // because tests need visibility but the value would leak passwords if surfaced publicly.
-  internal string ConnectionStringForTesting => _options.ConnectionString ?? string.Empty;
+  // The constructor refuses options without a connection string.
+  internal string ConnectionStringForTesting => _options.ConnectionString!;
 
   /// <summary>Builds the pool from options + worker registry. The Npgsql connection pool is constructed once and reused for the pool's lifetime.</summary>
   /// <exception cref="ArgumentNullException"><paramref name="options"/> or <paramref name="registry"/> is null.</exception>

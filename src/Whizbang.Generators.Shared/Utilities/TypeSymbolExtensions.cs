@@ -85,7 +85,7 @@ public static class TypeSymbolExtensions {
         }
 
         if (member.GetAttributes().Any(a =>
-            a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == attributeFullName)) {
+            TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, attributeFullName))) {
           return member;
         }
       }
@@ -156,7 +156,7 @@ public static class TypeSymbolExtensions {
         }
 
         if (member.GetAttributes().Any(a =>
-            a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == attributeFullName)) {
+            TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, attributeFullName))) {
           return member;
         }
       }

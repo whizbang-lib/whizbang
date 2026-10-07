@@ -91,6 +91,22 @@ every shard re-pays that cost while only the test portion divides. RabbitMQ is d
 unsharded for this reason: at 4m52 it is no longer the critical path, and three shards would buy
 ~2.6 minutes for three extra runners.
 
+## Build slices
+
+Test jobs do not download the whole build. The build job uploads one **slice** per integration suite
+(`build-<suite>-<run>`): the `bin/Release` of the projects that suite runs, which already holds their
+whole dependency closure, plus a `test-slice-<suite>.txt` marker naming them. Sources come from the
+job's own checkout. The unit suite runs most projects, so it keeps the full build.
+
+`.github/scripts/Get-TestSlice.ps1` derives each slice the way `Run-Tests.ps1` selects the suite's
+projects: in the solution, `<WhizbangTestType>Integration</WhizbangTestType>`, and the suite's tag.
+A new project with that tag joins the slice on its own. Service Bus also carries the ECommerce
+samples' output, because its Aspire app host starts those services.
+
+A slice that misses a project cannot pass silently: under `-NoBuild`, `Run-Tests.ps1` fails when a
+project it selects has no build output, naming it. Before slices, every job downloaded about 2.4 GB,
+in anything from 40 seconds to over 5 minutes.
+
 ## Keeping shards balanced
 
 Shards drift as tests are added, so balance is a routine, not a one-off. The 2026-10 review found

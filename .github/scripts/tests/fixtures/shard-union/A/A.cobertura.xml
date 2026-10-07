@@ -1,0 +1,63 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<coverage line-rate="0.5" branch-rate="0.3333333333333333" complexity="6" version="1.9" timestamp="1791306878" lines-covered="4" lines-valid="8" branches-covered="2" branches-valid="6">
+  <packages>
+    <package line-rate="0.5" branch-rate="0.3333333333333333" complexity="6" name="Whizbang.Exp">
+      <classes>
+        <class line-rate="0.5" branch-rate="0.3333333333333333" complexity="6" name="Exp.Calc" filename="/fx/src/Whizbang.Exp/Calc.cs">
+          <methods>
+            <method line-rate="0.6666666666666666" branch-rate="0.5" complexity="2" name="Sign" signature="(int)">
+              <lines>
+                <line number="5" hits="1" branch="True" condition-coverage="50% (1/2)">
+                  <conditions>
+                    <condition number="0" type="jump" coverage="50%" />
+                  </conditions>
+                </line>
+                <line number="6" hits="1" branch="False" />
+                <line number="8" hits="0" branch="False" />
+              </lines>
+            </method>
+            <method line-rate="0.4" branch-rate="0.25" complexity="4" name="Pick" signature="(int)">
+              <lines>
+                <line number="12" hits="1" branch="True" condition-coverage="50% (1/2)">
+                  <conditions>
+                    <condition number="0" type="jump" coverage="50%" />
+                  </conditions>
+                </line>
+                <line number="13" hits="1" branch="False" />
+                <line number="15" hits="0" branch="True" condition-coverage="0% (0/2)">
+                  <conditions>
+                    <condition number="0" type="jump" coverage="0%" />
+                  </conditions>
+                </line>
+                <line number="16" hits="0" branch="False" />
+                <line number="18" hits="0" branch="False" />
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="5" hits="1" branch="True" condition-coverage="50% (1/2)">
+              <conditions>
+                <condition number="0" type="jump" coverage="50%" />
+              </conditions>
+            </line>
+            <line number="6" hits="1" branch="False" />
+            <line number="8" hits="0" branch="False" />
+            <line number="12" hits="1" branch="True" condition-coverage="50% (1/2)">
+              <conditions>
+                <condition number="0" type="jump" coverage="50%" />
+              </conditions>
+            </line>
+            <line number="13" hits="1" branch="False" />
+            <line number="15" hits="0" branch="True" condition-coverage="0% (0/2)">
+              <conditions>
+                <condition number="0" type="jump" coverage="0%" />
+              </conditions>
+            </line>
+            <line number="16" hits="0" branch="False" />
+            <line number="18" hits="0" branch="False" />
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>

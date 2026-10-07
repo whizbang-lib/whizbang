@@ -160,6 +160,55 @@ public class TryRecoverViaWatchdogAsyncTests {
   }
 
   [Test]
+  public async Task FastPath_RecoveringASagaWithAFailedItem_CompletesWithFailuresAsync() {
+    var emitter = new FailOnceEmitter();
+    var svc = new TestSagaService(emitter, itemRepository: null, terminalReader: null, projectionOverride: null);
+    var ctx = new SagaContext(_sagaId, _entityId);
+    await svc.InitiateSagaAsync(ctx, ["a", "b"], hookNames: null, CancellationToken.None);
+    await svc.FailItemAsync(ctx, "a", "boom", errorDetails: null, displayName: null, CancellationToken.None);
+    await Assert.That(async () => await svc.UpdateItemAsync(
+        ctx, "b", SagaItemState.Completed, displayName: null, CancellationToken.None))
+      .Throws<InvalidOperationException>();
+
+    var recovered = await svc.TryRecoverViaWatchdogAsync(ctx, CancellationToken.None);
+
+    await Assert.That(recovered).IsTrue();
+    var completed = emitter.Published.OfType<TestCompletedEvent>().Single();
+    await Assert.That(completed.FailedItems).IsEqualTo(1);
+    await Assert.That(completed.FinalStatus).IsEqualTo(SagaStatus.CompletedWithFailures)
+      .Because("a saga that finished with a failed item completes with failures, however it is recovered");
+  }
+
+  [Test]
+  public async Task FastPath_SagaWithNoItems_IsNotTerminalInMemoryAsync() {
+    // A saga initiated with nothing to do has a total of zero: "every item terminal" is vacuously
+    // true, and completing it on that basis would end a saga that never ran. The tracker does not
+    // claim it; with no projection wired there is nothing to recover.
+    var emitter = new FailOnceEmitter { FailuresRemaining = 0 };
+    var svc = new TestSagaService(emitter, itemRepository: null, terminalReader: null, projectionOverride: null);
+    var ctx = new SagaContext(_sagaId, _entityId);
+    await svc.InitiateSagaAsync(ctx, [], hookNames: null, CancellationToken.None);
+
+    var recovered = await svc.TryRecoverViaWatchdogAsync(ctx, CancellationToken.None);
+
+    await Assert.That(recovered).IsFalse();
+    await Assert.That(emitter.Published.OfType<TestCompletedEvent>()).IsEmpty();
+  }
+
+  [Test]
+  public async Task ItemTerminal_InASagaWithNoItems_DoesNotCompleteItAsync() {
+    var emitter = new FailOnceEmitter { FailuresRemaining = 0 };
+    var svc = new TestSagaService(emitter, itemRepository: null, terminalReader: null, projectionOverride: null);
+    var ctx = new SagaContext(_sagaId, _entityId);
+    await svc.InitiateSagaAsync(ctx, [], hookNames: null, CancellationToken.None);
+
+    await svc.UpdateItemAsync(ctx, "stray", SagaItemState.Completed, displayName: null, CancellationToken.None);
+
+    await Assert.That(emitter.Published.OfType<TestCompletedEvent>()).IsEmpty()
+      .Because("a terminal for an item the saga never had cannot complete a saga of zero items");
+  }
+
+  [Test]
   public async Task FastPath_WhenItsOwnEmitFails_StaysRecoverableOnTheNextTickAsync() {
     // The fast path claims the same flag before emitting, so it can strand the saga exactly the
     // way the auto-complete path could. Two failures, then a tick that works.

@@ -152,7 +152,11 @@ public class EFCoreCommitHandlerTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task CommitHandlerBatchAsync_TierOneFallback_LogsReasonAndCountsAsync() {
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task CommitHandlerBatchAsync_TierOneFallback_LogsReasonAndCountsAsync(bool observed) {
+    // Unobserved: a coordinator built without a logger or metrics falls back exactly the same way;
+    // the warning and the counter are reporting, never a prerequisite for the slow path.
     // #573: the orchestrator's silent fallback made 930k per-handler commits look healthy.
     // The caller now surfaces the tier: a WARNING with the Tier-1 SQLSTATE and a counter
     // an operator can alert on. Fault injection: a test-owned trigger raises on a sentinel
@@ -173,7 +177,7 @@ public class EFCoreCommitHandlerTests : EFCoreTestBase {
 
     await using var dbContext = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
-      dbContext, JsonContextRegistry.CreateCombinedOptions(), logger, metrics);
+      dbContext, JsonContextRegistry.CreateCombinedOptions(), observed ? logger : null, observed ? metrics : null);
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
 
@@ -219,6 +223,9 @@ public class EFCoreCommitHandlerTests : EFCoreTestBase {
     await Assert.That(results.Count).IsEqualTo(2);
     await Assert.That(results.Count(r => r.Success)).IsEqualTo(1)
       .Because("the savepoint loop isolates the duplicate to the second handler");
+    if (!observed) {
+      return;
+    }
     List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> entries;
     lock (logger.Entries) { entries = [.. logger.Entries]; }
     await Assert.That(entries.Any(e =>

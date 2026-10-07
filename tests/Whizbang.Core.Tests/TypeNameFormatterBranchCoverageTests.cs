@@ -34,6 +34,51 @@ public class TypeNameFormatterBranchCoverageTests {
     await Assert.That(TypeNameFormatter.DisplayName(genericParameter)).IsEqualTo("T");
   }
 
+  /// <summary>
+  /// A registry walk names every type that has a CLR name, in order, and skips one that has none
+  /// rather than forwarding a null key to the table lookup.
+  /// </summary>
+  [Test]
+  public async Task ClrTypeNamesOf_SkipsATypeWithNoFullNameAsync() {
+    var genericParameter = typeof(List<>).GetGenericArguments()[0];
+
+    var names = TypeNameFormatter.ClrTypeNamesOf([typeof(string), genericParameter, typeof(int)]).ToList();
+
+    await Assert.That(names).IsEquivalentTo(["System.String", "System.Int32"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  /// <summary>
+  /// A type matches a CLR name only when it has exactly that name; a type with no full name matches
+  /// nothing, not even a name its simple name would suggest.
+  /// </summary>
+  [Test]
+  public async Task HasClrTypeName_MatchesOnlyTheExactFullNameAsync() {
+    var genericParameter = typeof(List<>).GetGenericArguments()[0];
+
+    await Assert.That(TypeNameFormatter.HasClrTypeName(typeof(string), "System.String")).IsTrue();
+    await Assert.That(TypeNameFormatter.HasClrTypeName(typeof(string), "System.string")).IsFalse()
+      .Because("the comparison is ordinal");
+    await Assert.That(TypeNameFormatter.HasClrTypeName(genericParameter, "T")).IsFalse()
+      .Because("a type with no full name has no CLR name to match");
+  }
+
+  [Test]
+  public async Task AssemblyQualifiedNameOrDisplay_ClosedType_IsTheAssemblyQualifiedNameAsync() {
+    var name = TypeNameFormatter.AssemblyQualifiedNameOrDisplay(typeof(List<int>));
+
+    await Assert.That(name).IsEqualTo(TypeNameFormatter.AssemblyQualifiedName(typeof(List<int>)));
+  }
+
+  [Test]
+  public async Task AssemblyQualifiedNameOrDisplay_TypeWithNoAssemblyQualifiedName_IsItsDisplayNameAsync() {
+    var genericParameter = typeof(List<>).GetGenericArguments()[0];
+
+    await Assert.That(TypeNameFormatter.AssemblyQualifiedNameOrNull(genericParameter)).IsNull()
+      .Because("the setup must present a type with no assembly-qualified name");
+
+    await Assert.That(TypeNameFormatter.AssemblyQualifiedNameOrDisplay(genericParameter)).IsEqualTo("T");
+  }
+
   [Test]
   public async Task AssemblyDisplayName_NoFullName_FallsBackToSimpleNameAsync() {
     var assembly = new NamelessAssembly(new AssemblyName("Probe.Assembly"));

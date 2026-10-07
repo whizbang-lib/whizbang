@@ -164,14 +164,28 @@ public sealed partial class PgSharedNotifyConnection(
       SetAvailable(ok, ok ? null : "ProbeNowAsync round-trip failed");
       return ok;
     } catch (Exception ex) {
-      // A cancellation the caller did not ask for is the self-test timeout; name it as such.
-      var reason = ex is OperationCanceledException && !cancellationToken.IsCancellationRequested
-        ? "ProbeNowAsync timed out"
-        : ex.Message;
-      SetAvailable(false, reason);
+      SetAvailable(false, ProbeFailureReason(ex, cancellationToken));
       return false;
     }
   }
+
+  /// <summary>
+  /// The reason a forced probe that threw is recorded with: a cancellation the caller did not ask for
+  /// is named a timeout, and anything else, including the caller's own cancellation, by its message.
+  /// </summary>
+  /// <param name="ex">What ended the probe.</param>
+  /// <param name="callerToken">The token the caller handed the probe.</param>
+  /// <returns>The failure reason to record.</returns>
+  /// <remarks>
+  /// Its own method so both names can be pinned. The probe's own self-test window is caught inside
+  /// <see cref="RunProbeAsync"/>, so a cancellation reaching here unasked comes from the driver, which
+  /// no live connection can be made to raise on demand; the caller's cancellation must still never be
+  /// reported as a slow database.
+  /// </remarks>
+  internal static string ProbeFailureReason(Exception ex, CancellationToken callerToken) =>
+    ex is OperationCanceledException && !callerToken.IsCancellationRequested
+      ? "ProbeNowAsync timed out"
+      : ex.Message;
 
   /// <summary>
   /// Performs the LISTEN + NOTIFY-via-second-conn + wait-with-timeout round-trip. Returns
@@ -455,7 +469,7 @@ public sealed partial class PgSharedNotifyConnection(
           lockCmd.CommandText = "SELECT claim_instance_alive_lock(@instanceId)";
           lockCmd.Parameters.AddWithValue("@instanceId", _instanceProvider.InstanceId);
           var lockResult = await lockCmd.ExecuteScalarAsync(stoppingToken).ConfigureAwait(false);
-          _aliveLockHeld = lockResult is bool b && b;
+          _aliveLockHeld = ScalarResult.IsTrue(lockResult);
           if (!_aliveLockHeld) {
             // Uncommon: a duplicate-startup race left a previous session holding the lock.
             // Non-fatal — the heartbeat table fallback still functions.
@@ -491,37 +505,8 @@ public sealed partial class PgSharedNotifyConnection(
         // delivers to subscribers), the keepalive timeout fires (issue SELECT 1), or a
         // late Subscribe/Dispose triggers a resync (issue LISTEN/UNLISTEN to match registry).
         // The shared _resyncSignal CTS is what _signalResync() cancels.
-        while (!stoppingToken.IsCancellationRequested
-            && conn.State == System.Data.ConnectionState.Open) {
-          using var keepalive = new CancellationTokenSource(_options.ListenKeepaliveInterval, _timeProvider);
-          using var resync = new CancellationTokenSource();
-          Volatile.Write(ref _resyncSignal, resync);
-          using var combined = CancellationTokenSource.CreateLinkedTokenSource(
-            stoppingToken, keepalive.Token, resync.Token);
-
-          // Drain the latch AFTER publishing the handle, so a request racing this point either
-          // is seen here or finds the handle and cancels the wait below. Covers both the request
-          // that woke us and any that landed while we were syncing.
-          if (Interlocked.Exchange(ref _resyncPending, 0) == 1) {
-            await SyncListensAsync(conn, stoppingToken).ConfigureAwait(false);
-          }
-
-          var keepaliveFired = false;
-          try {
-            await conn.WaitAsync(combined.Token).ConfigureAwait(false);
-            // Notification arrived (or backend message) — handler ran synchronously inside
-            // WaitAsync. Loop again to wait for the next one.
-          } catch (OperationCanceledException) when (combined.Token.IsCancellationRequested && !stoppingToken.IsCancellationRequested) {
-            keepaliveFired = keepalive.IsCancellationRequested;
-          } finally {
-            Volatile.Write(ref _resyncSignal, null);
-          }
-          if (keepaliveFired) {
-            // Verify the connection is still alive. If SELECT 1 throws, we'll fall into
-            // the outer catch and reconnect.
-            await using var ping = new NpgsqlCommand("SELECT 1", conn);
-            _ = await ping.ExecuteScalarAsync(stoppingToken).ConfigureAwait(false);
-          }
+        while (KeepListening(conn.State, stoppingToken)) {
+          await _listenOnceAsync(conn, stoppingToken).ConfigureAwait(false);
         }
       } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
         break;
@@ -547,6 +532,61 @@ public sealed partial class PgSharedNotifyConnection(
 
     SetAvailable(false, failureReason: "shutdown");
     LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// Whether the dispatch loop waits again: only while the host has not asked it to stop and the
+  /// connection it listens on is still open.
+  /// </summary>
+  /// <param name="state">The listening connection's state.</param>
+  /// <param name="stoppingToken">The host's stopping token.</param>
+  /// <returns>True to wait for the next notification.</returns>
+  /// <remarks>
+  /// Its own method so its contract can be asserted, the way the exclusion procedure prefers to a
+  /// skipped line. Through the loop, neither way out is reached on demand: a stop cancels the wait,
+  /// and a connection that drops fails its wait, so both leave by exception before this is asked
+  /// again. It is the guard for the moment between the two, which only a race can land in.
+  /// </remarks>
+  internal static bool KeepListening(System.Data.ConnectionState state, CancellationToken stoppingToken) =>
+    !stoppingToken.IsCancellationRequested && state == System.Data.ConnectionState.Open;
+
+  /// <summary>
+  /// One pass of the dispatch loop: resyncs the LISTEN set if asked, waits for a notification, a
+  /// keepalive or a resync, and on a keepalive checks the connection with <c>SELECT 1</c>.
+  /// </summary>
+  private async Task _listenOnceAsync(NpgsqlConnection conn, CancellationToken stoppingToken) {
+    using var keepalive = new CancellationTokenSource(_options.ListenKeepaliveInterval, _timeProvider);
+    using var resync = new CancellationTokenSource();
+    Volatile.Write(ref _resyncSignal, resync);
+    using var combined = CancellationTokenSource.CreateLinkedTokenSource(
+      stoppingToken, keepalive.Token, resync.Token);
+
+    // Drain the latch AFTER publishing the handle, so a request racing this point either
+    // is seen here or finds the handle and cancels the wait below. Covers both the request
+    // that woke us and any that landed while we were syncing.
+    if (Interlocked.Exchange(ref _resyncPending, 0) == 1) {
+      await SyncListensAsync(conn, stoppingToken).ConfigureAwait(false);
+    }
+
+    var keepaliveFired = false;
+    try {
+      await conn.WaitAsync(combined.Token).ConfigureAwait(false);
+      // Notification arrived (or backend message) — handler ran synchronously inside
+      // WaitAsync. Loop again to wait for the next one.
+    } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested && combined.Token.IsCancellationRequested) {
+      // A keepalive or resync woke the wait: not a stop, and one of our own tokens. Asked in
+      // this order so the stop, the case that matters, is the decision; a cancellation from
+      // none of our tokens still escapes to the reconnect below.
+      keepaliveFired = keepalive.IsCancellationRequested;
+    } finally {
+      Volatile.Write(ref _resyncSignal, null);
+    }
+    if (keepaliveFired) {
+      // Verify the connection is still alive. If SELECT 1 throws, we'll fall into
+      // the outer catch and reconnect.
+      await using var ping = new NpgsqlCommand("SELECT 1", conn);
+      _ = await ping.ExecuteScalarAsync(stoppingToken).ConfigureAwait(false);
+    }
   }
 
   /// <summary>

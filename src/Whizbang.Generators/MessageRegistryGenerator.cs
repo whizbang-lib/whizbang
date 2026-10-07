@@ -126,20 +126,29 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
 
+    // Where the documentation checkout is, from the build's own inputs (#1180), never from the process.
+    var docsLocation = context.AnalyzerConfigOptionsProvider.Select(static (provider, _) => {
+      provider.GlobalOptions.TryGetValue(PathResolver.DOCS_PATH_PROPERTY, out var configuredPath);
+      provider.GlobalOptions.TryGetValue(PathResolver.PROJECT_DIRECTORY_PROPERTY, out var projectDirectory);
+      return new DocsLocation(configuredPath, projectDirectory);
+    });
+
     // Combine all discoveries + compilation (for referenced assembly versions)
     var allData = messageTypes.Collect()
         .Combine(dispatchers.Collect())
         .Combine(receptors.Collect())
         .Combine(perspectives.Collect())
-        .Combine(context.CompilationProvider);
+        .Combine(context.CompilationProvider)
+        .Combine(docsLocation);
 
     context.RegisterSourceOutput(
         allData,
         static (ctx, data) => {
-          var ((((messages, dispatchers2), receptors2), perspectives2), compilation) = data;
+          var (((((messages, dispatchers2), receptors2), perspectives2), compilation), docs) = data;
           _generateMessageRegistry(ctx,
             (((messages, dispatchers2), receptors2), perspectives2),
-            compilation);
+            compilation,
+            PathResolver.FindDocsRepositoryPath(docs.ConfiguredPath, docs.ProjectDirectory));
         }
     );
   }
@@ -211,13 +220,11 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // (the typical case), `ContainingType` is the same interface, but in some
     // overload-resolution paths Roslyn returns an open or constructed wrapper
     // whose `OriginalDefinition` is what matches our constant.
-    // A method with no containing type is no more a dispatcher method than one on an unrelated type,
-    // so that guard shares this exit rather than standing on a line of its own.
-    var containingType = methodSymbol.ContainingType;
-    var isDispatcherMethod = containingType is not null
-        && (TypeNameHelper.GetFullyQualifiedName(containingType) == StandardInterfaceNames.I_DISPATCHER
-            || TypeNameHelper.GetFullyQualifiedName(containingType.OriginalDefinition) == StandardInterfaceNames.I_DISPATCHER
-            || TypeNameHelper.ImplementsInterface(containingType, StandardInterfaceNames.I_DISPATCHER));
+    // Every method belongs to a type; a local function's is the type that encloses it.
+    var containingType = methodSymbol.ContainingType!;
+    var isDispatcherMethod = TypeNameHelper.GetFullyQualifiedName(containingType) == StandardInterfaceNames.I_DISPATCHER
+        || TypeNameHelper.GetFullyQualifiedName(containingType.OriginalDefinition) == StandardInterfaceNames.I_DISPATCHER
+        || TypeNameHelper.ImplementsInterface(containingType, StandardInterfaceNames.I_DISPATCHER);
     if (!isDispatcherMethod) {
       return null;
     }
@@ -259,12 +266,10 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
           ? TypeNameHelper.GetFullyQualifiedName(declaredTypeSymbol)
           : "<unknown>";
     } else {
-      // Top-level statements: ask the semantic model for the enclosing symbol,
-      // which lives in the compiler-synthesized Program type.
-      var enclosingSymbol = semanticModel.GetEnclosingSymbol(invocation.SpanStart, cancellationToken);
-      className = enclosingSymbol?.ContainingType is { } synthesizedType
-          ? TypeNameHelper.GetFullyQualifiedName(synthesizedType)
-          : "<top-level>";
+      // Top-level statements: ask the semantic model for the enclosing symbol, which is the
+      // compiler-synthesized entry point, and it always lives in the synthesized Program type.
+      var enclosingSymbol = semanticModel.GetEnclosingSymbol(invocation.SpanStart, cancellationToken)!;
+      className = TypeNameHelper.GetFullyQualifiedName(enclosingSymbol.ContainingType!);
     }
 
     var location = invocation.GetLocation();
@@ -402,13 +407,14 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private static void _generateMessageRegistry(
       SourceProductionContext context,
       (((ImmutableArray<MessageTypeInfo>, ImmutableArray<DispatcherLocationInfo>), ImmutableArray<ReceptorLocationInfo>), ImmutableArray<PerspectiveLocationInfo>) data,
-      Compilation? compilation = null) {
+      Compilation? compilation = null,
+      string? docsPath = null) {
 
     var (((messages, dispatchers), receptors), perspectives) = data;
 
     // Load documentation and test mappings for VSCode tooling enhancement
-    var docsMap = _loadCodeDocsMap(context);
-    var testsMap = _loadCodeTestsMap(context);
+    var docsMap = _loadCodeDocsMap(context, docsPath);
+    var testsMap = _loadCodeTestsMap(context, docsPath);
 
     // Enrich all data with documentation URLs and test counts
     var enrichedMessages = messages.Select(m => _enrichMessageInfo(m, docsMap, testsMap)).ToImmutableArray();
@@ -571,8 +577,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   /// Loads code-docs-map.json from documentation repository.
   /// Returns mapping: symbol name → documentation URL
   /// </summary>
-  private static Dictionary<string, string> _loadCodeDocsMap(SourceProductionContext context) {
-    var docsPath = PathResolver.FindDocsRepositoryPath();
+  private static Dictionary<string, string> _loadCodeDocsMap(SourceProductionContext context, string? docsPath) {
     if (docsPath == null) {
       return [];
     }
@@ -604,8 +609,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   /// Loads code-tests-map.json from documentation repository.
   /// Returns mapping: symbol name → test information array
   /// </summary>
-  private static Dictionary<string, TestInfo[]> _loadCodeTestsMap(SourceProductionContext context) {
-    var docsPath = PathResolver.FindDocsRepositoryPath();
+  private static Dictionary<string, TestInfo[]> _loadCodeTestsMap(SourceProductionContext context, string? docsPath) {
     if (docsPath == null) {
       return [];
     }
@@ -868,6 +872,9 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 #pragma warning restore S1144, S3459
     public string TestClass { get; set; } = "";
   }
+
+  /// <summary>The build inputs that locate the documentation checkout: equatable, so an unchanged location is cached.</summary>
+  private sealed record DocsLocation(string? ConfiguredPath, string? ProjectDirectory);
 }
 
 // Value types for captured information (registry-specific versions to avoid conflicts)

@@ -9,10 +9,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsTestProject>true</IsTestProject>
-    <WhizbangTestTags>Integration;Docker</WhizbangTestTags>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
     <IsPackable>false</IsPackable>
     <!-- Integration: Requires PostgreSQL + Azurite via Testcontainers -->
-    <WhizbangTestType>Integration</WhizbangTestType>
+    <WhizbangTestType>Unit</WhizbangTestType>
   </PropertyGroup>
 
   <ItemGroup>

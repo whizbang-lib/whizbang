@@ -67,6 +67,17 @@ public static class TypeNameFormatter {
     return type.AssemblyQualifiedName;
   }
 
+  /// <summary>
+  /// The versioned assembly-qualified form, or the display name for a type that has none (an open
+  /// generic parameter). A lookup key for the priority and type registries, which every runtime
+  /// message type, being closed, answers with its assembly-qualified name.
+  /// </summary>
+  /// <param name="type">The type to name.</param>
+  public static string AssemblyQualifiedNameOrDisplay(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.AssemblyQualifiedName ?? DisplayName(type);
+  }
+
   /// <summary>Display text for an assembly (its full display name, else its simple name).</summary>
   /// <param name="assembly">The assembly to describe.</param>
   public static string AssemblyDisplayName(System.Reflection.Assembly assembly) {
@@ -131,6 +142,38 @@ public static class TypeNameFormatter {
     ArgumentNullException.ThrowIfNull(type);
     clrTypeName = type.FullName;
     return clrTypeName is not null;
+  }
+
+  /// <summary>
+  /// Whether the type's CLR full name is exactly this one; a type with no full name matches nothing.
+  /// </summary>
+  /// <param name="type">The type to test.</param>
+  /// <param name="clrTypeName">The CLR full type name to match, compared ordinally.</param>
+  /// <returns>True when the type has that CLR full name.</returns>
+  /// <remarks>
+  /// The lookup a registry walk makes to find a perspective's model by its name. Registered models
+  /// are always named, so the no-name side is asserted here rather than through a walk.
+  /// </remarks>
+  internal static bool HasClrTypeName(Type type, string clrTypeName) =>
+    TryFormatClrTypeName(type, out var name) && string.Equals(name, clrTypeName, StringComparison.Ordinal);
+
+  /// <summary>
+  /// The CLR full type names of the types that have one, in order, skipping any that do not (see
+  /// <see cref="TryFormatClrTypeName"/>).
+  /// </summary>
+  /// <param name="types">The types to name.</param>
+  /// <returns>One CLR full type name per type that has one.</returns>
+  /// <remarks>
+  /// The one place a registry walk turns types into the names the perspective tables are keyed by.
+  /// The types registered as perspective models are always named, so through those walks the skip is
+  /// never taken; it is asserted here instead, where a type with no name can be handed in directly.
+  /// </remarks>
+  internal static IEnumerable<string> ClrTypeNamesOf(IEnumerable<Type> types) {
+    foreach (var type in types) {
+      if (TryFormatClrTypeName(type, out var clrTypeName)) {
+        yield return clrTypeName;
+      }
+    }
   }
 
   /// <summary>

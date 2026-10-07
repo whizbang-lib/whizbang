@@ -471,3 +471,6 @@ Whizbang.Analysis.slnx
 
 # Local git worktrees — checkouts, never content
 .worktrees/
+
+# Per-suite build slice markers written by .github/scripts/Get-TestSlice.ps1 in the build job
+test-slice-*.txt

@@ -45,6 +45,13 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
   private readonly EventCategoryMetrics? _metrics;
 
   /// <summary>
+  /// The source the dispatch span is started on. Internal so a test can hand in a source no listener
+  /// samples: the shared source has a listener whenever any test in the process is capturing spans,
+  /// so whether the span exists would otherwise depend on what else is running.
+  /// </summary>
+  internal global::System.Diagnostics.ActivitySource ActivitySource { get; init; } = WhizbangActivitySource.Tracing;
+
+  /// <summary>
   /// Creates a dispatcher.
   /// </summary>
   /// <param name="services">For resolving handler instances by <see cref="CollectiveApplyEntry.HandlerType"/>.</param>
@@ -87,7 +94,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
     // (the metrics tag event_type/namespace too, but a span shows the duration + causal parent). Tagged the
     // same way as the metrics so trace and metric views line up. Child spans (per-model apply, per-batch) are
     // created by the driver adapters and nest under this via Activity.Current.
-    using var activity = WhizbangActivitySource.Tracing.StartActivity("Collective Dispatch", ActivityKind.Internal);
+    using var activity = ActivitySource.StartActivity("Collective Dispatch", ActivityKind.Internal);
     if (activity is not null) {
       activity.SetTag(TAG_EVENT_TYPE, eventTypeName);
       activity.SetTag(TAG_EVENT_NAMESPACE, eventNamespace);

@@ -24,7 +24,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   private readonly Timer? _sampler;
   private readonly Process _process;
   private TimeSpan _lastCpuSample;
-  private DateTime _lastSampleTime;
+  private DateTimeOffset _lastSampleTime;
   private bool _isPaused;
   private bool _disposed;
 
@@ -46,7 +46,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     });
     _process = Process.GetCurrentProcess();
     _lastCpuSample = _readCpuTime();
-    _lastSampleTime = DateTime.UtcNow;
+    _lastSampleTime = _utcNow();
 
     // Start sampling timer if using CPU time sampling mode
     if (_shouldUseCpuSampling()) {
@@ -57,6 +57,10 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
 
   /// <summary>Reads accumulated CPU time from the configured source, or the process.</summary>
   private TimeSpan _readCpuTime() => _options.CpuTimeSource?.Invoke() ?? _process.TotalProcessorTime;
+
+  private bool _isDebuggerAttached() => _options.DebuggerAttachedSource?.Invoke() ?? Debugger.IsAttached;
+
+  private DateTimeOffset _utcNow() => _options.WallClockSource?.Invoke() ?? DateTimeOffset.UtcNow;
 
   /// <inheritdoc />
   public DebuggerDetectionMode Mode => _options.Mode;
@@ -132,7 +136,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       return;
     }
 
-    var now = DateTime.UtcNow;
+    var now = _utcNow();
     TimeSpan currentCpu;
 
     try {
@@ -149,11 +153,11 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     var wasPaused = _isPaused;
     _isPaused = _options.Mode switch {
       DebuggerDetectionMode.DebuggerAttached =>
-          Debugger.IsAttached && _isFrozenBasedOnCpuTime(wallDelta, cpuDelta),
+          _isDebuggerAttached() && _isFrozenBasedOnCpuTime(wallDelta, cpuDelta),
       DebuggerDetectionMode.CpuTimeSampling =>
           _isFrozenBasedOnCpuTime(wallDelta, cpuDelta),
       DebuggerDetectionMode.Auto =>
-          Debugger.IsAttached && _isFrozenBasedOnCpuTime(wallDelta, cpuDelta),
+          _isDebuggerAttached() && _isFrozenBasedOnCpuTime(wallDelta, cpuDelta),
       _ => false
     };
 
@@ -269,7 +273,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
         return _wallStopwatch.Elapsed;
       }
 
-      if (!Debugger.IsAttached && _clock._options.Mode != DebuggerDetectionMode.CpuTimeSampling) {
+      if (!_clock._isDebuggerAttached() && _clock._options.Mode != DebuggerDetectionMode.CpuTimeSampling) {
         // No debugger attached and not using CPU sampling: use wall time
         return _wallStopwatch.Elapsed;
       }

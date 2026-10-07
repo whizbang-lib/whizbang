@@ -97,10 +97,8 @@ public static class PolymorphicModelDiscovery {
   /// Checks whether a type is a System namespace type that is NOT a collections type.
   /// </summary>
   private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace is { } containingNamespace
-      ? TypeNameUtilities.Display(containingNamespace)
-      : null;
-    return ns?.StartsWith("System", System.StringComparison.Ordinal) == true &&
+    var ns = TypeNameUtilities.DisplayOrEmpty(type.ContainingNamespace);
+    return ns.StartsWith("System", System.StringComparison.Ordinal) &&
            !ns.StartsWith("System.Collections", System.StringComparison.Ordinal);
   }
 
@@ -125,9 +123,12 @@ public static class PolymorphicModelDiscovery {
   /// <summary>
   /// Checks whether a class or struct type recursively contains polymorphic properties.
   /// </summary>
+  /// <remarks>
+  /// A System type needs no filter here: <see cref="_checkForPolymorphicTypes"/> answers false for
+  /// every non-collection System type before it looks at a member.
+  /// </remarks>
   private static bool _isRecursivelyPolymorphic(INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited) =>
     (type.TypeKind == TypeKind.Class || type.TypeKind == TypeKind.Struct) &&
-    !_isSystemPrimitiveType(type) &&
     _checkForPolymorphicTypes(type, visited);
 
   /// <summary>
@@ -141,7 +142,7 @@ public static class PolymorphicModelDiscovery {
       if (IsPolymorphicType(typeArg)) {
         return true;
       }
-      if (!_isSystemPrimitiveType(typeArg) && _checkForPolymorphicTypes(typeArg, visited)) {
+      if (_checkForPolymorphicTypes(typeArg, visited)) {
         return true;
       }
     }
@@ -200,17 +201,5 @@ public static class PolymorphicModelDiscovery {
     }
 
     return null;
-  }
-
-  /// <summary>
-  /// Checks whether a type is a system primitive that cannot contain polymorphic properties.
-  /// </summary>
-  private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
-    if (TypeNameUtilities.IsNamed(type.ContainingNamespace, "System")) {
-      var name = type.Name;
-      return name is "String" or "DateTime" or "DateTimeOffset" or "TimeSpan" or
-             "Guid" or "Decimal" or "Uri" or "Version" or "DateOnly" or "TimeOnly";
-    }
-    return false;
   }
 }

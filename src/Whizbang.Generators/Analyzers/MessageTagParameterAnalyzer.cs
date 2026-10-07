@@ -77,7 +77,7 @@ public class MessageTagParameterAnalyzer : DiagnosticAnalyzer {
           // Find the best suggestion based on type compatibility
           var suggestion = _findSuggestion(allProperties, parameter);
 
-          var location = parameter.Locations.FirstOrDefault() ?? Location.None;
+          var location = LocationUtilities.FirstOrNone(parameter);
 
           context.ReportDiagnostic(Diagnostic.Create(
               DiagnosticDescriptors.MessageTagParameterMismatch,

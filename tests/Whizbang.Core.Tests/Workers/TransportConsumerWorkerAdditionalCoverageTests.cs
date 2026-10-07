@@ -186,7 +186,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var stopped = new List<Activity>();
     using var listener = new ActivityListener {
       ShouldListenTo = source => source.Name == "Whizbang.Transport",
-      Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
+      Sample = (ref options) => ActivitySamplingResult.AllData,
       ActivityStopped = activity => {
         lock (stopped) {
           stopped.Add(activity);
@@ -263,6 +263,51 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
              + "the trace shows a clean receive for a message that was thrown away.");
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
       .Because("nothing may be written for a message whose envelope type cannot be read back.");
+  }
+
+  /// <summary>
+  /// The receive span for a delivery that becomes an inbox row is marked Ok, so a trace tells a clean
+  /// receive from one whose status was never decided.
+  /// </summary>
+  [Test]
+  public async Task HandleMessage_StoredWithTraceParent_SetsActivityOkStatusAsync() {
+    var stopped = new List<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = source => source.Name == "Whizbang.Transport",
+      Sample = (ref options) => ActivitySamplingResult.AllData,
+      ActivityStopped = activity => {
+        lock (stopped) {
+          stopped.Add(activity);
+        }
+      }
+    };
+    ActivitySource.AddActivityListener(listener);
+
+    var messageId = MessageId.New();
+    var transport = new AdditionalCoverageTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("test-topic"));
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
+    var worker = _createWorker(transport, options, services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>());
+
+    using var cts = new CancellationTokenSource();
+    _ = worker.StartAsync(cts.Token);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
+
+    var envelope = _createJsonEnvelopeWithTraceParent(messageId, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+    await transport.SimulateMessageReceivedAsync(envelope, "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core");
+    await cts.CancelAsync();
+
+    List<Activity> inboxActivities;
+    lock (stopped) {
+      inboxActivities = [.. stopped.Where(a => (string?)a.GetTagItem("messaging.message_id") == messageId.ToString())];
+    }
+    await Assert.That(inboxActivities.Count).IsEqualTo(1);
+    await Assert.That(inboxActivities[0].Status).IsEqualTo(ActivityStatusCode.Ok);
+    await Assert.That(inboxActivities[0].GetTagItem("whizbang.hop_count")).IsEqualTo(envelope.Hops.Count);
   }
 
   // ========================================
@@ -1045,11 +1090,13 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
   private static TransportConsumerWorker _createWorker(
       ITransport transport,
-      TransportConsumerOptions options) {
-    var services = new ServiceCollection();
-    services.TryAddWhizbangDefaults();
-    var serviceProvider = services.BuildServiceProvider();
-    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+      TransportConsumerOptions options,
+      IServiceScopeFactory? scopeFactory = null) {
+    if (scopeFactory is null) {
+      var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
+      scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
 
     return new TransportConsumerWorker(
       transport: transport,

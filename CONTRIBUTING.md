@@ -263,6 +263,9 @@ pull request, and every pull request is reviewed against the same standard.
 - every added library line and hand-written branch is executed (100% of new lines, and every outcome
   of every new hand-written decision; see `ai-docs/coverage-exclusions.md` for what counts as
   hand-written), and SonarCloud reports zero open findings on new code;
+- every hand-written decision in the library is covered: the whole-library gate is 100%, so a pull
+  request that leaves any outcome of any hand-written decision untested, anywhere in `src/`, fails
+  (a member excluded by the documented procedure in `ai-docs/coverage-exclusions.md` is not counted);
 - CodeQL, secret scanning and the dependency vulnerability scan find nothing new;
 - `dotnet format` makes no changes, and every source file carries the copyright and license header;
 - every commit is signed off ([DCO](#developer-certificate-of-origin)), and lock files match the

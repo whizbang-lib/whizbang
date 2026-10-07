@@ -412,8 +412,9 @@ public partial class TransportPublishStrategy(
 
         var batchThrottled = caught is not null
           ? TransportFailureClassifier.Classify(caught) == MessageFailureReason.Throttled
-          : batchResults!.All(r => !r.Success
-              && TransportFailureClassifier.Classify(new InvalidOperationException(r.Error ?? "")) == MessageFailureReason.Throttled);
+          // The transport classifies each item from the exception it caught (#1167). An empty answer refused
+          // nothing, so it is not a throttle.
+          : batchResults!.Count > 0 && batchResults.All(r => !r.Success && r.Reason == MessageFailureReason.Throttled);
 
         if (batchThrottled && batchAttempt < _throttleRetry.MaxAttempts) {
           // The batch group is keyed by namespace already, so the shared destination names exactly
@@ -452,7 +453,8 @@ public partial class TransportPublishStrategy(
               MessageId = batchResult.MessageId,
               Success = batchResult.Success,
               CompletedStatus = batchResult.Success ? MessageProcessingStatus.Published : originalWork.Status,
-              Error = batchResult.Error
+              Error = batchResult.Error,
+              Reason = batchResult.Reason ?? MessageFailureReason.Unknown,
             });
           }
         }
@@ -507,8 +509,9 @@ public partial class TransportPublishStrategy(
     // This applies whether or not WithRouting() was explicitly called
     if (messageKind == MessageKind.Command) {
       // Commands go to shared inbox topic (configured via constructor)
-      // Parse the type name to get the routing key for filtering
-      var typeName = _extractTypeName(work.MessageType)?.ToLowerInvariant() ?? work.Destination;
+      // Parse the type name to get the routing key for filtering. A message is classified a
+      // command only when it has a type name (_detectMessageKindFromTypeName), so it is there.
+      var typeName = _extractTypeName(work.MessageType)!.ToLowerInvariant();
       var ns = _extractNamespace(work.MessageType)?.ToLowerInvariant() ?? "";
       var routingKey = string.IsNullOrEmpty(ns) ? typeName : $"{ns}.{typeName}";
 

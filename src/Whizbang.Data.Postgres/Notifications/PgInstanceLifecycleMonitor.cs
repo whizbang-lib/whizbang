@@ -142,7 +142,8 @@ public sealed partial class PgInstanceLifecycleMonitor(
   }
 
   /// <summary>Test hook: run one detection tick without the loop.</summary>
-  public Task TickForTestsAsync(CancellationToken cancellationToken) => _tickOnceAsync(cancellationToken);
+  /// <returns>The delay the loop would wait before the next tick, so a test can assert the cadence a tick chose.</returns>
+  public Task<TimeSpan> TickForTestsAsync(CancellationToken cancellationToken) => _tickOnceAsync(cancellationToken);
 
   private async Task<TimeSpan> _tickOnceAsync(CancellationToken ct) {
     var threshold = StaleThreshold;
@@ -183,7 +184,7 @@ public sealed partial class PgInstanceLifecycleMonitor(
     while (await reader.ReadAsync(ct)) {
       var id = reader.GetGuid(0);
       var age = TimeSpan.FromSeconds(Math.Max(0, reader.GetDouble(1)));
-      if (oldestAge is null || age > oldestAge) {
+      if (oldestAge is not { } oldest || age > oldest) {
         oldestAge = age;
       }
       (reader.GetBoolean(2) ? alive : dead).Add(id);

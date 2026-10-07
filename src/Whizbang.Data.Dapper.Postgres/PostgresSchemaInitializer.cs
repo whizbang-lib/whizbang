@@ -227,14 +227,12 @@ public sealed class PostgresSchemaInitializer {
       return false;
     }
 
-    // Extract the original table name from backup name (remove _bak_<date> suffix). The suffix is
-    // what the query matched on, so a missing marker shares the identifier guard's exit rather than
-    // getting a `return false` of its own that no row selected by that LIKE can reach.
-    var bakIdx = backupTableName.LastIndexOf("_bak_", StringComparison.Ordinal);
-    var originalTableName = bakIdx < 0 ? null : backupTableName[..bakIdx];
+    // Extract the original table name from backup name (remove _bak_<date> suffix). The query selects
+    // only names containing the literal marker (its underscores are escaped), so the marker is there.
+    var originalTableName = backupTableName[..backupTableName.LastIndexOf("_bak_", StringComparison.Ordinal)];
 
     // Validate all identifiers before using in DDL
-    if (originalTableName is null || !_isSafeIdentifier(originalTableName) || !_isSafeIdentifier(backupTableName)) {
+    if (!_isSafeIdentifier(originalTableName) || !_isSafeIdentifier(backupTableName)) {
       return false;
     }
 

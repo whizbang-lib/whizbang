@@ -6,6 +6,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Whizbang.Generators.Shared.Models;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
 
@@ -149,7 +150,7 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
     }
 
     var subject = $"An equality or 'in' filter a request composes on '{model.Name}' ({string.Join(", ", unattributed)})";
-    var location = surface.Locations.FirstOrDefault() ?? Location.None;
+    var location = LocationUtilities.FirstOrNone(surface);
 
     context.ReportDiagnostic(declared == DocumentMatchDeclaration.Off
       ? Diagnostic.Create(

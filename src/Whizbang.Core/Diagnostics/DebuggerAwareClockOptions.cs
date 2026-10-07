@@ -57,4 +57,24 @@ public sealed class DebuggerAwareClockOptions {
   /// scripted) source instead and the transition becomes a fact, not a race.
   /// </remarks>
   public Func<TimeSpan>? CpuTimeSource { get; set; }
+
+  /// <summary>
+  /// Optional source for whether a debugger is attached; <see langword="null"/> (the default) reads
+  /// <see cref="System.Diagnostics.Debugger.IsAttached"/>.
+  /// </summary>
+  /// <remarks>
+  /// The same seam as <see cref="CpuTimeSource"/>, for the same reason: the attached-debugger modes can
+  /// only be driven deterministically when the answer is the test's to give, not the test runner's.
+  /// </remarks>
+  public Func<bool>? DebuggerAttachedSource { get; set; }
+
+  /// <summary>
+  /// Optional source for the wall clock the sampler measures each interval on; <see langword="null"/>
+  /// (the default) reads <see cref="DateTimeOffset.UtcNow"/>.
+  /// </summary>
+  /// <remarks>
+  /// Freeze detection needs a wall interval of at least 200 ms, so with the real clock a test of a
+  /// sampling decision has to wait for real time to pass; a source makes the interval the test's to set.
+  /// </remarks>
+  public Func<DateTimeOffset>? WallClockSource { get; set; }
 }

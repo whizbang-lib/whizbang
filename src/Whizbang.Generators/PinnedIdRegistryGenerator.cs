@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
@@ -74,8 +75,7 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
 
     var pinnedIdAttribute = typeSymbol.GetAttributes()
         .FirstOrDefault(attr =>
-            attr.AttributeClass is not null &&
-            TypeNameHelper.GetFullyQualifiedName(attr.AttributeClass) == StandardInterfaceNames.PINNED_ID_ATTRIBUTE);
+            TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
 
     if (pinnedIdAttribute is null) {
       return null;
@@ -87,15 +87,9 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var messageKind = TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_COMMAND)
-        ? "command"
-        : "event";
-    var kind = isPerspective ? "perspective" : messageKind;
-
     return new PinnedIdInfo(
         TypeName: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-        PinnedId: pinnedId,
-        Kind: kind
+        PinnedId: pinnedId
     );
   }
 
@@ -195,6 +189,5 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
 /// </summary>
 internal sealed record PinnedIdInfo(
     string TypeName,
-    string PinnedId,
-    string Kind
+    string PinnedId
 );

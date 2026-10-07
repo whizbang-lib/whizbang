@@ -110,6 +110,8 @@ jobs:
           path: |
             tests/**/TestResults/*.cobertura.xml
             samples/**/TestResults/*.cobertura.xml
+            tests/**/TestResults/*.coverage
+            samples/**/TestResults/*.coverage
           # A leg that ran tests but wrote no report would otherwise upload nothing and leave the
           # quality job to time out waiting for it; fail here, where the cause is.
           if-no-files-found: error

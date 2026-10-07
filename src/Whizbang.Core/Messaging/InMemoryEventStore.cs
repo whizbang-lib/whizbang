@@ -208,7 +208,6 @@ public class InMemoryEventStore : IEventStore {
   }
 
   /// <inheritdoc />
-  [SuppressMessage("Trimming", "IL2075:UnrecognizedReflectionPattern", Justification = "InMemoryEventStore is for testing only, not production. Reflection is acceptable here.")]
   public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId,
       Guid? afterEventId,
@@ -229,26 +228,16 @@ public class InMemoryEventStore : IEventStore {
     var eventEnvelopes = new List<MessageEnvelope<IEvent>>();
 
     foreach (var envelope in allEnvelopes) {
-      // InMemoryEventStore stores envelopes as objects
-      // Extract the payload and check if it's an IEvent
-      var payloadProperty = envelope.GetType().GetProperty("Payload");
-      if (payloadProperty != null) {
-        var payload = payloadProperty.GetValue(envelope);
-        if (payload is IEvent eventPayload) {
-          // Create a new envelope with IEvent payload
-          var messageIdProperty = envelope.GetType().GetProperty("MessageId");
-          var hopsProperty = envelope.GetType().GetProperty("Hops");
-
-          var messageId = (MessageId?)messageIdProperty?.GetValue(envelope) ?? MessageId.New();
-          var hops = (List<MessageHop>?)hopsProperty?.GetValue(envelope) ?? [];
-
-          eventEnvelopes.Add(new MessageEnvelope<IEvent> {
-            MessageId = messageId,
-            Payload = eventPayload,
-            Hops = hops,
-            DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Outbox, Source = MessageSource.Local }
-          });
-        }
+      // Re-wrap every stored envelope whose payload is an event, keeping its identity and hops. An
+      // envelope stored without a hop list (Hops is required, but nothing stops a caller passing
+      // null) reads back with an empty one, because consumers walk the list without a null check.
+      if (envelope.Payload is IEvent eventPayload) {
+        eventEnvelopes.Add(new MessageEnvelope<IEvent> {
+          MessageId = envelope.MessageId,
+          Payload = eventPayload,
+          Hops = envelope.Hops ?? [],
+          DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Outbox, Source = MessageSource.Local }
+        });
       }
     }
 

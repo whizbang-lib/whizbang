@@ -192,7 +192,7 @@ public sealed partial class IntegrityCheckpointReceptor(
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "checkpoint"),
           new KeyValuePair<string, object?>("origin", pending.OriginServiceName));
-        await _sendRepairRequestAsync(services, options, pending, cancellationToken).ConfigureAwait(false);
+        await _sendRepairRequestAsync(services, tracker, options, pending, cancellationToken).ConfigureAwait(false);
         // Charged only for a request that was actually sent, so the per-checkpoint budget and the
         // ledger cannot burn this window's attempt budget on requests that never left.
         repairPolicy.RecordRequested(observation);
@@ -278,7 +278,7 @@ public sealed partial class IntegrityCheckpointReceptor(
   private static readonly IntegrityRepairPolicy _processFallbackPolicy = new(new IntegrityRepairPolicy.Settings());
 
   private async Task _sendRepairRequestAsync(
-      IServiceProvider services, StreamIntegrityOptions options,
+      IServiceProvider services, IntegrityGapTracker tracker, StreamIntegrityOptions options,
       IntegrityGapTracker.PendingGap pending, CancellationToken cancellationToken) {
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
@@ -312,7 +312,8 @@ public sealed partial class IntegrityCheckpointReceptor(
     // hand is the requester's own — publishing there fanned the request out to every service on
     // the shared topic (and back to the requester itself). The origin's next checkpoint carries
     // the address, and an unhealed deficit re-confirms then.
-    var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(pending.OriginServiceId);
+    // The tracker that held this pending gap, so it is there; it is what recorded the origin's address.
+    var originRequestTopic = tracker.GetRequestTopic(pending.OriginServiceId);
     if (string.IsNullOrEmpty(originRequestTopic)) {
       LogRepairSkippedNoOriginTopic(logger, pending.OriginServiceName, pending.EventType);
       return;

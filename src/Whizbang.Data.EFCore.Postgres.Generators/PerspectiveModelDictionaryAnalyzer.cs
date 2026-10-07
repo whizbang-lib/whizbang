@@ -48,6 +48,10 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
+    // One walk per model, shared by every interface: a perspective implementing two interfaces over the same model
+    // reported each property once per interface (#1179).
+    var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+
     // Find IPerspectiveFor<TModel, ...> interfaces
     foreach (var iface in typeSymbol.AllInterfaces) {
       // Must be IPerspectiveFor with at least 2 type arguments (TModel + at least one TEvent)
@@ -64,7 +68,6 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
 
       // Check model for Dictionary properties (recursive with cycle detection). A field promoted to a
       // jsonb column is left out: it is stored and read as that column, not mapped in the document.
-      var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
       _checkForDictionary(context, modelType, visited, promotedToJsonbSkipped: true);
     }
   }
@@ -126,13 +129,16 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// Recursively checks a nested class/struct type for Dictionary properties.
   /// </summary>
+  /// <remarks>
+  /// A System type needs no filter here: <see cref="_checkForDictionary"/> returns for every
+  /// non-collection System type before it looks at a member.
+  /// </remarks>
   private static void _checkNestedTypeForDictionary(
       SymbolAnalysisContext context,
       INamedTypeSymbol propType,
       HashSet<INamedTypeSymbol> visited) {
 
-    if ((propType.TypeKind == TypeKind.Class || propType.TypeKind == TypeKind.Struct) &&
-        !_isSystemPrimitiveType(propType)) {
+    if (propType.TypeKind == TypeKind.Class || propType.TypeKind == TypeKind.Struct) {
       _checkForDictionary(context, propType, visited);
     }
   }
@@ -146,8 +152,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// </summary>
   private static bool _isPromotedToJsonb(IPropertySymbol member) {
     var attribute = member.GetAttributes().FirstOrDefault(a =>
-      a.AttributeClass is { } attributeClass
-      && TypeNameUtilities.Display(attributeClass) == "Whizbang.Core.Perspectives.PhysicalFieldAttribute");
+      TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PhysicalFieldAttribute"));
     if (attribute is null) {
       return false;
     }
@@ -224,7 +229,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
     foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
       if (_isDictionaryType(typeArg)) {
         _reportDictionaryDiagnostic(context, member, containingType, typeArg);
-      } else if (!_isSystemPrimitiveType(typeArg)) {
+      } else {
         _checkForDictionary(context, typeArg, visited);
       }
     }
@@ -241,22 +246,6 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
            typeName == "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>";
   }
 
-  /// <summary>True for the handful of System types that never hold anything worth walking into.</summary>
-  /// <remarks>A type with no containing namespace is not in System either, so it answers false
-  /// through the same comparison instead of needing a guard on a line of its own.</remarks>
-  private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : null;
-
-    // Skip common system types that definitely won't contain Dictionary
-    if (ns == "System") {
-      var name = type.Name;
-      return name is "String" or "DateTime" or "DateTimeOffset" or "TimeSpan" or
-             "Guid" or "Decimal" or "Uri" or "Version" or "DateOnly" or "TimeOnly";
-    }
-
-    return false;
-  }
-
   /// <summary>
   /// Checks if a property is marked as ignored by EF Core or JSON serialization.
   /// Properties with these attributes are not persisted, so Dictionary usage is fine.
@@ -267,7 +256,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// </remarks>
   private static bool _isPropertyIgnored(IPropertySymbol property) {
     foreach (var attr in property.GetAttributes()) {
-      var attrName = attr.AttributeClass is { } attributeClass ? TypeNameUtilities.Display(attributeClass) : null;
+      var attrName = TypeNameUtilities.DisplayOrNull(attr.AttributeClass);
       if (attrName == null) {
         continue;
       }

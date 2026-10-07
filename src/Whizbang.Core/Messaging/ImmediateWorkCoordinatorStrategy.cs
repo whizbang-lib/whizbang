@@ -165,10 +165,10 @@ public partial class ImmediateWorkCoordinatorStrategy(
 
     var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
       new FlushContext(
-        _coordinator, _scopeFactory, _instanceProvider, _options, "immediate",
+        _coordinator, _scopeFactory, _instanceProvider, _options,
         outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
-        outboxFailures, inboxFailures, flags, _lifecycleMessageDeserializer,
-        _logger, _tracingOptions, _metrics, _lifecycleMetrics,
+        outboxFailures, inboxFailures, _lifecycleMessageDeserializer,
+        _logger, _tracingOptions, _lifecycleMetrics,
         WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages),
       ct
     );

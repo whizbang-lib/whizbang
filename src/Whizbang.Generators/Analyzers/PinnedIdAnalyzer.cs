@@ -6,6 +6,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
@@ -69,10 +70,9 @@ public class PinnedIdAnalyzer : DiagnosticAnalyzer {
     }
 
     var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
-        attr.AttributeClass is not null &&
-        TypeNameHelper.GetFullyQualifiedName(attr.AttributeClass) == StandardInterfaceNames.PINNED_ID_ATTRIBUTE);
+        TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
 
-    var location = typeSymbol.Locations.FirstOrDefault() ?? Location.None;
+    var location = LocationUtilities.FirstOrNone(typeSymbol);
 
     if (pinnedIdAttribute is null) {
       if (isPerspective) {
@@ -96,7 +96,7 @@ public class PinnedIdAnalyzer : DiagnosticAnalyzer {
     }
 
     if (!Guid.TryParse(pinnedIdValue, out _)) {
-      var attributeLocation = pinnedIdAttribute.ApplicationSyntaxReference?.GetSyntax(context.CancellationToken).GetLocation() ?? location;
+      var attributeLocation = LocationUtilities.ApplicationOrFallback(pinnedIdAttribute, location, context.CancellationToken);
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PinnedIdNotAValidGuid,
           attributeLocation,

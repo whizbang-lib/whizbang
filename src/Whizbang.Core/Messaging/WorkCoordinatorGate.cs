@@ -79,8 +79,12 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
       .OrderByDescending(h => h.HeldMs)];
   }
 
-  /// <summary>Holders grouped by caller with a count and the oldest age, for the deadline warning.</summary>
-  private string _holdersSummary() {
+  /// <summary>
+  /// Holders grouped by caller with a count and the oldest age, for the deadline warning. Internal so
+  /// the empty form can be asserted: a timed-out acquire with no recorded holder happens only inside
+  /// the release race, which no test can force.
+  /// </summary>
+  internal string HoldersSummary() {
     var groups = SnapshotHolders()
       .GroupBy(h => h.Caller)
       .Select(g => $"{g.Key} x{g.Count()} (oldest {g.Max(h => h.HeldMs) / 1000.0:0.#} s)")
@@ -132,7 +136,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     if (acquired) {
       return _grant(taken, caller);
     }
-    LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent, _holdersSummary());
+    LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent, HoldersSummary());
     return default;
   }
 
@@ -260,7 +264,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
       LogAcquireGranted(_logger, _semaphore.CurrentCount, MaxConcurrent);
       return _grant(caller);
     }
-    LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent, _holdersSummary());
+    LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent, HoldersSummary());
     // Degrade gracefully: return a no-op Releaser so the caller proceeds without
     // holding a slot. The cap becomes advisory for this single call; pool exhaustion
     // (if it materialises) surfaces at the Npgsql layer with a real exception instead

@@ -77,7 +77,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
   private static bool _isPerspectiveModel(INamedTypeSymbol typeSymbol) {
     // Check if the type has [Perspective] attribute
     foreach (var attribute in typeSymbol.GetAttributes()) {
-      var attributeName = attribute.AttributeClass is { } attributeClass ? TypeNameUtilities.Display(attributeClass) : "";
+      var attributeName = TypeNameUtilities.DisplayOrEmpty(attribute.AttributeClass);
       if (attributeName == "Whizbang.Core.Perspectives.PerspectiveAttribute" ||
           attributeName.EndsWith(".PerspectiveAttribute", System.StringComparison.Ordinal)) {
         return true;
@@ -104,7 +104,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
     foreach (var member in typeSymbol.GetMembers()) {
       if (member is IPropertySymbol property) {
         foreach (var attribute in property.GetAttributes()) {
-          var attributeName = attribute.AttributeClass is { } attributeClass ? TypeNameUtilities.Display(attributeClass) : "";
+          var attributeName = TypeNameUtilities.DisplayOrEmpty(attribute.AttributeClass);
           if (attributeName == "Whizbang.Core.Perspectives.StreamIdAttribute" ||
               attributeName.EndsWith(".StreamIdAttribute", System.StringComparison.Ordinal)) {
             return true;
@@ -118,7 +118,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
 
   private static bool _hasVectorFieldAttribute(IPropertySymbol propertySymbol) {
     foreach (var attribute in propertySymbol.GetAttributes()) {
-      var attributeName = attribute.AttributeClass is { } attributeClass ? TypeNameUtilities.Display(attributeClass) : "";
+      var attributeName = TypeNameUtilities.DisplayOrEmpty(attribute.AttributeClass);
       if (attributeName == "Whizbang.Core.Lenses.VectorFieldAttribute" ||
           attributeName.EndsWith(".VectorFieldAttribute", System.StringComparison.Ordinal)) {
         return true;
@@ -132,8 +132,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
   /// </summary>
   private static bool _isPromotedToJsonb(IPropertySymbol propertySymbol) {
     var attribute = propertySymbol.GetAttributes().FirstOrDefault(a =>
-      a.AttributeClass is { } attributeClass
-      && TypeNameUtilities.Display(attributeClass) == "Whizbang.Core.Perspectives.PhysicalFieldAttribute");
+      TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PhysicalFieldAttribute"));
     if (attribute is null) {
       return false;
     }
@@ -167,7 +166,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
       var elementType = TypeNameUtilities.MinimallyQualified(arrayType.ElementType);
 
       // Find the property declaration syntax for accurate location
-      var location = propertySymbol.Locations.FirstOrDefault() ?? Location.None;
+      var location = LocationUtilities.FirstOrNone(propertySymbol);
 
       var diagnostic = Diagnostic.Create(
           ArrayPropertyInPerspectiveModel,

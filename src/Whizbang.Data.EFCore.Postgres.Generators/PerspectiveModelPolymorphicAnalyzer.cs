@@ -52,6 +52,10 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
+    // One walk per model, shared by every interface: a perspective implementing two interfaces over the same model
+    // reported each property once per interface (#1179).
+    var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+
     // Find IPerspectiveFor<TModel, ...> interfaces
     foreach (var iface in typeSymbol.AllInterfaces) {
       // Must be IPerspectiveFor with at least 2 type arguments (TModel + at least one TEvent)
@@ -67,7 +71,6 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
       }
 
       // Check model for polymorphic properties (recursive with cycle detection)
-      var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
       _checkForPolymorphicTypes(context, modelType, visited);
     }
   }
@@ -129,13 +132,16 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// Recursively checks a nested class/struct type for polymorphic properties.
   /// </summary>
+  /// <remarks>
+  /// A System type needs no filter here: <see cref="_checkForPolymorphicTypes"/> returns for every
+  /// non-collection System type before it looks at a member.
+  /// </remarks>
   private static void _checkNestedTypeForPolymorphic(
       SymbolAnalysisContext context,
       INamedTypeSymbol typeToCheck,
       HashSet<INamedTypeSymbol> visited) {
 
-    if ((typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) &&
-        !_isSystemPrimitiveType(typeToCheck)) {
+    if (typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) {
       _checkForPolymorphicTypes(context, typeToCheck, visited);
     }
   }
@@ -196,7 +202,7 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
     // S3267: Loop has side effects (reporting diagnostics, mutating visited set) — LINQ not appropriate
 #pragma warning disable S3267
     foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
-      if (!_isSystemPrimitiveType(typeArg) && !_isPolymorphicType(typeArg)) {
+      if (!_isPolymorphicType(typeArg)) {
         _checkForPolymorphicTypes(context, typeArg, visited);
       }
     }
@@ -253,22 +259,6 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
     }
 
     return null;
-  }
-
-  /// <summary>True for the handful of System types that never hold anything worth walking into.</summary>
-  /// <remarks>A type with no containing namespace is not in System either, so it answers false
-  /// through the same comparison instead of needing a guard on a line of its own.</remarks>
-  private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : null;
-
-    // Skip common system types that definitely won't contain polymorphic properties
-    if (ns == "System") {
-      var name = type.Name;
-      return name is "String" or "DateTime" or "DateTimeOffset" or "TimeSpan" or
-             "Guid" or "Decimal" or "Uri" or "Version" or "DateOnly" or "TimeOnly";
-    }
-
-    return false;
   }
 
 }

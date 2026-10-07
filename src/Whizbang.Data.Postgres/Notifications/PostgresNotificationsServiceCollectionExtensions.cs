@@ -201,8 +201,8 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // mode fix work out of the box — consumers don't have to know about it.
     services.TryAddSingleton<INotificationDataSource>(sp => {
       var configuration = sp.GetRequiredService<IConfiguration>();
-      var options = sp.GetService<IOptions<WhizbangNotificationOptions>>()?.Value
-        ?? new WhizbangNotificationOptions();
+      // AddOptions<WhizbangNotificationOptions>() above registers the options, so they always resolve.
+      var options = sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value;
 
       // If the explicit-options path will resolve a credential-bearing string,
       // the workers can use it directly — no auto-discovery needed. Same
@@ -222,8 +222,8 @@ public static class PostgresNotificationsServiceCollectionExtensions {
         var borrowed = sp.GetService<INotificationDataSourceFallback>()?.GetDataSource()
           ?? sp.GetService<NpgsqlDataSource>();
         if (borrowed is not null) {
-          var logger = sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Data.Postgres.Notifications");
-          if (logger is not null) {
+          if (sp.GetService<ILoggerFactory>() is { } loggerFactory) {
+            var logger = loggerFactory.CreateLogger("Whizbang.Data.Postgres.Notifications");
             NotificationDataSourceDiscoveryLog.ReusingApplicationDataSource(logger);
           }
           return new NotificationDataSource(borrowed, ownsDataSource: false);

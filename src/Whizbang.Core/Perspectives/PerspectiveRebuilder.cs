@@ -424,7 +424,7 @@ public sealed partial class PerspectiveRebuilder(
   private static async Task _streamGroupPresenceReconcileAsync(
       string perspectiveName, IServiceProvider sp, CancellationToken ct) {
     var model = PerspectiveStreamGroupRegistry.RegisteredModels()
-      .FirstOrDefault(m => TypeNameFormatter.TryFormatClrTypeName(m, out var clr) && string.Equals(clr, perspectiveName, StringComparison.Ordinal));
+      .FirstOrDefault(m => TypeNameFormatter.HasClrTypeName(m, perspectiveName));
     if (model is null) {
       return; // not a group member — nothing to reconcile.
     }
@@ -448,7 +448,7 @@ public sealed partial class PerspectiveRebuilder(
     }
 
     var names = new List<string> { perspectiveName };
-    names.AddRange(announcers.Select(a => TypeNameFormatter.TryFormatClrTypeName(a, out var clr) ? clr : null).Where(n => n is not null).Cast<string>());
+    names.AddRange(TypeNameFormatter.ClrTypeNamesOf(announcers));
     var tables = await coordinator.GetPerspectiveTableNamesAsync(names, ct).ConfigureAwait(false);
     var followerTable = tables.FirstOrDefault(t => t.ClrTypeName == perspectiveName)?.TableName;
     var announcerTables = tables.Where(t => t.ClrTypeName != perspectiveName).Select(t => t.TableName).ToList();

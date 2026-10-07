@@ -130,10 +130,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
 
       yield return new MessageTagInfo(
           TypeFullName: typeFullName,
-          TypeName: typeSymbol.Name,
-          Namespace: typeSymbol.ContainingNamespace is null ? "" : TypeNameUtilities.Display(typeSymbol.ContainingNamespace),
           AttributeFullName: attributeFullName,
-          AttributeName: tagAttribute.AttributeClass!.Name,
           Tag: tag,
           Properties: properties,
           ExtraJson: extraJson,
@@ -161,12 +158,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      var literal = _typedConstantToCSharpLiteral(kvp.Value);
-      if (literal is null) {
-        continue; // Unsupported value kind — skip rather than emit invalid C#.
-      }
-
-      result.Add($"{kvp.Key} = {literal}");
+      result.Add($"{kvp.Key} = {_typedConstantToCSharpLiteral(kvp.Value)}");
     }
 
     return [.. result];
@@ -183,9 +175,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     var current = attributeClass;
     while (current is not null) {
       var conventionAttr = current.GetAttributes().FirstOrDefault(a =>
-          a.AttributeClass is not null
-          && TypeNameUtilities.FullyQualified(a.AttributeClass)
-              == "global::Whizbang.Core.Attributes.AttributeArgNamingAttribute");
+          TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, "global::Whizbang.Core.Attributes.AttributeArgNamingAttribute"));
       if (conventionAttr?.ConstructorArguments.Length > 0) {
         var rawValue = conventionAttr.ConstructorArguments[0].Value;
         if (rawValue is int intValue) {
@@ -225,11 +215,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
       var propertyName = AttributeArgNamingHelper.Convert(paramName, convention);
-      var literal = _typedConstantToCSharpLiteral(ctorArgs[i]);
-      if (literal is null) {
-        continue; // Skip unsupported kinds rather than emit invalid C#.
-      }
-      result.Add($"{propertyName} = {literal}");
+      result.Add($"{propertyName} = {_typedConstantToCSharpLiteral(ctorArgs[i])}");
     }
     return [.. result];
   }
@@ -237,11 +223,11 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Converts a Roslyn <see cref="TypedConstant"/> into a valid C# literal expression so
   /// it can be inlined into generated code. Handles the kinds that appear in attribute
-  /// named arguments (primitive, string, enum, type, array). Returns null for unsupported
-  /// kinds to let callers drop them safely.
+  /// named arguments (primitive, string, enum, type, array). That table is closed: an error
+  /// constant has no value and renders as <c>null</c>, so every argument has a rendering.
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The branching is the constant-kind table: null, the four primitive shapes that need different quoting, enum, array and type. Every arm renders a different C# literal, none of them nest beyond the array's element pass, and splitting the table would hide that it is closed over what Roslyn can hand an attribute argument.")]
-  private static string? _typedConstantToCSharpLiteral(TypedConstant value) {
+  private static string _typedConstantToCSharpLiteral(TypedConstant value) {
     if (value.IsNull) {
       return "null";
     }
@@ -251,30 +237,30 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
         string s => $"\"{_escapeString(s)}\"",
         bool b => b ? "true" : "false",
         char c => $"'{c}'",
-        _ => value.Value?.ToString() ?? "null"
+        // Invariant, so a number is written the same on every build machine (#1175): on a comma-decimal culture
+        // 1.5 was written 1,5, which does not compile.
+        _ => System.Convert.ToString(value.Value, System.Globalization.CultureInfo.InvariantCulture)
       };
     }
 
     if (value.Kind == TypedConstantKind.Enum) {
       // Emit as ((EnumType)underlyingValue) — always compiles even for [Flags] combinations.
-      var enumTypeName = value.Type is null ? "int" : TypeNameUtilities.FullyQualified(value.Type);
-      return $"({enumTypeName})({value.Value})";
+      // An enum constant always carries its enum type; only an error constant has none, and IsNull took that.
+      return $"({TypeNameUtilities.FullyQualified(value.Type!)})({value.Value})";
     }
 
     if (value.Kind == TypedConstantKind.Array) {
-      var elementType = value.Type is IArrayTypeSymbol arrayType ? TypeNameUtilities.FullyQualified(arrayType.ElementType) : null;
-      if (elementType is null) { return null; }
+      // An array constant's type is the array type it was written as.
+      var elementType = TypeNameUtilities.FullyQualified(((IArrayTypeSymbol)value.Type!).ElementType);
       var elements = value.Values
           .Select(_typedConstantToCSharpLiteral)
-          .Where(e => e is not null)
           .ToArray();
       return $"new {elementType}[] {{ {string.Join(", ", elements)} }}";
     }
 
-    // TypedConstantKind.Type, and any kind this generator has no rendering for. The only other kind
-    // is Error, whose value is always null, so it never gets this far — the IsNull test above took
-    // it. Either way the answer is the same: no ITypeSymbol to name means nothing to emit.
-    return value.Value is not ITypeSymbol t ? null : $"typeof({TypeNameUtilities.FullyQualified(t)})";
+    // TypedConstantKind.Type, the one kind left: Error's value is always null, so the IsNull test
+    // above took it, and a non-null Type constant's value is the type it names.
+    return $"typeof({TypeNameUtilities.FullyQualified((ITypeSymbol)value.Value!)})";
   }
 
   private static bool _inheritsFromMessageTagAttribute(INamedTypeSymbol? attributeClass) {
@@ -532,7 +518,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     }
 
     if (!string.IsNullOrEmpty(tag.ExtraJson)) {
-      sb.AppendLine($"      ExtraJson = \"\"\"{_escapeString(tag.ExtraJson)}\"\"\",");
+      sb.AppendLine($"      ExtraJson = \"\"\"{_escapeString(tag.ExtraJson!)}\"\"\",");
     }
 
     // Generate PayloadBuilder
@@ -556,8 +542,9 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
 
     // Merge extra JSON if present
     if (!string.IsNullOrEmpty(tag.ExtraJson)) {
-      sb.AppendLine($"        // Merge extra JSON: {_escapeString(tag.ExtraJson)}");
-      sb.AppendLine($"        var extra = JsonDocument.Parse(\"\"\"{_escapeString(tag.ExtraJson)}\"\"\");");
+      var extraJson = _escapeString(tag.ExtraJson!);
+      sb.AppendLine($"        // Merge extra JSON: {extraJson}");
+      sb.AppendLine($"        var extra = JsonDocument.Parse(\"\"\"{extraJson}\"\"\");");
       sb.AppendLine("        foreach (var prop in extra.RootElement.EnumerateObject()) {");
       sb.AppendLine("          dict[prop.Name] = prop.Value.Clone();");
       sb.AppendLine("        }");
@@ -579,7 +566,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("    },");
   }
 
-  private static string _escapeString(string? s) => s is null ? "" : s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+  private static string _escapeString(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
   private static string _sanitizeIdentifier(string name) {
     // Replace dots and hyphens with underscores, remove other invalid chars
@@ -600,10 +587,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
 /// </summary>
 internal sealed record MessageTagInfo(
     string TypeFullName,
-    string TypeName,
-    string Namespace,
     string AttributeFullName,
-    string AttributeName,
     string Tag,
     string[]? Properties,
     string? ExtraJson,

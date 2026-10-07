@@ -149,10 +149,10 @@ public sealed class AuditingEventStoreDecorator(
 
     // Build scope dictionary
     var scope = new Dictionary<string, string?>();
-    if (scopeContext?.Scope?.TenantId != null) {
+    if (scopeContext?.Scope.TenantId != null) {
       scope["TenantId"] = scopeContext.Scope.TenantId;
     }
-    if (scopeContext?.Scope?.UserId != null) {
+    if (scopeContext?.Scope.UserId != null) {
       scope["UserId"] = scopeContext.Scope.UserId;
     }
     if (correlationId != null) {

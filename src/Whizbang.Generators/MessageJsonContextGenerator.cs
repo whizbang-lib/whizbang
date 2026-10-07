@@ -590,11 +590,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Check if marked with [WhizbangSerializable] attribute
     bool isSerializable = typeSymbol.GetAttributes()
-        .Any(a => a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_SERIALIZABLE}");
+        .Any(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, $"global::{WHIZBANG_SERIALIZABLE}"));
 
     // Check if marked with [GraphQLName] attribute (implies GraphQL serialization needed)
     bool hasGraphQLName = typeSymbol.GetAttributes()
-        .Any(a => a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{GRAPHQL_NAME_ATTRIBUTE}");
+        .Any(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, $"global::{GRAPHQL_NAME_ATTRIBUTE}"));
 
     // Check if this type is a perspective model (used as TModel in IPerspectiveFor<TModel, ...>)
     // Look for sibling or nested types that implement IPerspectiveFor<ThisType, ...>
@@ -1512,14 +1512,32 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       Assembly assembly,
       ImmutableArray<JsonMessageTypeInfo> allTypes,
       ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
-    if (!polymorphicTypes.IsEmpty) {
+    var hasEvents = allTypes.Any(t => t.IsEvent);
+    var hasCommands = allTypes.Any(t => t.IsCommand);
+
+    // A Whizbang interface that the registry dispatch below covers must not be answered by this
+    // context's own polymorphic factory first: that factory has no quarantine, so one derived type
+    // whose property graph cannot configure would fail every serialize reaching the interface.
+    var dispatchedToRegistry = new HashSet<string>(StringComparer.Ordinal);
+    if (hasEvents || hasCommands) {
+      dispatchedToRegistry.Add(GLOBAL_WHIZBANG_CORE_IMESSAGE);
+    }
+    if (hasEvents) {
+      dispatchedToRegistry.Add(GLOBAL_WHIZBANG_CORE_IEVENT);
+    }
+    if (hasCommands) {
+      dispatchedToRegistry.Add(GLOBAL_WHIZBANG_CORE_ICOMMAND);
+    }
+
+    var ownPolymorphicTypes = polymorphicTypes.Where(p => !dispatchedToRegistry.Contains(p.BaseTypeName)).ToList();
+    if (ownPolymorphicTypes.Count > 0) {
       var polymorphicCheckSnippet = TemplateUtilities.ExtractSnippet(
           assembly,
           TEMPLATE_SNIPPET_FILE,
           "GET_TYPE_INFO_POLYMORPHIC");
 
       sb.AppendLine("  // Polymorphic base types");
-      foreach (var polyType in polymorphicTypes) {
+      foreach (var polyType in ownPolymorphicTypes) {
         var check = polymorphicCheckSnippet
             .Replace("__BASE_TYPE__", polyType.BaseTypeName)
             .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, polyType.UniqueIdentifier);
@@ -1527,9 +1545,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         sb.AppendLine();
       }
     }
-
-    var hasEvents = allTypes.Any(t => t.IsEvent);
-    var hasCommands = allTypes.Any(t => t.IsCommand);
 
     if (hasEvents || hasCommands) {
       _appendInterfaceTypeChecks(sb, assembly, hasEvents, hasCommands);
@@ -2228,8 +2243,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       discoveredPolymorphicTypes[typeNameToProcess] = new PolymorphicTypeInfo(
           BaseTypeName: typeNameToProcess,
           BaseSimpleName: typeSymbol.Name,
-          DerivedTypes: [.. derivedTypeNames],
-          IsInterface: typeSymbol.TypeKind == TypeKind.Interface
+          DerivedTypes: [.. derivedTypeNames]
       );
     }
   }
@@ -2446,23 +2460,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Checks if a type is a collection type that would be handled by _extractElementType.
-  /// Includes Dictionary types whose value types are extracted.
-  /// </summary>
-  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_DictionaryAsDirectProperty_TreatedAsCollectionAsync</tests>
-  private static bool _isCollectionType(string fullyQualifiedTypeName) {
-    return fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.List<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IList<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.ICollection<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IEnumerable<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.Dictionary<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IDictionary<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IReadOnlyDictionary<", StringComparison.Ordinal);
-  }
-
-  /// <summary>
   /// Extracts type name from a direct (non-collection) property.
   /// Returns null if the type is a primitive, framework type, or collection.
   /// </summary>
@@ -2475,13 +2472,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     // Nothing to discover for: primitive and framework types; anything under System.*, which is
-    // either handled natively by STJ or not worth discovering; collection types, whose element type
-    // _extractElementType already pulled out; and array types, likewise. All four answer the same
-    // way, so they share one test instead of four early returns, only the first of which any caller
-    // reaches today.
+    // either handled natively by STJ or not worth discovering, collection types included (their
+    // element type _extractElementType already pulled out); and array types, likewise. All answer
+    // the same way, so they share one test instead of early returns.
     if (_isPrimitiveOrFrameworkType(typeName)
         || typeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)
-        || _isCollectionType(typeName)
         || typeName.EndsWith("[]", StringComparison.Ordinal)) {
       return null;
     }
@@ -2642,7 +2637,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         var elementSimpleName = parts[^1].Replace(PLACEHOLDER_GLOBAL, "");
 
         arrayTypes[arrayTypeName] = new ArrayTypeInfo(
-            ArrayTypeName: arrayTypeName,
             ElementTypeName: elementTypeName,
             ElementSimpleName: elementSimpleName
         );
@@ -3162,7 +3156,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithWhizbangIdProperty_SkipsConverterGenerationAsync</tests>
   private static bool _hasWhizbangIdAttribute(INamedTypeSymbol typeSymbol) {
     return typeSymbol.GetAttributes().Any(a =>
-        a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_ID_ATTRIBUTE}");
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, $"global::{WHIZBANG_ID_ATTRIBUTE}"));
   }
 
   /// <summary>
@@ -3477,8 +3471,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonPolymorphicAbstractType_DiscoversDerivedTypesAsync</tests>
   private static bool _hasJsonPolymorphicAttribute(INamedTypeSymbol typeSymbol) {
     return typeSymbol.GetAttributes().Any(a =>
-        a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) ==
-        "global::System.Text.Json.Serialization.JsonPolymorphicAttribute");
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, "global::System.Text.Json.Serialization.JsonPolymorphicAttribute"));
   }
 
   /// <summary>
@@ -3902,8 +3895,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       registry.Add(new PolymorphicTypeInfo(
           BaseTypeName: baseTypeName,
           BaseSimpleName: simpleName,
-          DerivedTypes: derivedTypes,
-          IsInterface: isInterface
+          DerivedTypes: derivedTypes
       ));
     }
 
@@ -3959,8 +3951,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Checks whether a type is concrete (non-abstract) and public.
   /// </summary>
   private static bool _isConcretePublicType(string typeName, Compilation compilation) {
-    var symbol = _tryGetTypeSymbolByName(typeName, compilation);
-    return symbol?.IsAbstract == false && symbol.DeclaredAccessibility == Accessibility.Public;
+    // A derived name that is not synthesized came from a message whose symbol this same lookup
+    // resolved when the inheritance was collected, so it resolves here too.
+    var symbol = _tryGetTypeSymbolByName(typeName, compilation)!;
+    return !symbol.IsAbstract && symbol.DeclaredAccessibility == Accessibility.Public;
   }
 
   /// <summary>
@@ -3980,7 +3974,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static INamedTypeSymbol? _tryGetTypeSymbolByName(string fullyQualifiedName, Compilation compilation) {
     // Remove global:: prefix for GetTypeByMetadataName
     var metadataName = fullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
-    return compilation.GetTypeByMetadataName(metadataName);
+    var symbol = compilation.GetTypeByMetadataName(metadataName);
+    // A nested type's metadata name joins it to its container with '+' where the display name has '.' (#1176): try
+    // each dot from the right as a nesting boundary until the type resolves.
+    for (var dot = metadataName.LastIndexOf('.'); symbol is null && dot > 0; dot = metadataName.LastIndexOf('.', dot - 1)) {
+      metadataName = metadataName.Remove(dot, 1).Insert(dot, "+");
+      symbol = compilation.GetTypeByMetadataName(metadataName);
+    }
+    return symbol;
   }
 
   /// <summary>

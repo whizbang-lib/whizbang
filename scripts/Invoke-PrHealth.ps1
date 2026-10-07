@@ -11,7 +11,9 @@
          unless -Snapshot.
       2. The SonarCloud gate and every open finding of any type on new code (Get-SonarPrFindings.ps1).
       3. The uncovered new lines and uncovered new hand-written branches (Find-UncoveredNewLines.ps1),
-         computed from the CI run's own coverage artifacts for the PR's head commit.
+         computed from the CI run's own coverage artifacts for the PR's head commit, and the same
+         whole-library line the PR quality-gate comment shows, gated at 100%. Reading the binary
+         coverage reports needs dotnet-coverage on PATH (the script names the install command).
 
     The report lands in .whizbang/cache/pr-health/pr-<n>-<timestamp>.md (the repository's ignored
     cache) with the raw JSON and text files beside it. The exit code is 0 when the PR is clean and 1
@@ -77,10 +79,17 @@ $sonar = Get-Content "$prefix-sonar.json" -Raw | ConvertFrom-Json
 $run = gh run list @repoArgs --commit $pr.headRefOid --workflow ci.yml --limit 1 --json databaseId --jq '.[0].databaseId'
 $uncoveredCount = $null
 $uncoveredBranchCount = $null
+$wholeLibrary = $null
+$wholeUntested = $null
 $coverageNote = 'no CI run found for the head commit yet'
 if ($run) {
   $covDir = Join-Path $ReportDir "coverage-$run"
-  & pwsh (Join-Path $scripts 'Find-UncoveredNewLines.ps1') -CoverageRoot $covDir -BaseRef $BaseRef -DownloadFromRun $run -OutFile "$prefix-uncovered.txt" -BranchOutFile "$prefix-uncovered-branches.txt" 2>&1 | Out-Host
+  & pwsh (Join-Path $scripts 'Find-UncoveredNewLines.ps1') -CoverageRoot $covDir -BaseRef $BaseRef -DownloadFromRun $run -OutFile "$prefix-uncovered.txt" -BranchOutFile "$prefix-uncovered-branches.txt" -SummaryOutFile "$prefix-whole-library.json" 2>&1 | Out-Host
+  if (Test-Path "$prefix-whole-library.json") {
+    $wholeSummary = Get-Content "$prefix-whole-library.json" -Raw | ConvertFrom-Json
+    $wholeLibrary = $wholeSummary.Text
+    $wholeUntested = $wholeSummary.Untested
+  }
   if (Test-Path "$prefix-uncovered.txt") {
     $uncoveredCount = @(Get-Content "$prefix-uncovered.txt" | Where-Object { $_ }).Count
     $uncoveredBranchCount = @(Get-Content "$prefix-uncovered-branches.txt" -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
@@ -115,7 +124,14 @@ if ($null -eq $uncoveredCount) {
   foreach ($u in (Get-Content "$prefix-uncovered-branches.txt" -ErrorAction SilentlyContinue | Where-Object { $_ })) { $lines.Add("- ``$u``") }
 }
 $lines.Add("")
-$clean = ($checks.fail -eq 0) -and ($checks.pending -eq 0) -and ($sonar.findings.Count -eq 0) -and ($sonar.gate -eq 'OK') -and ($uncoveredCount -eq 0) -and ($uncoveredBranchCount -eq 0)
+# The same line the PR quality-gate comment shows. Gated: any untested hand-written outcome anywhere in
+# the library fails the verdict, as it fails the quality job.
+$lines.Add("## $(if ($wholeLibrary) { $wholeLibrary } else { "Whole library: $coverageNote" })")
+if ($wholeUntested -gt 0) {
+  $lines.Add("- FAIL whole-library gate: $wholeUntested untested hand-written outcome(s); the list is the CI run's library-gap.txt (pr-quality-gate artifact)")
+}
+$lines.Add("")
+$clean = ($checks.fail -eq 0) -and ($checks.pending -eq 0) -and ($sonar.findings.Count -eq 0) -and ($sonar.gate -eq 'OK') -and ($uncoveredCount -eq 0) -and ($uncoveredBranchCount -eq 0) -and ($wholeUntested -eq 0)
 $lines.Add($(if ($clean) { "## Verdict: clean. Ready to merge." } else { "## Verdict: not yet. Fix everything above, push, and run this again." }))
 $report = "$prefix.md"
 [System.IO.File]::WriteAllLines($report, $lines.ToArray())

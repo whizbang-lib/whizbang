@@ -81,7 +81,7 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
     // for both the interface and the concrete class. A target method with no containing type has no
     // name to match, so that guard shares this exit instead of standing on its own line.
     var containingType = invocation.TargetMethod.ContainingType;
-    var typeName = containingType is null ? null : TypeNameUtilities.Display(containingType);
+    var typeName = TypeNameUtilities.DisplayOrNull(containingType);
     if (typeName is null
         || (!typeName.Contains("PerspectiveSyncAwaiter") && !typeName.Contains("IPerspectiveSyncAwaiter"))) {
       return;
@@ -158,7 +158,7 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
 
         if (stageType is INamedTypeSymbol enumType) {
           var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-              .FirstOrDefault(f => f.ConstantValue is int val && val == stageValue);
+              .FirstOrDefault(f => Equals(f.ConstantValue, stageValue));
 
           if (enumMember is not null) {
             fireAtStages.Add(enumMember.Name);

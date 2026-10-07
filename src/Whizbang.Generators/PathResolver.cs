@@ -1,50 +1,51 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System;
 using System.IO;
 
 namespace Whizbang.Generators;
 
 /// <summary>
-/// Resolves paths to documentation repository with sibling discovery and environment variable overrides.
+/// Resolves the documentation repository a generator reads its docs and tests maps from, from the generator's own
+/// inputs only (#1180): the <c>WhizbangDocsPath</c> MSBuild property, else a sibling of the git root above the project.
 /// </summary>
+/// <remarks>
+/// It used to read the <c>WHIZBANG_DOCS_PATH</c> environment variable and walk up from the process's current directory
+/// while generating, so its output varied by machine and a test that set the variable changed what generator tests
+/// running beside it produced. The package's build props still default <c>WhizbangDocsPath</c> from that variable, so
+/// setting it keeps working, but as an MSBuild input rather than process state.
+/// </remarks>
 /// <tests>tests/Whizbang.Generators.Tests/PathResolverTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageRegistryDocsPathTests.cs</tests>
 public static class PathResolver {
+  /// <summary>The MSBuild property naming the documentation checkout, as the generator receives it.</summary>
+  public const string DOCS_PATH_PROPERTY = "build_property.WhizbangDocsPath";
+
+  /// <summary>The MSBuild property naming the project's directory, where sibling discovery starts.</summary>
+  public const string PROJECT_DIRECTORY_PROPERTY = "build_property.ProjectDir";
+
   /// <summary>
-  /// Finds the documentation repository path.
-  /// Priority: 1) WHIZBANG_DOCS_PATH env var, 2) Sibling directory discovery
+  /// Finds the documentation repository path: <paramref name="configuredPath"/> when it exists, else a
+  /// <c>whizbang-lib.github.io</c> sibling of the git root above <paramref name="projectDirectory"/>.
   /// </summary>
-  /// <param name="searchStartDirectory">
-  /// Where sibling discovery starts walking up from. Null (the default, and what every production
-  /// call site passes) means the process's current directory.
-  /// </param>
+  /// <param name="configuredPath">The <c>WhizbangDocsPath</c> property, if set.</param>
+  /// <param name="projectDirectory">The project's directory, where sibling discovery starts; none means no discovery.</param>
   /// <returns>Path to documentation repository, or null if not found</returns>
-  /// <remarks>
-  /// The start directory is a parameter rather than always the process's current directory so the
-  /// "not inside a git working tree" outcome — a generator running from a NuGet package in a build
-  /// directory with no repository above it — can be asserted without mutating process-wide state
-  /// that every other test in the run shares.
-  /// </remarks>
-  public static string? FindDocsRepositoryPath(string? searchStartDirectory = null) {
-    // Priority 1: Environment variable override
-    var envPath = Environment.GetEnvironmentVariable("WHIZBANG_DOCS_PATH");
-    if (!string.IsNullOrEmpty(envPath) && Directory.Exists(envPath)) {
-      return envPath;
+  public static string? FindDocsRepositoryPath(string? configuredPath, string? projectDirectory) {
+    if (!string.IsNullOrEmpty(configuredPath) && Directory.Exists(configuredPath)) {
+      return configuredPath;
     }
 
-    // Priority 2: Sibling directory discovery
-    var libraryRoot = _findGitRoot(searchStartDirectory ?? Directory.GetCurrentDirectory());
+    var libraryRoot = string.IsNullOrEmpty(projectDirectory) ? null : _findGitRoot(projectDirectory!);
     if (libraryRoot == null) {
       return null;
     }
 
-    // Path.GetDirectoryName is null only when the library root IS the filesystem root, which would
-    // take a .git directory at "/". The guard stays, folded into the existence test so it is
-    // evaluated on every call: no parent means no sibling path, which means no documentation repo.
-    var parentDir = Path.GetDirectoryName(libraryRoot);
-    var docsPath = parentDir == null ? null : Path.Combine(parentDir, "whizbang-lib.github.io");
-    return docsPath != null && Directory.Exists(docsPath) ? docsPath : null;
+    // The sibling is resolved through "..", which the filesystem answers even at its root (the root is
+    // its own parent), so a library root of "/" looks for "/whizbang-lib.github.io" rather than needing a
+    // case of its own; the existence test below decides either way.
+    var docsPath = Path.GetFullPath(Path.Combine(libraryRoot, "..", "whizbang-lib.github.io"));
+    return Directory.Exists(docsPath) ? docsPath : null;
   }
 
   /// <summary>

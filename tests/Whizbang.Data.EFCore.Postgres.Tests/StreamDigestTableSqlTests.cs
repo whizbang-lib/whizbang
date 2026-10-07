@@ -21,7 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// invariant: the table always matches the full recompute (ComputeStreamDigestsAsync's query).
 /// </summary>
 /// <docs>proposals/stream-integrity</docs>
-[Category("Shard1")]
+[Category("Shard2")]
 public class StreamDigestTableSqlTests : EFCoreTestBase {
   private const string ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 

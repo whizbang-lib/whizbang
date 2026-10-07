@@ -12,3 +12,5 @@ overrides:
   baseline-browser-mapping: '>=2.11.0'
   piscina: '>=5.3.2'
   http-cache-semantics: '>=4.2.1'
+  source-map-js: '>=1.2.2'
+  '@modelcontextprotocol/sdk': '>=1.31.0'

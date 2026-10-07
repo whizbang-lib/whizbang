@@ -141,6 +141,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
                 isEnabledByDefault: true);
             ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, validPerspectives.Length));
 
+            _reportIgnoredConverters(ctx, validPerspectives);
+
             // Report each discovered perspective
             foreach (var perspective in validPerspectives) {
               var modelDescriptor = new DiagnosticDescriptor(
@@ -494,6 +496,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Extract physical fields from model type
     var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);
+    var declaredConverters = _extractDeclaredConverters(modelType as INamedTypeSymbol);
     var (storedForms, storedFormProblems) = StoredFormDiscovery.From(modelType as INamedTypeSymbol);
 
     // Check for [WhizbangPerspective] attribute (optional)
@@ -515,7 +518,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelClrTypeName: TypeNameUtilities.BuildClrTypeName(modelType),
         DbSetPropertyName: dbSetPropertyName,
         TableBaseName: tableBaseName,
-        NamespaceHint: TypeNameUtilities.Display(symbol.ContainingNamespace),
         Keys: keys,
         PhysicalFields: physicalFields,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
@@ -532,7 +534,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         // Issue #1002: a Split class with an init-only promoted field is hydrated through a copy.
         ModelCopy: !modelType.IsRecord && physicalFields.Any(f => f.IsSplit && f.IsInitOnly)
           ? ModelCopy.For((INamedTypeSymbol)modelType, context.SemanticModel.Compilation.Assembly)
-          : null
+          : null,
+        DeclaredConverters: declaredConverters
     );
   }
 
@@ -626,7 +629,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelClrTypeName: candidate.ModelClrTypeName,
         DbSetPropertyName: candidate.DbSetPropertyName,
         TableName: tableName,
-        NamespaceHint: candidate.NamespaceHint,
         Keys: candidate.Keys,
         PhysicalFields: candidate.PhysicalFields,
         JsonIndexes: candidate.JsonIndexes,
@@ -640,7 +642,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         DocumentProperties: candidate.DocumentProperties,
         TableStorage: candidate.TableStorage,
         PerspectiveClrTypeName: candidate.PerspectiveClrTypeName,
-        ModelCopy: candidate.ModelCopy
+        ModelCopy: candidate.ModelCopy,
+        DeclaredConverters: candidate.DeclaredConverters
     );
   }
 
@@ -687,6 +690,75 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Warns once per declared JSON converter, because none is consulted for a stored document.
+  /// </summary>
+  /// <remarks>
+  /// Saying nothing about it is how one sat in a consumer's model, documented as the fix, having never run.
+  /// </remarks>
+  private static void _reportIgnoredConverters(SourceProductionContext ctx, ImmutableArray<PerspectiveModelInfo> perspectives) {
+    foreach (var perspective in perspectives.Where(p => !p.DeclaredConverters.IsDefault)) {
+      foreach (var declared in perspective.DeclaredConverters) {
+        ctx.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.PerspectiveModelJsonConverterIgnored,
+            Location.None,
+            declared.PropertyName,
+            declared.ValueTypeName,
+            declared.ConverterTypeName));
+      }
+    }
+  }
+
+  /// <summary>
+  /// Every converter the model declares with <c>[JsonConverter(typeof(...))]</c>, including on a nested
+  /// object's values, so the walk reaches what Entity Framework's own walk of the model will.
+  /// </summary>
+  /// <remarks>
+  /// Discovered here because this is where the symbol exists. The attribute is never read at run time:
+  /// each one found becomes a closed generic call in the generated context, which is what keeps the
+  /// output ahead-of-time compatible.
+  /// </remarks>
+  private static ImmutableArray<DeclaredConverterInfo> _extractDeclaredConverters(INamedTypeSymbol? modelType) {
+    if (modelType is null) {
+      return [];
+    }
+
+    var found = new System.Collections.Generic.List<DeclaredConverterInfo>();
+    var seen = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+    _collectDeclaredConverters(modelType, found, seen, depth: 0);
+    return [.. found];
+  }
+
+  private static void _collectDeclaredConverters(
+      ITypeSymbol type,
+      System.Collections.Generic.List<DeclaredConverterInfo> found,
+      System.Collections.Generic.HashSet<string> seen,
+      int depth) {
+    // A model is a tree of plain objects; the bound is only so a cyclic graph cannot spin here.
+    if (depth > 8 || !seen.Add(TypeNameUtilities.FullyQualified(type))) {
+      return;
+    }
+
+    foreach (var property in _enumerateInstanceProperties(type)) {
+      var attribute = property.GetAttributes().FirstOrDefault(a =>
+        TypeNameUtilities.IsNamed(a.AttributeClass, "System.Text.Json.Serialization.JsonConverterAttribute"));
+
+      if (attribute?.ConstructorArguments.Length > 0
+          && attribute.ConstructorArguments[0].Value is INamedTypeSymbol converter) {
+        found.Add(new DeclaredConverterInfo(
+          property.Name,
+          TypeNameUtilities.FullyQualified(type),
+          TypeNameUtilities.FullyQualified(converter)));
+        continue;
+      }
+
+      // A nested object's values are inside the same document, so they are reached too.
+      if (property.Type is INamedTypeSymbol { SpecialType: SpecialType.None } nested && !nested.IsGenericType) {
+        _collectDeclaredConverters(nested, found, seen, depth + 1);
+      }
+    }
+  }
+
+  /// <summary>
   /// Extracts physical field information from a model type.
   /// Looks for [PhysicalField] and [VectorField] attributes on properties.
   /// </summary>
@@ -701,7 +773,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // FieldStorageMode.Split is 2.
     var isSplit = modelType.GetAttributes().Any(a =>
         TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PerspectiveStorageAttribute") &&
-        a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is 2);
+        a.ConstructorArguments.Length > 0 && (int)a.ConstructorArguments[0].Value! == 2);
     var properties = modelType.GetMembers()
         .OfType<IPropertySymbol>()
         .Where(p => !p.IsStatic);
@@ -1310,6 +1382,26 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         .Replace(PLACEHOLDER_GLOBAL, "")
         .TrimEnd('?'); // Remove nullable suffix
 
+    return PostgresColumnTypeFor(typeName);
+  }
+
+  /// <summary>
+  /// The PostgreSQL column type the schema-extension DDL gives a physical field whose CLR type renders as
+  /// <paramref name="typeName"/> (no <c>global::</c> prefix, no nullable suffix). The match is
+  /// exact and ordinal: a name that is not one of the mapped types, however close, is
+  /// <c>TEXT</c>.
+  /// </summary>
+  /// <remarks>
+  /// Public rather than private so a test can pin the whole table, including the names the
+  /// generator rarely or never renders (most CLR spellings of the keyword types) and the near misses that
+  /// must fall through to the default. Not internal for the reason given on
+  /// <see cref="TryLoadRegistrationSnippets"/>: InternalsVisibleTo exposes this assembly's
+  /// polyfills to the test project. This assembly ships as an analyzer, so its public
+  /// surface is not a consumer API.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/GeneratorColumnTypeTableTests.cs:RegistrationColumnType_MapsEveryKnownNameAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/GeneratorColumnTypeTableTests.cs:RegistrationColumnType_NearMissNames_FallBackToDefaultAsync</tests>
+  public static string PostgresColumnTypeFor(string typeName) {
     return typeName switch {
       "System.Guid" => "UUID",
       "System.String" or "string" => "TEXT",
@@ -2604,37 +2696,33 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // Or from "...Templates.Migrations.001_Name.sql" -> "001_Name.sql"
       var fileName = resourceName[resourcePrefix.Length..];
 
-      // Read content from embedded resource. The name came from GetManifestResourceNames, so the
-      // stream is there; guarding it keeps a name that stops resolving between the two calls from
-      // faulting the generator, and contributes no entry when it fires. Written as a block the
-      // resource enters rather than as a skip it leaves by, so the test runs on every resource.
-      using var stream = assembly.GetManifestResourceStream(resourceName);
-      if (stream is not null) {
-        using var reader = new System.IO.StreamReader(stream);
-        var content = reader.ReadToEnd();
+      // Non-null by contract, as in the bootstrap pass: the name came from GetManifestResourceNames
+      // on this same assembly, so a guard here would be a branch no input can reach.
+      using var stream = assembly.GetManifestResourceStream(resourceName)!;
+      using var reader = new System.IO.StreamReader(stream);
+      var content = reader.ReadToEnd();
 
-        // Escape the SQL content for C# verbatim string literal (@"...")
-        // In verbatim strings, only quotes need escaping (by doubling them)
-        // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
-        // IMPORTANT: Replace __SCHEMA__ with __MIGRATION_SCHEMA__ to prevent build-time replacement.
-        //            The runtime _transformMigrationSql function uses the schema parameter, not __SCHEMA__.
-        var escapedContent = content
-            .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")  // Preserve for runtime transformation
-            .Replace("\"", "\"\"")  // Escape quotes for verbatim string
-            .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
-            .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
+      // Escape the SQL content for C# verbatim string literal (@"...")
+      // In verbatim strings, only quotes need escaping (by doubling them)
+      // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
+      // IMPORTANT: Replace __SCHEMA__ with __MIGRATION_SCHEMA__ to prevent build-time replacement.
+      //            The runtime _transformMigrationSql function uses the schema parameter, not __SCHEMA__.
+      var escapedContent = content
+          .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")  // Preserve for runtime transformation
+          .Replace("\"", "\"\"")  // Escape quotes for verbatim string
+          .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
+          .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
 
-        sb.Append($"      (\"{fileName}\", @\"{escapedContent}\")");
+      sb.Append($"      (\"{fileName}\", @\"{escapedContent}\")");
 
-        if (i < migrationResources.Length - 1) {
-          sb.AppendLine(",");
-        }
+      if (i < migrationResources.Length - 1) {
+        sb.AppendLine(",");
       }
     }
 
-    // An empty resource set produces no entries, and the placeholder comment stands in for them so
-    // the generated array initializer still reads as deliberate rather than as a truncation.
-    return migrationResources.Length == 0 ? "// No migration files found in embedded resources" : sb.ToString();
+    // The migrations are this generator's own embedded resources, fixed when it is built, and the
+    // generator tests assert they are emitted; the set is never empty.
+    return sb.ToString();
   }
 
   /// <summary>
@@ -2877,8 +2965,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return false;
     }
 
-    var typeName = field.TypeName.Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
-    return typeName is "System.String" or "string";
+    // The field's type name is rendered fully qualified, which writes a special type as its keyword.
+    return field.TypeName.TrimEnd('?') == "string";
   }
 
   /// <summary>
@@ -3776,7 +3864,6 @@ internal sealed record DbContextInfo(
 /// <c>TypeNameFormatter.FormatClrTypeName</c></param>
 /// <param name="DbSetPropertyName">Property name for DbSet (e.g., "ActiveJobTemplateModels" for nested Model classes)</param>
 /// <param name="TableName">Snake_case table name</param>
-/// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective. Empty = default context only</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model (for DDL generation)</param>
 /// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
@@ -3797,7 +3884,6 @@ internal sealed record PerspectiveModelInfo(
     string ModelClrTypeName,
     string DbSetPropertyName,
     string TableName,
-    string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
@@ -3811,7 +3897,8 @@ internal sealed record PerspectiveModelInfo(
     ImmutableArray<string> DocumentProperties,
     TableStorageInfo? TableStorage = null,
     string PerspectiveClrTypeName = "",
-    ModelCopyInfo? ModelCopy = null);
+    ModelCopyInfo? ModelCopy = null,
+    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -3822,7 +3909,6 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="ModelClrTypeName">The model's CLR type name (<c>Outer+Model</c> for nested types), the registry key</param>
 /// <param name="DbSetPropertyName">Property name for DbSet</param>
 /// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
-/// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
@@ -3844,7 +3930,6 @@ internal sealed record PerspectiveModelCandidate(
     string ModelClrTypeName,
     string DbSetPropertyName,
     string TableBaseName,
-    string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
@@ -3858,7 +3943,8 @@ internal sealed record PerspectiveModelCandidate(
     ImmutableArray<string> DocumentProperties,
     TableStorageInfo? TableStorage = null,
     string PerspectiveClrTypeName = "",
-    ModelCopyInfo? ModelCopy = null);
+    ModelCopyInfo? ModelCopy = null,
+    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default);
 
 /// <summary>
 /// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.

@@ -67,4 +67,25 @@ public class WorkCoordinatorGateHolderDiagnosticsTests {
       .Because("a disabled gate hands out no slots, so there is nothing to attribute");
     pass.Dispose();
   }
+
+  [Test]
+  public async Task HoldersSummary_NoHolders_SaysNoneRatherThanNothingAsync() {
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 2, logger: NullLogger<WorkCoordinatorGate>.Instance, acquireTimeoutMilliseconds: 1000);
+
+    await Assert.That(gate.HoldersSummary()).IsEqualTo("(none)")
+      .Because("a deadline warning with an empty holder list must still read as a sentence");
+  }
+
+  [Test]
+  public async Task HoldersSummary_WithHolders_GroupsThemByCallerAsync() {
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, logger: NullLogger<WorkCoordinatorGate>.Instance, acquireTimeoutMilliseconds: 1000);
+    var a = await gate.AcquireAsync(CancellationToken.None, caller: "CommitHandlerBatchAsync");
+    var b = await gate.AcquireAsync(CancellationToken.None, caller: "CommitHandlerBatchAsync");
+    try {
+      await Assert.That(gate.HoldersSummary()).StartsWith("CommitHandlerBatchAsync x2 (oldest ");
+    } finally {
+      a.Dispose();
+      b.Dispose();
+    }
+  }
 }

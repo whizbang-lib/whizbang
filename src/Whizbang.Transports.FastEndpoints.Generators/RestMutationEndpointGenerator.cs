@@ -60,8 +60,7 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
     // Check for [CommandEndpoint<TCommand, TResult>] attribute
     if (context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) is not INamedTypeSymbol symbol
         || symbol.GetAttributes()
-             .FirstOrDefault(a => a.AttributeClass is { } attributeClass
-                 && TypeNameUtilities.Display(attributeClass).StartsWith(COMMAND_ENDPOINT_ATTRIBUTE_PREFIX, StringComparison.Ordinal))
+             .FirstOrDefault(a => TypeNameUtilities.DisplayOrEmpty(a.AttributeClass).StartsWith(COMMAND_ENDPOINT_ATTRIBUTE_PREFIX, StringComparison.Ordinal))
            is not { AttributeClass: not null } commandEndpointAttr) {
       return null;
     }
@@ -93,7 +92,6 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
         CommandTypeName: TypeNameUtilities.FullyQualified(commandType),
         CommandTypeNameShort: commandType.Name,
         ResultTypeName: TypeNameUtilities.FullyQualified(resultType),
-        ResultTypeNameShort: resultType.Name,
         RestRoute: restRoute!,
         RequestTypeName: requestTypeName,
         Namespace: TypeNameUtilities.Display(symbol.ContainingNamespace),

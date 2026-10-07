@@ -111,8 +111,7 @@ internal static class EphemeralResolver {
 
   private static AttributeData? _on(INamedTypeSymbol type) =>
     type.GetAttributes().FirstOrDefault(a =>
-      a.AttributeClass is not null &&
-      TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == EPHEMERAL_ATTR);
+      TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, EPHEMERAL_ATTR));
 
   private static int _intArgName(AttributeData attr, string propertyName, int defaultValue) {
     foreach (var na in attr.NamedArguments) {
@@ -130,7 +129,7 @@ internal static class EphemeralResolver {
           && na.Value.Value is not null) {
         var member = enumType.GetMembers()
           .OfType<IFieldSymbol>()
-          .FirstOrDefault(f => f.HasConstantValue && Equals(f.ConstantValue, na.Value.Value));
+          .FirstOrDefault(f => Equals(f.ConstantValue, na.Value.Value));
         if (member is not null) {
           return member.Name;
         }

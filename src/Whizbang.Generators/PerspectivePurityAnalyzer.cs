@@ -139,23 +139,24 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
   private static void _analyzeMethod(SyntaxNodeAnalysisContext context) {
     var methodDeclaration = (MethodDeclarationSyntax)context.Node;
-    var methodSymbol = context.SemanticModel.GetDeclaredSymbol(methodDeclaration, context.CancellationToken);
+    // A method declaration in its own compilation always has its symbol.
+    var methodSymbol = context.SemanticModel.GetDeclaredSymbol(methodDeclaration, context.CancellationToken)!;
 
     // Collective-apply replay purity (WHIZ106): a [CollectiveApplyFor] spec is folded per-row against a
     // single stream in isolation during replay/rebuild, so it must not query sibling perspectives at apply
     // time. This is independent of the Apply-name / perspective-interface gating below.
-    var isCollectiveApply = methodSymbol is not null && _isCollectiveApply(methodSymbol);
+    var isCollectiveApply = _isCollectiveApply(methodSymbol);
 
     // The determinism checks (async/await, DB/HTTP I/O, DateTime.UtcNow) apply to BOTH perspective Apply
     // methods and collective applies — both are folded during replay and must be deterministic.
-    var isPerspectiveApply = methodSymbol is { Name: "Apply" }
+    var isPerspectiveApply = methodSymbol.Name == "Apply"
         && _implementsPerspectiveInterface(methodSymbol.ContainingType);
 
     // A declaration Roslyn bound no symbol for is neither of those, so the bind guard shares this
     // exit instead of standing on a line of its own that no input reaches. Nothing below this point
     // runs for a null symbol, and the collective-apply analysis moves under the same gate — it only
     // ever ran when isCollectiveApply was true, which cannot be true for a null symbol.
-    if (methodSymbol is null || (!isPerspectiveApply && !isCollectiveApply)) {
+    if (!isPerspectiveApply && !isCollectiveApply) {
       return;
     }
 
@@ -284,11 +285,9 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
       // Check if parameter type (or its interface) has [PureService] attribute
       if (!_hasPureServiceAttribute(parameterType)) {
-        // Find the parameter location in the constructor
-        var parameterSyntax = constructorDeclaration.ParameterList.Parameters
-            .FirstOrDefault(p => p.Identifier.Text == parameter.Name);
-
-        var location = parameterSyntax?.GetLocation() ?? constructorDeclaration.Identifier.GetLocation();
+        // The parameter's own syntax, by position: matched by name, a parameter written @event never matched the
+        // symbol's name, event, and the diagnostic fell back to the constructor (#1178).
+        var location = constructorDeclaration.ParameterList.Parameters[parameter.Ordinal].GetLocation();
 
         var diagnostic = Diagnostic.Create(
             NonPureServiceInjected,
@@ -363,7 +362,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     foreach (var invocation in invocations) {
       var symbolInfo = semanticModel.GetSymbolInfo(invocation);
       if (symbolInfo.Symbol is IMethodSymbol methodSymbol) {
-        var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : "";
+        var containingType = TypeNameUtilities.DisplayOrEmpty(methodSymbol.ContainingType);
         var methodName = methodSymbol.Name;
 
         // Check for common database operation patterns
@@ -396,7 +395,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     foreach (var invocation in invocations) {
       var symbolInfo = semanticModel.GetSymbolInfo(invocation);
       if (symbolInfo.Symbol is IMethodSymbol methodSymbol) {
-        var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : "";
+        var containingType = TypeNameUtilities.DisplayOrEmpty(methodSymbol.ContainingType);
         var methodName = methodSymbol.Name;
 
         // Check for HTTP operation patterns

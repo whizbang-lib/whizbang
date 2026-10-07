@@ -244,6 +244,8 @@ public class AzureServiceBusTransportPublishPathTests {
     await Assert.That(results.All(r => !r.Success)).IsTrue();
     await Assert.That(results[0].Error).Contains("ServiceBusException");
     await Assert.That(results[0].Error).Contains("busy");
+    await Assert.That(results.All(r => r.Reason == MessageFailureReason.Throttled)).IsTrue()
+      .Because("a ServiceBusy send says so on every item, so the outbox retries the batch (#1167)");
   }
 
   /// <summary>
@@ -314,6 +316,8 @@ public class AzureServiceBusTransportPublishPathTests {
     await Assert.That(goodResult.Success).IsTrue();
     await Assert.That(badResult.Success).IsFalse();
     await Assert.That(badResult.Error).IsNotNull();
+    await Assert.That(badResult.Reason).IsEqualTo(MessageFailureReason.Unknown)
+      .Because("the transport classifies the item's own exception, a serialization failure and not a throttle");
     await Assert.That(client.LastSender!.SentBatchCounts).Count().IsEqualTo(1)
       .Because("the surviving item is still sent in its batch");
   }

@@ -172,7 +172,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // closing event — the A1 close guard refuses a discard-close of any stream it consumes. Resolved at compile
     // time; the generator registers the perspective's name so the runtime guard can key off it.
     var isFullHistory = classSymbol.GetAttributes().Any(
-        static a => a.AttributeClass?.Name is "FullHistoryAttribute" or "FullHistory");
+        static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "FullHistoryAttribute" or "FullHistory");
 
     // Find StreamId property on model
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
@@ -180,6 +180,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       // Return warning instead of silently skipping (WHIZ033)
       return _missingStreamIdWarning(classDeclaration, classSymbol, modelType);
     }
+
+    // Only a named type declares properties (an array, a type parameter or dynamic has none of its own), so a model
+    // with a [StreamId] property is always one. Everything below reads the model's members and attributes, and takes
+    // it as the named type that guarantee makes it rather than re-testing a shape it cannot have.
+    var namedModel = (INamedTypeSymbol)modelType;
 
     // Build the CreateEmptyModel object initializer at generation time so the
     // runner constructs the model directly (no Activator, no reflection).
@@ -206,21 +211,21 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
 
     // Discover physical fields (including vector fields) on model properties
-    var physicalFields = _discoverPhysicalFields(modelType);
+    var physicalFields = _discoverPhysicalFields(namedModel);
 
     // Discover what each member reads as when the document has no key for it (#1044)
-    var memberDefaults = _discoverMemberDefaults(modelType);
+    var memberDefaults = _discoverMemberDefaults(namedModel);
 
     // Extract storage mode from [PerspectiveStorage] attribute on model type
-    var storageMode = _extractStorageMode(modelType);
+    var storageMode = _extractStorageMode(namedModel);
 
     // Check if model is a record type (supports 'with {}' expressions for immutable copies)
-    var isModelRecord = modelType is INamedTypeSymbol namedModel && namedModel.IsRecord;
+    var isModelRecord = namedModel.IsRecord;
 
     // Issue #1002: a Split class with an init-only promoted field is stripped and loaded through a copy, because a
     // class can set an init-only property only while an instance is being created.
     var modelCopy = storageMode == 2 && !isModelRecord && physicalFields.Any(f => f.IsInitOnly)
-        ? ModelCopy.For((INamedTypeSymbol)modelType, semanticModel.Compilation.Assembly)
+        ? ModelCopy.For(namedModel, semanticModel.Compilation.Assembly)
         : null;
 
     // Check if perspective implements IPerspectiveScopeFor<TModel> for IScopeEvent handling
@@ -239,7 +244,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InterfaceTypeArguments: typeArguments,
             EventTypes: [.. eventTypes],
             MessageTypeNames: messageTypeNames,
-            StreamIdPropertyName: streamKeyPropertyName,
             EmptyModelInitializer: emptyModelInitializer,
             EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
@@ -308,7 +312,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// </summary>
   private static int _resolveExplicitRowTtlSeconds(INamedTypeSymbol classSymbol) {
     var rowTtlAttribute = classSymbol.GetAttributes().FirstOrDefault(
-        static a => a.AttributeClass?.Name is "RowTtlAttribute" or "RowTtl");
+        static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "RowTtlAttribute" or "RowTtl");
     if (rowTtlAttribute is null) {
       return -1;
     }
@@ -336,7 +340,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// </summary>
   private static (int PerScope, string? ScopeKey) _resolveRowCap(INamedTypeSymbol classSymbol) {
     var rowCapAttribute = classSymbol.GetAttributes().FirstOrDefault(
-        static a => a.AttributeClass?.Name is "RowCapAttribute" or "RowCap");
+        static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "RowCapAttribute" or "RowCap");
     if (rowCapAttribute is null) {
       return (-1, null);
     }
@@ -365,7 +369,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string? _buildStreamGroupSpec(INamedTypeSymbol classSymbol) {
     var streamGroupParts = new List<string>();
     foreach (var groupAttribute in classSymbol.GetAttributes().Where(
-        static a => a.AttributeClass?.Name is "StreamGroupAttribute" or "StreamGroup")) {
+        static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "StreamGroupAttribute" or "StreamGroup")) {
       var encoded = _encodeStreamGroupMembership(groupAttribute);
       if (encoded is not null) {
         streamGroupParts.Add(encoded);
@@ -408,7 +412,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static int _extractInheritScopeOnCreate(ITypeSymbol modelType) {
     const int defaultAll = 63;
     foreach (var attr in modelType.GetAttributes()) {
-      var name = attr.AttributeClass?.Name;
+      var name = TypeNameUtilities.SimpleNameOrNull(attr.AttributeClass);
       if (name != "InheritScopeAttribute" && name != "InheritScope") {
         continue;
       }
@@ -1382,12 +1386,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Extracts the FieldStorageMode from the [PerspectiveStorage] attribute on the model type.
   /// Returns 0 (JsonOnly) if the attribute is not present.
   /// </summary>
-  /// <remarks>A model that is not a named type — an array satisfies the interface's <c>class</c>
-  /// constraint — carries no attributes, so the loop never runs and the answer is the same default.
-  /// </remarks>
-  private static int _extractStorageMode(ITypeSymbol modelType) {
-    foreach (var attribute in (modelType as INamedTypeSymbol)?.GetAttributes() ?? []) {
-      if (attribute.AttributeClass?.Name == "PerspectiveStorageAttribute" &&
+  private static int _extractStorageMode(INamedTypeSymbol modelType) {
+    foreach (var attribute in modelType.GetAttributes()) {
+      if (TypeNameUtilities.SimpleNameOrNull(attribute.AttributeClass) == "PerspectiveStorageAttribute" &&
           attribute.ConstructorArguments.Length > 0 &&
           attribute.ConstructorArguments[0].Value is int mode) {
         return mode;
@@ -1430,10 +1431,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// those rows were written; a rebuild deserializes them and the member holds this value, so a collective
   /// predicate has to filter on it rather than on SQL NULL (#1044).
   /// </summary>
-  private static string[] _discoverMemberDefaults(ITypeSymbol modelType) {
+  private static string[] _discoverMemberDefaults(INamedTypeSymbol modelType) {
     var defaults = new List<string>();
 
-    foreach (var property in (modelType as INamedTypeSymbol)?.GetAllProperties() ?? []) {
+    foreach (var property in modelType.GetAllProperties()) {
       var declared = _tryDeclaredDefault(property);
       if (declared is not null) {
         defaults.Add(property.Name + MEMBER_DEFAULT_SEPARATOR + declared);
@@ -1482,10 +1483,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     };
   }
 
-  private static PhysicalFieldInfoCompact[] _discoverPhysicalFields(ITypeSymbol modelType) {
+  private static PhysicalFieldInfoCompact[] _discoverPhysicalFields(INamedTypeSymbol modelType) {
     var physicalFields = new List<PhysicalFieldInfoCompact>();
 
-    foreach (var property in (modelType as INamedTypeSymbol)?.GetAllProperties() ?? []) {
+    foreach (var property in modelType.GetAllProperties()) {
       var fieldInfo = _tryExtractPhysicalField(property);
       if (fieldInfo is not null) {
         physicalFields.Add(fieldInfo);
@@ -1504,7 +1505,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
 
     foreach (var attribute in property.GetAttributes()) {
-      var attrClassName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
+      var attrClassName = TypeNameUtilities.DisplayOrNull(attribute.AttributeClass);
 
       if (attrClassName != PHYSICAL_FIELD_ATTRIBUTE && attrClassName != VECTOR_FIELD_ATTRIBUTE) {
         continue;

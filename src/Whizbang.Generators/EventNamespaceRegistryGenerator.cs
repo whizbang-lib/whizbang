@@ -94,10 +94,10 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      // Get the namespace
-      var ns = eventType.ContainingNamespace is null ? null : TypeNameUtilities.Display(eventType.ContainingNamespace);
-      if (!string.IsNullOrEmpty(ns)) {
-        eventNamespaces.Add(ns!.ToLowerInvariant());
+      // An event in the global namespace has none to register, as on the receptor path (#1177): displayed, the
+      // global namespace reads "<global namespace>", which is not a namespace.
+      if (!eventType.ContainingNamespace.IsGlobalNamespace) {
+        eventNamespaces.Add(TypeNameUtilities.Display(eventType.ContainingNamespace).ToLowerInvariant());
       }
     }
 
@@ -145,8 +145,9 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
     }
 
     // Get the namespace
-    var containingNamespace = messageType.ContainingNamespace;
-    if (containingNamespace?.IsGlobalNamespace != false) {
+    // A type that implements IEvent is a named type or a type parameter, and both sit in a namespace.
+    var containingNamespace = messageType.ContainingNamespace!;
+    if (containingNamespace.IsGlobalNamespace) {
       return null;
     }
 

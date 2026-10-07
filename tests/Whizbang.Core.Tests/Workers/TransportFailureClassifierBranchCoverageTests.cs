@@ -35,5 +35,13 @@ namespace Whizbang.Core.Tests.Workers {
       await Assert.That(reason).IsEqualTo(MessageFailureReason.TransportException)
         .Because("with no message there is no flow-control signal to read, so it is a plain transport failure, and reading it must not throw");
     }
+
+    [Test]
+    public async Task Classify_ServiceBusExceptionWithNullMessage_IsATransportFailureNotThrottlingAsync() {
+      var reason = TransportFailureClassifier.Classify(Azure.Messaging.ServiceBus.ServiceBusException.WithNullMessage());
+
+      await Assert.That(reason).IsEqualTo(MessageFailureReason.TransportException)
+        .Because("with no message there is no ServiceBusy signal to read, and reading it must not throw");
+    }
   }
 }

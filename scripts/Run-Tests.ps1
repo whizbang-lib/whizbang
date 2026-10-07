@@ -1001,10 +1001,16 @@ try {
     # collector instruments in memory, inside the test process: nothing on disk is rewritten.
     # Every test project must reference Microsoft.Testing.Extensions.CodeCoverage, or its module
     # rejects --coverage as an unknown option.
+    #
+    # Each module also writes the binary <guid>.coverage beside its Cobertura report. A Cobertura line
+    # records how many outcomes its process took, not which, so merging per-process reports cannot
+    # tell one outcome taken twice from two different outcomes; the binary report records every
+    # block's hit, and the quality gate unions those across processes (Find-UncoveredNewLines.ps1,
+    # Merge-BlockCoverage).
     if ($ModuleCoverage) {
         $testArgs += "--coverage"
         $testArgs += "--coverage-output-format"
-        $testArgs += "cobertura"
+        $testArgs += "cobertura,coverage"
         $testArgs += "--coverage-settings"
         $testArgs += (Join-Path $repoRoot "codecoverage.config")
     }
@@ -1659,11 +1665,31 @@ try {
 
         if ($unbuilt.Count -gt 0) {
             # -NoBuild is a promise that the build output is already here (CI downloads it). Never
-            # compile behind it: name what is missing, so a short artifact is visible rather than
-            # paid for in minutes, and let discovery run on what exists.
+            # compile behind it. CI suites download only their own slice of the build
+            # (.github/scripts/Get-TestSlice.ps1), so most projects are legitimately absent; what must
+            # never be absent is a project THIS run selects, because discovery would skip it without a
+            # word and its tests would silently stop running. That is an error, naming the projects.
             if ($NoBuild) {
-                $names = ($unbuilt | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) }) -join ', '
-                Write-Warning "-NoBuild: $($unbuilt.Count) test project(s) in the solution have no $Configuration build output and will not be discovered: $names"
+                $wantedTypes = switch ($Mode) {
+                    { $_ -in @('Unit', 'AiUnit') } { @('Unit') }
+                    { $_ -in @('Integration', 'AiIntegrations') } { @('Integration') }
+                    default { @('Unit', 'Integration') }
+                }
+                $selected = @($unbuilt | Where-Object {
+                    $name = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+                    (Get-ProjectTestType $_.FullName) -in $wantedTypes -and
+                    (-not $Tag -or (@(Get-ProjectTags $_.FullName) -contains $Tag)) -and
+                    (-not $ProjectFilter -or $name -match $ProjectFilter) -and
+                    (-not $ExcludeProjectFilter -or $name -notmatch $ExcludeProjectFilter)
+                })
+                if ($selected.Count -gt 0) {
+                    $names = ($selected | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) }) -join ', '
+                    # Written, not Write-Error: this script stops on errors, and its trap re-throws a
+                    # Write-Error as a bare "ScriptHalted" with the message lost.
+                    $message = "-NoBuild: this run selects $($selected.Count) test project(s) with no $Configuration build output, so their tests would not run: $names. In CI, the suite's build slice is missing them (.github/scripts/Get-TestSlice.ps1)."
+                    if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::error::$message" } else { Write-Host $message -ForegroundColor Red }
+                    exit 1
+                }
                 return
             }
             if (-not $useAiOutput) {
@@ -1696,7 +1722,7 @@ try {
     if ($Tag) {
         Ensure-BuildExists
         # Find all test DLLs and filter by tag
-        $tagFilteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+        $tagFilteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { $_.Name -notmatch $excludePattern } |
@@ -1733,8 +1759,11 @@ try {
     } elseif ($ProjectFilter) {
         Ensure-BuildExists
         # Find DLLs matching the filter, excluding AppHost and ensuring they're primary test DLLs
-        # IMPORTANT: Only match *.Tests.dll to avoid picking up non-test DLLs like Whizbang.Data.EFCore.Postgres.dll
-        $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*.Tests.dll" -ErrorAction SilentlyContinue |
+        # IMPORTANT: Only match *Tests.dll to avoid picking up non-test DLLs like Whizbang.Data.EFCore.Postgres.dll.
+        # "*Tests.dll", not "*.Tests.dll": a project named ...IntegrationTests (no dot) was invisible to
+        # every pattern here and never ran (#1196). Every match is still checked against its project's
+        # declared test type, so the wider pattern admits no assembly that is not a test project.
+        $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { $_.Name -notmatch "AppHost" } |
             Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
@@ -1756,7 +1785,7 @@ try {
         # Run ONLY integration tests (WhizbangTestType=Integration)
         Ensure-BuildExists
         # Filter by WhizbangTestType property in .csproj files
-        $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+        $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
@@ -1781,7 +1810,7 @@ try {
         # Run only unit tests (WhizbangTestType=Unit)
         Ensure-BuildExists
         # Filter by WhizbangTestType property - only include Unit tests
-        $unitTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+        $unitTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
@@ -1806,7 +1835,7 @@ try {
         # Include ALL test projects (Unit + Integration, excludes Benchmark)
         Ensure-BuildExists
         # Filter to projects with WhizbangTestType of Unit or Integration (not Benchmark)
-        $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+        $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
