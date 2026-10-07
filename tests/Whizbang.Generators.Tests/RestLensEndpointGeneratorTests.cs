@@ -161,4 +161,142 @@ public class RestLensEndpointGeneratorTests {
     await Assert.That(result.Diagnostics.Any(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error))
       .IsFalse();
   }
+
+  // ========================================
+  // #1194: EnableFiltering, EnableSorting and EnablePaging decide what the endpoint does
+  // ========================================
+
+  private const string SHAPED_MODEL = """
+    namespace App {
+      using System;
+      using System.Collections.Generic;
+
+      public enum Status { Open, Closed }
+
+      public class Address { public string? City { get; set; } }
+
+      public class AuditedModel { public DateTimeOffset CreatedAt { get; set; } }
+
+      public class Invoice : AuditedModel {
+        public Guid Id { get; set; }
+        public string? Name { get; set; }
+        public decimal Amount { get; set; }
+        public Status State { get; set; }
+        public int? Priority { get; set; }
+        public bool Paid { get; set; }
+        public List<string> Tags { get; set; } = new();
+        public Address? Address { get; set; }
+        public static int Ignored { get; set; }
+        public string WriteOnly { set { } }
+      }
+    }
+    """;
+
+  private static string _invoiceEndpoint(string attributeArguments) => _generatedSource(SHAPED_MODEL + $$"""
+    namespace App {
+      using Whizbang.Core.Lenses;
+      using Whizbang.Transports.FastEndpoints;
+
+      [RestLens({{attributeArguments}})]
+      public interface IInvoiceLens : ILensQuery<Invoice> { }
+    }
+    """);
+
+  [Test]
+  public async Task Generator_ByDefault_AppliesFilteringSortingAndPagingAsync() {
+    var generated = _invoiceEndpoint("Route = \"/api/invoices\"");
+
+    await Assert.That(generated).Contains("req.Filter")
+      .Because("filtering is on by default, so the endpoint reads the filter parameters");
+    await Assert.That(generated).Contains("LensQueryShaping.ParseSort(req.Sort)")
+      .Because("sorting is on by default, so the endpoint reads the sort parameter");
+    await Assert.That(generated).Contains(".Skip(skip).Take(pageSize)")
+      .Because("paging is on by default");
+    await Assert.That(generated).DoesNotContain("TODO");
+  }
+
+  [Test]
+  public async Task Generator_WithFilteringDisabled_IgnoresFilterParametersAsync() {
+    var generated = _invoiceEndpoint("Route = \"/api/invoices\", EnableFiltering = false");
+
+    await Assert.That(generated).DoesNotContain("req.Filter");
+    await Assert.That(generated).DoesNotContain("_filter(");
+    await Assert.That(generated).Contains("LensQueryShaping.ParseSort(req.Sort)");
+  }
+
+  [Test]
+  public async Task Generator_WithSortingDisabled_OrdersByIdOnlyAsync() {
+    var generated = _invoiceEndpoint("Route = \"/api/invoices\", EnableSorting = false");
+
+    await Assert.That(generated).DoesNotContain("req.Sort");
+    await Assert.That(generated).DoesNotContain("_sort(");
+    await Assert.That(generated).Contains(".OrderBy(x => x.Id)")
+      .Because("an unsorted endpoint still needs a stable order for its pages");
+    await Assert.That(generated).Contains("req.Filter");
+  }
+
+  [Test]
+  public async Task Generator_WithPagingDisabled_ReturnsEveryRowAsync() {
+    var generated = _invoiceEndpoint("Route = \"/api/invoices\", EnablePaging = false");
+
+    await Assert.That(generated).DoesNotContain(".Skip(");
+    await Assert.That(generated).DoesNotContain("req.Page");
+    await Assert.That(generated).Contains("PageSize = items.Count");
+  }
+
+  [Test]
+  public async Task Generator_FiltersEachScalarPropertyByItsTypeAsync() {
+    var generated = _invoiceEndpoint("Route = \"/api/invoices\"");
+
+    await Assert.That(generated).Contains("case \"NAME\": return query.Where(x => x.Name == value);")
+      .Because("text compares as given");
+    await Assert.That(generated).Contains("LensQueryShaping.Parse<decimal>(field, value)");
+    await Assert.That(generated).Contains("LensQueryShaping.Parse<global::System.Guid>(field, value)");
+    await Assert.That(generated).Contains("LensQueryShaping.Parse<int>(field, value)")
+      .Because("a nullable property is filtered by its underlying type");
+    await Assert.That(generated).Contains("LensQueryShaping.Parse<bool>(field, value)");
+    await Assert.That(generated).Contains("LensQueryShaping.ParseEnum<global::App.Status>(field, value)");
+    await Assert.That(generated).Contains("case \"CREATEDAT\":")
+      .Because("an inherited property is part of the model");
+    await Assert.That(generated).Contains("throw InvalidLensRequestException.UnknownField(\"filter\", field)");
+  }
+
+  [Test]
+  public async Task Generator_SortsEachScalarPropertyAsync() {
+    var generated = _invoiceEndpoint("Route = \"/api/invoices\"");
+
+    await Assert.That(generated).Contains("\"AMOUNT\" => LensQueryShaping.ThenOrderBy(query, ordered, x => x.Amount, sort.Descending),");
+    await Assert.That(generated).Contains("\"STATE\" => LensQueryShaping.ThenOrderBy(query, ordered, x => x.State, sort.Descending),");
+    await Assert.That(generated).Contains("_ => throw InvalidLensRequestException.UnknownField(\"sort\", sort.Field),");
+  }
+
+  [Test]
+  public async Task Generator_LeavesOutWhatNeitherFiltersNorSortsAsync() {
+    var generated = _invoiceEndpoint("Route = \"/api/invoices\"");
+
+    await Assert.That(generated).DoesNotContain("x.Tags").Because("a collection has no single value to compare or order by");
+    await Assert.That(generated).DoesNotContain("x.Address").Because("a nested object has no single value either");
+    await Assert.That(generated).DoesNotContain("x.Ignored").Because("a static property is not part of a row");
+    await Assert.That(generated).DoesNotContain("x.WriteOnly").Because("a property with no getter cannot be read");
+  }
+
+  /// <summary>
+  /// The endpoint reads through the lens's default scope, so a public endpoint returns only the rows
+  /// the caller's scope allows; the unscoped legacy query bypassed that and is obsolete.
+  /// </summary>
+  [Test]
+  public async Task Generator_ReadsThroughTheLensDefaultScopeAsync() {
+    var generated = _invoiceEndpoint("Route = \"/api/invoices\"");
+
+    await Assert.That(generated).Contains("_lens.DefaultScope.Query.Select(r => r.Data)");
+    await Assert.That(generated).DoesNotContain("_lens.Query");
+  }
+
+  /// <summary>The response goes out through the current FastEndpoints send API.</summary>
+  [Test]
+  public async Task Generator_SendsTheResponseThroughTheSendApiAsync() {
+    var generated = _invoiceEndpoint("Route = \"/api/invoices\"");
+
+    await Assert.That(generated).Contains("await Send.OkAsync(response, ct);");
+  }
 }

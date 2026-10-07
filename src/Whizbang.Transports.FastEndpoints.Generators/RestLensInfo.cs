@@ -17,6 +17,11 @@ namespace Whizbang.Transports.FastEndpoints.Generators;
 /// <param name="MaxPageSize">Maximum page size for paging</param>
 /// <param name="Namespace">The namespace for generated code</param>
 /// <param name="EndpointClassName">Generated endpoint class name</param>
+/// <param name="FilterCases">
+/// The filter switch's cases, one per filterable model property, rendered at discovery time so the
+/// record keeps value equality (a list would compare by reference and defeat incremental caching).
+/// </param>
+/// <param name="SortCases">The sort switch's arms, one per sortable model property, rendered likewise.</param>
 internal sealed record RestLensInfo(
     string InterfaceName,
     string ModelTypeName,
@@ -27,5 +32,7 @@ internal sealed record RestLensInfo(
     int DefaultPageSize,
     int MaxPageSize,
     string Namespace,
-    string EndpointClassName
+    string EndpointClassName,
+    string FilterCases,
+    string SortCases
 );

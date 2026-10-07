@@ -13,7 +13,7 @@ namespace Whizbang.Data.Postgres;
 /// succeeds in nearly all cases. Non-transient errors (e.g. <c>42P01</c> undefined_table) propagate
 /// on the first attempt.
 /// </summary>
-/// <docs>operations/infrastructure/deadlock-retry</docs>
+/// <docs>fundamentals/workers/transient-database-failures#deadlock-retry</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresDeadlockRetryTests.cs</tests>
 public static partial class PostgresDeadlockRetry {
   private const string DEADLOCK_SQL_STATE = "40P01";
@@ -43,20 +43,25 @@ public static partial class PostgresDeadlockRetry {
   /// Executes an async action with deadlock retry.
   /// </summary>
   /// <param name="action">The database operation to execute.</param>
-  /// <param name="maxAttempts">Maximum number of attempts (default: 3).</param>
+  /// <param name="maxAttempts">Maximum number of attempts (default: 3). Must be at least one.</param>
   /// <param name="logger">Optional logger for retry warnings.</param>
   /// <param name="cancellationToken">Cancellation token honored between retries.</param>
-  // Excluded until #1185 is fixed, and this attribute goes with that fix. The loop's exit through its
-  // condition happens only for maxAttempts <= 0, which is the defect #1185 describes (the action never
-  // runs and the call reports success); a test reaching it would pin the defect as behavior. Every
-  // other path of this method is tested.
-  [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "Only maxAttempts <= 0 exits through the loop condition, which is defect #1185; remove with its fix.")]
+  /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxAttempts"/> is below one.</exception>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresDeadlockRetryCoverageTests.cs:ExecuteAsync_WithNonPositiveMaxAttempts_ThrowsWithoutRunningTheActionAsync</tests>
   public static async Task ExecuteAsync(
     Func<Task> action,
     int maxAttempts = 3,
     ILogger? logger = null,
     CancellationToken cancellationToken = default) {
-    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+    // A count below one asks for no attempt. Rejected before the action is touched: returning
+    // without running it reported success for a write that never happened (#1185).
+    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxAttempts);
+
+    // Every attempt returns or throws from its body, the last one included, so the loop needs no
+    // condition and nothing can fall out of it.
+    var attempt = 0;
+    while (true) {
+      attempt++;
       try {
         await action();
         return;
@@ -78,12 +83,22 @@ public static partial class PostgresDeadlockRetry {
   /// <summary>
   /// Executes an async function with deadlock retry and returns the result.
   /// </summary>
+  /// <param name="action">The database operation to execute.</param>
+  /// <param name="maxAttempts">Maximum number of attempts (default: 3). Must be at least one.</param>
+  /// <param name="logger">Optional logger for retry warnings.</param>
+  /// <param name="cancellationToken">Cancellation token honored between retries.</param>
+  /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxAttempts"/> is below one.</exception>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresDeadlockRetryCoverageTests.cs:ExecuteAsyncOfT_WithNonPositiveMaxAttempts_ThrowsWithoutRunningTheActionAsync</tests>
   public static async Task<T> ExecuteAsync<T>(
     Func<Task<T>> action,
     int maxAttempts = 3,
     ILogger? logger = null,
     CancellationToken cancellationToken = default) {
-    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxAttempts);
+
+    var attempt = 0;
+    while (true) {
+      attempt++;
       try {
         return await action();
       } catch (PostgresException ex) when (_isTransient(ex) && attempt < maxAttempts) {
@@ -99,7 +114,6 @@ public static partial class PostgresDeadlockRetry {
         throw;
       }
     }
-    throw new InvalidOperationException("Unreachable");
   }
 
   /// <summary>
