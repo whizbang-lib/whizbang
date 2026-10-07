@@ -13,7 +13,7 @@ namespace Whizbang.Data.Postgres;
 /// succeeds in nearly all cases. Non-transient errors (e.g. <c>42P01</c> undefined_table) propagate
 /// on the first attempt.
 /// </summary>
-/// <docs>operations/infrastructure/deadlock-retry</docs>
+/// <docs>fundamentals/workers/transient-database-failures#deadlock-retry</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresDeadlockRetryTests.cs</tests>
 public static partial class PostgresDeadlockRetry {
   private const string DEADLOCK_SQL_STATE = "40P01";
