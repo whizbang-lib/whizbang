@@ -426,7 +426,8 @@ public class DeadLetterRecoveryWorkerTests {
       string generation = "test/0.0.1",
       FakeNotificationListener? listener = null,
       Whizbang.Core.Messaging.StreamIntegrityOptions? integrity = null,
-      TimeProvider? timeProvider = null) {
+      TimeProvider? timeProvider = null,
+      ILogger<DeadLetterRecoveryWorker>? logger = null) {
     var svc = new FakeRecoveryService();
     var services = new ServiceCollection();
     services.AddSingleton<IDeadLetterRecoveryService>(svc);
@@ -438,11 +439,27 @@ public class DeadLetterRecoveryWorkerTests {
       options: Options.Create(options ?? new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
       integrityOptions: Options.Create(integrity ?? new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider(generation),
-      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
+      logger: logger ?? NullLogger<DeadLetterRecoveryWorker>.Instance,
       notificationListener: (IWorkNotificationListener?)listener ?? new NoOpWorkNotificationListener(),
       metrics: null,
       timeProvider: timeProvider);
     return (worker, svc);
+  }
+
+  /// <summary>
+  /// Completes <see cref="Seen"/> when the worker logs the given event, so a test can wait until a
+  /// code path has actually run rather than until the worker was merely scheduled.
+  /// </summary>
+  private sealed class EventSignalLogger(int watchedEventId) : ILogger<DeadLetterRecoveryWorker> {
+    private readonly TaskCompletionSource _seen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task Seen => _seen.Task;
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (eventId.Id == watchedEventId) {
+        _seen.TrySetResult();
+      }
+    }
   }
 
   /// <summary>
@@ -818,13 +835,19 @@ public class DeadLetterRecoveryWorkerTests {
 
   [Test]
   public async Task DisabledWorker_DoesNotScanAsync() {
+    var disabled = new EventSignalLogger(watchedEventId: 3);
     var (worker, svc) = _newWorker(new DeadLetterRecoveryOptions {
       Enabled = false,
       ScanIntervalMinutes = 1,
-    });
+    }, logger: disabled);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // StartAsync returning proves only that ExecuteAsync was scheduled (ai-docs/flaky-tests.md,
+    // Pattern 7). Stopping straight away let a fast run cancel the worker before it reached the
+    // Enabled check at all: the test still passed, asserting "no scans" of a body that never ran,
+    // and the disabled branch's coverage came and went between runs. Wait for the branch to log.
+    await disabled.Seen.WaitAsync(TimeSpan.FromSeconds(5));
     // Stop first: once the body has returned, nothing it could have done is still to come.
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
