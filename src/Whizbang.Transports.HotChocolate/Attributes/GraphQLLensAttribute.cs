@@ -54,6 +54,16 @@ public sealed class GraphQLLensAttribute : Attribute {
   /// are exposed in GraphQL queries.
   /// Default: <see cref="GraphQLLensScopes.None"/> (uses system configuration).
   /// </summary>
+  /// <remarks>
+  /// <para>The generated row type for the lens contains only the declared parts, and its filter and sort input
+  /// types offer only those parts (further narrowed by <see cref="WhizbangGraphQLOptions.IncludeMetadataInFilters"/>
+  /// and <see cref="WhizbangGraphQLOptions.IncludeScopeInFilters"/>). Each lens gets its own GraphQL types, named
+  /// after its query (<c>OrdersRow</c>, <c>OrdersRowFilterInput</c>, <c>OrdersRowSortInput</c> for <c>orders</c>),
+  /// so two lenses over the same model keep their own field sets.</para>
+  /// <para>When left at <see cref="GraphQLLensScopes.None"/>, <see cref="WhizbangGraphQLOptions.DefaultScope"/>
+  /// applies. A scope that resolves to <see cref="GraphQLLensScopes.None"/>, or carries an undefined bit, exposes
+  /// <see cref="GraphQLLensScopes.Data"/> only.</para>
+  /// </remarks>
   public GraphQLLensScopes Scope { get; set; } = GraphQLLensScopes.None;
 
   /// <summary>

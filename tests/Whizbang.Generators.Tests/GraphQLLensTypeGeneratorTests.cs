@@ -137,7 +137,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code).Contains("[UsePaging(DefaultPageSize = 20, MaxPageSize = 50)]");
+    await Assert.That(code).Contains("[UsePaging(typeof(OrdersLensRowType), DefaultPageSize = 20, MaxPageSize = 50)]");
   }
 
   /// <summary>
@@ -195,7 +195,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code).Contains("[UseFiltering]");
+    await Assert.That(code).Contains("[UseFiltering(typeof(OrdersLensRowFilterInputType))]");
   }
 
   /// <summary>
@@ -224,7 +224,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code).DoesNotContain("[UseFiltering]");
+    await Assert.That(code).DoesNotContain("[UseFiltering");
   }
 
   /// <summary>
@@ -253,7 +253,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code).Contains("[UseSorting]");
+    await Assert.That(code).Contains("[UseSorting(typeof(OrdersLensRowSortInputType))]");
   }
 
   /// <summary>
@@ -588,10 +588,10 @@ public class GraphQLLensTypeGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
     await Assert.That(code).Contains("GetAuditLogs");
-    await Assert.That(code).Contains("[UseFiltering]");
-    await Assert.That(code).Contains("[UseSorting]");
+    await Assert.That(code).Contains("[UseFiltering(typeof(AuditLogsLensRowFilterInputType))]");
+    await Assert.That(code).Contains("[UseSorting(typeof(AuditLogsLensRowSortInputType))]");
     await Assert.That(code).Contains("[UseProjection]");
-    await Assert.That(code).Contains("[UsePaging(DefaultPageSize = 25, MaxPageSize = 100)]");
+    await Assert.That(code).Contains("[UsePaging(typeof(AuditLogsLensRowType), DefaultPageSize = 25, MaxPageSize = 100)]");
   }
 
   /// <summary>
@@ -626,10 +626,61 @@ public class GraphQLLensTypeGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
     await Assert.That(code).Contains("GetSimple");
-    await Assert.That(code).DoesNotContain("[UseFiltering]");
-    await Assert.That(code).DoesNotContain("[UseSorting]");
+    await Assert.That(code).DoesNotContain("[UseFiltering");
+    await Assert.That(code).DoesNotContain("[UseSorting");
     await Assert.That(code).DoesNotContain("[UsePaging");
     await Assert.That(code).DoesNotContain("[UseProjection]");
+    await Assert.That(code).Contains("[GraphQLType(typeof(NonNullType<ListType<NonNullType<SimpleLensRowType>>>))]");
+    await Assert.That(code).Contains("public sealed class SimpleLensRowType");
+    await Assert.That(code).DoesNotContain("SimpleLensRowFilterInputType");
+    await Assert.That(code).DoesNotContain("SimpleLensRowSortInputType");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_DeclaredScope_IsPassedToEachLensTypeAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Lenses;
+            using Whizbang.Transports.HotChocolate;
+
+            namespace TestApp;
+
+            public record OrderReadModel(Guid Id, string Status);
+
+            [GraphQLLens(QueryName = "orders", Scope = GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields)]
+            public interface IOrderLens : ILensQuery<OrderReadModel> { }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<GraphQLLensTypeGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
+    const string scope = "(global::Whizbang.Transports.HotChocolate.GraphQLLensScopes)(9)";
+    await Assert.That(code).Contains($"base(\"OrdersRow\", {scope})");
+    await Assert.That(code).Contains($"base(\"OrdersRowFilterInput\", {scope})");
+    await Assert.That(code).Contains($"base(\"OrdersRowSortInput\", {scope})");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_UnsetScope_PassesNoneForTheRuntimeDefaultAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Lenses;
+            using Whizbang.Transports.HotChocolate;
+
+            namespace TestApp;
+
+            public record OrderReadModel(Guid Id, string Status);
+
+            [GraphQLLens(QueryName = "orders")]
+            public interface IOrderLens : ILensQuery<OrderReadModel> { }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<GraphQLLensTypeGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
+    await Assert.That(code).Contains("base(\"OrdersRow\", (global::Whizbang.Transports.HotChocolate.GraphQLLensScopes)(0))");
   }
 
   // --- Extraction guards ----------------------------------------------------

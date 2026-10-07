@@ -19,6 +19,10 @@ namespace Whizbang.Transports.HotChocolate.Generators;
 public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
   private const string GRAPHQL_LENS_ATTRIBUTE_NAME = "Whizbang.Transports.HotChocolate.GraphQLLensAttribute";
   private const string LENS_QUERY_INTERFACE_NAME = "Whizbang.Core.Lenses.ILensQuery";
+  private const string SCOPES_TYPE_NAME = "global::Whizbang.Transports.HotChocolate.GraphQLLensScopes";
+  private const string ROW_TYPE_SUFFIX = "LensRowType";
+  private const string FILTER_TYPE_SUFFIX = "LensRowFilterInputType";
+  private const string SORT_TYPE_SUFFIX = "LensRowSortInputType";
 
   /// <inheritdoc />
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -130,6 +134,7 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
 
     // Generate query methods
     var queryMethods = new StringBuilder();
+    var rowTypes = new StringBuilder();
     var lensInfoProps = new StringBuilder();
 
     foreach (var lens in validLenses) {
@@ -137,6 +142,9 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
       var methodCode = _generateQueryMethod(lens);
       queryMethods.AppendLine(methodCode);
       queryMethods.AppendLine();
+
+      // Generate the lens's own row, filter and sort types, which carry its scope into the schema
+      rowTypes.AppendLine(_generateRowTypes(lens));
 
       // Generate info property
       var infoCode = _generateLensInfoProperty(lens);
@@ -157,6 +165,7 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
     result = result.Replace("__TIMESTAMP__", timestamp);
 
     result = TemplateUtilities.ReplaceRegion(result, "LENS_QUERY_METHODS", queryMethods.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "LENS_ROW_TYPES", rowTypes.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "LENS_INFO_PROPERTIES", lensInfoProps.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "LENS_TYPE_REGISTRATIONS", "// No additional registrations needed");
 
@@ -169,28 +178,33 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _generateQueryMethod(GraphQLLensInfo lens) {
     var sb = new StringBuilder();
-    var methodName = "Get" + char.ToUpperInvariant(lens.QueryName[0]) + lens.QueryName[1..];
+    var pascalName = _pascalName(lens.QueryName);
+    var methodName = "Get" + pascalName;
 
     sb.AppendLine("  /// <summary>");
     sb.AppendLine($"  /// Query field for {lens.QueryName}.");
     sb.AppendLine($"  /// Returns results from the {lens.InterfaceName} lens.");
     sb.AppendLine("  /// </summary>");
 
-    // Add attributes based on configuration
+    // Add attributes based on configuration. Every attribute names the lens's own types, so the
+    // schema exposes only the row parts its scope declares, in the output and in filter and sort inputs.
+    var rowType = pascalName + ROW_TYPE_SUFFIX;
     if (lens.EnablePaging) {
-      sb.AppendLine($"  [UsePaging(DefaultPageSize = {lens.DefaultPageSize}, MaxPageSize = {lens.MaxPageSize})]");
+      sb.AppendLine($"  [UsePaging(typeof({rowType}), DefaultPageSize = {lens.DefaultPageSize}, MaxPageSize = {lens.MaxPageSize})]");
+    } else {
+      sb.AppendLine($"  [GraphQLType(typeof(NonNullType<ListType<NonNullType<{rowType}>>>))]");
     }
     if (lens.EnableProjection) {
       sb.AppendLine("  [UseProjection]");
     }
     if (lens.EnableFiltering) {
-      sb.AppendLine("  [UseFiltering]");
+      sb.AppendLine($"  [UseFiltering(typeof({pascalName}{FILTER_TYPE_SUFFIX}))]");
     }
     if (lens.EnableSorting) {
-      sb.AppendLine("  [UseSorting]");
+      sb.AppendLine($"  [UseSorting(typeof({pascalName}{SORT_TYPE_SUFFIX}))]");
     }
 
-    sb.AppendLine($"  public IQueryable<PerspectiveRow<{lens.ModelTypeName}>> {methodName}(");
+    sb.AppendLine($"  public global::System.Linq.IQueryable<PerspectiveRow<{lens.ModelTypeName}>> {methodName}(");
     sb.AppendLine($"      [Service] {lens.InterfaceName} lens) {{");
     sb.AppendLine("    return lens.Query;");
     sb.AppendLine("  }");
@@ -199,10 +213,46 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Generate the lens's own row type, plus its filter and sort input types when those are enabled. Each passes
+  /// the lens's declared scope to its runtime base type, which resolves it against the system default when the
+  /// schema is built. The scope is emitted as its integer value so an undefined value reaches the runtime
+  /// resolution, which fails closed, instead of being dropped here.
+  /// </summary>
+  private static string _generateRowTypes(GraphQLLensInfo lens) {
+    var pascalName = _pascalName(lens.QueryName);
+    var scope = $"({SCOPES_TYPE_NAME})({lens.Scope.ToString(CultureInfo.InvariantCulture)})";
+    var sb = new StringBuilder();
+
+    _appendRowType(sb, lens, pascalName + ROW_TYPE_SUFFIX, "LensPerspectiveRowType", pascalName + "Row", scope);
+    if (lens.EnableFiltering) {
+      _appendRowType(sb, lens, pascalName + FILTER_TYPE_SUFFIX, "LensPerspectiveRowFilterInputType", pascalName + "RowFilterInput", scope);
+    }
+    if (lens.EnableSorting) {
+      _appendRowType(sb, lens, pascalName + SORT_TYPE_SUFFIX, "LensPerspectiveRowSortInputType", pascalName + "RowSortInput", scope);
+    }
+
+    return sb.ToString();
+  }
+
+  private static void _appendRowType(
+      StringBuilder sb, GraphQLLensInfo lens, string className, string baseTypeName, string graphQLName, string scope) {
+    sb.AppendLine("/// <summary>");
+    sb.AppendLine($"/// GraphQL type {graphQLName} for the {lens.QueryName} lens, limited to the row parts its scope exposes.");
+    sb.AppendLine("/// </summary>");
+    sb.AppendLine($"public sealed class {className} : global::Whizbang.Transports.HotChocolate.{baseTypeName}<{lens.ModelTypeName}> {{");
+    sb.AppendLine($"  public {className}() : base(\"{graphQLName}\", {scope}) {{ }}");
+    sb.AppendLine("}");
+    sb.AppendLine();
+  }
+
+  private static string _pascalName(string queryName) =>
+      char.ToUpperInvariant(queryName[0]) + queryName[1..];
+
+  /// <summary>
   /// Generate a lens info property for diagnostics.
   /// </summary>
   private static string _generateLensInfoProperty(GraphQLLensInfo lens) {
-    var propName = char.ToUpperInvariant(lens.QueryName[0]) + lens.QueryName[1..];
+    var propName = _pascalName(lens.QueryName);
     return $"""
   /// <summary>
   /// Information about the {lens.QueryName} lens.
