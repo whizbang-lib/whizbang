@@ -96,6 +96,9 @@ public class JsonbContainmentRewriterGuardTests {
     public NestedGuard Data { get; init; } = new();
 
     public Oddity Odd { get; init; } = new();
+
+    /// <summary>A nullable number, which a membership test reaches through a cast to its value type.</summary>
+    public int? Maybe { get; init; }
   }
 
   /// <summary>A model this context never maps, so its row has no entity type to consult.</summary>
@@ -330,6 +333,35 @@ public class JsonbContainmentRewriterGuardTests {
   public async Task AStaticMemberIsDeclinedAsync() =>
     await Assert.That(_plantsAMarkerFor<GuardModel>(_ => Elsewhere == "x")).IsFalse()
       .Because("nothing about a static read is a path into a document");
+
+  /// <summary>
+  /// Membership over a nullable member cast to its value type is still claimed.
+  /// </summary>
+  /// <remarks>
+  /// The cast is stripped to find the member, which leaves a nullable member and a collection of the
+  /// value type. The set helper takes the value type, so the member is converted back to it rather
+  /// than the membership being given up on a difference the cast already settled.
+  /// </remarks>
+  [Test]
+  public async Task MembershipOverANullableMemberCastToItsValueTypeIsClaimedAsync() {
+    var candidates = new List<int> { 1, 2 };
+    await Assert.That(_plantsAMarkerFor<GuardModel>(r => candidates.Contains((int)r.Data.Maybe!))).IsTrue()
+      .Because("the cast settles the member's type, so the set helper can take it");
+  }
+
+  /// <summary>
+  /// Membership over a member nested inside the document is declined.
+  /// </summary>
+  /// <remarks>
+  /// The set helper builds one single-key document per candidate, so it can only express a member that
+  /// sits directly on the document; a nested one keeps the extraction form, correct and unindexed.
+  /// </remarks>
+  [Test]
+  public async Task MembershipOverANestedMemberIsDeclinedAsync() {
+    var candidates = new List<string> { "a", "b" };
+    await Assert.That(_plantsAMarkerFor<GuardModel>(r => candidates.Contains(r.Data.Odd.Label))).IsFalse()
+      .Because("a nested member would need a nested document per candidate");
+  }
 
   /// <summary>
   /// A filter over a row the model does not map is declined.
