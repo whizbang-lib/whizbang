@@ -250,7 +250,13 @@ foreach ($runId in @($candidates | ForEach-Object { [string]$_.id } | Select-Obj
   foreach ($artifact in $artifacts) {
     $shard = [int]($artifact.name.Substring($ShardArtifactPrefix.Length))
     $dir = Join-Path -Path $work -ChildPath "$runId-$shard"
-    gh run download $runId --repo $Repository --name $artifact.name --dir $dir | Out-Null
+    # Reported, never discarded: a download that fails silently leaves nothing to measure, and the
+    # only symptom is "no TRX artifacts found" with no hint why.
+    $downloadOutput = gh run download $runId --repo $Repository --name $artifact.name --dir $dir 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "Could not download $($artifact.name) from run ${runId}: $($downloadOutput -join ' ')"
+      continue
+    }
     foreach ($trx in Get-ChildItem -Path $dir -Recurse -Filter '*.trx') {
       [xml]$xml = [System.IO.File]::ReadAllText($trx.FullName)
       $classOf = @{}
