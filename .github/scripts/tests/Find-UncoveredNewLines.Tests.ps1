@@ -308,6 +308,34 @@ Describe 'Write-MergedCobertura' {
   }
 }
 
+Describe 'Read-CoberturaCoverage, one source line compiled into several assemblies' {
+  # Shared source compiled into several assemblies (the generators' shared code) reports the same line
+  # once per copy, and the copies' IL can differ, so one line can arrive with different outcome totals.
+  It 'never counts more outcomes covered than the line has, and keeps the copy with the larger gap' {
+    $wide = New-Report $TestDrive 'wide.cobertura.xml' 'src/P/Shared.cs' @(@{ n = 7; hits = 1; cov = '4/4' })
+    $narrow = New-Report $TestDrive 'narrow.cobertura.xml' 'src/P/Shared.cs' @(@{ n = 7; hits = 1; cov = '1/2' })
+
+    foreach ($order in @(@($wide, $narrow), @($narrow, $wide))) {
+      $coverage = Read-CoberturaCoverage $order
+      $pair = $coverage['src/P/Shared.cs'].Conditions[7]
+
+      $pair[0] | Should -BeLessOrEqual $pair[1]
+      $pair | Should -Be @(1, 2)
+    }
+  }
+
+  It 'gives a whole-library count that is never negative' {
+    $wide = New-Report $TestDrive 'wide2.cobertura.xml' 'src/P/Shared.cs' @(@{ n = 1; hits = 1; cov = '4/4' })
+    $narrow = New-Report $TestDrive 'narrow2.cobertura.xml' 'src/P/Shared.cs' @(@{ n = 1; hits = 1; cov = '1/2' })
+    $source = @{ 'src/P/Shared.cs' = @('if (a && b) {') }
+
+    $whole = Get-WholeLibraryCoverage -Coverage (Read-CoberturaCoverage @($wide, $narrow)) -ReadSource { param($p) $source[$p] }
+
+    $whole.CoveredOutcomes | Should -BeLessOrEqual $whole.Outcomes
+    (Get-WholeLibraryGateResult $whole).Untested | Should -Be 1
+  }
+}
+
 Describe 'Get-WholeLibraryCoverage' {
   It 'counts every hand-written library line and decision outcome, and nothing else' {
     $report = New-Report $TestDrive 'whole.cobertura.xml' 'src/P/A.cs' @(

@@ -162,7 +162,7 @@ function Read-CoberturaCoverage([string[]]$ReportPaths, [scriptblock]$ReadSource
     $sources = @($xml.coverage.sources.source | Where-Object { $_ })
     foreach ($cls in $xml.SelectNodes('//class')) {
       $path = Get-RelativeSourcePath ([string]$cls.GetAttribute('filename')) $sources
-      if (-not $coverage.ContainsKey($path)) { $coverage[$path] = @{ Hits = @{}; Conditions = @{}; LineBest = @{}; JumpBest = @{}; IfOutcomes = @{} } }
+      if (-not $coverage.ContainsKey($path)) { $coverage[$path] = @{ Hits = @{}; Conditions = @{}; LineBest = @{}; JumpBest = @{}; Totals = @{}; IfOutcomes = @{} } }
       $entry = $coverage[$path]
       $classHits = @{}
       $halfJumps = [System.Collections.Generic.List[int]]::new()
@@ -174,23 +174,36 @@ function Read-CoberturaCoverage([string[]]$ReportPaths, [scriptblock]$ReadSource
         if ($line.GetAttribute('condition-coverage') -match '\((\d+)/(\d+)\)') {
           $covered = [int]$Matches[1]; $total = [int]$Matches[2]
           if ($h -gt 0 -and $covered -eq 1 -and $total -eq 2) { $halfJumps.Add($n) }
-          if (-not $entry.LineBest.ContainsKey($n) -or $entry.LineBest[$n] -lt $covered) { $entry.LineBest[$n] = $covered }
+          # Shared source compiled into several assemblies reports a line once per copy, and copies
+          # whose IL differs report different totals. Outcomes are only comparable, and unioned,
+          # between copies with the same total; the line then reports the group with the larger gap,
+          # so one copy's covered count never meets another copy's total.
+          $key = "${n}|${total}"
+          if (-not $entry.LineBest.ContainsKey($key) -or $entry.LineBest[$key] -lt $covered) { $entry.LineBest[$key] = $covered }
           $jumps = Get-JumpOutcomes $line $total
-          if (-not $entry.JumpBest.ContainsKey($n)) {
-            $entry.JumpBest[$n] = $jumps
-          } elseif ($null -eq $jumps -or $null -eq $entry.JumpBest[$n] -or $jumps.Count -ne $entry.JumpBest[$n].Count) {
-            $entry.JumpBest[$n] = $null
+          if (-not $entry.JumpBest.ContainsKey($key)) {
+            $entry.JumpBest[$key] = $jumps
+          } elseif ($null -eq $jumps -or $null -eq $entry.JumpBest[$key] -or $jumps.Count -ne $entry.JumpBest[$key].Count) {
+            $entry.JumpBest[$key] = $null
           } else {
             for ($i = 0; $i -lt $jumps.Count; $i++) {
-              if ($entry.JumpBest[$n][$i] -lt $jumps[$i]) { $entry.JumpBest[$n][$i] = $jumps[$i] }
+              if ($entry.JumpBest[$key][$i] -lt $jumps[$i]) { $entry.JumpBest[$key][$i] = $jumps[$i] }
             }
           }
-          $best = $entry.LineBest[$n]
-          if ($null -ne $entry.JumpBest[$n]) {
-            $union = ($entry.JumpBest[$n] | Measure-Object -Sum).Sum
+          $best = $entry.LineBest[$key]
+          if ($null -ne $entry.JumpBest[$key]) {
+            $union = ($entry.JumpBest[$key] | Measure-Object -Sum).Sum
             if ($union -gt $best) { $best = [int]$union }
           }
-          $entry.Conditions[$n] = @($best, $total)
+          $best = [math]::Min($best, $total)
+          if (-not $entry.Totals.ContainsKey($n)) { $entry.Totals[$n] = @{} }
+          $entry.Totals[$n][$total] = $best
+          $worst = $null
+          foreach ($t in $entry.Totals[$n].Keys) {
+            $gapOf = $t - $entry.Totals[$n][$t]
+            if ($null -eq $worst -or $gapOf -gt ($worst[1] - $worst[0])) { $worst = @($entry.Totals[$n][$t], $t) }
+          }
+          $entry.Conditions[$n] = $worst
         }
       }
       if ($null -ne $ReadSource -and $halfJumps.Count -gt 0) {
