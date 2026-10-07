@@ -144,6 +144,24 @@ public class ContainmentSqlRewriterTests {
   }
 
   /// <summary>
+  /// A grouped query's HAVING is visited like its WHERE: a count over the groups has no JSON equality
+  /// to reshape, so it is kept as written and the query still translates.
+  /// </summary>
+  [Test]
+  public async Task AHavingClauseIsVisitedAndKeptAsync() {
+    using var db = _newContext();
+
+    var sql = db.Set<PerspectiveRow<ReshapeModel>>()
+      .GroupBy(r => r.Data.Rank)
+      .Where(g => g.Count() > 1)
+      .Select(g => g.Key)
+      .ToQueryString();
+
+    await Assert.That(sql).Contains("HAVING", StringComparison.Ordinal);
+    await Assert.That(sql).Contains("count(", StringComparison.OrdinalIgnoreCase);
+  }
+
+  /// <summary>
   /// A converted member is reshaped correctly, which is the whole reason for this mechanism.
   /// </summary>
   /// <remarks>
