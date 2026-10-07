@@ -30,11 +30,18 @@ namespace TestNamespace {
 
   public enum Stage { Draft, Active, Retired }
 
+  // Constants declared on ANOTHER type. Resolving these would need a semantic model, which this generator does
+  // not take, so they stand for "knowable to the compiler but not to the generator".
+  public static class Defaults {
+    public const Stage Phase = Stage.Active;
+    public const int Number = 2;
+  }
+
   public record OrderModel {
     [StreamId]
     public Guid Id { get; init; }
 
-    // A literal initializer: the value a rebuild sees when the key is absent.
+    // A literal initializer on a reference type: the token text is the value.
     public string Status { get; init; } = "Draft";
 
     // Non-nullable value types with no initializer: the CLR default is the value a rebuild sees.
@@ -42,12 +49,49 @@ namespace TestNamespace {
     public bool IsLive { get; init; }
     public Stage Stage { get; init; }
 
-    // Nullable: an absent key already reads as null in both paths, so there is nothing to declare.
+    // Nullable with no initializer: an absent key already reads as null in both paths, so there is nothing
+    // to declare.
     public string? Note { get; init; }
     public long? MaybeOrdinal { get; init; }
 
-    // Not a literal, so its value is not knowable from the declaration alone.
+    // A non-nullable reference type with no initializer. There is no value to declare and no CLR default
+    // worth registering — it would read as null, which the registry records by not registering.
+    public string Bare { get; init; }
+
+    // Knowable without being a literal: an enumeration member IS a compile-time constant, and this is the
+    // ordinary way a status-like member declares an eligible default.
+    public Stage Phase { get; init; } = Stage.Active;
+
+    // The same constant, written as a cast of a literal.
+    public Stage Legacy { get; init; } = (Stage)2;
+
+    // A nullable enumeration with an enumeration-member initializer: nullable, but a rebuild still runs the
+    // initializer, so an absent key does not read as null.
+    public Stage? Maybe { get; init; } = Stage.Retired;
+
+    // Nullable, but the initializer runs on a rebuild, so an absent key does NOT read as null here.
+    public string? Label { get; init; } = "none";
+    public long? Threshold { get; init; } = 7;
+
+    // `= null` says the member reads as null, which is what not registering it already means.
+    public string? Nulled { get; init; } = null;
+
+    // A literal on a value type, and a negated one.
+    public long Start { get; init; } = 5;
+    public long Offset { get; init; } = -3;
+
+    // A unary operator the rule does not read: `+5` states its value as plainly as `-3` does, but only minus is
+    // recognized, so this one is skipped rather than guessed at.
+    public long Plus { get; init; } = +5;
+
+    // A unary minus over something that is not a literal — the sign is knowable, the operand is not.
+    public long Negated { get; init; } = -Defaults.Number;
+
+    // Not knowable from the declaration alone.
     public string Name { get; init; } = string.Empty;
+    public Stage FromConst { get; init; } = Defaults.Phase;
+    public Stage Converted { get; init; } = (Stage)Defaults.Number;
+    public string Computed { get; init; } = "a" + "b";
   }
 
   public class OrderPerspective : IPerspectiveFor<OrderModel, OrderMovedEvent> {
@@ -117,6 +161,145 @@ namespace TestNamespace {
     await Assert.That(runner).DoesNotContain("\"Name\"")
       .Because("Only a literal is knowable from the declaration. Guessing at an expression would register a "
         + "default that differs from the one a rebuild actually produces, which is worse than registering none.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_AnEnumMemberInitializer_RegistersThatMemberAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).Contains(REGISTER + "typeof(global::TestNamespace.OrderModel), \"Phase\", global::TestNamespace.Stage.Active)")
+      .Because("An enumeration member is a compile-time constant, so what an absent key reads as is knowable "
+        + "exactly — there is no guessing. Skipping it is what leaves a cohort predicate on a status-like member "
+        + "filtering on SQL NULL while the rebuild it is meant to agree with sees Active.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_ACastOfALiteralInitializer_RegistersThatValueAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).Contains("\"Legacy\", (global::TestNamespace.Stage)2)")
+      .Because("`(Stage)2` is the same constant as naming the member; the declaration form it is written in does "
+        + "not change what a rebuild produces.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_ANullableMemberWithAnInitializer_RegistersItAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).Contains("\"Label\", \"none\")")
+      .Because("The nullable skip holds only because an absent key reads as null in BOTH paths. An initializer "
+        + "breaks that: a rebuild runs it and the member holds \"none\", so the two paths disagree exactly as they "
+        + "do for a non-nullable member.");
+    await Assert.That(runner).Contains("\"Threshold\", (long?)7)")
+      .Because("Nullable<T> is the same case; the value binds as the member's own type so it compares against the "
+        + "column as that type rather than as int.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_AnEnumMemberWithoutAnInitializer_StillRegistersItsClrDefaultAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).Contains("\"Stage\", default(global::TestNamespace.Stage))")
+      .Because("Widening the rule to knowable constants must not disturb the no-initializer case, which already "
+        + "resolved correctly.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_ANullableEnumWithAnEnumMemberInitializer_RegistersThatMemberAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).Contains("\"Maybe\", global::TestNamespace.Stage.Retired)")
+      .Because("Nullable<Stage> is unwrapped to find the enumeration the member names. The member is registered as "
+        + "the enumeration value, which boxes as Stage and binds against the column as Stage does.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_ALiteralOnAValueType_RegistersItCastToThatTypeAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).Contains("\"Start\", (long)5)")
+      .Because("`= 5` on a long must arrive as a long, not an int, or the registered value binds against the "
+        + "column as the wrong type.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_ANegatedLiteral_RegistersTheNegatedValueAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).Contains("\"Offset\", (long)(-3))")
+      .Because("Unary minus only parses ahead of a numeric literal, so the value stays knowable; dropping the "
+        + "sign would register +3 and quietly filter the wrong rows.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_AnExplicitNullInitializer_IsNotRegisteredAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).DoesNotContain("\"Nulled\"")
+      .Because("`= null` says the member reads as null, which is exactly what no registration means. Registering "
+        + "it would also be read as a removal, so the two agree — but saying nothing is the honest form.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_ANonNullableReferenceWithNoInitializer_IsNotRegisteredAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).DoesNotContain("\"Bare\"")
+      .Because("The declaration names no value and a reference type has no CLR default worth registering: it "
+        + "reads as null, which both paths already agree on.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_AConstantDeclaredOnAnotherType_IsNotRegisteredAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).DoesNotContain("\"FromConst\"")
+      .Because("`Defaults.Phase` is a constant to the compiler but not to this generator: only a member of the "
+        + "member's OWN enumeration can be resolved from the type symbol, and binding a semantic model to read "
+        + "the rest would cost the discovery step its incremental cacheability.");
+    await Assert.That(runner).DoesNotContain("\"Converted\"")
+      .Because("A cast does not make its operand knowable — (Stage)Defaults.Number is the same unresolvable "
+        + "constant with a cast in front of it.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_AUnaryOperatorOtherThanMinus_IsNotRegisteredAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).DoesNotContain("\"Plus\"")
+      .Because("Only unary minus is read. `+5` is just as knowable, and recognizing it would be a fine change — "
+        + "but until it is read, registering nothing is what keeps the registration honest about what was parsed.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_AUnaryMinusOverANonLiteral_IsNotRegisteredAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).DoesNotContain("\"Negated\"")
+      .Because("The sign is knowable and the operand is not, so the expression as a whole is not. Negating an "
+        + "unresolved constant would register a value no rebuild produces.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_AConstantFoldedExpression_IsNotRegisteredAsync() {
+    var runner = _runner();
+
+    await Assert.That(runner).DoesNotContain("\"Computed\"")
+      .Because("\"a\" + \"b\" folds to a constant in the compiler, but reading it here would mean evaluating "
+        + "expressions. The line is drawn at what the declaration states outright.");
   }
 
   [Test]
