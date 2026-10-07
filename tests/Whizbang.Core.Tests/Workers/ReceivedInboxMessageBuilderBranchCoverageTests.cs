@@ -47,7 +47,7 @@ public class ReceivedInboxMessageBuilderBranchCoverageTests {
   public async Task Classify_WithAReceiveHook_ShowsItTheReceivedEnvelopeAsync() {
     var messageId = MessageId.New();
     var envelope = new MessageEnvelope<JsonElement>(messageId, JsonDocument.Parse("{}").RootElement, hops: []);
-    using var scope = new ServiceCollection()
+    await using var scope = new ServiceCollection()
       .AddSingleton(new Whizbang.Core.Priority.PriorityHookChain([], [new ByMessageIdHook(messageId)], []))
       .BuildServiceProvider();
 

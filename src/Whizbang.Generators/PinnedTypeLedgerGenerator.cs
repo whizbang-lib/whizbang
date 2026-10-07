@@ -53,8 +53,9 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
     // The predicate admits only type declarations, and a type declaration in its own compilation always
     // has its symbol.
     var type = (INamedTypeSymbol)context.SemanticModel.GetDeclaredSymbol((TypeDeclarationSyntax)context.Node, ct)!;
-    if (type.IsAbstract ||
-        type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) {
+    // A type declaration is a class, a struct, a record or an interface, and an interface is abstract,
+    // so a concrete one is a class or a struct.
+    if (type.IsAbstract) {
       return null;
     }
 

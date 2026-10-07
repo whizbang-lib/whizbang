@@ -149,7 +149,7 @@ public class ContainmentSqlRewriterTests {
   /// </summary>
   [Test]
   public async Task AHavingClauseIsVisitedAndKeptAsync() {
-    using var db = _newContext();
+    await using var db = _newContext();
 
     var sql = db.Set<PerspectiveRow<ReshapeModel>>()
       .GroupBy(r => r.Data.Rank)
