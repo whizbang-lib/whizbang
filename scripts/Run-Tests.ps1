@@ -1665,11 +1665,31 @@ try {
 
         if ($unbuilt.Count -gt 0) {
             # -NoBuild is a promise that the build output is already here (CI downloads it). Never
-            # compile behind it: name what is missing, so a short artifact is visible rather than
-            # paid for in minutes, and let discovery run on what exists.
+            # compile behind it. CI suites download only their own slice of the build
+            # (.github/scripts/Get-TestSlice.ps1), so most projects are legitimately absent; what must
+            # never be absent is a project THIS run selects, because discovery would skip it without a
+            # word and its tests would silently stop running. That is an error, naming the projects.
             if ($NoBuild) {
-                $names = ($unbuilt | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) }) -join ', '
-                Write-Warning "-NoBuild: $($unbuilt.Count) test project(s) in the solution have no $Configuration build output and will not be discovered: $names"
+                $wantedTypes = switch ($Mode) {
+                    { $_ -in @('Unit', 'AiUnit') } { @('Unit') }
+                    { $_ -in @('Integration', 'AiIntegrations') } { @('Integration') }
+                    default { @('Unit', 'Integration') }
+                }
+                $selected = @($unbuilt | Where-Object {
+                    $name = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+                    (Get-ProjectTestType $_.FullName) -in $wantedTypes -and
+                    (-not $Tag -or (@(Get-ProjectTags $_.FullName) -contains $Tag)) -and
+                    (-not $ProjectFilter -or $name -match $ProjectFilter) -and
+                    (-not $ExcludeProjectFilter -or $name -notmatch $ExcludeProjectFilter)
+                })
+                if ($selected.Count -gt 0) {
+                    $names = ($selected | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) }) -join ', '
+                    # Written, not Write-Error: this script stops on errors, and its trap re-throws a
+                    # Write-Error as a bare "ScriptHalted" with the message lost.
+                    $message = "-NoBuild: this run selects $($selected.Count) test project(s) with no $Configuration build output, so their tests would not run: $names. In CI, the suite's build slice is missing them (.github/scripts/Get-TestSlice.ps1)."
+                    if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::error::$message" } else { Write-Host $message -ForegroundColor Red }
+                    exit 1
+                }
                 return
             }
             if (-not $useAiOutput) {

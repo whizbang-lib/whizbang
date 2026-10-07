@@ -781,7 +781,7 @@ jobs:
             testFilter: ''
     uses: ./.github/workflows/reusable-test-postgres.yml
     with:
-      artifact-name: build-${{ github.run_id }}
+      artifact-name: build-postgres-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
       project-filter: ${{ matrix.projectFilter }}
       test-filter: ${{ matrix.testFilter }}
       shard-name: ${{ matrix.shard }}
@@ -794,7 +794,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/reusable-test-inmemory.yml
     with:
-      artifact-name: build-${{ github.run_id }}
+      artifact-name: build-inmemory-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
 
   rabbitmq-integration:
     name: Test · RabbitMQ
@@ -804,7 +804,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
     with:
-      artifact-name: build-${{ github.run_id }}
+      artifact-name: build-rabbitmq-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
 
   servicebus-integration:
     # Single-dimension matrix so GitHub renders the leg names itself ("Service Bus
@@ -823,7 +823,7 @@ jobs:
         shard: [whizbang, ecommerce]
     uses: ./.github/workflows/reusable-test-servicebus.yml
     with:
-      artifact-name: build-${{ github.run_id }}
+      artifact-name: build-servicebus-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
       project-filter: ${{ matrix.shard == 'whizbang' && 'Whizbang\.Transports\.AzureServiceBus' || 'ECommerce\.AzureServiceBus' }}
       shard-name: ${{ matrix.shard }}
 
@@ -835,7 +835,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/reusable-test-azureblob.yml
     with:
-      artifact-name: build-${{ github.run_id }}
+      artifact-name: build-azureblob-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
 
   quality:
     name: Analyze · Quality
