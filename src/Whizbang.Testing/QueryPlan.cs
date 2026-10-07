@@ -183,7 +183,7 @@ public sealed class QueryPlan {
         throw new QueryPlanAssertionException(
           $"{relation} is read by a sequential scan: {node.ActualRows} rows over {node.ActualLoops} loop(s), "
           + $"visiting {node.SharedHit + node.SharedRead} shared buffers. A scan repeated per row is a different "
-          + $"defect from one unavoidable scan, which is why the loop count is here.", Json);
+          + "defect from one unavoidable scan, which is why the loop count is here.", Json);
       }
     }
 
@@ -246,7 +246,7 @@ public sealed class QueryPlan {
     throw new QueryPlanAssertionException(
       $"The query visited {SharedBuffersVisited} shared buffers to return {ActualRows} row(s): {perRow} per row, "
       + $"over the ceiling of {buffersPerReturnedRow}. A correct result at this cost is a scan nested inside a "
-      + $"per-row loop, not contention.", Json);
+      + "per-row loop, not contention.", Json);
   }
 }
 
@@ -256,56 +256,47 @@ public sealed class QueryPlan {
 /// nothing can reach them when the type is only ever built from its constructor. Get-only properties leave no
 /// surface that cannot be exercised.
 /// </remarks>
-public sealed class QueryPlanNode {
-  /// <summary>Creates a node.</summary>
-  /// <param name="nodeType">The planner's node type, e.g. <c>Seq Scan</c> or <c>Index Only Scan</c>.</param>
-  /// <param name="relationName">The table the node reads, when it reads one.</param>
-  /// <param name="indexName">The index the node reads, when it reads one.</param>
-  /// <param name="functionName">The function the node scans, for a <c>Function Scan</c>.</param>
-  /// <param name="actualRows">Rows the node produced per loop.</param>
-  /// <param name="actualLoops">How many times the node ran. A scan repeated per row shows up here.</param>
-  /// <param name="actualTotalTimeMs">What the node took, in milliseconds.</param>
-  /// <param name="sharedHit">Shared buffers the node found in cache.</param>
-  /// <param name="sharedRead">Shared buffers the node read from disk.</param>
-  public QueryPlanNode(string nodeType, string? relationName, string? indexName, string? functionName,
-      long actualRows, long actualLoops, double actualTotalTimeMs, long sharedHit, long sharedRead) {
-    NodeType = nodeType;
-    RelationName = relationName;
-    IndexName = indexName;
-    FunctionName = functionName;
-    ActualRows = actualRows;
-    ActualLoops = actualLoops;
-    ActualTotalTimeMs = actualTotalTimeMs;
-    SharedHit = sharedHit;
-    SharedRead = sharedRead;
-  }
+#pragma warning disable S107 // A plan node carries the nine attributes EXPLAIN reports for one node. Grouping
+// them into sub-objects would read better here and worse at every use site, where a rule asks for one of them by
+// name (node.ActualLoops, node.SharedHit). The shape follows EXPLAIN's, which is the point of the type.
+public sealed class QueryPlanNode(
+    string nodeType,
+    string? relationName,
+    string? indexName,
+    string? functionName,
+    long actualRows,
+    long actualLoops,
+    double actualTotalTimeMs,
+    long sharedHit,
+    long sharedRead) {
+#pragma warning restore S107
 
   /// <summary>The planner's node type, e.g. <c>Seq Scan</c> or <c>Index Only Scan</c>.</summary>
-  public string NodeType { get; }
+  public string NodeType { get; } = nodeType;
 
   /// <summary>The table the node reads, when it reads one.</summary>
-  public string? RelationName { get; }
+  public string? RelationName { get; } = relationName;
 
   /// <summary>The index the node reads, when it reads one.</summary>
-  public string? IndexName { get; }
+  public string? IndexName { get; } = indexName;
 
   /// <summary>The function the node scans, for a <c>Function Scan</c>.</summary>
-  public string? FunctionName { get; }
+  public string? FunctionName { get; } = functionName;
 
   /// <summary>Rows the node produced per loop.</summary>
-  public long ActualRows { get; }
+  public long ActualRows { get; } = actualRows;
 
   /// <summary>How many times the node ran. A scan repeated per row shows up here.</summary>
-  public long ActualLoops { get; }
+  public long ActualLoops { get; } = actualLoops;
 
   /// <summary>What the node took, in milliseconds.</summary>
-  public double ActualTotalTimeMs { get; }
+  public double ActualTotalTimeMs { get; } = actualTotalTimeMs;
 
   /// <summary>Shared buffers the node found in cache.</summary>
-  public long SharedHit { get; }
+  public long SharedHit { get; } = sharedHit;
 
   /// <summary>Shared buffers the node read from disk.</summary>
-  public long SharedRead { get; }
+  public long SharedRead { get; } = sharedRead;
 }
 
 /// <summary>A query's plan did not meet a rule a test stated about it.</summary>
