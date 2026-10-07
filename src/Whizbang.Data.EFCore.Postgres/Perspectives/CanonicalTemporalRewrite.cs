@@ -235,7 +235,9 @@ public static class CanonicalTemporalRewrite {
       ImmutableArray<TemporalPath>.Builder found, bool topLevel) {
     // The top-level complex property is the document itself; a nested one is a key in it, and a
     // collection is every element under that key.
-    var here = topLevel ? prefix : prefix.Add(complex.GetJsonPropertyName() ?? complex.Name);
+    // A nested complex property in a document always has a stored name, held by the same test as the
+    // properties below; a fallback to the member name would address a key the document does not have.
+    var here = topLevel ? prefix : prefix.Add(complex.GetJsonPropertyName()!);
     if (complex.IsCollection) {
       here = here.Add(TemporalPath.COLLECTION);
     }
