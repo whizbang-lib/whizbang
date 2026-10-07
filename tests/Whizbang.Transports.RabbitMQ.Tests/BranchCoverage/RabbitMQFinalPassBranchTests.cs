@@ -136,13 +136,14 @@ public class RabbitMQFinalPassBranchTests {
 
   /// <summary>
   /// Only a subscription whose metadata carries the owned-inbox marker set to true is probed for
-  /// ownership drift; no metadata, metadata without the marker, and a false marker are all not
-  /// owned.
+  /// ownership drift; no metadata, metadata without the marker, a false marker and a marker that is
+  /// not a boolean are all not owned.
   /// </summary>
   [Test]
   [Arguments("no-metadata", 0)]
   [Arguments("no-marker", 0)]
   [Arguments("marker-false", 0)]
+  [Arguments("marker-text", 0)]
   [Arguments("marker-true", 1)]
   public async Task Provisioner_OwnedInboxMarker_ProbesOnlyAnOwnedInboxAsync(string metadataShape, int expectedProbes) {
     var channel = new FakeChannel { ExistingExchanges = { INBOX_TOPIC } };
@@ -166,6 +167,8 @@ public class RabbitMQFinalPassBranchTests {
     "no-metadata" => null,
     "no-marker" => new Dictionary<string, object> { ["unrelated"] = "value" },
     "marker-false" => new Dictionary<string, object> { [NamespaceInboxStrategy.OwnedCommandInboxMetadataKey] = false },
+    // Only the boolean true is the marker; a value that merely reads like it is not.
+    "marker-text" => new Dictionary<string, object> { [NamespaceInboxStrategy.OwnedCommandInboxMetadataKey] = "true" },
     _ => new Dictionary<string, object> { [NamespaceInboxStrategy.OwnedCommandInboxMetadataKey] = true },
   };
 

@@ -208,10 +208,12 @@ public class AsbComponentBranchCoverageTests {
   [Test]
   public async Task ProvisionManifest_OwnershipMarkerNotTrue_IsNotDriftCheckedAsync() {
     var adminClient = new RecordingProvisioningAdminClient {
-      ExistingTopics = { "inbox.marker-false", "inbox.no-metadata", "inbox.owned" },
+      ExistingTopics = { "inbox.marker-false", "inbox.no-metadata", "inbox.unmarked", "inbox.marker-text", "inbox.owned" },
       ExistingSubscriptions = {
         ("inbox.marker-false", "other-service-a"),
         ("inbox.no-metadata", "other-service-b"),
+        ("inbox.unmarked", "other-service-d"),
+        ("inbox.marker-text", "other-service-e"),
         ("inbox.owned", "other-service-c")
       }
     };
@@ -223,6 +225,14 @@ public class AsbComponentBranchCoverageTests {
         [NamespaceInboxStrategy.OwnedCommandInboxMetadataKey] = false
       }),
       new InboxSubscription("inbox.no-metadata"),
+      // Metadata for something else entirely carries no ownership marker at all.
+      new InboxSubscription("inbox.unmarked", Metadata: new Dictionary<string, object> {
+        ["coverage-unrelated-key"] = true
+      }),
+      // Only the boolean true is the marker; a value that merely reads like it is not.
+      new InboxSubscription("inbox.marker-text", Metadata: new Dictionary<string, object> {
+        [NamespaceInboxStrategy.OwnedCommandInboxMetadataKey] = "true"
+      }),
       new InboxSubscription("inbox.owned", Metadata: new Dictionary<string, object> {
         [NamespaceInboxStrategy.OwnedCommandInboxMetadataKey] = true
       })
@@ -232,7 +242,7 @@ public class AsbComponentBranchCoverageTests {
 
     var finding = driftState.Findings.Single();
     await Assert.That(finding.Entity).IsEqualTo("inbox.owned")
-      .Because("the true marker is checked (proving the check runs) and the other two are not");
+      .Because("the true marker is checked (proving the check runs) and the other four are not");
   }
 
   /// <summary>
