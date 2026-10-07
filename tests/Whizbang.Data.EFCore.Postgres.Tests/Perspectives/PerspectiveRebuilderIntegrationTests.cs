@@ -25,7 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// Paired with the unit tests in Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs.
 /// </summary>
 [Category("Integration")]
-[Category("Shard2")]
+[Category("Shard1")]
 public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
   // What the rebuilder published during a test. One per test instance, so tests do not see each other's events.
