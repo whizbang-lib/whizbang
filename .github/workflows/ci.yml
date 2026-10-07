@@ -115,7 +115,14 @@ jobs:
             push)         BASE="$BEFORE";  HEAD="$GITHUB_SHA" ;;
             *)            BASE="";         HEAD="" ;;
           esac
-          if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+          # A release-branch push is always code (#1208). Its run is the one the stable publish
+          # promotes packages from and the release PR takes coverage from, so it must build and pack
+          # even when the push changes nothing: an empty fix merged into the branch once left the
+          # release PR's Quality with no coverage and the publish with no packages.
+          if [ "$EVENT" = push ] && [[ "$GITHUB_REF" == refs/heads/release/v* ]]; then
+            echo "Release-branch push: always built and packed."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          elif [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
             echo "No base to compare against ($EVENT): treating as code."
             echo "code=true" >> "$GITHUB_OUTPUT"
           elif pwsh -NoProfile -File .github/scripts/Test-InertDiff.ps1 -Base "$BASE" -Head "$HEAD"; then
@@ -1072,9 +1079,10 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
           EVENT: ${{ github.event_name }}
           ACTOR: ${{ github.actor }}
+          REF: ${{ github.ref }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-        run: pwsh -NoProfile -File .github/scripts/Test-CiResult.ps1 -Needs "$RESULTS" -EventName "$EVENT" -Actor "$ACTOR"
+        run: pwsh -NoProfile -File .github/scripts/Test-CiResult.ps1 -Needs "$RESULTS" -EventName "$EVENT" -Actor "$ACTOR" -Ref "$REF"
 
   # ============================================================================
   # Pack NuGet Packages - validates packability and produces artifacts
@@ -1250,6 +1258,17 @@ jobs:
           PR=$(open_pr)
           if [ -n "$PR" ]; then
             echo "Open release PR to main (#$PR) — the merge will publish. Skipping release-branch publish."
+            { echo "should_publish=false"; echo "line=current"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Already merged into main (#1209): a re-run of this branch's run after its release PR merged,
+          # which is the recovery when the merge's publish found no packages. The merge's release.yml
+          # promotes this run's packages, so there is nothing to route: opening a PR would fail ("No
+          # commits between main and ...") and turn the run that must be green red.
+          AHEAD=$(gh api "repos/$REPO/compare/main...$GITHUB_SHA" --jq '.ahead_by')
+          if [ "$AHEAD" = 0 ]; then
+            echo "$GITHUB_SHA is already in main: its release PR merged, and release.yml publishes from this run."
             { echo "should_publish=false"; echo "line=current"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi

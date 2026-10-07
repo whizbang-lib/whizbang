@@ -58,6 +58,11 @@ Work out the version from facts, not guesses:
   the approval gate, the tag exists (`git ls-remote --tags origin vX.Y.Z`), and after approval the
   packages are live (`curl -s https://api.nuget.org/v3-flatcontainer/softwareextravaganza.whizbang.core/index.json | jq -r '.versions[-3:][]'`).
 - `gh pr merge --auto` prints nothing when the PR is already merged. Read `state` back.
+- A release-branch run must have built and packed: the publish promotes its `nuget-packages-<run>`
+  artifact and the release PR takes its coverage. Every `release/v*` push counts as code and the gate
+  fails one with no build or pack (#1208), so a second PR carrying the same fix can no longer leave the
+  release with nothing to publish. If an older run still lacks packages, re-running all its jobs is
+  safe even after the release PR merged (#1209).
 - A red `Plan · Locate the tested packages` says which failure it is: no run found, run not green, or
   packages missing. Each has its own row in the Recovery table. "No run found" after a green
   release-branch run is the search missing it: re-run the release's failed jobs, not the branch CI.
