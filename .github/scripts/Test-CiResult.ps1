@@ -23,7 +23,10 @@
       docs-only     a push or PR whose change detector found only inert paths.
       tested here   anything else: build, all six suites and Quality must be green. A skip fails.
 
-    On every path, any failed or canceled job fails the gate.
+    On every path, any failed or canceled job fails the gate. A push to a release branch must also have
+    built and packed, whatever path it took (#1208): that run is the one the stable publish promotes
+    packages from and the release PR takes coverage from, so a release-branch run with no packages is a
+    failure here rather than at publish time.
 
     Exit 0 on pass, 1 on fail. Needs GH_TOKEN and REPO only when the path is "yielded".
 
@@ -35,6 +38,9 @@
 
 .PARAMETER Actor
     github.actor (a Dependabot PR runs without Sonar secrets, so its Quality is skipped by design).
+
+.PARAMETER Ref
+    github.ref. A push to refs/heads/release/v* must have built and packed.
 
 .EXAMPLE
     pwsh .github/scripts/Test-CiResult.ps1 -Needs "$RESULTS" -EventName pull_request -Actor someone
@@ -48,7 +54,10 @@ param(
     [string]$EventName,
 
     [Parameter()]
-    [string]$Actor = ''
+    [string]$Actor = '',
+
+    [Parameter()]
+    [string]$Ref = ''
 )
 
 Set-StrictMode -Version Latest
@@ -100,7 +109,8 @@ function Get-CiVerdict {
       [Parameter(Mandatory)][hashtable]$NeedsTable,
       [Parameter(Mandatory)][string]$EventName,
       [string]$Actor = '',
-      [string]$CoveringGate = ''
+      [string]$CoveringGate = '',
+      [string]$Ref = ''
   )
   $problems = [System.Collections.Generic.List[string]]::new()
 
@@ -148,6 +158,13 @@ function Get-CiVerdict {
     }
   }
 
+  if ($EventName -eq 'push' -and $Ref -like 'refs/heads/release/v*') {
+    $why = 'a release-branch run is what the stable publish promotes and the release PR takes coverage from'
+    foreach ($job in @('build', 'pack')) {
+      if (-not ($problems | Where-Object { $_ -like "$job is *" })) { & $require $job $why }
+    }
+  }
+
   return [pscustomobject]@{ Pass = ($problems.Count -eq 0); Path = $path; Problems = @($problems) }
 }
 
@@ -179,7 +196,7 @@ if ((Get-CiPath -Needs $table -EventName $EventName) -eq 'yielded') {
   Write-Output "yielded to run $run; its gate: $covering"
 }
 
-$verdict = Get-CiVerdict -NeedsTable $table -EventName $EventName -Actor $Actor -CoveringGate $covering
+$verdict = Get-CiVerdict -NeedsTable $table -EventName $EventName -Actor $Actor -CoveringGate $covering -Ref $Ref
 $summary = if ($verdict.Pass) { "Gate passed on the **$($verdict.Path)** path." } else { "Gate failed on the **$($verdict.Path)** path." }
 if ($env:GITHUB_STEP_SUMMARY) {
   $summary | Add-Content -Path $env:GITHUB_STEP_SUMMARY

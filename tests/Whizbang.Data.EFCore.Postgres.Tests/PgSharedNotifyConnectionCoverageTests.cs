@@ -67,6 +67,44 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     }
   }
 
+  /// <summary>
+  /// Reads the shared connection's own backend row until it shows a completed keepalive: a
+  /// <c>SELECT 1</c> as the last statement, with the session back to <c>idle</c>.
+  /// </summary>
+  /// <remarks>
+  /// Both facts are transient in opposite directions. The session is <c>active</c> for as long as a
+  /// round trip is in flight, and <c>query</c> holds whatever ran last — so a single sample can catch
+  /// a healthy keepalive mid-flight and read it as a failure. Polling converges on the state the test
+  /// is actually asserting, and a keepalive that never runs still fails, by exhausting the window.
+  /// </remarks>
+  private async Task<(bool Found, string LastQuery, string State)> _awaitKeepaliveObservedAsync(
+      string appName, CancellationToken cancellationToken) {
+    var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+    (bool Found, string LastQuery, string State) last = (false, string.Empty, string.Empty);
+
+    while (DateTime.UtcNow < deadline) {
+      await using var admin = new NpgsqlConnection(ConnectionString);
+      await admin.OpenAsync(cancellationToken);
+      await using var cmd = admin.CreateCommand();
+      cmd.CommandText =
+        "SELECT query, state FROM pg_stat_activity WHERE application_name = @appName";
+      cmd.Parameters.AddWithValue("@appName", appName);
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+
+      if (await reader.ReadAsync(cancellationToken)) {
+        last = (true, reader.GetString(0), reader.GetString(1));
+        if (last.State == "idle" && last.LastQuery.Contains("SELECT 1", StringComparison.Ordinal)) {
+          return last;
+        }
+      }
+
+      await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+    }
+
+    // Whatever was last seen, so a failure reports the real state rather than an empty one.
+    return last;
+  }
+
   // A subscriber's channel name is producer-controlled, and PgSharedNotifyConnection never
   // sanitizes it before splicing it into `LISTEN "{channel}"`. If a bad name (or a bug in a
   // caller building one) threw the resync pass off its feet instead of being caught per
@@ -211,26 +249,19 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     try {
       await _awaitAvailableAsync(gate, cancellationToken);
 
-      // Idle well past several keepalive intervals. Nothing else touches this connection
-      // during the window (no subscribers, no notifications), so any SELECT 1 that ran can
-      // only be the keepalive branch.
-      await Task.Delay(TimeSpan.FromMilliseconds(1200), cancellationToken);
-
+      // Wait for the evidence rather than sleeping past it. The keepalive fires every 200ms, so a
+      // single sample taken after a fixed delay can land while a SELECT 1 is still in flight and
+      // read 'active' -- which is a healthy keepalive, reported as a failure. That is what made this
+      // test flaky on a loaded runner, where an in-flight round trip occupies a larger share of each
+      // interval. Converging on the condition keeps the assertion exact and removes the race: a
+      // keepalive that never runs still fails, now by timing out rather than by a lucky sample.
       var appName = PgSharedNotifyConnection.ComputeApplicationName(instanceProvider.InstanceId);
-      await using var admin = new NpgsqlConnection(ConnectionString);
-      await admin.OpenAsync(cancellationToken);
-      await using var cmd = admin.CreateCommand();
-      cmd.CommandText =
-        "SELECT query, state FROM pg_stat_activity WHERE application_name = @appName";
-      cmd.Parameters.AddWithValue("@appName", appName);
-      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-      var found = await reader.ReadAsync(cancellationToken);
+      var (found, lastQuery, state) =
+        await _awaitKeepaliveObservedAsync(appName, cancellationToken);
 
       await Assert.That(found).IsTrue()
         .Because("the shared connection's own backend row must still exist -- a plain idle "
                + "period must not have dropped and reopened it");
-      var lastQuery = reader.GetString(0);
-      var state = reader.GetString(1);
       await Assert.That(state).IsEqualTo("idle")
         .Because("the keepalive round-trip must complete and return the session to idle, not "
                + "leave it stuck mid-query");

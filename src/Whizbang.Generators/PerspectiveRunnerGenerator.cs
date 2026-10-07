@@ -1445,42 +1445,102 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// The C# expression for what one member reads as, or null when the declaration does not say.
+  /// The C# expression for what one member reads as when the stored document has no key for it, or null when the
+  /// declaration does not say.
   /// </summary>
   /// <remarks>
-  /// Nullable members are skipped: an absent key already reads as null on both paths, so they agree, and
-  /// coalescing would change a predicate that is correct today. Only a literal initializer is read — an
-  /// arbitrary expression could evaluate to anything, and registering a guess that differs from what a rebuild
-  /// produces is worse than registering nothing. A member whose declaration is not in this compilation is
-  /// skipped for the same reason: whether it has an initializer cannot be known from metadata.
+  /// <para>
+  /// A member is registered when what an absent key reads as is KNOWABLE from the declaration alone. Registering a
+  /// guess that differs from what a rebuild produces is worse than registering nothing, so an expression that could
+  /// evaluate to anything is skipped — but a compile-time constant is not a guess. An enumeration member and a cast
+  /// of a literal name the same value every rebuild produces, and they are how a status-like member ordinarily
+  /// declares its eligible default, so testing for literal SYNTAX left exactly those members filtered on SQL NULL
+  /// while the replay they are meant to agree with saw the default.
+  /// </para>
+  /// <para>
+  /// Nullability alone does not skip a member. That skip holds only because an absent key reads as null on BOTH
+  /// paths, which is true of a nullable member with no initializer and false of one with an initializer: a rebuild
+  /// runs the initializer and the member holds its value.
+  /// </para>
+  /// <para>
+  /// A member whose declaration is not in this compilation is skipped — whether it carries an initializer cannot be
+  /// known from metadata. A constant declared on ANOTHER type (<c>= Defaults.Phase</c>) is skipped too: resolving it
+  /// needs a semantic model, and taking one would bind this step to compilation identity and cost it its
+  /// incremental cacheability.
+  /// </para>
   /// </remarks>
   private static string? _tryDeclaredDefault(IPropertySymbol property) {
-    if (property.Type.NullableAnnotation == NullableAnnotation.Annotated
-        || property.Type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T) {
-      return null;
-    }
-
-    // A member declared outside this compilation has no syntax to read, so whether it carries an initializer cannot
-    // be known from metadata — the same reason a non-literal initializer is skipped.
+    // A member declared outside this compilation has no syntax to read.
     var declaration = property.DeclaringSyntaxReferences
       .Select(reference => reference.GetSyntax())
       .OfType<PropertyDeclarationSyntax>()
       .FirstOrDefault();
-    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     if (declaration is null) {
       return null;
     }
 
-    return declaration.Initializer?.Value switch {
+    var type = property.Type;
+    var typeName = TypeNameUtilities.FullyQualified(type);
+
+    if (declaration.Initializer is null) {
+      // No initializer: an absent key reads as the CLR default, which is null for anything nullable and for a
+      // reference type — a value both paths already agree on, so there is nothing to declare.
+      var nullable = type.NullableAnnotation == NullableAnnotation.Annotated
+        || type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T;
+      return !nullable && type.IsValueType ? $"default({typeName})" : null;
+    }
+
+    return _tryKnowableValue(declaration.Initializer.Value, type, typeName);
+  }
+
+  /// <summary>
+  /// The C# expression for an initializer whose value the declaration states outright, or null when reading it
+  /// would mean evaluating an expression.
+  /// </summary>
+  private static string? _tryKnowableValue(ExpressionSyntax expression, ITypeSymbol type, string typeName) =>
+    expression switch {
+      // `= null` says the member reads as null, which is what registering nothing already means.
+      LiteralExpressionSyntax literal when literal.Token.IsKind(SyntaxKind.NullKeyword) => null,
       // A value type's literal is cast to the member's own type so the registered value boxes as that type —
       // `= 5` on a long must arrive as a long, not an int, or it binds against the column as the wrong type.
-      LiteralExpressionSyntax literal => property.Type.IsValueType
-          ? $"({typeName}){literal.Token.Text}"
-          : literal.Token.Text,
-      null => property.Type.IsValueType ? $"default({typeName})" : null,
+      LiteralExpressionSyntax literal => type.IsValueType ? $"({typeName}){literal.Token.Text}" : literal.Token.Text,
+      // Unary minus only parses ahead of a numeric literal, so the member is necessarily a value type.
+      PrefixUnaryExpressionSyntax { Operand: LiteralExpressionSyntax negated } unary
+          when unary.OperatorToken.IsKind(SyntaxKind.MinusToken) => $"({typeName})(-{negated.Token.Text})",
+      // `(Stage)2` names the same constant the member does; the form it is written in changes nothing. A cast of
+      // anything else is still that unresolvable thing, which the recursion reports.
+      CastExpressionSyntax cast => _tryKnowableValue(cast.Expression, type, typeName),
+      // `Stage.Active` — a member of the member's OWN enumeration resolves from the type symbol alone.
+      MemberAccessExpressionSyntax access => _tryEnumMember(type, access.Name.Identifier.ValueText),
       _ => null,
     };
+
+  /// <summary>
+  /// The fully qualified name of <paramref name="memberName"/> when it names a member of <paramref name="type"/>'s
+  /// enumeration, or null when it names anything else.
+  /// </summary>
+  /// <remarks>
+  /// A nullable enumeration is unwrapped first: <c>Stage? x = Stage.Retired</c> names a Stage member, and the value
+  /// registered for it boxes as Stage, which is what the column stores.
+  /// </remarks>
+  private static string? _tryEnumMember(ITypeSymbol type, string memberName) {
+    var enumType = type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
+      ? nullable.TypeArguments[0]
+      : type;
+
+    if (enumType.TypeKind != TypeKind.Enum) {
+      return null;
+    }
+
+    foreach (var member in enumType.GetMembers()) {
+      // An enumeration's members are its constant fields; it also carries the non-constant `value__`.
+      if (member is IFieldSymbol { HasConstantValue: true } && member.Name == memberName) {
+        return TypeNameUtilities.FullyQualified(enumType) + "." + memberName;
+      }
+    }
+
+    return null;
   }
 
   private static PhysicalFieldInfoCompact[] _discoverPhysicalFields(INamedTypeSymbol modelType) {
