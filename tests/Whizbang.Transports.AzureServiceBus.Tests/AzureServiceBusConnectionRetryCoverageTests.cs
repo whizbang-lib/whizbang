@@ -179,4 +179,60 @@ public class AzureServiceBusConnectionRetryCoverageTests {
       .IsFalse()
       .Because("nothing was recovered from, so there is nothing to report at Information level");
   }
+
+  // Each attempt constructs a client before it knows whether the namespace answers. An attempt that
+  // fails has to close the client it made: a namespace that refuses for minutes at startup would
+  // otherwise leave one open client, with its connection and its timers, per attempt (#1187).
+  [Test]
+  public async Task CreateClientWithRetryAsync_WhenAnAttemptFails_ClosesThatAttemptsClientAsync(
+      CancellationToken cancellationToken) {
+    var created = new List<Azure.Messaging.ServiceBus.ServiceBusClient>();
+    var verifications = 0;
+    var retry = new AzureServiceBusConnectionRetry(_fastRetryOptions()) {
+      CreateClient = connectionString => {
+        var client = new Azure.Messaging.ServiceBus.ServiceBusClient(connectionString);
+        created.Add(client);
+        return client;
+      },
+      VerifyNamespaceReachableAsync = (_, _) => {
+        verifications++;
+        return verifications < 3
+          ? Task.FromException(new Azure.RequestFailedException("namespace not answering yet"))
+          : Task.CompletedTask;
+      }
+    };
+
+    await using var client = await retry.CreateClientWithRetryAsync(UNREACHABLE_NAMESPACE, cancellationToken);
+
+    await Assert.That(created).Count().IsEqualTo(3);
+    await Assert.That(created[0].IsClosed).IsTrue().Because("the first attempt failed, so its client must be closed");
+    await Assert.That(created[1].IsClosed).IsTrue().Because("the second attempt failed, so its client must be closed");
+    await Assert.That(client).IsSameReferenceAs(created[2]);
+    await Assert.That(client.IsClosed).IsFalse().Because("the verified client is the one handed back, open");
+  }
+
+  // Giving up is a failure too: the client made by the last attempt is closed before the error
+  // reaches the caller, who never receives it and so could never close it.
+  [Test]
+  public async Task CreateClientWithRetryAsync_WhenAttemptsAreExhausted_ClosesEveryClientItMadeAsync(
+      CancellationToken cancellationToken) {
+    var created = new List<Azure.Messaging.ServiceBus.ServiceBusClient>();
+    var options = _fastRetryOptions();
+    options.RetryIndefinitely = false;
+    var retry = new AzureServiceBusConnectionRetry(options) {
+      CreateClient = connectionString => {
+        var client = new Azure.Messaging.ServiceBus.ServiceBusClient(connectionString);
+        created.Add(client);
+        return client;
+      },
+      VerifyNamespaceReachableAsync = (_, _) =>
+        Task.FromException(new Azure.Messaging.ServiceBus.ServiceBusException("refused", Azure.Messaging.ServiceBus.ServiceBusFailureReason.ServiceCommunicationProblem))
+    };
+
+    await Assert.That(async () => { await retry.CreateClientWithRetryAsync(UNREACHABLE_NAMESPACE, cancellationToken); })
+      .Throws<Azure.Messaging.ServiceBus.ServiceBusException>();
+    await Assert.That(created).IsNotEmpty();
+    await Assert.That(created.All(c => c.IsClosed)).IsTrue()
+      .Because("no client from a failed attempt may outlive the call");
+  }
 }

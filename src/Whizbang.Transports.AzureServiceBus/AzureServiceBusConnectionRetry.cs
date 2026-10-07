@@ -70,8 +70,15 @@ public sealed partial class AzureServiceBusConnectionRetry {
 
         // Create the client, then prove the namespace actually answers — constructing a client
         // connects to nothing, so the verification below is what makes an attempt meaningful.
-        var client = new ServiceBusClient(connectionString);
-        await VerifyNamespaceReachableAsync(connectionString, cancellationToken).ConfigureAwait(false);
+        var client = CreateClient(connectionString);
+        try {
+          await VerifyNamespaceReachableAsync(connectionString, cancellationToken).ConfigureAwait(false);
+        } catch {
+          // The caller only ever receives a verified client, so one from a failed attempt is closed
+          // here or never: retried, given up on, or canceled alike (#1187).
+          await client.DisposeAsync().ConfigureAwait(false);
+          throw;
+        }
 
         if (attempt > 1 && _logger is not null) {
           LogConnectionEstablished(_logger, attempt);
@@ -96,6 +103,16 @@ public sealed partial class AzureServiceBusConnectionRetry {
   /// </remarks>
   internal Func<string, CancellationToken, Task> VerifyNamespaceReachableAsync { get; init; } =
     _verifyNamespaceReachableAsync;
+
+  /// <summary>
+  /// Constructs the client an attempt verifies. Constructing one connects to nothing.
+  /// </summary>
+  /// <remarks>
+  /// The seam lets the unit suite see the client each attempt made, which is how it proves a
+  /// failed attempt's client is closed rather than left open. Production always uses the default.
+  /// </remarks>
+  internal Func<string, ServiceBusClient> CreateClient { get; init; } =
+    static connectionString => new ServiceBusClient(connectionString);
 
   private static Task _verifyNamespaceReachableAsync(string connectionString, CancellationToken cancellationToken) =>
     new ServiceBusAdministrationClient(connectionString).GetNamespacePropertiesAsync(cancellationToken);

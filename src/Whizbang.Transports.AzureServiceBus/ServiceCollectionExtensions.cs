@@ -230,20 +230,26 @@ public static class ServiceCollectionExtensions {
     // drainer abandon — the message stays on the broker DLQ instead of being silently lost.
     services.AddSingleton<Whizbang.Core.Transports.ITransportDeadLetterDrainer>(sp => {
       var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
-      return new AzureServiceBusFleetDeadLetterDrainer(
-        clientFactory: () => sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>(),
-        activeSubscriptions: () =>
-          sp.GetRequiredService<ITransport>() is AzureServiceBusTransport asb
-            ? asb.ActiveSubscriptions
-            : [],
-        importAsync: async (import, ct) => {
+      var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+      Func<Whizbang.Core.Transports.BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync =
+        async (import, ct) => {
           using var scope = scopeFactory.CreateScope();
           var coordinator = scope.ServiceProvider.GetService<Whizbang.Core.Messaging.IWorkCoordinator>()
             ?? throw new InvalidOperationException(
               "Broker DLQ import requires an IWorkCoordinator; none is registered — message stays on the broker DLQ.");
           return await coordinator.ImportBrokerDeadLetterAsync(import, ct).ConfigureAwait(false);
-        },
-        loggerFactory: sp.GetRequiredService<ILoggerFactory>());
+        };
+
+      // One fleet per Service Bus namespace, each draining with its own namespace's client. A
+      // multi-namespace host resolves a namespace router here, and every namespace behind it has
+      // dead-letter queues of its own.
+      return new AzureServiceBusNamespacesDeadLetterDrainer(
+        transports: () => AzureServiceBusNamespacesDeadLetterDrainer.ServiceBusTransportsOf(sp.GetRequiredService<ITransport>()),
+        fleetFor: transport => new AzureServiceBusFleetDeadLetterDrainer(
+          clientFactory: () => transport.Client,
+          activeSubscriptions: () => transport.ActiveSubscriptions,
+          importAsync: importAsync,
+          loggerFactory: loggerFactory));
     });
 
     // Backlog-age duty's peek (topology arc phase 10): the transport contributes the admin-plane

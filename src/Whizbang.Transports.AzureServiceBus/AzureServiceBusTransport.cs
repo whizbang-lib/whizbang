@@ -72,6 +72,12 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   internal IReadOnlyCollection<(string TopicName, string SubscriptionName)> ActiveSubscriptions
     => [.. _activeSubscriptionKeys.Keys];
 
+  /// <summary>
+  /// The client this transport's namespace is reached through. A multi-namespace host has one per
+  /// namespace, and draining a namespace's dead-letter queues needs that namespace's client.
+  /// </summary>
+  internal ServiceBusClient Client => _client;
+
   // ===== Adaptive session acceptors =====
   // One governor per session subscription; the sweep loop is shared (one PeriodicTimer per
   // transport, same idiom as the receive-liveness watchdog — no busy loops, no per-sub timers).
@@ -2396,7 +2402,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     return element.ValueKind switch {
       JsonValueKind.String => element.GetString(),
       JsonValueKind.Number when element.TryGetInt64(out var longVal) => longVal,
-      JsonValueKind.Number when element.TryGetDouble(out var doubleVal) => doubleVal,
+      // .NET parses a number beyond the double range to infinity and reports success, so a finite
+      // result is what proves the double holds the value. Anything else falls through to the
+      // original text below rather than going out as a different number (#1184).
+      JsonValueKind.Number when element.TryGetDouble(out var doubleVal) && double.IsFinite(doubleVal) => doubleVal,
       JsonValueKind.True => true,
       JsonValueKind.False => false,
       JsonValueKind.Null => null,
