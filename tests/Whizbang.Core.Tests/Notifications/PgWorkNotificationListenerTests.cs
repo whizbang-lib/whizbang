@@ -96,6 +96,22 @@ public class PgWorkNotificationListenerTests {
     await Assert.That(conn.Active).IsEmpty();
   }
 
+  /// <summary>
+  /// A host torn down without a clean stop still releases the subscription: disposing a started
+  /// listener unsubscribes it from the shared connection, so the connection does not keep a LISTEN
+  /// for a listener that no longer exists.
+  /// </summary>
+  [Test]
+  public async Task Dispose_WithoutStop_ReleasesTheSubscriptionAsync() {
+    var (listener, conn, _, instanceId) = _build();
+
+    await ((IHostedService)listener).StartAsync(CancellationToken.None);
+    listener.Dispose();
+
+    await Assert.That(conn.DisposeChannels).IsEquivalentTo([$"wh_work_i_{instanceId:D}"]);
+    await Assert.That(conn.Active).IsEmpty();
+  }
+
   [Test]
   public async Task IsHealthy_DelegatesToGateAvailabilityAsync() {
     var (listener, _, gate, _) = _build();
