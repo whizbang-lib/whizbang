@@ -5,6 +5,11 @@
 // DO NOT EDIT - Changes will be overwritten
 #endregion
 
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using FastEndpoints;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;

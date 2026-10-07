@@ -22,6 +22,9 @@
     <ProjectReference Include="../../src/Whizbang.Transports.FastEndpoints/Whizbang.Transports.FastEndpoints.csproj" />
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
     <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
+    <!-- The REST lens generator, as a consumer references it: the generated endpoints are compiled
+         and exercised here, not only compared as text. -->
+    <ProjectReference Include="../../src/Whizbang.Transports.FastEndpoints.Generators/Whizbang.Transports.FastEndpoints.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
@@ -30,5 +33,6 @@
     <PackageReference Include="Bogus" />
     <PackageReference Include="FastEndpoints" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
   </ItemGroup>
 </Project>

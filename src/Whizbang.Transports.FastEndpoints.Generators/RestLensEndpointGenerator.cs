@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Utilities;
 
@@ -77,6 +79,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
     }
 
     var modelType = lensQueryInterface.TypeArguments[0];
+    var fields = _shapedFieldsOf(modelType);
 
     // Extract attribute properties
     var route = AttributeUtilities.GetStringValue(restLensAttr, "Route")
@@ -100,8 +103,120 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
         DefaultPageSize: defaultPageSize,
         MaxPageSize: maxPageSize,
         Namespace: TypeNameUtilities.Display(symbol.ContainingNamespace),
-        EndpointClassName: endpointClassName
+        EndpointClassName: endpointClassName,
+        FilterCases: _renderFilterCases(fields),
+        SortCases: _renderSortCases(fields)
     );
+  }
+
+  /// <summary>How a filter value is read as a property's type.</summary>
+  private enum FieldKind {
+    /// <summary>Compared as the text given.</summary>
+    Text,
+
+    /// <summary>Read through the type's own <c>IParsable</c> implementation.</summary>
+    Parsable,
+
+    /// <summary>Read as a defined member of the enumeration.</summary>
+    Enumeration,
+  }
+
+  /// <summary>A model property a request can filter and sort by.</summary>
+  private readonly record struct ShapedField(string Name, string Identifier, string TypeName, FieldKind Kind);
+
+  // The value types whose BCL implementation of IParsable reads them back from text, by special type
+  // and, for the types that have none, by name.
+  private static readonly HashSet<SpecialType> _parsableSpecialTypes = [
+    SpecialType.System_Boolean, SpecialType.System_Byte, SpecialType.System_SByte,
+    SpecialType.System_Int16, SpecialType.System_UInt16, SpecialType.System_Int32, SpecialType.System_UInt32,
+    SpecialType.System_Int64, SpecialType.System_UInt64, SpecialType.System_Single, SpecialType.System_Double,
+    SpecialType.System_Decimal, SpecialType.System_DateTime,
+  ];
+
+  private static readonly HashSet<string> _parsableTypeNames = new(StringComparer.Ordinal) {
+    "System.Guid", "System.DateTimeOffset", "System.DateOnly", "System.TimeOnly", "System.TimeSpan",
+  };
+
+  /// <summary>
+  /// The model's readable, public, instance properties whose value a request can compare and order
+  /// by, most-derived first. A name that differs only in case from one already taken is skipped,
+  /// since request field names match ignoring case.
+  /// </summary>
+  private static List<ShapedField> _shapedFieldsOf(ITypeSymbol model) {
+    var fields = new List<ShapedField>();
+    var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    for (var type = model; type is not null; type = type.BaseType) {
+      foreach (var property in type.GetMembers().OfType<IPropertySymbol>()) {
+        if (property.IsStatic || property.IsIndexer || property.GetMethod is null
+            || property.DeclaredAccessibility != Accessibility.Public
+            || _kindOf(property.Type) is not { } kind
+            || !taken.Add(property.Name)) {
+          continue;
+        }
+
+        fields.Add(new ShapedField(
+          property.Name,
+          SyntaxFacts.GetKeywordKind(property.Name) == SyntaxKind.None ? property.Name : "@" + property.Name,
+          TypeNameUtilities.FullyQualified(_withoutNullable(property.Type)),
+          kind));
+      }
+    }
+
+    return fields;
+  }
+
+  private static ITypeSymbol _withoutNullable(ITypeSymbol type) =>
+    type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
+      ? nullable.TypeArguments[0]
+      : type;
+
+  private static FieldKind? _kindOf(ITypeSymbol type) {
+    var bare = _withoutNullable(type);
+    if (bare.SpecialType == SpecialType.System_String) {
+      return FieldKind.Text;
+    }
+
+    if (bare.TypeKind == TypeKind.Enum) {
+      return FieldKind.Enumeration;
+    }
+
+    return _parsableSpecialTypes.Contains(bare.SpecialType) || _parsableTypeNames.Contains(TypeNameUtilities.Display(bare))
+      ? FieldKind.Parsable
+      : null;
+  }
+
+  /// <summary>
+  /// One <c>case</c> per field: text compares as given, anything else is first read as the field's
+  /// type, so a value that is not one is a 400 rather than a comparison that matches nothing.
+  /// </summary>
+  private static string _renderFilterCases(List<ShapedField> fields) {
+    var sb = new StringBuilder();
+    foreach (var field in fields) {
+      var key = field.Name.ToUpperInvariant();
+      if (field.Kind == FieldKind.Text) {
+        sb.AppendLine($"      case \"{key}\": return query.Where(x => x.{field.Identifier} == value);");
+        continue;
+      }
+
+      var parse = field.Kind == FieldKind.Enumeration ? "ParseEnum" : "Parse";
+      sb.AppendLine($"      case \"{key}\": {{");
+      sb.AppendLine($"        var parsed = LensQueryShaping.{parse}<{field.TypeName}>(field, value);");
+      sb.AppendLine($"        return query.Where(x => x.{field.Identifier} == parsed);");
+      sb.AppendLine("      }");
+    }
+
+    return sb.ToString();
+  }
+
+  /// <summary>One switch arm per field, each adding that field to the ordering.</summary>
+  private static string _renderSortCases(List<ShapedField> fields) {
+    var sb = new StringBuilder();
+    foreach (var field in fields) {
+      sb.AppendLine($"        \"{field.Name.ToUpperInvariant()}\" => LensQueryShaping.ThenOrderBy(query, ordered, x => x.{field.Identifier}, sort.Descending),");
+    }
+
+    return sb.ToString();
   }
 
   /// <summary>
@@ -209,35 +324,91 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("  /// <inheritdoc />");
     sb.AppendLine("  public override async Task HandleAsync(LensRequest req, CancellationToken ct) {");
-    sb.AppendLine("    // Calculate paging");
-    sb.AppendLine("    var page = Math.Max(1, req.Page);");
-    sb.AppendLine($"    var pageSize = req.PageSize ?? {lens.DefaultPageSize};");
-    sb.AppendLine($"    pageSize = Math.Min(pageSize, {lens.MaxPageSize});");
-    sb.AppendLine("    pageSize = Math.Max(1, pageSize);");
-    sb.AppendLine("    var skip = (page - 1) * pageSize;");
+    // The default scope, not the unscoped legacy query: a public endpoint must return only the rows
+    // the caller's scope allows.
+    sb.AppendLine($"    IQueryable<{lens.ModelTypeName}> query = _lens.DefaultScope.Query.Select(r => r.Data);");
+    sb.AppendLine($"    IQueryable<{lens.ModelTypeName}> ordered;");
+    sb.AppendLine("    try {");
+    if (lens.EnableFiltering) {
+      sb.AppendLine("      // Every filter[field]=value narrows the rows; together they are AND'd.");
+      sb.AppendLine("      if (req.Filter is not null) {");
+      sb.AppendLine("        foreach (var filter in req.Filter) {");
+      sb.AppendLine("          query = _filter(query, filter.Key, filter.Value);");
+      sb.AppendLine("        }");
+      sb.AppendLine("      }");
+    }
+
+    if (lens.EnableSorting) {
+      sb.AppendLine("      ordered = _sort(query, LensQueryShaping.ParseSort(req.Sort));");
+    } else {
+      sb.AppendLine("      // Sorting is off for this lens: a stable order by Id keeps pages consistent.");
+      sb.AppendLine("      ordered = query.OrderBy(x => x.Id);");
+    }
+
+    sb.AppendLine("    } catch (InvalidLensRequestException ex) {");
+    sb.AppendLine("      ThrowError(ex.Message);");
+    sb.AppendLine("      return;");
+    sb.AppendLine("    }");
     sb.AppendLine();
-    sb.AppendLine("    // Build query with default ordering by Id for consistent pagination");
-    sb.AppendLine("    var query = _lens.Query.Select(r => r.Data).OrderBy(x => x.Id);");
+
+    if (lens.EnablePaging) {
+      sb.AppendLine("    var page = Math.Max(1, req.Page);");
+      sb.AppendLine($"    var pageSize = req.PageSize ?? {lens.DefaultPageSize};");
+      sb.AppendLine($"    pageSize = Math.Min(pageSize, {lens.MaxPageSize});");
+      sb.AppendLine("    pageSize = Math.Max(1, pageSize);");
+      sb.AppendLine("    var skip = (page - 1) * pageSize;");
+      sb.AppendLine();
+      sb.AppendLine("    var totalCount = await ordered.CountAsync(ct);");
+      sb.AppendLine("    var items = await ordered.Skip(skip).Take(pageSize).ToListAsync(ct);");
+      sb.AppendLine();
+      sb.AppendLine($"    var response = new LensResponse<{lens.ModelTypeName}> {{");
+      sb.AppendLine("      Data = items,");
+      sb.AppendLine("      TotalCount = totalCount,");
+      sb.AppendLine("      Page = page,");
+      sb.AppendLine("      PageSize = pageSize");
+      sb.AppendLine("    };");
+    } else {
+      sb.AppendLine("    // Paging is off for this lens: every matching row is one page.");
+      sb.AppendLine("    var items = await ordered.ToListAsync(ct);");
+      sb.AppendLine($"    var response = new LensResponse<{lens.ModelTypeName}> {{");
+      sb.AppendLine("      Data = items,");
+      sb.AppendLine("      TotalCount = items.Count,");
+      sb.AppendLine("      Page = 1,");
+      sb.AppendLine("      PageSize = items.Count");
+      sb.AppendLine("    };");
+    }
+
     sb.AppendLine();
-    sb.AppendLine("    // TODO: Apply filtering based on req.Filter");
-    sb.AppendLine("    // TODO: Apply sorting based on req.Sort (should override default OrderBy)");
-    sb.AppendLine();
-    sb.AppendLine("    // Get total count before paging");
-    sb.AppendLine("    var totalCount = await query.CountAsync(ct);");
-    sb.AppendLine();
-    sb.AppendLine("    // Apply paging");
-    sb.AppendLine("    var items = await query.Skip(skip).Take(pageSize).ToListAsync(ct);");
-    sb.AppendLine();
-    sb.AppendLine("    // Build response");
-    sb.AppendLine($"    var response = new LensResponse<{lens.ModelTypeName}> {{");
-    sb.AppendLine("      Data = items,");
-    sb.AppendLine("      TotalCount = totalCount,");
-    sb.AppendLine("      Page = page,");
-    sb.AppendLine("      PageSize = pageSize");
-    sb.AppendLine("    };");
-    sb.AppendLine();
-    sb.AppendLine("    await SendAsync(response, cancellation: ct);");
+    sb.AppendLine("    await Send.OkAsync(response, ct);");
     sb.AppendLine("  }");
+
+    if (lens.EnableFiltering) {
+      sb.AppendLine();
+      sb.AppendLine($"  private static IQueryable<{lens.ModelTypeName}> _filter(IQueryable<{lens.ModelTypeName}> query, string field, string value) {{");
+      sb.AppendLine("    switch (field.ToUpperInvariant()) {");
+      sb.Append(lens.FilterCases);
+      sb.AppendLine("      default:");
+      sb.AppendLine("        throw InvalidLensRequestException.UnknownField(\"filter\", field);");
+      sb.AppendLine("    }");
+      sb.AppendLine("  }");
+    }
+
+    if (lens.EnableSorting) {
+      sb.AppendLine();
+      sb.AppendLine($"  private static IQueryable<{lens.ModelTypeName}> _sort(IQueryable<{lens.ModelTypeName}> query, IReadOnlyList<SortExpression> sorts) {{");
+      sb.AppendLine($"    IOrderedQueryable<{lens.ModelTypeName}>? ordered = null;");
+      sb.AppendLine("    foreach (var sort in sorts) {");
+      sb.AppendLine("      ordered = sort.Field.ToUpperInvariant() switch {");
+      sb.Append(lens.SortCases);
+      sb.AppendLine("        _ => throw InvalidLensRequestException.UnknownField(\"sort\", sort.Field),");
+      sb.AppendLine("      };");
+      sb.AppendLine("    }");
+      sb.AppendLine();
+      sb.AppendLine("    // Id last, so rows the requested keys leave tied still page in a stable order.");
+      sb.AppendLine("    return LensQueryShaping.ThenOrderBy(query, ordered, x => x.Id, false);");
+      sb.AppendLine("  }");
+    }
+
     sb.AppendLine("}");
 
     return sb.ToString();
