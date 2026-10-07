@@ -24,6 +24,10 @@ public class WhizbangGraphQLOptions {
   /// <see cref="GraphQLLensScopes.None"/>.
   /// Default: <see cref="GraphQLLensScopes.DataOnly"/>
   /// </summary>
+  /// <remarks>
+  /// Read when the schema is built. <see cref="GraphQLLensScopes.None"/> or a value with an undefined bit
+  /// exposes <see cref="GraphQLLensScopes.Data"/> only.
+  /// </remarks>
   public GraphQLLensScopes DefaultScope { get; set; } = GraphQLLensScopes.DataOnly;
 
   /// <summary>
