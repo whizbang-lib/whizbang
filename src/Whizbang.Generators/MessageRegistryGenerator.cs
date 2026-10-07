@@ -220,13 +220,11 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // (the typical case), `ContainingType` is the same interface, but in some
     // overload-resolution paths Roslyn returns an open or constructed wrapper
     // whose `OriginalDefinition` is what matches our constant.
-    // A method with no containing type is no more a dispatcher method than one on an unrelated type,
-    // so that guard shares this exit rather than standing on a line of its own.
-    var containingType = methodSymbol.ContainingType;
-    var isDispatcherMethod = containingType is not null
-        && (TypeNameHelper.GetFullyQualifiedName(containingType) == StandardInterfaceNames.I_DISPATCHER
-            || TypeNameHelper.GetFullyQualifiedName(containingType.OriginalDefinition) == StandardInterfaceNames.I_DISPATCHER
-            || TypeNameHelper.ImplementsInterface(containingType, StandardInterfaceNames.I_DISPATCHER));
+    // Every method belongs to a type; a local function's is the type that encloses it.
+    var containingType = methodSymbol.ContainingType!;
+    var isDispatcherMethod = TypeNameHelper.GetFullyQualifiedName(containingType) == StandardInterfaceNames.I_DISPATCHER
+        || TypeNameHelper.GetFullyQualifiedName(containingType.OriginalDefinition) == StandardInterfaceNames.I_DISPATCHER
+        || TypeNameHelper.ImplementsInterface(containingType, StandardInterfaceNames.I_DISPATCHER);
     if (!isDispatcherMethod) {
       return null;
     }
@@ -268,12 +266,10 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
           ? TypeNameHelper.GetFullyQualifiedName(declaredTypeSymbol)
           : "<unknown>";
     } else {
-      // Top-level statements: ask the semantic model for the enclosing symbol,
-      // which lives in the compiler-synthesized Program type.
-      var enclosingSymbol = semanticModel.GetEnclosingSymbol(invocation.SpanStart, cancellationToken);
-      className = enclosingSymbol?.ContainingType is { } synthesizedType
-          ? TypeNameHelper.GetFullyQualifiedName(synthesizedType)
-          : "<top-level>";
+      // Top-level statements: ask the semantic model for the enclosing symbol, which is the
+      // compiler-synthesized entry point, and it always lives in the synthesized Program type.
+      var enclosingSymbol = semanticModel.GetEnclosingSymbol(invocation.SpanStart, cancellationToken)!;
+      className = TypeNameHelper.GetFullyQualifiedName(enclosingSymbol.ContainingType!);
     }
 
     var location = invocation.GetLocation();

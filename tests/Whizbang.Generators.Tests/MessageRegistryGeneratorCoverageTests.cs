@@ -432,6 +432,75 @@ namespace TestNamespace {
     }
   }
 
+  /// <summary>
+  /// A tests map that is the JSON literal null, or an object without its CodeToTests table, carries no
+  /// tests; the registry is generated without any and no load failure is reported.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Arguments("null")]
+  [Arguments("{}")]
+  public async Task MessageRegistryGenerator_TestsMapWithoutATable_GeneratesWithoutTestsAsync(string testsMapJson) {
+    const string source = """
+
+using Whizbang.Core;
+
+namespace TestNamespace {
+  public class CovNoTableCommand : ICommand {
+    public string Value { get; set; } = "";
+  }
+}
+""";
+
+    var docsRepoPath = _createDocsRepo("{}", testsMapJson);
+    try {
+      var result = _runGeneratorWithDocsPath(source, docsRepoPath);
+
+      var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
+      await Assert.That(generatedSource).IsNotNull();
+      await Assert.That(generatedSource).Contains("CovNoTableCommand");
+      await Assert.That(generatedSource).DoesNotContain("\"\"testFile\"\"");
+      await Assert.That(result.Diagnostics.Select(d => d.Id)).DoesNotContain("WHIZ054");
+    } finally {
+      Directory.Delete(docsRepoPath, recursive: true);
+    }
+  }
+
+  /// <summary>
+  /// A test entry that names only its line still becomes an entry, its missing names written empty
+  /// rather than as the text "null" or a failed load.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_TestEntryWithOnlyALine_IsWrittenWithEmptyNamesAsync() {
+    const string source = """
+
+using Whizbang.Core;
+
+namespace TestNamespace {
+  public class CovSparseCommand : ICommand {
+    public string Value { get; set; } = "";
+  }
+}
+""";
+    const string testsMapJson = """
+{ "CodeToTests": { "CovSparseCommand": [ { "TestLine": 64 } ] } }
+""";
+
+    var docsRepoPath = _createDocsRepo("{}", testsMapJson);
+    try {
+      var result = _runGeneratorWithDocsPath(source, docsRepoPath);
+
+      var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
+      await Assert.That(generatedSource).IsNotNull();
+      await Assert.That(generatedSource).Contains("\"\"testLine\"\": 64");
+      await Assert.That(generatedSource).Contains("\"\"testFile\"\": \"\"\"\"");
+      await Assert.That(generatedSource).Contains("\"\"testClass\"\": \"\"\"\"");
+    } finally {
+      Directory.Delete(docsRepoPath, recursive: true);
+    }
+  }
+
   // ========================================
   // Helpers
   // ========================================

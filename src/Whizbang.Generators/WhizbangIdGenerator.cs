@@ -805,11 +805,12 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       Compilation compilation,
       ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> results) {
 
-    // Extract only valid IDs (filter out errors and nulls)
+    // Extract only valid IDs, leaving out the error results. Each discovery pipeline drops its null
+    // results before they are collected, so every element has a value.
     var validIds = results.IsDefaultOrEmpty
         ? new List<WhizbangIdInfo>()
         : [.. results
-            .Where(r => r.HasValue && r.Value.Item1 is not null)
+            .Where(r => r!.Value.Item1 is not null)
             .Select(r => r!.Value.Item1!)];
 
     // Deduplicate by fully qualified name

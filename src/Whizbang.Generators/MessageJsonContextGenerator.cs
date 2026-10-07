@@ -3951,8 +3951,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Checks whether a type is concrete (non-abstract) and public.
   /// </summary>
   private static bool _isConcretePublicType(string typeName, Compilation compilation) {
-    var symbol = _tryGetTypeSymbolByName(typeName, compilation);
-    return symbol?.IsAbstract == false && symbol.DeclaredAccessibility == Accessibility.Public;
+    // A derived name that is not synthesized came from a message whose symbol this same lookup
+    // resolved when the inheritance was collected, so it resolves here too.
+    var symbol = _tryGetTypeSymbolByName(typeName, compilation)!;
+    return !symbol.IsAbstract && symbol.DeclaredAccessibility == Accessibility.Public;
   }
 
   /// <summary>
