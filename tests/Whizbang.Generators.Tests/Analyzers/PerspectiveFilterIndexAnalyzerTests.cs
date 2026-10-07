@@ -625,6 +625,148 @@ public class PerspectiveFilterIndexAnalyzerTests {
     await Assert.That(_whiz302(diagnostics)).IsNotEmpty();
   }
 
+  // ========================================
+  // Correlated keys: a comparison against another row is a join, not a lookup
+  // ========================================
+
+  /// <summary>
+  /// Equality against another row's value is a join key, and containment cannot answer it: the lens
+  /// rewrites a comparison to containment only when the other side is a value, so this one compiles
+  /// to an extraction that scans the inner table once per outer row.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("from o in _rows let n = _rows.Where(r => r.Data.AlsoJsonOnly == o.Id).Count() select n")]
+  [Arguments("_rows.Select(o => _rows.Count(r => r.Data.AlsoJsonOnly == o.Id))")]
+  [Arguments("_rows.Select(o => _rows.Count(r => o.Id == r.Data.AlsoJsonOnly))")]
+  [Arguments("from o in _rows let n = (from r in _rows where r.Data.AlsoJsonOnly == o.Id select r).Count() select n")]
+  [Arguments("from o in _rows from r in _rows where r.Data.AlsoJsonOnly == o.Id select r")]
+  [Arguments("_rows.Select(o => _rows.Count(r => r.Data.JsonOnly.Equals(o.Data.UniqueCode, System.StringComparison.Ordinal)))")]
+  [Arguments("_rows.Select(o => _rows.Count(r => string.Equals(r.Data.JsonOnly, o.Data.UniqueCode, System.StringComparison.Ordinal)))")]
+  [Arguments("_rows.Select(o => _rows.Count(r => new[] { o.Id }.Contains(r.Data.AlsoJsonOnly)))")]
+  public async Task CorrelatedKey_OnJsonOnlyField_IsReportedAsync(string query) {
+    var source = _repositoryOver($"""
+            return ({query}).ToList();
+      """);
+
+    var diagnostics = (await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source)).ToList();
+
+    var reported = _whiz302(diagnostics).ToList();
+    await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("ThingModel");
+    // It is a scan to report, not a whole-document match to check the document index against.
+    await Assert.That(diagnostics.Where(d => d.Id is "WHIZ307" or "WHIZ308")).IsEmpty();
+  }
+
+  /// <summary>
+  /// A comparison between two fields of the same row is no more a value than a correlated one, and
+  /// the lens declines to rewrite it for the same reason.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ComparisonWithinTheSameRow_IsReportedAsync() {
+    var source = _repositoryOver("""
+            return _rows.Where(r => r.Data.AlsoJsonOnly == r.Data.IndexedOwnerId).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics).Select(d => d.GetMessage(CultureInfo.InvariantCulture)).Single())
+      .Contains("AlsoJsonOnly");
+  }
+
+  /// <summary>
+  /// The outer row's member is the value each lookup is made with, not a filter on the outer table,
+  /// so it is not reported; only the inner side decides which rows are read.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("from o in _rows let n = _rows.Where(r => r.Data.IndexedOwnerId == o.Data.AlsoJsonOnly).Count() select n")]
+  [Arguments("_rows.Select(o => _rows.Count(r => o.Data.AlsoJsonOnly == r.Data.IndexedOwnerId))")]
+  [Arguments("_rows.Select(o => _rows.Count(r => r.Data.DeclaredBtree == o.Data.Num))")]
+  [Arguments("from o in _rows let n = (from r in _rows where r.Data.IndexedOwnerId == o.Data.AlsoJsonOnly select r).Count() select n")]
+  [Arguments("from o in _rows let n = (from r in _rows orderby o.Data.JsonOnly select r).Count() select n")]
+  public async Task CorrelatedKey_OnIndexedField_WithOuterDocumentValue_IsNotReportedAsync(string query) {
+    var source = _repositoryOver($"""
+            return ({query}).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty();
+  }
+
+  /// <summary>
+  /// A row held in a variable is a value to the query, like any other local: its member narrows
+  /// nothing, and an equality against it is still a containment lookup.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("r.Data.Num == row.Data.Num", 0)]
+  [Arguments("r.Data.Num > row.Data.Num", 1)]
+  public async Task MemberOfARowHeldInAVariable_IsAValueAsync(string predicate, int expected) {
+    var source = _repositoryOver($"""
+            var row = _rows.First();
+            return _rows.Where(r => {predicate}).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).Count().IsEqualTo(expected);
+  }
+
+  /// <summary>
+  /// A join reaches each of its rows through the pair it built. Both are the predicate's own rows, so
+  /// a filter on either is analyzed, and a comparison between them is a join key rather than a value.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("pair.o.Data.JsonOnly.Contains(\"ab\")", 1)]
+  [Arguments("pair.o.Data.JsonOnly == \"ab\"", 0)]
+  [Arguments("pair.o.Data.AlsoJsonOnly == pair.c.Data.AlsoJsonOnly", 2)]
+  public async Task JoinedPair_RowsAreThePredicatesOwnAsync(string predicate, int expected) {
+    var source = _repositoryOver($$"""
+            return _rows.SelectMany(_ => _rows, (o, c) => new { o, c }).Where(pair => {{predicate}}).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).Count().IsEqualTo(expected);
+  }
+
+  /// <summary>An ordering in query syntax reads its own query's rows, so it is reported as before.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task QuerySyntaxOrdering_OnTheQuerysOwnRow_IsReportedAsync() {
+    var source = _repositoryOver("""
+            return (from o in _rows from r in _rows orderby r.Data.JsonOnly select o).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// A captured local or method parameter becomes a value in the query, which the lens does rewrite
+  /// to containment, so the correlated-key rule must not take these over.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("_rows.Where(r => r.Data.AlsoJsonOnly == id)")]
+  [Arguments("_rows.Select(o => _rows.Count(r => r.Data.AlsoJsonOnly == id))")]
+  [Arguments("from o in _rows let n = _rows.Where(r => r.Data.AlsoJsonOnly == captured).Count() select n")]
+  public async Task EqualityAgainstACapturedValue_InsideACorrelatedQuery_IsNotReportedAsync(string query) {
+    var source = _repositoryOver($"""
+            var captured = id;
+            return ({query}).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty();
+  }
+
   /// <summary>Ordering needs the value itself, which containment never supplies.</summary>
   [Test]
   [RequiresAssemblyFiles]

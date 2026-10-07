@@ -27,7 +27,8 @@ namespace Whizbang.Transports.HotChocolate;
 public enum GraphQLLensScopes {
   /// <summary>
   /// Use system-configured default from <see cref="WhizbangGraphQLOptions.DefaultScope"/>.
-  /// When no explicit scope is set, the system default is applied at runtime.
+  /// When no explicit scope is set, the system default is applied when the schema is built;
+  /// if that default is also <see cref="None"/>, or carries an undefined bit, only <see cref="Data"/> is exposed.
   /// </summary>
   None = 0,
 

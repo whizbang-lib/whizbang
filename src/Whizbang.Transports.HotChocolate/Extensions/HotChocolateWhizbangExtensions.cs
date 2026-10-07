@@ -48,6 +48,9 @@ public static class HotChocolateWhizbangExtensions {
 
     builder.Services.AddSingleton(options);
 
+    // The generated lens types read DefaultScope and the filter options while the schema is built.
+    builder.ConfigureSchema(schema => schema.SetContextData(GraphQLLensScopeResolver.OPTIONS_CONTEXT_KEY, options));
+
     builder
         .AddFiltering<WhizbangFilterConvention>()
         .AddSorting<WhizbangSortConvention>()
