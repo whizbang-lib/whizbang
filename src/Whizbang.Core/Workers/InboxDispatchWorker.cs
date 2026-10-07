@@ -209,6 +209,40 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LogPartitionCountClamped(_logger, configured, partitionCount, _gate!.MaxConcurrent);
     }
     var partitions = new Channel<InboxWork>[partitionCount];
+    var consumers = _startPartitionConsumers(partitions, stoppingToken);
+
+    try {
+      await foreach (var work in _inboxChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
+        var partitionIndex = (int)((uint)work.StreamId.GetHashCode() % (uint)partitionCount);
+        await partitions[partitionIndex].Writer.WriteAsync(work, stoppingToken).ConfigureAwait(false);
+      }
+    } catch (OperationCanceledException) {
+      // expected on shutdown
+    } finally {
+      foreach (var p in partitions) {
+        p.Writer.TryComplete();
+      }
+      try {
+        await Task.WhenAll(consumers).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        // shutdown
+      }
+    }
+
+    LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// Creates each partition's queue and starts its single consumer, which dispatches the partition's
+  /// work in order until the queue completes or the worker stops.
+  /// </summary>
+  /// <remarks>
+  /// Its own method rather than inline in <see cref="ExecuteAsync"/>: inside the async state machine
+  /// the loop picked up a compiler-generated branch beside its own condition, and here it has only the
+  /// condition it was written with.
+  /// </remarks>
+  private Task[] _startPartitionConsumers(Channel<InboxWork>[] partitions, CancellationToken stoppingToken) {
+    var partitionCount = partitions.Length;
     var consumers = new Task[partitionCount];
     for (var i = 0; i < partitionCount; i++) {
       partitions[i] = Channel.CreateUnbounded<InboxWork>(new UnboundedChannelOptions {
@@ -240,26 +274,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         }
       }, stoppingToken);
     }
-
-    try {
-      await foreach (var work in _inboxChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
-        var partitionIndex = (int)((uint)work.StreamId.GetHashCode() % (uint)partitionCount);
-        await partitions[partitionIndex].Writer.WriteAsync(work, stoppingToken).ConfigureAwait(false);
-      }
-    } catch (OperationCanceledException) {
-      // expected on shutdown
-    } finally {
-      foreach (var p in partitions) {
-        p.Writer.TryComplete();
-      }
-      try {
-        await Task.WhenAll(consumers).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        // shutdown
-      }
-    }
-
-    LogStopped(_logger);
+    return consumers;
   }
 
   private async Task _processOneAsync(InboxWork work, CancellationToken stoppingToken) {
