@@ -323,8 +323,8 @@ public class AsbComponentBranchCoverageTests {
 
   /// <summary>
   /// When the registered transport is not the Service Bus transport (a decorator or a replacement),
-  /// the fleet drainer finds no Service Bus subscriptions to drain and does nothing, rather than
-  /// failing a cast on every drain pass.
+  /// the drainer finds no Service Bus namespace to drain and does nothing, rather than failing a cast
+  /// on every drain pass.
   /// </summary>
   [Test]
   public async Task FleetDrainerRegistration_NonServiceBusTransport_DrainsNothingAsync() {
@@ -334,11 +334,12 @@ public class AsbComponentBranchCoverageTests {
     services.AddAzureServiceBusTransport(UNIT_CONNECTION_STRING);
     services.AddSingleton<ITransport>(new TestTransport(isInitialized: true));
     await using var provider = services.BuildServiceProvider();
-    var fleet = provider.GetServices<ITransportDeadLetterDrainer>()
-      .OfType<AzureServiceBusFleetDeadLetterDrainer>()
+    // The registration contributes one drainer covering every Service Bus namespace (#1186).
+    var drainer = provider.GetServices<ITransportDeadLetterDrainer>()
+      .OfType<AzureServiceBusNamespacesDeadLetterDrainer>()
       .Single();
 
-    var drained = await fleet.DrainDeadLetterQueueAsync(10);
+    var drained = await drainer.DrainDeadLetterQueueAsync(10);
 
     await Assert.That(drained).IsEqualTo(0);
   }
