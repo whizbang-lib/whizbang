@@ -178,6 +178,12 @@ public class PhysicalJsonbContainmentRewriterTests {
       ("r => r.Data.Other!.Name == tag", r => r.Data.Other!.Name == tag, true, 0),
       ("r => _local(r.Data).Tags.Contains(tag)", r => _local(r.Data).Tags.Contains(tag), true, 0),
       ("r => r.Data.Tags.Contains(tag)", r => r.Data.Tags.Contains(tag), false, 0),
+      // EF.Property for a name the row does not map, and over something that is not an entity at all:
+      // neither is a jsonb column, so neither is claimed.
+      ("r => EF.Property<List<string>>(r, \"NoSuchColumn\").Contains(tag)",
+        r => EF.Property<List<string>>(r, "NoSuchColumn").Contains(tag), true, 0),
+      ("r => EF.Property<List<string>>(r.Data, \"Tags\").Contains(tag)",
+        r => EF.Property<List<string>>(r.Data, "Tags").Contains(tag), true, 0),
     };
 
     var wrong = shapes.Where(s => _containments(s.Filter, s.WithModel) != s.Expected).Select(s => s.Name).ToList();

@@ -4,6 +4,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Diagnostics;
 using Whizbang.Generators.Analyzers;
 
 namespace Whizbang.Generators.Tests.Analyzers;
@@ -450,6 +451,52 @@ public class PerspectiveFilterIndexAnalyzerTests {
     var reported = _whiz302(diagnostics).ToList();
     await Assert.That(reported).Count().IsEqualTo(1);
     await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("NotExcused");
+  }
+
+  /// <summary>
+  /// A model that arrives as a package carries its own assembly's opt-out with it: the advisory is not
+  /// raised in the consuming project for a model whose assembly declares a reasoned suppression, while
+  /// the same model without that declaration is still reported there.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments(true, 0)]
+  [Arguments(false, 1)]
+  public async Task Filter_OnAModelFromAnotherAssembly_HonorsThatAssemblysSuppressionAsync(bool suppressed, int expected) {
+    var modelAssembly = AnalyzerTestHelper.CreateCompilationWithFrameworkReferences($$"""
+      using Whizbang.Core.Perspectives;
+
+      {{(suppressed ? "[assembly: SuppressIndexAdvisory(\"the package's tables are reference data\")]" : "")}}
+
+      namespace PackagedModels;
+
+      public class PackagedModel {
+        public string Region { get; init; } = string.Empty;
+      }
+      """).WithAssemblyName("PackagedModels");
+    await using var image = new System.IO.MemoryStream();
+    var emitted = modelAssembly.Emit(image);
+    await Assert.That(emitted.Success).IsTrue().Because("the packaged model must compile for the reference to mean anything");
+
+    var consumer = AnalyzerTestHelper.CreateCompilationWithFrameworkReferences("""
+      using System.Linq;
+      using Whizbang.Core.Lenses;
+      using PackagedModels;
+
+      namespace TestApp;
+
+      public class PackagedRepository {
+        private readonly IQueryable<PerspectiveRow<PackagedModel>> _rows = null!;
+
+        public object Find() => _rows.Where(r => r.Data.Region.Contains("ab")).ToList();
+      }
+      """).AddReferences(Microsoft.CodeAnalysis.MetadataReference.CreateFromImage(image.ToArray()));
+
+    var diagnostics = await consumer
+      .WithAnalyzers([new PerspectiveFilterIndexAnalyzer()])
+      .GetAnalyzerDiagnosticsAsync();
+
+    await Assert.That(_whiz302(diagnostics).Count()).IsEqualTo(expected);
   }
 
   private static string _suppressedModelSource(

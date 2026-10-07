@@ -86,7 +86,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
   // The integrity paths' fail-open warnings, written to a logger that is always there: a coordinator built
   // without one discards them, exactly as the null-conditional calls it replaces did.
-  private readonly ILogger _integrityLogger = (ILogger?)logger ?? NullLogger.Instance;
+  private readonly ILogger _log = (ILogger?)logger ?? NullLogger.Instance;
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly WorkCoordinatorGate? _gate = gate;
   private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
@@ -823,7 +823,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; falls back to the single-key functions.
-      _integrityLogger.LogWarning(ex,
+      _log.LogWarning(ex,
         "Integrity ledger batch {Function} failed; falling back to single-key calls for this chunk.", fn);
 #pragma warning restore CA1848
       return null;
@@ -902,7 +902,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; the drain derives a coarser window instead.
-      _integrityLogger.LogWarning(ex, "Integrity window stamp failed; the drain will derive a coarser range for these buckets.");
+      _log.LogWarning(ex, "Integrity window stamp failed; the drain will derive a coarser range for these buckets.");
 #pragma warning restore CA1848
     }
   }
@@ -948,7 +948,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; the drain simply waits for the next pass.
-      _integrityLogger.LogWarning(ex, "Integrity repair-drain claim failed; nothing dispatched this pass.");
+      _log.LogWarning(ex, "Integrity repair-drain claim failed; nothing dispatched this pass.");
 #pragma warning restore CA1848
       return [];
     }
@@ -989,7 +989,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; falls back to the single-key functions.
-      _integrityLogger.LogWarning(ex,
+      _log.LogWarning(ex,
         "Integrity ledger batch wh_integrity_mark_healed_batch failed; falling back to single-key calls for this chunk.");
 #pragma warning restore CA1848
       return null;
@@ -1044,7 +1044,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       throw;
     } catch (Exception ex) {
 #pragma warning disable CA1848 // Rare error path; a source-generated message would require making this type partial.
-      _integrityLogger.LogWarning(ex,
+      _log.LogWarning(ex,
         "Integrity ledger summary failed; convergence gauges will read as healthy until this is resolved.");
 #pragma warning restore CA1848
       return Whizbang.Core.Observability.LedgerGaugeSnapshot.Empty;
@@ -1095,7 +1095,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Never silent: a swallowed failure here degrades convergence invisibly, which is exactly
       // how a broken ledger would masquerade as a working one.
 #pragma warning disable CA1848 // Rare error path; a source-generated message would require making this type partial.
-      _integrityLogger.LogWarning(ex,
+      _log.LogWarning(ex,
         "Integrity ledger call {Function} failed; continuing with failOpen={FailOpen}. " +
         "Convergence bounding is degraded until this is resolved.", fn, failOpen);
 #pragma warning restore CA1848

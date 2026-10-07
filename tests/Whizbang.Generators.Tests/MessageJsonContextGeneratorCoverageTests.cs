@@ -328,6 +328,45 @@ public class CountedEvent : EventBase<int> {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task MessageJsonContextGenerator_AbstractPerspectiveEventUnderABase_IsLeftOutOfTheBasesFactoryAsync() {
+    // A perspective may name an abstract event type, and it is described for that perspective. Under a
+    // concrete base it still cannot be constructed, so the base's factory lists only the concrete leaf.
+    const string source = """
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestApp;
+
+public class ShapeEvent : IEvent {
+  public string Name { get; init; } = "";
+}
+
+public abstract class RoundShapeEvent : ShapeEvent;
+
+public class CircleDrawn : RoundShapeEvent {
+  public double Radius { get; init; }
+}
+
+public record ShapeModel {
+  public string Name { get; init; } = "";
+}
+
+public class ShapePerspective : IPerspectiveFor<ShapeModel, RoundShapeEvent> {
+  public ShapeModel Apply(ShapeModel currentData, RoundShapeEvent @event) => currentData;
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("CreatePolymorphic_TestApp_ShapeEvent");
+    await Assert.That(code).Contains("typeof(global::TestApp.CircleDrawn)");
+    await Assert.That(code).DoesNotContain("typeof(global::TestApp.RoundShapeEvent), \"");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task MessageJsonContextGenerator_AbstractAndInternalDerivedTypes_AreLeftOutOfTheBasesFactoryAsync() {
     // A polymorphic base's factory instantiates its derived types, so only concrete public ones may
     // be listed: an abstract intermediate cannot be constructed and an internal one cannot be named

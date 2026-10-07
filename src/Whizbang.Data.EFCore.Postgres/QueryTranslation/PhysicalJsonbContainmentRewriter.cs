@@ -314,7 +314,7 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
     switch (current) {
       // The root is found first, so the serializer is only asked about members under a jsonb column.
       case MemberExpression { Expression: { } owner, Member: PropertyInfo property }:
-        if (!_path(owner, isRoot, steps) || _storedName(owner.Type, property.Name) is not { } name) {
+        if (!_path(owner, isRoot, steps) || StoredNameFor(owner.Type, property.Name) is not { } name) {
           return false;
         }
 
@@ -339,7 +339,11 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
   /// The name a member is stored under, from the serializer's metadata for its declaring type under the
   /// persistence profile, which is what wrote the column. Null when the metadata does not know it.
   /// </summary>
-  private static string? _storedName(Type owner, string member) {
+  /// <remarks>
+  /// Internal so its fallback for metadata without attribute providers can be asserted directly: the
+  /// documents the rewriter's own tests query all carry providers, so no query reaches that branch.
+  /// </remarks>
+  internal static string? StoredNameFor(Type owner, string member) {
     if (!PerspectiveDocumentSerialization.Options.TryGetTypeInfo(owner, out var info)
         || info.Kind != JsonTypeInfoKind.Object) {
       return null;
