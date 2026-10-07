@@ -92,7 +92,6 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
         CommandTypeName: TypeNameUtilities.FullyQualified(commandType),
         CommandTypeNameShort: commandType.Name,
         ResultTypeName: TypeNameUtilities.FullyQualified(resultType),
-        ResultTypeNameShort: resultType.Name,
         RestRoute: restRoute!,
         RequestTypeName: requestTypeName,
         Namespace: TypeNameUtilities.Display(symbol.ContainingNamespace),

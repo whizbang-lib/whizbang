@@ -111,7 +111,7 @@ public static class StoredFormDiscovery {
     }
 
     var walk = new Walk(TypeNameUtilities.Display(model), model.GetAttributes().Any(a =>
-      TypeNameUtilities.IsNamed(a.AttributeClass, STORAGE) && a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is SPLIT));
+      TypeNameUtilities.IsNamed(a.AttributeClass, STORAGE) && a.ConstructorArguments.Length > 0 && (int)a.ConstructorArguments[0].Value! == SPLIT));
     _walk(walk, model, "", 0, null);
 
     var ordered = walk.Migrations.Select((m, i) => (m, i)).OrderBy(x => x.m.Order).ThenBy(x => x.i).Select(x => x.m);
@@ -321,7 +321,8 @@ public static class StoredFormDiscovery {
 
   private static (Scalar Kind, string? Number) _classify(ITypeSymbol type) {
     if (type.TypeKind == TypeKind.Enum) {
-      return (Scalar.Enum, type is INamedTypeSymbol { EnumUnderlyingType: { } underlying } ? _number(underlying.SpecialType) : null);
+      // An enum is a named type with an underlying integral type.
+      return (Scalar.Enum, _number(((INamedTypeSymbol)type).EnumUnderlyingType!.SpecialType));
     }
     return type.SpecialType switch {
       SpecialType.System_String or SpecialType.System_Char => (Scalar.Text, null),
@@ -347,7 +348,8 @@ public static class StoredFormDiscovery {
   };
 
   private static string _members(ITypeSymbol enumType) {
-    var members = PhysicalFieldScalar.EnumMembers(enumType) ?? "";
+    // Only an enum reaches here, and EnumMembers answers null only for a type that is not one.
+    var members = PhysicalFieldScalar.EnumMembers(enumType)!;
     string[] pairs = members.Length == 0
       ? []
       : [.. members.Split(';').Select(m => {

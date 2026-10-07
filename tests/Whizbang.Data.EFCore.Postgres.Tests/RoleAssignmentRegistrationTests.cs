@@ -197,6 +197,21 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
       .Because("a bridged stamper holds, and a vote looks for, the lock an older stamper takes");
   }
 
+  /// <summary>
+  /// The framework's null elector registered as an instance is still a null default, not a host's own
+  /// elector, so the driver replaces it with the role elector exactly as it replaces a type registration.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task TheDriver_ReplacesANullElectorRegisteredAsAnInstanceAsync(CancellationToken cancellationToken) {
+    var pod = new Pod();
+    await using var dataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
+    var services = _driverOnly(pod, dataSource, before: s => s.AddSingleton<IDutyElector>(NullDutyElector.Instance));
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetRequiredService<IDutyElector>()).IsTypeOf<PgRoleElector>();
+  }
+
   [Test]
   [Timeout(120000)]
   public async Task TheDriver_LeavesAHostsOwnElector_AndRegistersNoRoleElectorAsync(CancellationToken cancellationToken) {

@@ -42,6 +42,24 @@ public class CollectivePredicateContainsShapeTests {
       .WithMessageContaining("custom IEqualityComparer");
   }
 
+  // A comparer captured as a constant (a tree built by hand, or by a provider that folds the member read)
+  // is still a custom comparer: only a null constant or a default expression asks for plain equality.
+  [Test]
+  public async Task ThreeArgumentContains_WithAComparerConstant_IsRefusedAsync() {
+    int[] values = [3, 5];
+    var row = Expression.Parameter(typeof(PerspectiveRow<JobModel>), "row");
+    var count = Expression.Property(Expression.Property(row, nameof(PerspectiveRow<>.Data)), nameof(JobModel.Count));
+    var method = typeof(Holder).GetMethod(nameof(Holder.Contains), [typeof(int[]), typeof(int), typeof(IEqualityComparer<int>)])!;
+    var call = Expression.Call(
+      method, Expression.Constant(values), count,
+      Expression.Constant(EqualityComparer<int>.Default, typeof(IEqualityComparer<int>)));
+    var predicate = Expression.Lambda<Func<PerspectiveRow<JobModel>, bool>>(call, row);
+
+    await Assert.That(() => CollectivePredicateSqlCompiler<JobModel>.Compile(predicate))
+      .Throws<NotSupportedException>()
+      .WithMessageContaining("custom IEqualityComparer");
+  }
+
   // A Contains of a shape the compiler does not know is refused, and the message names the argument types
   // it saw, or "-" where there is no argument to name.
   [Test]

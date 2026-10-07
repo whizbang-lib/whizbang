@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -10,6 +11,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 
 namespace Whizbang.Transports.RabbitMQ.Tests.BranchCoverage;
@@ -204,6 +206,30 @@ public class RabbitMQTransportLoggingBranchTests {
     await Assert.That(handled).IsEmpty();
     await Assert.That(logger.Entries.Any(e =>
       e.Level == LogLevel.Error && e.Message.Contains("Failed to deserialize message non-envelope", StringComparison.Ordinal))).IsTrue();
+  }
+
+  /// <summary>
+  /// An envelope whose payload arrives as a JSON null is still described in the diagnostic trace, as
+  /// "null", rather than the trace failing on the payload's type.
+  /// </summary>
+  [Test]
+  public async Task Receive_EnvelopeWithANullPayloadWithLogger_TracesThePayloadAsNullAsync() {
+    var channel = new RecordingChannel();
+    var logger = new CapturingLogger<RabbitMQTransport>();
+    _ = await _subscribeAsync(channel, logger);
+    var envelope = RabbitTestWire.NewEnvelope();
+    envelope.Payload = null!;
+    var aqn = typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName!;
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(aqn, RabbitTestWire.JsonOptions)!;
+    var props = new BasicProperties {
+      MessageId = "null-payload",
+      Headers = new Dictionary<string, object?> { ["EnvelopeType"] = Encoding.UTF8.GetBytes(aqn) }
+    };
+
+    await RabbitTestWire.DeliverAsync(channel, props, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(envelope, typeInfo)), 1);
+
+    await Assert.That(logger.Entries.Any(e =>
+      e.Level == LogLevel.Debug && e.Message.Contains("PayloadType=null", StringComparison.Ordinal))).IsTrue();
   }
 
   #endregion

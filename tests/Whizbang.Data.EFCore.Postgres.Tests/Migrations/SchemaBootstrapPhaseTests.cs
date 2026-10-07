@@ -147,6 +147,20 @@ public class SchemaBootstrapPhaseTests {
   }
 
   /// <summary>
+  /// A context with no schema configured targets <c>public</c>, so the bootstrap finds the objects it
+  /// created there rather than probing a schema whose name is empty.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AnEmptySchemaNameTargetsThePublicSchemaAsync(CancellationToken cancellationToken) {
+    var ready = await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, _bootstrapScripts(), string.Empty, TIMEOUT_SECONDS, null, cancellationToken);
+
+    await Assert.That(ready).IsTrue()
+      .Because("the scripts run in public, and the probe has to look there to see what they created");
+  }
+
+  /// <summary>
   /// Without the bootstrap, that same election is impossible.
   /// </summary>
   /// <remarks>

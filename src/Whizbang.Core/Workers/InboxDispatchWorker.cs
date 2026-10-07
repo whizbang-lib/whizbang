@@ -209,6 +209,40 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LogPartitionCountClamped(_logger, configured, partitionCount, _gate!.MaxConcurrent);
     }
     var partitions = new Channel<InboxWork>[partitionCount];
+    var consumers = _startPartitionConsumers(partitions, stoppingToken);
+
+    try {
+      await foreach (var work in _inboxChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
+        var partitionIndex = (int)((uint)work.StreamId.GetHashCode() % (uint)partitionCount);
+        await partitions[partitionIndex].Writer.WriteAsync(work, stoppingToken).ConfigureAwait(false);
+      }
+    } catch (OperationCanceledException) {
+      // expected on shutdown
+    } finally {
+      foreach (var p in partitions) {
+        p.Writer.TryComplete();
+      }
+      try {
+        await Task.WhenAll(consumers).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        // shutdown
+      }
+    }
+
+    LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// Creates each partition's queue and starts its single consumer, which dispatches the partition's
+  /// work in order until the queue completes or the worker stops.
+  /// </summary>
+  /// <remarks>
+  /// Its own method rather than inline in <see cref="ExecuteAsync"/>: inside the async state machine
+  /// the loop picked up a compiler-generated branch beside its own condition, and here it has only the
+  /// condition it was written with.
+  /// </remarks>
+  private Task[] _startPartitionConsumers(Channel<InboxWork>[] partitions, CancellationToken stoppingToken) {
+    var partitionCount = partitions.Length;
     var consumers = new Task[partitionCount];
     for (var i = 0; i < partitionCount; i++) {
       partitions[i] = Channel.CreateUnbounded<InboxWork>(new UnboundedChannelOptions {
@@ -240,26 +274,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         }
       }, stoppingToken);
     }
-
-    try {
-      await foreach (var work in _inboxChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
-        var partitionIndex = (int)((uint)work.StreamId.GetHashCode() % (uint)partitionCount);
-        await partitions[partitionIndex].Writer.WriteAsync(work, stoppingToken).ConfigureAwait(false);
-      }
-    } catch (OperationCanceledException) {
-      // expected on shutdown
-    } finally {
-      foreach (var p in partitions) {
-        p.Writer.TryComplete();
-      }
-      try {
-        await Task.WhenAll(consumers).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        // shutdown
-      }
-    }
-
-    LogStopped(_logger);
+    return consumers;
   }
 
   private async Task _processOneAsync(InboxWork work, CancellationToken stoppingToken) {
@@ -758,7 +773,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       var commitRequest = _buildCommitRequest(
         work, status: (int)MessageProcessingStatus.EventStored,
         newInboxMessages: result.Children, newOutboxMessages: preFanoutOutbox);
-      await _commitCompositeAsync(commitRequest, scopeProvider, ct).ConfigureAwait(false);
+      await _commitCompositeAsync(commitRequest, result.Children.Count, scopeProvider, ct).ConfigureAwait(false);
       return;
     }
 
@@ -766,7 +781,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var reason = result.Outcome == CompositeInboxFanout.FanoutOutcome.CapExceeded
       ? Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded
       : Whizbang.Core.Messaging.MessageFailureReason.CompositeExpansionFailure;
-    LogCompositeFanoutFailed(_logger, work.MessageId, reason.ToString(), result.Detail ?? "(none)");
+    LogCompositeFanoutFailed(_logger, work.MessageId, reason.ToString(), result.Detail);
     _compositeMetrics?.DeadLettered.Add(1);
 
     if (_deadLetterStore.IsConfigured) {
@@ -810,10 +825,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// the failure, and releases the in-flight entry so the re-offer is not filtered. Without a coordinator in
   /// the dispatch scope the batched channel is used as before, with a warning naming the cost.
   /// </summary>
-  private async Task _commitCompositeAsync(HandlerCommitRequest request, IServiceProvider scopeProvider, CancellationToken ct) {
+  private async Task _commitCompositeAsync(HandlerCommitRequest request, int childCount, IServiceProvider scopeProvider, CancellationToken ct) {
     var coordinator = scopeProvider.GetService<IWorkCoordinator>();
     if (coordinator is null) {
-      LogCompositeCommitWithoutCoordinator(_logger, request.HandlerId, request.NewInboxMessages?.Count ?? 0);
+      LogCompositeCommitWithoutCoordinator(_logger, request.HandlerId, childCount);
       await _handlerCommitChannel.EnqueueAsync(request, ct).ConfigureAwait(false);
       return;
     }
@@ -821,7 +836,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       await coordinator.CommitHandlerResultAsync(request, ct).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _compositeMetrics?.CommitFailures.Add(1);
-      LogCompositeCommitFailed(_logger, request.HandlerId, request.NewInboxMessages?.Count ?? 0, ex);
+      LogCompositeCommitFailed(_logger, request.HandlerId, childCount, ex);
     } finally {
       // Committed: the row is gone and its in-flight entry with it. Failed: the row must be re-offered.
       _inboxChannelWriter.RemoveInFlight(request.HandlerId);
@@ -902,7 +917,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     if (receptorInvoker is null) {
       return default;
     }
-    var runtimeType = typedEnvelope.Payload?.GetType();
+    var runtimeType = typedEnvelope.Payload.GetType();
     var hasPre = _receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
       || RuntimeHasReceptors(runtimeType, LifecycleStage.PreInboxInline);
     var hasPost = _receptorRegistry.HasReceptors(LifecycleStage.PostInboxInline, work.MessageType)
@@ -1218,7 +1233,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
   [LoggerMessage(EventId = 26, Level = LogLevel.Warning, Message = "InboxDispatchWorker composite fan-out failed for message {MessageId}: {Reason} — {Detail}; dead-lettering composite row")]
-  static partial void LogCompositeFanoutFailed(ILogger logger, Guid messageId, string reason, string detail);
+  static partial void LogCompositeFanoutFailed(ILogger logger, Guid messageId, string reason, string? detail);
 
   [LoggerMessage(EventId = 72, Level = LogLevel.Warning,
     Message = "Composite {MessageId} expanded to {ChildCount} child row(s) but no IWorkCoordinator is registered in the dispatch scope; "

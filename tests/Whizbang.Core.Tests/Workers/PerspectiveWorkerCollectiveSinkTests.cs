@@ -73,6 +73,44 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       .Because("The sink bypasses the per-stream runner.");
   }
 
+  /// <summary>
+  /// A sink item with no row to complete still dispatches. Every id of an empty set is trivially in
+  /// the processed-event cache, so the drain re-offer guard must not read "all already completed"
+  /// into a set that holds nothing.
+  /// </summary>
+  [Test]
+  public async Task CollectiveSink_WithNoWorkIdToComplete_StillDispatchesAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-none") };
+    var dispatcher = new RecordingDispatcher();
+    var work = new PerspectiveWork {
+      WorkId = Guid.Empty,
+      StreamId = streamId,
+      PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    };
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [work],
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
+      dispatcher: dispatcher);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    // RED (guard removed): the empty set reads as all-completed, nothing dispatches, and this times out.
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
+      .Because("a sink item with no row id still carries a collective event to apply");
+  }
+
   [Test]
   public async Task CollectiveSink_LongApply_RenewsWorkLeasePerReportedBatchAsync() {
     // The dispatcher reports 3 apply batches; the worker must renew the sink work item's lease on

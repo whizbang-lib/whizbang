@@ -58,6 +58,9 @@ public class UpsertCoverageWidgetPerspective : IPerspectiveFor<UpsertCoverageWid
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/BaseUpsertStrategy.cs</code-under-test>
 [Category("Shard1")]
 public class BaseUpsertStrategyCoverageTests {
+  // PerEventApplyHooks.Registry is process-wide, and a test that swaps it in while another is mid-upsert
+  // takes the other's hooks away, so every test that swaps it holds this key.
+  internal const string REGISTRY_KEY = "PerEventApplyHooks.Registry";
 
   private sealed class HookableModel {
     public string Status { get; set; } = string.Empty;
@@ -96,6 +99,7 @@ public class BaseUpsertStrategyCoverageTests {
   // passed in, the hook is still registered and reports nothing wrong, and every downstream reader trusts a
   // field that was never actually stamped.
   [Test]
+  [NotInParallel(REGISTRY_KEY)]
   public async Task Upsert_WithRegisteredSetPropertyHook_MutatesTheModelBeforePersistingAsync() {
     var previousRegistry = PerEventApplyHooks.Registry;
     try {
@@ -122,6 +126,80 @@ public class BaseUpsertStrategyCoverageTests {
       await Assert.That(row).IsNotNull();
       await Assert.That(row!.Data.Status).IsEqualTo("HookApplied")
         .Because("a registered per-event SetProperty hook must mutate the loaded model before it is persisted");
+    } finally {
+      PerEventApplyHooks.Registry = previousRegistry;
+    }
+  }
+
+  // A hook that clears updated_at hands the stamp back to the write site, which must use the applied
+  // event's business time. Falling back to the wall clock instead would make a replayed row's
+  // updated_at differ from the original's, which is the replay variance business time exists to remove.
+  [Test]
+  [NotInParallel(REGISTRY_KEY)]
+  public async Task Upsert_WithAHookThatClearsUpdatedAt_StampsTheEventsBusinessTimeAsync() {
+    var previousRegistry = PerEventApplyHooks.Registry;
+    try {
+      PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
+        .Register<HookableModel>(new RecordingSetPropertyHook((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, null)));
+
+      var options = new DbContextOptionsBuilder<HookableDbContext>()
+        .UseInMemoryDatabase($"hookable-{Guid.NewGuid()}")
+        .Options;
+      await using var context = new HookableDbContext(options);
+      var strategy = new InMemoryUpsertStrategy();
+      var testId = Guid.NewGuid();
+      var eventTime = new DateTime(2020, 5, 6, 7, 8, 9, DateTimeKind.Utc);
+
+      await strategy.UpsertPerspectiveRowAsync(
+        context,
+        "wh_per_hookable_model",
+        testId,
+        new HookableModel { Status = "Original" },
+        new PerspectiveMetadata { EventType = "Test", EventId = Guid.NewGuid().ToString(), Timestamp = eventTime },
+        new PerspectiveScope());
+
+      var row = await context.Set<PerspectiveRow<HookableModel>>().FirstOrDefaultAsync(r => r.Id == testId);
+
+      await Assert.That(row).IsNotNull();
+      await Assert.That(row!.UpdatedAt).IsEqualTo(eventTime)
+        .Because("with no hook-supplied stamp, updated_at is the applied event's business time, not the clock");
+    } finally {
+      PerEventApplyHooks.Registry = previousRegistry;
+    }
+  }
+
+  // A hook that sets updated_at overrides the write site's own stamp. If the tracked path ignored it, a
+  // perspective that stamps updated_at from its own business rule would silently get the event time.
+  [Test]
+  [NotInParallel(REGISTRY_KEY)]
+  public async Task Upsert_WithAHookThatSetsUpdatedAt_StampsTheHooksValueAsync() {
+    var previousRegistry = PerEventApplyHooks.Registry;
+    var sentinel = new DateTimeOffset(2099, 3, 4, 5, 6, 7, TimeSpan.Zero);
+    try {
+      PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
+        .Register<HookableModel>(new RecordingSetPropertyHook((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)));
+
+      var options = new DbContextOptionsBuilder<HookableDbContext>()
+        .UseInMemoryDatabase($"hookable-{Guid.NewGuid()}")
+        .Options;
+      await using var context = new HookableDbContext(options);
+      var strategy = new InMemoryUpsertStrategy();
+      var testId = Guid.NewGuid();
+      var eventTime = new DateTime(2020, 5, 6, 7, 8, 9, DateTimeKind.Utc);
+
+      await strategy.UpsertPerspectiveRowAsync(
+        context,
+        "wh_per_hookable_model",
+        testId,
+        new HookableModel { Status = "Original" },
+        new PerspectiveMetadata { EventType = "Test", EventId = Guid.NewGuid().ToString(), Timestamp = eventTime },
+        new PerspectiveScope());
+
+      var row = await context.Set<PerspectiveRow<HookableModel>>().FirstOrDefaultAsync(r => r.Id == testId);
+
+      await Assert.That(row).IsNotNull();
+      await Assert.That(row!.UpdatedAt).IsEqualTo(sentinel.UtcDateTime)
+        .Because("a hook-supplied updated_at wins over the event's business time");
     } finally {
       PerEventApplyHooks.Registry = previousRegistry;
     }
@@ -341,6 +419,115 @@ public class BaseUpsertStrategyCoverageIntegrationTests : EFCoreTestBase {
     await Assert.That(row).IsNotNull()
       .Because("declining the atomic path for a malformed physical-field key must not drop the write");
     await Assert.That(row!.Data.Name).IsEqualTo("Guarded");
+  }
+
+  private static readonly DateTimeOffset _hookStamp = new(2099, 3, 4, 5, 6, 7, TimeSpan.Zero);
+
+  private sealed class StampUpdatedAtWidgetHook : IApplyHook<UpsertCoverageWidgetModel> {
+    public void Configure(IApplyHookBuilder<UpsertCoverageWidgetModel> builder, ApplyHookContext context) =>
+      builder.SetColumn(ApplyHookColumns.UPDATED_AT, _hookStamp);
+  }
+
+  // The atomic path binds updated_at itself, so it must honor a hook-supplied stamp exactly as the tracked
+  // path does; binding the event time instead would silently discard the hook's decision.
+  [Test]
+  [NotInParallel(["EFCorePostgresTests", BaseUpsertStrategyCoverageTests.REGISTRY_KEY])]
+  public async Task Upsert_WithAHookThatSetsUpdatedAt_StampsTheHooksValueViaTheAtomicPathAsync() {
+    var previousRegistry = PerEventApplyHooks.Registry;
+    PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
+      .Register<UpsertCoverageWidgetModel>(new StampUpdatedAtWidgetHook());
+    try {
+      await _createWidgetTableAsync();
+      await using var context = _createWidgetDbContext();
+      var strategy = new PostgresUpsertStrategy();
+      var testId = Guid.CreateVersion7();
+      var eventTime = new DateTime(2020, 5, 6, 7, 8, 9, DateTimeKind.Utc);
+
+      await strategy.UpsertPerspectiveRowAsync(
+        context, WIDGET_TABLE, testId,
+        new UpsertCoverageWidgetModel { Id = testId, Name = "Stamped" },
+        new PerspectiveMetadata { EventType = "WidgetCreated", EventId = Guid.NewGuid().ToString(), Timestamp = eventTime },
+        new PerspectiveScope());
+
+      await using var conn = new NpgsqlConnection(ConnectionString);
+      await conn.OpenAsync();
+      var updatedAt = await conn.QuerySingleAsync<DateTime>(
+        $"SELECT updated_at FROM {WIDGET_TABLE} WHERE id = @id",
+        new { id = testId });
+
+      await Assert.That(updatedAt.ToUniversalTime()).IsEqualTo(_hookStamp.UtcDateTime);
+    } finally {
+      PerEventApplyHooks.Registry = previousRegistry;
+    }
+  }
+
+  private sealed class ClearUpdatedAtWidgetHook : IApplyHook<UpsertCoverageWidgetModel> {
+    public void Configure(IApplyHookBuilder<UpsertCoverageWidgetModel> builder, ApplyHookContext context) =>
+      builder.SetColumn(ApplyHookColumns.UPDATED_AT, null);
+  }
+
+  // A hook that clears the stamp leaves the atomic path to bind the applied event's business time, never a
+  // null the column cannot hold and never the clock, which would make a replayed row differ from the original.
+  [Test]
+  [NotInParallel(["EFCorePostgresTests", BaseUpsertStrategyCoverageTests.REGISTRY_KEY])]
+  public async Task Upsert_WithAHookThatClearsUpdatedAt_StampsTheEventsBusinessTimeViaTheAtomicPathAsync() {
+    var previousRegistry = PerEventApplyHooks.Registry;
+    PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
+      .Register<UpsertCoverageWidgetModel>(new ClearUpdatedAtWidgetHook());
+    try {
+      await _createWidgetTableAsync();
+      await using var context = _createWidgetDbContext();
+      var strategy = new PostgresUpsertStrategy();
+      var testId = Guid.CreateVersion7();
+      var eventTime = new DateTime(2020, 5, 6, 7, 8, 9, DateTimeKind.Utc);
+
+      await strategy.UpsertPerspectiveRowAsync(
+        context, WIDGET_TABLE, testId,
+        new UpsertCoverageWidgetModel { Id = testId, Name = "Cleared" },
+        new PerspectiveMetadata { EventType = "WidgetCreated", EventId = Guid.NewGuid().ToString(), Timestamp = eventTime },
+        new PerspectiveScope());
+
+      await using var conn = new NpgsqlConnection(ConnectionString);
+      await conn.OpenAsync();
+      var updatedAt = await conn.QuerySingleAsync<DateTime>(
+        $"SELECT updated_at FROM {WIDGET_TABLE} WHERE id = @id",
+        new { id = testId });
+
+      await Assert.That(updatedAt.ToUniversalTime()).IsEqualTo(eventTime);
+    } finally {
+      PerEventApplyHooks.Registry = previousRegistry;
+    }
+  }
+
+  private sealed class UnmappedDbContext(DbContextOptions<UnmappedDbContext> options) : DbContext(options);
+
+  // The atomic path takes the table by name, so a context that does not map the perspective row at all can
+  // still write it: there is no EF schema to qualify the table with, and no EF property to type a physical
+  // column's parameter by, so both fall back to what the value and the connection's search path provide.
+  [Test]
+  public async Task Upsert_ThroughAContextThatDoesNotMapTheRow_WritesTheNamedTableViaTheAtomicPathAsync() {
+    await _createWidgetTableAsync();
+    await using var context = new UnmappedDbContext(
+      new DbContextOptionsBuilder<UnmappedDbContext>().UseNpgsql(ConnectionString).Options);
+    var strategy = new PostgresUpsertStrategy();
+    var testId = Guid.CreateVersion7();
+    var reference = Guid.CreateVersion7();
+
+    await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+      context, WIDGET_TABLE, testId,
+      new UpsertCoverageWidgetModel { Id = testId, Name = "Unmapped" },
+      new PerspectiveMetadata { EventType = "WidgetCreated", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow },
+      new PerspectiveScope(),
+      new Dictionary<string, object?> { ["ref_id"] = reference });
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var (name, refId) = await conn.QuerySingleAsync<(string Name, Guid RefId)>(
+      $"SELECT data->>'Name', ref_id FROM {WIDGET_TABLE} WHERE id = @id",
+      new { id = testId });
+
+    await Assert.That(name).IsEqualTo("Unmapped");
+    await Assert.That(refId).IsEqualTo(reference);
   }
 
   // If the atomic path stopped binding the expires_at parameter for a TTL-registered model, a TtlRow

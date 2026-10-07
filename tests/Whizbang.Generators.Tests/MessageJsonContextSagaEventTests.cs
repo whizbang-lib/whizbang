@@ -168,6 +168,45 @@ public partial class LandingSaga { }
     await Assert.That(code).Contains("\"TotalItems\"");
   }
 
+  /// <summary>
+  /// The attribute ships in the contracts package and the default event base in the runtime one, so a
+  /// compilation can carry [Saga] without SagaEventBase. The events are still described, from their
+  /// own declared members alone, rather than the saga being dropped.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithoutTheDefaultEventBase_DescribesEventsFromTheirOwnMembersAsync() {
+    const string baseDeclaration = """
+  public class SagaEventBase : IEvent {
+    public Guid MessageId { get; set; }
+    public DateTimeOffset OccurredAt { get; set; }
+    public Guid? CorrelationId { get; set; }
+    public Guid? CausationId { get; set; }
+    public string? OperationName { get; set; }
+  }
+""";
+    var surface = SAGA_SURFACE.Replace("\r\n", "\n");
+    await Assert.That(surface).Contains(baseDeclaration).Because("the setup removes exactly this declaration");
+    var source = surface.Replace(baseDeclaration, "") + """
+
+namespace ConsumerApp.Sagas;
+
+[Whizbang.Sagas.Saga("landing")]
+public partial class LandingSaga { }
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("global::ConsumerApp.Sagas.LandingSaga.InitiatedEvent");
+    await Assert.That(code).Contains("\"TotalItems\"")
+      .Because("an event's declared members are described without a base");
+    await Assert.That(code).DoesNotContain("\"OccurredAt\"")
+      .Because("no base in the compilation means no inherited members to describe");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithCustomEventBase_UsesThatBasesPropertiesAsync() {

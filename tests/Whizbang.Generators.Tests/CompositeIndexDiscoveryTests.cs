@@ -61,6 +61,20 @@ public class CompositeIndexDiscoveryTests {
   }
 
   [Test]
+  public async Task AnExplicitlyNonUniqueDeclaration_IsNotUniqueAsync() {
+    var found = _discover(
+      """[PerspectiveIndex("Tenant", "Kind", Unique = false)]""",
+      """
+        public string Tenant { get; init; } = "";
+        public string Kind { get; init; } = "";
+      """);
+
+    await Assert.That(found).Count().IsEqualTo(1);
+    await Assert.That(found[0].Unique).IsFalse()
+      .Because("Unique = false is read as written, not as a flag whose presence alone means unique");
+  }
+
+  [Test]
   public async Task ADeclaredNameAndUniqueness_AreReadFromTheDeclarationAsync() {
     var found = _discover(
       """[PerspectiveIndex("Tenant", "Kind", Name = "idx_chosen", Unique = true)]""",

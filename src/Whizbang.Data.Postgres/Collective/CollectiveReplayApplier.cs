@@ -89,7 +89,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       return streamEvents;
     }
 
-    var tenantId = streamEvents[0].GetCurrentScope()?.Scope?.TenantId;
+    var tenantId = streamEvents[0].GetCurrentScope()?.Scope.TenantId;
     // The event store persists EventType via TypeNameFormatter ("Namespace.TypeName, AssemblyName"), not
     // Type.FullName — match that format so the filter finds the collective streams.
     var typeNames = collectiveTypes.ConvertAll(TypeNameFormatter.Format);

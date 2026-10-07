@@ -601,7 +601,7 @@ public sealed partial class MaintenanceWorker(
       }
 
       // clr name ↔ table ↔ model type maps, from the registry + the group declarations.
-      var clrNames = models.Select(m => TypeNameFormatter.TryFormatClrTypeName(m, out var clr) ? clr : null).Where(n => n is not null).Cast<string>().ToList();
+      var clrNames = TypeNameFormatter.ClrTypeNamesOf(models).ToList();
       var tableNames = await coordinator.GetPerspectiveTableNamesAsync(clrNames, ct).ConfigureAwait(false);
       var typeByClr = models.Where(m => TypeNameFormatter.TryFormatClrTypeName(m, out _)).ToDictionary(m => TypeNameFormatter.FormatClrTypeName(m), m => m, StringComparer.Ordinal);
       var typeByTable = new Dictionary<string, Type>(StringComparer.Ordinal);

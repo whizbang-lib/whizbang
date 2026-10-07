@@ -47,4 +47,14 @@ public class TrackedGuidHandlerTests {
       .Because("a defaulted identifier is a valid-looking key that silently collides with every "
              + "other defaulted row, which is worse than a loud failure");
   }
+
+  [Test]
+  public async Task Parse_NullValue_ThrowsAnInvalidCastNamingNoTypeAsync() {
+    // A null has no type to name; the failure is still a cast failure, not a null dereference.
+    var handler = new TrackedGuidHandler();
+
+    await Assert.That(() => handler.Parse(null!))
+      .Throws<InvalidCastException>()
+      .WithMessage("Cannot convert  to TrackedGuid");
+  }
 }

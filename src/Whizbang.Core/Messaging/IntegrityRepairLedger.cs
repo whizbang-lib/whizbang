@@ -77,7 +77,7 @@ public sealed class IntegrityRepairLedger(int maxEntries = IntegrityRepairLedger
         entry.RepairAttempts = 0;
         entry.LastRepairAt = null;
       }
-      if (entry.LastReportedAt is null || signatureChanged || now - entry.LastReportedAt >= cooldown) {
+      if (entry.LastReportedAt is not { } lastReportedAt || signatureChanged || now - lastReportedAt >= cooldown) {
         entry.LastReportedAt = now;
         return true;
       }

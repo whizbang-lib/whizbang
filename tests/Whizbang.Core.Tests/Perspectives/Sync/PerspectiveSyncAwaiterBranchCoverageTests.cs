@@ -133,6 +133,59 @@ public class PerspectiveSyncAwaiterBranchCoverageTests {
   }
 
   // ==========================================================================
+  // WaitAsync with tracing off: every exit returns the same outcome without a span
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitAsync_NoEmittedEvents_WithoutListener_ReturnsNoPendingEventsAsync() {
+    using var source = _unlistened();
+    var awaiter = _awaiter(new ScopedEventTracker(), new DecidingSyncEventTracker(answer: true), source: source);
+
+    var result = await awaiter.WaitAsync(typeof(BranchPerspective), SyncFilter.All().Build());
+
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
+  }
+
+  [Test]
+  public async Task WaitAsync_EventsReportedButNoInquiries_WithoutListener_ReturnsNoPendingEventsAsync() {
+    using var source = _unlistened();
+    var syncTracker = new DecidingSyncEventTracker(answer: true);
+    var awaiter = _awaiter(new CountDisagreesScopedEventTracker(), syncTracker, source: source);
+
+    var result = await awaiter.WaitAsync(typeof(BranchPerspective), SyncFilter.All().Build());
+
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
+    await Assert.That(result.EventsEmitted).IsEqualTo(1);
+    await Assert.That(syncTracker.WaitCalls).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task WaitAsync_EventsProcessed_WithoutListener_ReturnsSyncedAsync() {
+    using var source = _unlistened();
+    var scoped = new ScopedEventTracker();
+    scoped.TrackEmittedEvent(Guid.CreateVersion7(), typeof(BranchProbeEvent), Guid.CreateVersion7());
+    var awaiter = _awaiter(scoped, new DecidingSyncEventTracker(answer: true), source: source);
+
+    var result = await awaiter.WaitAsync(typeof(BranchPerspective), SyncFilter.All().Build());
+
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(result.EventsAwaited).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task WaitAsync_EventsNeverProcessed_WithoutListener_ReturnsTimedOutAsync() {
+    using var source = _unlistened();
+    var scoped = new ScopedEventTracker();
+    scoped.TrackEmittedEvent(Guid.CreateVersion7(), typeof(BranchProbeEvent), Guid.CreateVersion7());
+    var awaiter = _awaiter(scoped, new DecidingSyncEventTracker(answer: false), source: source);
+
+    var result = await awaiter.WaitAsync(typeof(BranchPerspective), SyncFilter.All().Build());
+
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.TimedOut);
+    await Assert.That(result.EventsAwaited).IsEqualTo(1);
+  }
+
+  // ==========================================================================
   // WaitForAppliedAsync: span tags
   // ==========================================================================
 
@@ -205,14 +258,20 @@ public class PerspectiveSyncAwaiterBranchCoverageTests {
   private static PerspectiveSyncAwaiter _awaiter(
       IScopedEventTracker scoped,
       ISyncEventTracker syncTracker,
-      Microsoft.Extensions.Logging.ILogger<PerspectiveSyncAwaiter>? logger = null) =>
+      Microsoft.Extensions.Logging.ILogger<PerspectiveSyncAwaiter>? logger = null,
+      ActivitySource? source = null) =>
     new(
       coordinator: new MockWorkCoordinator(),
       clock: _clock(),
       logger: logger ?? NullLogger<PerspectiveSyncAwaiter>.Instance,
       syncEventTracker: syncTracker,
       tracker: scoped,
-      lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
+      lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor()) {
+      ActivitySource = source ?? Whizbang.Core.Observability.WhizbangActivitySource.Tracing,
+    };
+
+  /// <summary>A source of this test's own that no listener samples, so its span is never created.</summary>
+  private static ActivitySource _unlistened() => new($"Whizbang.Core.Tests.Unlistened.{Guid.NewGuid():N}");
 
   /// <summary>
   /// Samples <c>Whizbang.Tracing</c> and keeps only the spans in the trace of a parent activity it

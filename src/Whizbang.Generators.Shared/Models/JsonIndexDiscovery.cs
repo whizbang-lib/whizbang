@@ -528,10 +528,12 @@ public static class JsonIndexDiscovery {
   /// <summary>Whether one declaration asks for the folded expression.</summary>
   /// <remarks>
   /// Positional, like the kind: the attribute declares both as get-only, so a named argument does
-  /// not compile and none can appear here. Absent means the default, which is to respect case.
+  /// not compile and none can appear here. Absent means the default, which is to respect case. A
+  /// constructor that binds supplies every argument, defaults included, and the second is the bool
+  /// parameter; a constructor that does not bind supplies none.
   /// </remarks>
   private static bool _foldsCase(AttributeData attribute) =>
-    attribute.ConstructorArguments.Length > 1 && attribute.ConstructorArguments[1].Value is true;
+    attribute.ConstructorArguments.Length > 1 && (bool)attribute.ConstructorArguments[1].Value!;
 
   /// <summary>The kind argument of a declaration, defaulting to the ordered capability.</summary>
   /// <remarks>
@@ -539,9 +541,8 @@ public static class JsonIndexDiscovery {
   /// declare <c>Kind</c> as get-only, so <c>[Indexed(Kind = …)]</c> does not compile and no caller can
   /// produce a named argument to read. The parameter is defaulted, so the constructor argument is
   /// always present; the fallback covers source that does not bind, which an analyzer sees mid-edit.
+  /// A bound kind argument is the enum's underlying int.
   /// </remarks>
   private static int _kindOf(AttributeData attribute, int fallback) =>
-    attribute.ConstructorArguments.Length > 0 && attribute.ConstructorArguments[0].Value is int positional
-      ? positional
-      : fallback;
+    attribute.ConstructorArguments.Length > 0 ? (int)attribute.ConstructorArguments[0].Value! : fallback;
 }

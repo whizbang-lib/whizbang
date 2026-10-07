@@ -219,6 +219,100 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_DocsRepoWithMaps_EnrichesDispatchersReceptorsAndPerspectivesAsync() {
+    // Arrange - each kind of location is looked up in the maps by its own class name, so each class
+    // gets its own documentation URL and test entry. A message-only map would leave all three empty.
+    const string source = """
+
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public class CovMapCommand : ICommand {
+    public string Value { get; set; } = "";
+  }
+
+  public class CovMapEvent : IEvent {
+    public string Value { get; set; } = "";
+  }
+
+  public record CovMapModel {
+    public string Value { get; init; } = "";
+  }
+
+  public class CovMapSender {
+    private readonly IDispatcher _dispatcher;
+
+    public CovMapSender(IDispatcher dispatcher) {
+      _dispatcher = dispatcher;
+    }
+
+    public async Task RunAsync() {
+      await _dispatcher.SendAsync(new CovMapCommand());
+    }
+  }
+
+  public class CovMapReceptor : IReceptor<CovMapCommand> {
+    public ValueTask HandleAsync(CovMapCommand message, CancellationToken ct = default) {
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  public class CovMapPerspective : IPerspectiveFor<CovMapModel, CovMapEvent> {
+    public CovMapModel Apply(CovMapModel currentData, CovMapEvent @event) {
+      return currentData with { Value = @event.Value };
+    }
+  }
+}
+""";
+
+    const string docsMapJson = """
+{
+  "CovMapSender": { "File": "src/CovMapSender.cs", "Symbol": "CovMapSender", "Docs": "https://example.test/docs/sender" },
+  "CovMapReceptor": { "File": "src/CovMapReceptor.cs", "Symbol": "CovMapReceptor", "Docs": "https://example.test/docs/receptor" },
+  "CovMapPerspective": { "File": "src/CovMapPerspective.cs", "Symbol": "CovMapPerspective", "Docs": "https://example.test/docs/perspective" }
+}
+""";
+
+    const string testsMapJson = """
+{
+  "CodeToTests": {
+    "CovMapSender": [
+      { "TestFile": "tests/CovMapSenderTests.cs", "TestMethod": "Sender_Sends_Async", "TestLine": 11, "TestClass": "CovMapSenderTests" }
+    ],
+    "CovMapReceptor": [
+      { "TestFile": "tests/CovMapReceptorTests.cs", "TestMethod": "Receptor_Handles_Async", "TestLine": 22, "TestClass": "CovMapReceptorTests" }
+    ],
+    "CovMapPerspective": [
+      { "TestFile": "tests/CovMapPerspectiveTests.cs", "TestMethod": "Perspective_Applies_Async", "TestLine": 33, "TestClass": "CovMapPerspectiveTests" }
+    ]
+  }
+}
+""";
+
+    var docsRepoPath = _createDocsRepo(docsMapJson, testsMapJson);
+    try {
+      // Act
+      var result = _runGeneratorWithDocsPath(source, docsRepoPath);
+
+      // Assert - every location carries its own class's URL and test entry.
+      var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
+      await Assert.That(generatedSource).IsNotNull();
+      await Assert.That(generatedSource).Contains("https://example.test/docs/sender");
+      await Assert.That(generatedSource).Contains("https://example.test/docs/receptor");
+      await Assert.That(generatedSource).Contains("https://example.test/docs/perspective");
+      await Assert.That(generatedSource).Contains("Sender_Sends_Async");
+      await Assert.That(generatedSource).Contains("Receptor_Handles_Async");
+      await Assert.That(generatedSource).Contains("Perspective_Applies_Async");
+    } finally {
+      Directory.Delete(docsRepoPath, recursive: true);
+    }
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task MessageRegistryGenerator_MalformedMapFiles_ReportsInfoDiagnosticsAndStillGeneratesAsync() {
     // Arrange - both map files exist but contain invalid JSON. The generator must
     // report WHIZ053/WHIZ054 info diagnostics and continue generating the registry
@@ -333,6 +427,75 @@ namespace TestNamespace {
       var diagnosticIds = result.Diagnostics.Select(d => d.Id).ToList();
       await Assert.That(diagnosticIds).DoesNotContain("WHIZ053");
       await Assert.That(diagnosticIds).DoesNotContain("WHIZ054");
+    } finally {
+      Directory.Delete(docsRepoPath, recursive: true);
+    }
+  }
+
+  /// <summary>
+  /// A tests map that is the JSON literal null, or an object without its CodeToTests table, carries no
+  /// tests; the registry is generated without any and no load failure is reported.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Arguments("null")]
+  [Arguments("{}")]
+  public async Task MessageRegistryGenerator_TestsMapWithoutATable_GeneratesWithoutTestsAsync(string testsMapJson) {
+    const string source = """
+
+using Whizbang.Core;
+
+namespace TestNamespace {
+  public class CovNoTableCommand : ICommand {
+    public string Value { get; set; } = "";
+  }
+}
+""";
+
+    var docsRepoPath = _createDocsRepo("{}", testsMapJson);
+    try {
+      var result = _runGeneratorWithDocsPath(source, docsRepoPath);
+
+      var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
+      await Assert.That(generatedSource).IsNotNull();
+      await Assert.That(generatedSource).Contains("CovNoTableCommand");
+      await Assert.That(generatedSource).DoesNotContain("\"\"testFile\"\"");
+      await Assert.That(result.Diagnostics.Select(d => d.Id)).DoesNotContain("WHIZ054");
+    } finally {
+      Directory.Delete(docsRepoPath, recursive: true);
+    }
+  }
+
+  /// <summary>
+  /// A test entry whose names are JSON nulls (a hand-edited map) still becomes an entry, its names
+  /// written empty rather than as the text "null" or a failed load.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_TestEntryWithOnlyALine_IsWrittenWithEmptyNamesAsync() {
+    const string source = """
+
+using Whizbang.Core;
+
+namespace TestNamespace {
+  public class CovSparseCommand : ICommand {
+    public string Value { get; set; } = "";
+  }
+}
+""";
+    const string testsMapJson = """
+{ "CodeToTests": { "CovSparseCommand": [ { "TestFile": null, "TestMethod": null, "TestLine": 64, "TestClass": null } ] } }
+""";
+
+    var docsRepoPath = _createDocsRepo("{}", testsMapJson);
+    try {
+      var result = _runGeneratorWithDocsPath(source, docsRepoPath);
+
+      var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
+      await Assert.That(generatedSource).IsNotNull();
+      await Assert.That(generatedSource).Contains("\"\"testLine\"\": 64");
+      await Assert.That(generatedSource).Contains("\"\"testFile\"\": \"\"\"\"");
+      await Assert.That(generatedSource).Contains("\"\"testClass\"\": \"\"\"\"");
     } finally {
       Directory.Delete(docsRepoPath, recursive: true);
     }

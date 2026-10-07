@@ -838,8 +838,9 @@ public sealed partial class ClaimWorker : BackgroundService {
     }
   }
 
-  private static List<Guid> _notInFlight(List<Guid> streamIds, Func<Guid, bool>? isInFlight) =>
-    isInFlight is null ? [.. streamIds] : [.. streamIds.Where(id => !isInFlight(id))];
+  // Both callers pass a drain channel's IsInFlight method group, so the predicate always exists.
+  private static List<Guid> _notInFlight(List<Guid> streamIds, Func<Guid, bool> isInFlight) =>
+    [.. streamIds.Where(id => !isInFlight(id))];
 
   private void _observeDrain(int outstanding) {
     var now = Stopwatch.GetTimestamp();

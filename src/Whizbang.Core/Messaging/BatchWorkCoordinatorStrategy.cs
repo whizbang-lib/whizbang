@@ -251,10 +251,10 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
   public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-    return _flushCoreAsync(flags, FlushTrigger.Manual, skipLifecycle: false, ct);
+    return _flushCoreAsync(FlushTrigger.Manual, skipLifecycle: false, ct);
   }
 
-  private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, FlushTrigger trigger, bool skipLifecycle, CancellationToken ct) {
+  private async Task<WorkBatch> _flushCoreAsync(FlushTrigger trigger, bool skipLifecycle, CancellationToken ct) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
       new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
@@ -323,10 +323,10 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
 
       var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
         new FlushContext(
-          _coordinator, _scopeFactory, _instanceProvider, _options, STRATEGY_NAME,
+          _coordinator, _scopeFactory, _instanceProvider, _options,
           outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
-          outboxFailures, inboxFailures, flags, _lifecycleMessageDeserializer,
-          _logger, _tracingOptions, _metrics, _lifecycleMetrics,
+          outboxFailures, inboxFailures, _lifecycleMessageDeserializer,
+          _logger, _tracingOptions, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: null,
           SkipLifecycle: skipLifecycle),
         ct
@@ -385,7 +385,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // hops, payload deserialized, fresh scope per message) and reads no ambient state.
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.BatchSize, skipLifecycle: false, ct: default);
+        await _flushCoreAsync(FlushTrigger.BatchSize, skipLifecycle: false, ct: default);
       } catch (Exception ex) {
         LogErrorDuringBatchFlush(_logger, ex);
       }
@@ -411,7 +411,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // function of traffic shape.
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.Debounce, skipLifecycle: false, ct: default);
+        await _flushCoreAsync(FlushTrigger.Debounce, skipLifecycle: false, ct: default);
       } catch (Exception ex) {
         LogErrorDuringDebounceFlush(_logger, ex);
       }
@@ -454,7 +454,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       // Disposal is the ONE deliberate lifecycle skip (issue #485 kept it): a shutdown drain's
       // backgrounded stage halves would race process exit, so the drain stores durably and the
       // stages are deliberately not run.
-      await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.Manual, skipLifecycle: true, ct: default);
+      await _flushCoreAsync(FlushTrigger.Manual, skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       LogErrorFlushingOnDisposal(_logger, ex);
     }

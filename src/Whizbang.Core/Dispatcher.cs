@@ -143,24 +143,26 @@ public abstract partial class Dispatcher(
   // event's receptors may live in several assemblies at once. Lazily resolved for the same
   // reasons as the schema gate above. Instances of this dispatcher's own generated type are
   // excluded so a publish never double-delivers to its own receptors.
+  // Null until resolved. One reference, written once the array is complete, so a reader on another
+  // thread sees either nothing (and resolves again, harmlessly) or the finished array.
   private IReceptorLookup[]? _foreignLookupsCache;
-  private bool _foreignLookupsResolved;
 
   private IReceptorLookup[] _foreignLookups() {
-    if (!_foreignLookupsResolved) {
-      try {
-        var own = GetType();
-        var all = (System.Collections.Generic.IEnumerable<IReceptorLookup>?)
-          serviceProvider.GetService(typeof(System.Collections.Generic.IEnumerable<IReceptorLookup>));
-        _foreignLookupsCache = all is null
-          ? []
-          : [.. all.Where(lookup => lookup.GetType() != own)];
-        _foreignLookupsResolved = true;
-      } catch (ObjectDisposedException) {
-        return [];
-      }
+    if (_foreignLookupsCache is { } cached) {
+      return cached;
     }
-    return _foreignLookupsCache ?? [];
+    try {
+      var own = GetType();
+      var all = (System.Collections.Generic.IEnumerable<IReceptorLookup>?)
+        serviceProvider.GetService(typeof(System.Collections.Generic.IEnumerable<IReceptorLookup>));
+      IReceptorLookup[] resolved = all is null
+        ? []
+        : [.. all.Where(lookup => lookup.GetType() != own)];
+      _foreignLookupsCache = resolved;
+      return resolved;
+    } catch (ObjectDisposedException) {
+      return [];
+    }
   }
 
   private ReceptorInvoker<TResult>? _lookupReceptorInvoker<TResult>(object message, Type messageType) {
@@ -398,7 +400,7 @@ public abstract partial class Dispatcher(
   /// </summary>
   private static HashSet<string> _resolveOwnedDomains(IServiceProvider sp) {
     var routingOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<RoutingOptions>>()?.Value;
-    return routingOptions?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+    return routingOptions?.OwnedDomains.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
   }
 
   /// <summary>
@@ -695,7 +697,7 @@ public abstract partial class Dispatcher(
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
         dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-        dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+        dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
         // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
         // This enables cross-scope sync where one handler emits events and another waits
@@ -826,7 +828,7 @@ public abstract partial class Dispatcher(
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
         dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-        dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+        dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
         // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
         await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
@@ -927,9 +929,9 @@ public abstract partial class Dispatcher(
         if (dispatchActivity != null) {
           dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
           dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-          dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+          dispatchActivity.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
           dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
-          dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source?.Name ?? "none");
+          dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source.Name ?? "none");
         }
 
         // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
@@ -1025,7 +1027,7 @@ public abstract partial class Dispatcher(
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
         dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-        dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+        dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
         // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
         await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
@@ -1578,7 +1580,7 @@ public abstract partial class Dispatcher(
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -1640,7 +1642,7 @@ public abstract partial class Dispatcher(
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
       // Invoke using delegate - zero reflection, strongly typed
       var result = await invoker(message);
@@ -1819,9 +1821,9 @@ public abstract partial class Dispatcher(
         if (dispatchActivity != null) {
           dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
           dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-          dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+          dispatchActivity.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
           dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
-          dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source?.Name ?? "none");
+          dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source.Name ?? "none");
         }
 
         // Invoke using delegate with unwrapped message - zero reflection, strongly typed
@@ -1899,7 +1901,7 @@ public abstract partial class Dispatcher(
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
         dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-        dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+        dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
         // Invoke using delegate - zero reflection, strongly typed
         await invoker(message);
@@ -1991,7 +1993,7 @@ public abstract partial class Dispatcher(
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
         dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-        dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+        dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
         // Invoke using delegate with unwrapped message - zero reflection, strongly typed
         await invoker(actualMessage);
@@ -2186,7 +2188,7 @@ public abstract partial class Dispatcher(
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
@@ -2240,7 +2242,7 @@ public abstract partial class Dispatcher(
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
       options.CancellationToken.ThrowIfCancellationRequested();
       await invoker(message);
@@ -2419,7 +2421,7 @@ public abstract partial class Dispatcher(
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
       var result = await invoker(message);
 
@@ -2480,7 +2482,7 @@ public abstract partial class Dispatcher(
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
@@ -2672,12 +2674,12 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
   // S3776: Core event cascade orchestration — complexity from routing modes, logging, and event tracking
 #pragma warning disable S3776
-  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type? originalMessageType = null, IMessageEnvelope? sourceEnvelope = null) {
+  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type originalMessageType, IMessageEnvelope sourceEnvelope) {
 #pragma warning restore S3776
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var resultTypeName = result?.GetType().Name ?? "null";
-      var origMsgTypeName = originalMessageType?.Name ?? "null";
+      var origMsgTypeName = originalMessageType.Name;
       CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ResultType={ResultType}, OriginalMessageType={OriginalMessageType}",
         resultTypeName, origMsgTypeName);
     }
@@ -2690,9 +2692,7 @@ public abstract partial class Dispatcher(
 
     // Look up receptor default routing from [DefaultRouting] attribute on the receptor
     // This is done via the generated GetReceptorDefaultRouting method
-    Dispatch.DispatchModes? receptorDefault = originalMessageType is not null
-        ? _lookupReceptorDefaultRouting(originalMessageType)
-        : null;
+    var receptorDefault = _lookupReceptorDefaultRouting(originalMessageType);
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ReceptorDefaultRouting={ReceptorDefault}", receptorDefault);
     }
@@ -2721,7 +2721,8 @@ public abstract partial class Dispatcher(
 
     if (extractedCount == 0) {
       if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
-        var resultTypeName = result?.GetType().Name ?? "null";
+        // Not null: a null (default) result returned at the fast path above.
+        var resultTypeName = result!.GetType().Name;
         CascadeLogger.LogWarning("[CASCADE] CascadeEventsFromResult: No messages extracted from result type {ResultType}. " +
           "This may indicate the result does not implement IMessage or is not wrapped in a supported collection/tuple.",
           resultTypeName);
@@ -4113,7 +4114,7 @@ public abstract partial class Dispatcher(
       // Priority step 1: a cascade emission is declared like any other send; the ambient parent supplies inheritance,
       // and an explicit number on the options is kept.
       _stampExplicitPriority(jsonEnvelope, priority);
-      jsonEnvelope.Priority = _declarePriority(jsonEnvelope, TypeNameFormatter.AssemblyQualifiedNameOrNull(eventType) ?? TypeNameFormatter.DisplayName(eventType), scheduledFor: null);
+      jsonEnvelope.Priority = _declarePriority(jsonEnvelope, TypeNameFormatter.AssemblyQualifiedNameOrDisplay(eventType), scheduledFor: null);
 
       // Add hop with metadata and scope
       var hopMetadata = _createHopMetadata(eventData, eventType);
@@ -4172,7 +4173,7 @@ public abstract partial class Dispatcher(
   /// Serializes event data to a JsonElement envelope using the runtime type's JSON type info.
   /// </summary>
   private static MessageEnvelope<JsonElement> _serializeToJsonEnvelope(IMessage eventData, Type eventType, MessageId messageId, MessageDispatchContext dispatchContext) {
-    var typeNameForLookup = TypeNameFormatter.AssemblyQualifiedNameOrNull(eventType) ?? TypeNameFormatter.DisplayName(eventType);
+    var typeNameForLookup = TypeNameFormatter.AssemblyQualifiedNameOrDisplay(eventType);
     var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
     var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions)
       ?? throw new InvalidOperationException(
@@ -4443,10 +4444,10 @@ public abstract partial class Dispatcher(
       if (dispatchActivity != null) {
         dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-        dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
         dispatchActivity.SetTag("whizbang.dispatch.destination", destination);
         dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
-        dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source?.Name ?? "none");
+        dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source.Name ?? "none");
       }
 
       // Serialize envelope to OutboxMessage
@@ -4533,10 +4534,10 @@ public abstract partial class Dispatcher(
       if (dispatchActivity != null) {
         dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-        dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
         dispatchActivity.SetTag("whizbang.dispatch.destination", destination);
         dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
-        dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source?.Name ?? "none");
+        dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source.Name ?? "none");
       }
 
       // Serialize envelope to OutboxMessage
@@ -5379,7 +5380,7 @@ public abstract partial class Dispatcher(
 
     // Priority step 1: declared before the row is built so the number travels inside the stored envelope
     // and sits on the row for the store. The message type is rendered by the shared helper.
-    var declaredPriority = _declarePriority(envelope, TypeNameFormatter.AssemblyQualifiedNameOrNull(payloadType) ?? TypeNameFormatter.DisplayName(payloadType), scheduledFor);
+    var declaredPriority = _declarePriority(envelope, TypeNameFormatter.AssemblyQualifiedNameOrDisplay(payloadType), scheduledFor);
     if (envelope is MessageEnvelope<TMessage> concreteEnvelope) {
       concreteEnvelope.Priority = declaredPriority;
     }
@@ -5456,10 +5457,11 @@ public abstract partial class Dispatcher(
   /// Tries to get stream ID from first hop metadata, falls back to message ID.
   /// </summary>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
-    // Check first hop for stream ID (stored as "AggregateId" for backward compatibility)
-    // Defensive: Handle null Hops gracefully
-    var firstHop = envelope.Hops?.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
+    // Check first hop for stream ID (stored as "AggregateId" for backward compatibility).
+    // Every outbox path builds its envelope with that hop before serializing (_createEnvelope,
+    // _createOutboxEnvelopeWithHop, the deferred-publish path), and Hops is required.
+    var firstHopMetadata = envelope.Hops[0].Metadata;
+    if (firstHopMetadata != null && firstHopMetadata.TryGetValue("AggregateId", out var streamIdElem) &&
         streamIdElem.ValueKind == JsonValueKind.String) {
       var streamIdStr = streamIdElem.GetString();
       if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {

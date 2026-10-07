@@ -81,6 +81,16 @@ public class DispatcherPriorityStampingTests {
     public int DeclarePriority(PriorityDeclarationContext context) => 7;
   }
 
+  /// <summary>Declares by what the envelope carries, recording the envelope it was shown.</summary>
+  private sealed class EnvelopeReadingHook : IPriorityProducerHook {
+    public IMessageEnvelope? Seen { get; private set; }
+    public int Order => 100;
+    public int DeclarePriority(PriorityDeclarationContext context) {
+      Seen = context.Envelope;
+      return context.Envelope.Payload is StampCommand { Data: "urgent" } ? 9 : context.Declared;
+    }
+  }
+
   private static (OutboxOnlyDispatcher Dispatcher, RecordingStrategy Strategy) _dispatcher(bool withChain = true, IPriorityProducerHook? hostHook = null) {
     var strategy = new RecordingStrategy();
     var services = new ServiceCollection();
@@ -120,6 +130,21 @@ public class DispatcherPriorityStampingTests {
 
     await Assert.That(strategy.QueuedOutbox.Single().Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
       .Because("a message produced while handling background work is background, whatever its type normally is");
+  }
+
+  [Test]
+  public async Task Send_WithAHostProducerHook_IsShownTheEnvelopeBeingSentAsync() {
+    var hook = new EnvelopeReadingHook();
+    var (dispatcher, strategy) = _dispatcher(hostHook: hook);
+
+    await dispatcher.SendAsync(new StampCommand("urgent"), MessageContext.New());
+
+    var row = strategy.QueuedOutbox.Single();
+    await Assert.That(hook.Seen).IsNotNull();
+    await Assert.That(hook.Seen!.MessageId).IsEqualTo(row.Envelope.MessageId)
+      .Because("a producer hook declares from the message as it will travel, so it is shown that envelope");
+    await Assert.That(row.Envelope.Priority).IsEqualTo(9)
+      .Because("the hook's decision from the envelope's payload is the number the envelope carries");
   }
 
   [Test]

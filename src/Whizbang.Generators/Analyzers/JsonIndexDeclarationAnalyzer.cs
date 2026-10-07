@@ -143,11 +143,10 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    // Guarded on one line deliberately. Roslyn resolves a property declaration in its own
-    // compilation to a symbol in every case reachable here, so the branch is a contract check rather
-    // than a case: it stays because an analyzer that dereferences null crashes the compiler instead
-    // of reporting, and it is not spread over four lines to look like a case that occurs.
-    if (context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken) is not IPropertySymbol property) { return; }
+    // Roslyn resolves a property declaration in its own compilation to its symbol in every case
+    // reachable here, so this states the contract rather than testing it. Were it ever broken, the
+    // analyzer driver reports the analyzer's exception (AD0001) and the compilation carries on.
+    var property = context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken)!;
 
     // Zero is an opt-out and null is silence, and neither is a claim about this field. Asking for no
     // index is the author saying what this diagnostic would otherwise be asking them to say.
@@ -248,8 +247,8 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
   private static void _analyzeModel(SyntaxNodeAnalysisContext context) {
     var declaration = (TypeDeclarationSyntax)context.Node;
 
-    // One line, for the same reason as the property guard above.
-    if (context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken) is not INamedTypeSymbol model) { return; }
+    // The same contract as the property's symbol above.
+    var model = context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken)!;
 
     if (!_declaresAnyIndex(model)) {
       return;
@@ -296,11 +295,10 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
     // Two unrelated reasons force the opaque form, and the message has to say which: an author told
     // that a model "holds a polymorphic member" when the real problem is a collection the mapped
     // path cannot fill will go looking for an abstract type that is not there.
+    // Opaque storage is forced by polymorphism or by a member the mapped path cannot construct, so a
+    // model that is not polymorphic has such a member.
     if (!PolymorphicModelDiscovery.IsPolymorphic(model)) {
-      var unmappable = MappedPathDiscovery.UnmappableMember(model);
-      return unmappable is null
-        ? null
-        : $"the model holds '{unmappable}', which the mapped path cannot construct";
+      return $"the model holds '{MappedPathDiscovery.UnmappableMember(model)}', which the mapped path cannot construct";
     }
 
     var named = model.GetMembers().OfType<IPropertySymbol>()

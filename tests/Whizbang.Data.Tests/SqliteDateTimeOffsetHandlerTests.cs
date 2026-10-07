@@ -74,4 +74,14 @@ public class SqliteDateTimeOffsetHandlerTests {
       .Throws<InvalidCastException>()
       .Because("a defaulted timestamp is worse than a failure — it silently reorders history");
   }
+
+  [Test]
+  public async Task Parse_NullValue_ThrowsAnInvalidCastNamingNoTypeAsync() {
+    // A null has no type to name; the failure is still a cast failure, not a null dereference.
+    var handler = new SqliteDateTimeOffsetHandler();
+
+    await Assert.That(() => handler.Parse(null!))
+      .Throws<InvalidCastException>()
+      .WithMessage("Cannot convert  to DateTimeOffset");
+  }
 }

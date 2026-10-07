@@ -4,6 +4,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Diagnostics;
 using Whizbang.Generators.Analyzers;
 
 namespace Whizbang.Generators.Tests.Analyzers;
@@ -452,6 +453,52 @@ public class PerspectiveFilterIndexAnalyzerTests {
     await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("NotExcused");
   }
 
+  /// <summary>
+  /// A model that arrives as a package carries its own assembly's opt-out with it: the advisory is not
+  /// raised in the consuming project for a model whose assembly declares a reasoned suppression, while
+  /// the same model without that declaration is still reported there.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments(true, 0)]
+  [Arguments(false, 1)]
+  public async Task Filter_OnAModelFromAnotherAssembly_HonorsThatAssemblysSuppressionAsync(bool suppressed, int expected) {
+    var modelAssembly = AnalyzerTestHelper.CreateCompilationWithFrameworkReferences($$"""
+      using Whizbang.Core.Perspectives;
+
+      {{(suppressed ? "[assembly: SuppressIndexAdvisory(\"the package's tables are reference data\")]" : "")}}
+
+      namespace PackagedModels;
+
+      public class PackagedModel {
+        public string Region { get; init; } = string.Empty;
+      }
+      """).WithAssemblyName("PackagedModels");
+    await using var image = new System.IO.MemoryStream();
+    var emitted = modelAssembly.Emit(image);
+    await Assert.That(emitted.Success).IsTrue().Because("the packaged model must compile for the reference to mean anything");
+
+    var consumer = AnalyzerTestHelper.CreateCompilationWithFrameworkReferences("""
+      using System.Linq;
+      using Whizbang.Core.Lenses;
+      using PackagedModels;
+
+      namespace TestApp;
+
+      public class PackagedRepository {
+        private readonly IQueryable<PerspectiveRow<PackagedModel>> _rows = null!;
+
+        public object Find() => _rows.Where(r => r.Data.Region.Contains("ab")).ToList();
+      }
+      """).AddReferences(Microsoft.CodeAnalysis.MetadataReference.CreateFromImage(image.ToArray()));
+
+    var diagnostics = await consumer
+      .WithAnalyzers([new PerspectiveFilterIndexAnalyzer()])
+      .GetAnalyzerDiagnosticsAsync();
+
+    await Assert.That(_whiz302(diagnostics).Count()).IsEqualTo(expected);
+  }
+
   private static string _suppressedModelSource(
       string propertyAttribute = "",
       string modelAttribute = "",
@@ -529,6 +576,8 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [Arguments("r.Data.JsonOnly.Contains(\"ab\")")]
   [Arguments("r.Data.JsonOnly.StartsWith(\"ab\")")]
   [Arguments("r.Data.JsonOnly.Equals(\"x\", System.StringComparison.OrdinalIgnoreCase)")]
+  // The static object.Equals, called unqualified, is not the instance Equals containment reproduces.
+  [Arguments("Equals(r.Data.JsonOnly, \"x\")")]
   [Arguments("r.Data.WhenOffset == offset")]
   [Arguments("r.Data.When > when")]
   // Equality on the date family moved to this side when its stored form became a number. The value
@@ -549,6 +598,26 @@ public class PerspectiveFilterIndexAnalyzerTests {
             var clock = new System.TimeOnly(5, 6, 7);
             var elapsed = System.TimeSpan.FromMinutes(3);
             return _rows.Where(r => {predicate}).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsNotEmpty();
+  }
+
+  /// <summary>
+  /// A field handed to a constructor inside a query-syntax filter is not an equality containment can
+  /// serve. A query expression is not a call, so a query held in a variable has no call around the
+  /// filter at all, and the field still forces a scan.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task FieldPassedToAConstructorInAQueryExpression_IsReportedAsync() {
+    var source = _repositoryOver("""
+            var query = from r in _rows
+                        where new System.Text.StringBuilder(r.Data.JsonOnly).Length > 0
+                        select r;
+            return query.ToList();
       """);
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
@@ -696,6 +765,31 @@ public class PerspectiveFilterIndexAnalyzerTests {
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
 
     await Assert.That(_whiz302(diagnostics)).IsEmpty();
+  }
+
+  /// <summary>
+  /// A read that no predicate encloses settles at the member declaration or at an anonymous method,
+  /// and is a value rather than a filter: a query-syntax projection or <c>let</c>, which carry no
+  /// lambda node, and a read inside a <c>delegate</c>, even one a filter's lambda holds. None of them
+  /// narrows the rows the query reads.
+  /// </summary>
+  /// <remarks>
+  /// Asserts no diagnostic at all, not only no WHIZ302: the walk that finds the deciding ancestor
+  /// expects one to exist, so a shape it had no verdict for would surface as the analyzer failing.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("return (from r in _rows select r.Data.JsonOnly).ToList();")]
+  [Arguments("return (from r in _rows let v = r.Data.JsonOnly select v).ToList();")]
+  // Inside a filter's lambda: the delegate is the nearer ancestor and settles it, where the lambda
+  // around it would otherwise make the read a filter.
+  [Arguments("return _rows.AsEnumerable().Where(r => ((System.Func<bool>)delegate { return r.Data.JsonOnly == \"ab\"; })()).ToList();")]
+  public async Task ReadOutsideAnyPredicate_IsNotReportedAsync(string body) {
+    var source = _repositoryOver(body);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(diagnostics).IsEmpty();
   }
 
   /// <summary>Ordering needs the value itself, which containment never supplies.</summary>

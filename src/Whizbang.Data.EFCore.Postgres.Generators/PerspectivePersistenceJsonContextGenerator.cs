@@ -143,7 +143,6 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
 
     return new WhizbangIdInfo(
         TypeName: structSymbol.Name,
-        Namespace: structSymbol.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : "Global",
         FullyQualifiedName: TypeNameUtilities.FullyQualified(structSymbol));
   }
 
@@ -372,6 +371,5 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
   /// </summary>
   internal sealed record WhizbangIdInfo(
       string TypeName,
-      string Namespace,
       string FullyQualifiedName);
 }

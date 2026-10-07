@@ -28,8 +28,6 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <docs>data/work-coordinator-strategies</docs>
 public class WorkCoordinatorFlushHelperTests {
 
-  private const string STRATEGY_NAME = "test";
-
   [Test]
   public async Task EmptyQueues_ReturnsEmptyBatch_DoesNotInvokeCoordinatorAsync() {
     var coordinator = new CapturingWorkCoordinator();
@@ -365,18 +363,15 @@ public class WorkCoordinatorFlushHelperTests {
     scopeFactory,
     new FakeInstanceProvider(),
     options ?? new WorkCoordinatorOptions { PartitionCount = 10 },
-    STRATEGY_NAME,
     outboxMessages ?? [],
     inboxMessages ?? [],
     outboxCompletions ?? [],
     inboxCompletions ?? [],
     outboxFailures ?? [],
     inboxFailures ?? [],
-    WorkBatchOptions.None,
     LifecycleMessageDeserializer: null,
     Logger: null,
     TracingOptions: null,
-    Metrics: null,
     LifecycleMetrics: null,
     WorkChannelWriter: workChannelWriter,
     PendingAuditMessages: pendingAudit,

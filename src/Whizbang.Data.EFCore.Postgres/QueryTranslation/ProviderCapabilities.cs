@@ -57,14 +57,14 @@ public static class ProviderCapabilities {
 
   /// <summary>The Entity Framework Core version actually loaded.</summary>
   public static Version EfCoreVersion { get; } =
-    typeof(DbContext).Assembly.GetName().Version ?? new Version(0, 0, 0);
+    typeof(DbContext).Assembly.GetName().Version!;
 
   /// <summary>The Npgsql Entity Framework Core provider version actually loaded.</summary>
   [SuppressMessage("Usage", "EF1001:Internal EF Core API usage",
     Justification = "Anchoring the version read on the very type the containment rewrite depends on is the " +
       "point: if that type moves or disappears, this stops compiling, which is exactly the signal wanted.")]
   public static Version NpgsqlProviderVersion { get; } =
-    typeof(PgUnknownBinaryExpression).Assembly.GetName().Version ?? new Version(0, 0, 0);
+    typeof(PgUnknownBinaryExpression).Assembly.GetName().Version!;
 
   /// <summary>
   /// Whether both loaded versions fall inside the ranges the containment rewrite was verified

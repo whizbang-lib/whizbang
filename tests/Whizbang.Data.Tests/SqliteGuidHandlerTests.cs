@@ -82,4 +82,14 @@ public class SqliteGuidHandlerTests {
     var output = await connection.QuerySingleAsync<Guid>("SELECT id FROM t");
     await Assert.That(output).IsEqualTo(input);
   }
+
+  [Test]
+  public async Task Parse_NullValue_ThrowsAnInvalidCastNamingNoTypeAsync() {
+    // A null has no type to name; the failure is still a cast failure, not a null dereference.
+    var handler = new SqliteGuidHandler();
+
+    await Assert.That(() => handler.Parse(null!))
+      .Throws<InvalidCastException>()
+      .WithMessage("Cannot convert  to Guid");
+  }
 }

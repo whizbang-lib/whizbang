@@ -114,7 +114,8 @@ public static class MigratorDutyStaging {
       return new SchemaStaging(SchemaStage.Migrator, grant, "this instance holds the migrator duty");
     }
 
-    var detail = attempt.Detail ?? "no detail";
+    // An attempt without a grant can only be built by DutyAttempt.Lost, which requires a detail.
+    var detail = attempt.Detail!;
 
     if (attempt.Refusal == DutyRefusal.Contended) {
       MigratorDutyStagingLog.Deferring(log, schema, detail);

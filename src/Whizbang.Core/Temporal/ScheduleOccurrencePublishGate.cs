@@ -84,7 +84,7 @@ public sealed partial class ScheduleOccurrencePublishGate(IServiceScopeFactory s
         if (store is null) {
           return OccurrencePublishDecision.Proceed;   // can't defer => run it rather than lose it
         }
-        await store.DeferAsync(context.OccurrenceId, decision.DeferUntil ?? DateTimeOffset.UtcNow, cancellationToken)
+        await store.DeferAsync(context.OccurrenceId, decision.DeferUntil!.Value, cancellationToken)
           .ConfigureAwait(false);
         LogDeferred(_logger, context.ScheduleId, context.OccurrenceId);
         return OccurrencePublishDecision.Deferred;

@@ -43,7 +43,7 @@ internal static class PerspectiveRowVersionSql {
   /// this guard can read. Any other provider (the InMemory test provider) is unchecked.
   /// </summary>
   internal static bool Supports(DbContext context) =>
-    context.Database.ProviderName?.Contains("Npgsql", StringComparison.Ordinal) == true;
+    context.Database.ProviderName!.Contains("Npgsql", StringComparison.Ordinal);
 
   /// <summary>
   /// The quoted, schema-qualified table <c>PerspectiveRow&lt;TModel&gt;</c> is mapped to in the context's model.

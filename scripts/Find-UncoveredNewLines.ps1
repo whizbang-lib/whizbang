@@ -35,7 +35,10 @@
 
     The whole library: every run also prints, and with -SummaryOutFile saves, the coverage of all
     hand-written library code: lines, and outcomes of hand-written decisions by the same classifier.
-    It is informational (the PR comment's last row); -FailOnAny considers new code only.
+    It is gated at 100%: with -FailOnWholeLibrary the script exits 1 while any hand-written decision
+    outcome in the library is untested (CI fails the quality job on the same count). A member excluded
+    with [ExcludeFromCodeCoverage] is absent from the reports and so is never counted. -FailOnAny
+    considers new code only.
 
     Standard practice: every new line and hand-written branch is covered before a PR opens. Run this
     against the CI artifacts (`gh run download <run> -n coverage-unit -D coverage/unit`, and the same for
@@ -57,7 +60,12 @@
 
 .PARAMETER SummaryOutFile
     Optional path; the whole-library summary is written there as JSON (Lines, CoveredLines, Outcomes,
-    CoveredOutcomes, BlockUnion, Text).
+    CoveredOutcomes, Untested, BlockUnion, Text).
+
+.PARAMETER LibraryGapOutFile
+    Optional path; the whole library's gap is written there, one per line: every library line no test
+    ran, as path:line: (never ran) source, and every line with a hand-written decision some outcome of
+    which no test took, as path:line: (covered/total conditions) source.
 
 .PARAMETER OutFile
     Optional path; the uncovered lines are written there, one per line as path:line: source.
@@ -68,6 +76,10 @@
 
 .PARAMETER FailOnAny
     Exit with code 1 when any uncovered line or branch is found.
+
+.PARAMETER FailOnWholeLibrary
+    Exit with code 1 when any hand-written decision outcome anywhere in the library is untested: the
+    whole-library gate, which holds the library at 100% once it is there.
 
 .PARAMETER DownloadFromRun
     A GitHub Actions run id. Every coverage-* artifact of that run is downloaded into -CoverageRoot
@@ -85,10 +97,12 @@ param(
   [string]$OutFile,
   [string]$BranchOutFile,
   [switch]$FailOnAny,
+  [switch]$FailOnWholeLibrary,
   [string]$DownloadFromRun,
   [string]$SourceRoot,
   [string]$MergedOutFile,
-  [string]$SummaryOutFile
+  [string]$SummaryOutFile,
+  [string]$LibraryGapOutFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -140,43 +154,114 @@ function Get-JumpOutcomes([System.Xml.XmlElement]$Line, [int]$Total) {
   some report observed, so neither can claim an outcome no test took. Outcomes split across processes on
   one condition are recovered from block data instead (Merge-BlockCoverage).
 #>
-function Read-CoberturaCoverage([string[]]$ReportPaths) {
+function Read-CoberturaCoverage([string[]]$ReportPaths, [scriptblock]$ReadSource = $null) {
   $coverage = @{}
+  $sourceCache = @{}
   foreach ($reportPath in $ReportPaths) {
     [xml]$xml = Get-Content -Path $reportPath -Raw
     $sources = @($xml.coverage.sources.source | Where-Object { $_ })
     foreach ($cls in $xml.SelectNodes('//class')) {
       $path = Get-RelativeSourcePath ([string]$cls.GetAttribute('filename')) $sources
-      if (-not $coverage.ContainsKey($path)) { $coverage[$path] = @{ Hits = @{}; Conditions = @{}; LineBest = @{}; JumpBest = @{} } }
+      if (-not $coverage.ContainsKey($path)) { $coverage[$path] = @{ Hits = @{}; Conditions = @{}; LineBest = @{}; JumpBest = @{}; Totals = @{}; IfOutcomes = @{} } }
       $entry = $coverage[$path]
+      $classHits = @{}
+      $halfJumps = [System.Collections.Generic.List[int]]::new()
       foreach ($line in $cls.SelectNodes('lines/line')) {
         $n = [int]$line.GetAttribute('number')
         $h = [int]$line.GetAttribute('hits')
+        $classHits[$n] = $h
         if (-not $entry.Hits.ContainsKey($n) -or $entry.Hits[$n] -lt $h) { $entry.Hits[$n] = $h }
         if ($line.GetAttribute('condition-coverage') -match '\((\d+)/(\d+)\)') {
           $covered = [int]$Matches[1]; $total = [int]$Matches[2]
-          if (-not $entry.LineBest.ContainsKey($n) -or $entry.LineBest[$n] -lt $covered) { $entry.LineBest[$n] = $covered }
+          if ($h -gt 0 -and $covered -eq 1 -and $total -eq 2) { $halfJumps.Add($n) }
+          # Shared source compiled into several assemblies reports a line once per copy, and copies
+          # whose IL differs report different totals. Outcomes are only comparable, and unioned,
+          # between copies with the same total; the line then reports the group with the larger gap,
+          # so one copy's covered count never meets another copy's total.
+          $key = "${n}|${total}"
+          if (-not $entry.LineBest.ContainsKey($key) -or $entry.LineBest[$key] -lt $covered) { $entry.LineBest[$key] = $covered }
           $jumps = Get-JumpOutcomes $line $total
-          if (-not $entry.JumpBest.ContainsKey($n)) {
-            $entry.JumpBest[$n] = $jumps
-          } elseif ($null -eq $jumps -or $null -eq $entry.JumpBest[$n] -or $jumps.Count -ne $entry.JumpBest[$n].Count) {
-            $entry.JumpBest[$n] = $null
+          if (-not $entry.JumpBest.ContainsKey($key)) {
+            $entry.JumpBest[$key] = $jumps
+          } elseif ($null -eq $jumps -or $null -eq $entry.JumpBest[$key] -or $jumps.Count -ne $entry.JumpBest[$key].Count) {
+            $entry.JumpBest[$key] = $null
           } else {
             for ($i = 0; $i -lt $jumps.Count; $i++) {
-              if ($entry.JumpBest[$n][$i] -lt $jumps[$i]) { $entry.JumpBest[$n][$i] = $jumps[$i] }
+              if ($entry.JumpBest[$key][$i] -lt $jumps[$i]) { $entry.JumpBest[$key][$i] = $jumps[$i] }
             }
           }
-          $best = $entry.LineBest[$n]
-          if ($null -ne $entry.JumpBest[$n]) {
-            $union = ($entry.JumpBest[$n] | Measure-Object -Sum).Sum
+          $best = $entry.LineBest[$key]
+          if ($null -ne $entry.JumpBest[$key]) {
+            $union = ($entry.JumpBest[$key] | Measure-Object -Sum).Sum
             if ($union -gt $best) { $best = [int]$union }
           }
-          $entry.Conditions[$n] = @($best, $total)
+          $best = [math]::Min($best, $total)
+          if (-not $entry.Totals.ContainsKey($n)) { $entry.Totals[$n] = @{} }
+          $entry.Totals[$n][$total] = $best
+          $worst = $null
+          foreach ($t in $entry.Totals[$n].Keys) {
+            $gapOf = $t - $entry.Totals[$n][$t]
+            if ($null -eq $worst -or $gapOf -gt ($worst[1] - $worst[0])) { $worst = @($entry.Totals[$n][$t], $t) }
+          }
+          $entry.Conditions[$n] = $worst
         }
+      }
+      if ($null -ne $ReadSource -and $halfJumps.Count -gt 0) {
+        if (-not $sourceCache.ContainsKey($path)) {
+          $text = & $ReadSource $path
+          $sourceCache[$path] = if ($null -eq $text) { $null } else { [string[]]@($text) }
+        }
+        Add-IfBodyEvidence $entry $sourceCache[$path] $classHits $halfJumps
       }
     }
   }
+  foreach ($entry in $coverage.Values) {
+    foreach ($n in @($entry.IfOutcomes.Keys)) {
+      if ($entry.IfOutcomes[$n] -eq 3 -and $entry.Conditions[$n][0] -lt 2) { $entry.Conditions[$n] = @(2, 2) }
+    }
+  }
   return $coverage
+}
+
+<#
+  Records which outcome each one-of-two `if (...) {` line took in one report, from whether that report
+  ran the body: 1 for true, 2 for false, OR'ed across reports. A braced body is entered only through
+  the decision's true outcome (C# cannot jump into a block from outside it, and a local function
+  declared in it is callable only inside it), so a report that ran any line strictly inside the braces
+  took true, and one that ran the decision with a single outcome and none of the body took false. A
+  decision both ways across reports has had both its outcomes taken, which the per-line counts alone
+  cannot show. Only a single-jump condition counts (total 2), and only a body on lines of its own: a
+  body on the decision's line, or an empty one, gives no evidence.
+#>
+function Add-IfBodyEvidence([hashtable]$Entry, [string[]]$Source, [hashtable]$ClassHits, $HalfJumps) {
+  if ($null -eq $Source) { return }
+  foreach ($n in $HalfJumps) {
+    if ($n -gt $Source.Count) { continue }
+    $code = (Get-CodeText $Source[$n - 1]).Trim()
+    if ($code -notmatch '^(\}\s*else\s+)?if\s*\(.*\)\s*\{$') { continue }
+    $close = Find-ClosingBraceLine $Source $n
+    if ($close -lt 0) { continue }
+    $body = @($ClassHits.Keys | Where-Object { $_ -gt $n -and $_ -lt $close } | Sort-Object | Select-Object -First 1)
+    if ($body.Count -eq 0) { continue }
+    $outcome = if ($ClassHits[$body[0]] -gt 0) { 1 } else { 2 }
+    $previous = if ($Entry.IfOutcomes.ContainsKey($n)) { $Entry.IfOutcomes[$n] } else { 0 }
+    $Entry.IfOutcomes[$n] = $previous -bor $outcome
+  }
+}
+
+<#
+  The line holding the brace that closes the block opened at the end of line $Line (1-based), or -1.
+  Strings and comments are skipped (Get-CodeText), so only code braces count.
+#>
+function Find-ClosingBraceLine([string[]]$Source, [int]$Line) {
+  $depth = 1
+  for ($i = $Line; $i -lt $Source.Count; $i++) {
+    foreach ($c in (Get-CodeText $Source[$i]).ToCharArray()) {
+      if ($c -eq '{') { $depth++ } elseif ($c -eq '}') { $depth-- }
+      if ($depth -eq 0) { return $i + 1 }
+    }
+  }
+  return -1
 }
 
 <#
@@ -355,24 +440,29 @@ function Test-LibrarySourcePath([string]$Path) {
 #>
 function Get-WholeLibraryCoverage([hashtable]$Coverage, [scriptblock]$ReadSource) {
   $lines = 0; $coveredLines = 0; $outcomes = 0; $coveredOutcomes = 0
-  foreach ($path in $Coverage.Keys) {
+  # The gap, in path and line order: every line no test ran, and every line that ran with a
+  # hand-written decision some outcome of which no test took.
+  $gap = [System.Collections.Generic.List[string]]::new()
+  foreach ($path in ($Coverage.Keys | Sort-Object)) {
     if (-not (Test-LibrarySourcePath $path)) { continue }
     $source = & $ReadSource $path
     if ($null -eq $source) { continue }
     $source = @($source)
     $entry = $Coverage[$path]
-    foreach ($n in $entry.Hits.Keys) {
+    foreach ($n in ($entry.Hits.Keys | Sort-Object)) {
       $lines++
-      if ($entry.Hits[$n] -gt 0) { $coveredLines++ }
-    }
-    foreach ($n in $entry.Conditions.Keys) {
-      $text = if ($n -le $source.Count) { [string]$source[$n - 1] } else { '' }
-      if (-not (Test-HandWrittenDecision $text)) { continue }
-      $outcomes += $entry.Conditions[$n][1]
-      $coveredOutcomes += $entry.Conditions[$n][0]
+      $text = if ($n -le $source.Count) { ([string]$source[$n - 1]).Trim() } else { '' }
+      if ($entry.Hits[$n] -gt 0) { $coveredLines++ } else { $gap.Add("${path}:${n}: (never ran) $text") }
+      if (-not $entry.Conditions.ContainsKey($n) -or -not (Test-HandWrittenDecision $text)) { continue }
+      $c = $entry.Conditions[$n]
+      $outcomes += $c[1]
+      $coveredOutcomes += $c[0]
+      if ($entry.Hits[$n] -gt 0 -and $c[0] -lt $c[1]) { $gap.Add("${path}:${n}: ($($c[0])/$($c[1]) conditions) $text") }
     }
   }
-  return [pscustomobject]@{ Lines = $lines; CoveredLines = $coveredLines; Outcomes = $outcomes; CoveredOutcomes = $coveredOutcomes }
+  return [pscustomobject]@{
+    Lines = $lines; CoveredLines = $coveredLines; Outcomes = $outcomes; CoveredOutcomes = $coveredOutcomes; Gap = $gap
+  }
 }
 
 # A percentage truncated to one decimal, so a gap never reads as 100%.
@@ -383,8 +473,22 @@ function Format-Percent([long]$Covered, [long]$Total) {
 }
 
 <#
-  The whole-library line of the PR quality-gate comment and of /pr-health. Informational: the gate fails
-  on new code only.
+  Whether the whole library passes its gate: every hand-written decision outcome is taken by some test.
+  Counts only what the reports measured, so a member excluded with [ExcludeFromCodeCoverage] (absent from
+  the reports) is never counted; an exclusion is the documented decision, not an untested outcome.
+#>
+function Get-WholeLibraryGateResult($Summary) {
+  $untested = [long]($Summary.Outcomes - $Summary.CoveredOutcomes)
+  $noun = if ($untested -eq 1) { 'outcome' } else { 'outcomes' }
+  $message = if ($untested -eq 0) { '' } else {
+    "Whole-library gate: $untested hand-written decision $noun in the library no test takes. Every hand-written decision in the library is covered (cover it, remove it with a behavior-neutral refactor, or exclude it by ai-docs/coverage-exclusions.md); the list is in library-gap.txt."
+  }
+  return [pscustomobject]@{ Untested = $untested; Passed = ($untested -eq 0); Message = $message }
+}
+
+<#
+  The whole-library line of the PR quality-gate comment and of /pr-health. The gate on it is
+  Get-WholeLibraryGateResult.
 #>
 function Format-WholeLibraryLine($Summary) {
   $text = "Whole library: lines $(Format-Percent $Summary.CoveredLines $Summary.Lines), hand-written branches $(Format-Percent $Summary.CoveredOutcomes $Summary.Outcomes)"
@@ -525,7 +629,14 @@ $reports = @(Get-ChildItem -Path $CoverageRoot -Recurse -Filter '*.cobertura.xml
 if ($reports.Count -eq 0) {
   Write-Error "No *.cobertura.xml under '$CoverageRoot'."
 }
-$coverage = Read-CoberturaCoverage @($reports | ForEach-Object { $_.FullName })
+if (-not $SourceRoot) { $SourceRoot = (Get-Location).Path }
+$readSource = {
+  param($p)
+  $f = Join-Path $SourceRoot $p
+  if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f } else { $null }
+}.GetNewClosure()
+
+$coverage = Read-CoberturaCoverage @($reports | ForEach-Object { $_.FullName }) -ReadSource $readSource
 if ($coverage.Count -eq 0) {
   Write-Error "The $($reports.Count) report(s) under '$CoverageRoot' measured no source file. The collector skipped every assembly."
 }
@@ -541,27 +652,34 @@ if ($blockUnion) {
   Write-Host "::warning::No binary (*.coverage) reports under '$CoverageRoot': outcomes of one line taken in different test processes cannot be unioned, so branch counts may be overstated."
 }
 
-if (-not $SourceRoot) { $SourceRoot = (Get-Location).Path }
-$readSource = {
-  param($p)
-  $f = Join-Path $SourceRoot $p
-  if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f } else { $null }
-}.GetNewClosure()
-
 if ($MergedOutFile) {
   Write-MergedCobertura -Coverage $coverage -OutFile $MergedOutFile -SourceRoot $SourceRoot
   Write-Host "Merged report: $MergedOutFile"
 }
 
-# 1c. The whole library, informational.
+# 1c. The whole library, gated at 100%.
 $whole = Get-WholeLibraryCoverage -Coverage $coverage -ReadSource $readSource
 $whole | Add-Member -NotePropertyName BlockUnion -NotePropertyValue $blockUnion
 $whole | Add-Member -NotePropertyName Text -NotePropertyValue (Format-WholeLibraryLine $whole)
+$wholeGate = Get-WholeLibraryGateResult $whole
+$whole | Add-Member -NotePropertyName Untested -NotePropertyValue $wholeGate.Untested
 Write-Host $whole.Text
 if ($SummaryOutFile) {
   $dir = Split-Path -Parent $SummaryOutFile
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-  [System.IO.File]::WriteAllText($SummaryOutFile, ($whole | ConvertTo-Json))
+  $fields = $whole | Select-Object Lines, CoveredLines, Outcomes, CoveredOutcomes, Untested, BlockUnion, Text
+  [System.IO.File]::WriteAllText($SummaryOutFile, ($fields | ConvertTo-Json))
+}
+if ($LibraryGapOutFile) {
+  $dir = Split-Path -Parent $LibraryGapOutFile
+  if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  # Written even when empty: an empty list is the evidence of 100%.
+  [System.IO.File]::WriteAllLines($LibraryGapOutFile, [string[]]$whole.Gap.ToArray())
+}
+
+if ($FailOnWholeLibrary -and -not $wholeGate.Passed) {
+  Write-Host "::error::$($wholeGate.Message)"
+  exit 1
 }
 
 if (-not $BaseRef) { exit 0 }

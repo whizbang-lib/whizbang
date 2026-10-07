@@ -148,15 +148,9 @@ public static class TemplateUtilities {
       indentedReplacement = indentedReplacement.TrimEnd() + trailing;
     }
 
-    var needsNewline = suffix.Length > 0 && !_endsWithNewline(indentedReplacement);
-    return needsNewline ? indentedReplacement + "\n" : indentedReplacement;
-  }
-
-  /// <summary>
-  /// Checks whether the string ends with a newline character (\n or \r).
-  /// </summary>
-  private static bool _endsWithNewline(string value) {
-    return value.EndsWith("\n", StringComparison.Ordinal) || value.EndsWith("\r", StringComparison.Ordinal);
+    // The replacement was trimmed before it was indented, and the trailing content stops at the line
+    // break, so the text never ends in one: a suffix always needs the separator.
+    return suffix.Length > 0 ? indentedReplacement + "\n" : indentedReplacement;
   }
 
   /// <summary>
@@ -352,7 +346,8 @@ public static class TemplateUtilities {
   /// <param name="generatorAssembly">The generator assembly whose version stamps the output</param>
   /// <returns>A stable, build-deterministic stamp string</returns>
   public static string GetDeterministicBuildStamp(Assembly generatorAssembly) {
-    var version = generatorAssembly.GetName().Version?.ToString() ?? "0.0.0.0";
+    // A loaded assembly always carries a version (0.0.0.0 when none was set).
+    var version = generatorAssembly.GetName().Version!.ToString();
     return $"generator v{version}";
   }
 

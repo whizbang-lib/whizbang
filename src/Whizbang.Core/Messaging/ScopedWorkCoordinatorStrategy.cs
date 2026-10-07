@@ -164,10 +164,10 @@ public partial class ScopedWorkCoordinatorStrategy(
 
     var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
       new FlushContext(
-        _coordinator, _dependencies.ScopeFactory, _instanceProvider, _options, STRATEGY_NAME,
+        _coordinator, _dependencies.ScopeFactory, _instanceProvider, _options,
         outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
-        outboxFailures, inboxFailures, flags, _dependencies.LifecycleMessageDeserializer,
-        _logger, _dependencies.TracingOptions, _metrics, _lifecycleMetrics,
+        outboxFailures, inboxFailures, _dependencies.LifecycleMessageDeserializer,
+        _logger, _dependencies.TracingOptions, _lifecycleMetrics,
         WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages),
       ct
     );
@@ -247,10 +247,10 @@ public partial class ScopedWorkCoordinatorStrategy(
 
         await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
           new FlushContext(
-            _coordinator, _dependencies.ScopeFactory, _instanceProvider, _options, STRATEGY_NAME,
+            _coordinator, _dependencies.ScopeFactory, _instanceProvider, _options,
             outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
-            outboxFailures, inboxFailures, WorkBatchOptions.SkipInboxClaiming, _dependencies.LifecycleMessageDeserializer,
-            _logger, _dependencies.TracingOptions, _metrics, _lifecycleMetrics,
+            outboxFailures, inboxFailures, _dependencies.LifecycleMessageDeserializer,
+            _logger, _dependencies.TracingOptions, _lifecycleMetrics,
             WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
             // Disposal drain: the ONE deliberate lifecycle skip (issue #485 kept it) — a
             // shutdown's backgrounded stage halves would race process exit.

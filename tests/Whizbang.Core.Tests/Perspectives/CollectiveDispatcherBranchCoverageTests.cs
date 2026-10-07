@@ -111,6 +111,34 @@ public class CollectiveDispatcherBranchCoverageTests {
     await Assert.That(errors[0].Value).IsEqualTo(1L);
   }
 
+  [Test]
+  public async Task DispatchAsync_NoMatchingEntry_WithoutListener_ReturnsNoHandlersAsync() {
+    using var source = new System.Diagnostics.ActivitySource($"Whizbang.Core.Tests.Unlistened.{Guid.NewGuid():N}");
+    var dispatcher = _build([], [], [], [], _newMetrics(), source);
+
+    var result = await dispatcher.DispatchAsync(new Archive(new TenantScope("t-1")), Guid.NewGuid(), new object(), cancellationToken: default);
+
+    await Assert.That(result.HandlerCount).IsEqualTo(0)
+      .Because("with tracing off there is no span to tag, and the dispatch answers the same");
+  }
+
+  [Test]
+  public async Task DispatchAsync_ApplyThrows_WithoutListener_PropagatesTheFailureAsync() {
+    using var source = new System.Diagnostics.ActivitySource($"Whizbang.Core.Tests.Unlistened.{Guid.NewGuid():N}");
+    var dispatcher = _build(
+      [_entryFor<Archive>(typeof(JobModel), typeof(JobHandler))],
+      [new StubResolver("tenant")],
+      [new ThrowingExecutor(typeof(JobModel))],
+      [new JobHandler()],
+      _newMetrics(),
+      source);
+
+    await Assert.That(async () => await dispatcher.DispatchAsync(
+        new Archive(new TenantScope("t-1")), Guid.NewGuid(), new object(), cancellationToken: default))
+      .ThrowsExactly<InvalidTimeZoneException>()
+      .Because("with tracing off there is no span to mark failed, and the failure still propagates unchanged");
+  }
+
   // ── helpers ─────────────────────────────────────────────────────────────
 
   private static EventCategoryMetrics _newMetrics() =>
@@ -181,12 +209,15 @@ public class CollectiveDispatcherBranchCoverageTests {
       IReadOnlyList<ICollectiveScopeResolver> resolvers,
       IReadOnlyList<ICollectiveEventExecutor> executors,
       IReadOnlyList<object> handlers,
-      EventCategoryMetrics metrics) {
+      EventCategoryMetrics metrics,
+      System.Diagnostics.ActivitySource? source = null) {
     var services = new ServiceCollection();
     foreach (var h in handlers) {
       services.AddSingleton(h.GetType(), _ => h);
     }
-    return new CollectiveDispatcher(services.BuildServiceProvider(), entries, resolvers, executors, metrics);
+    return new CollectiveDispatcher(services.BuildServiceProvider(), entries, resolvers, executors, metrics) {
+      ActivitySource = source ?? WhizbangActivitySource.Tracing,
+    };
   }
 
   // ── inline test types (mirroring CollectiveDispatcherTests) ─────────────

@@ -58,11 +58,12 @@ internal static class PerspectiveDiscoveryHelper {
   public static bool IsPerspectiveClass(INamedTypeSymbol classSymbol) {
     return classSymbol.AllInterfaces.Any(i => {
       var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
-      return (originalDef.StartsWith(PERSPECTIVE_BASE + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
-              originalDef.StartsWith(PERSPECTIVE_FOR + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
-              originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
-              originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal))
-             && i.TypeArguments.Length >= 2;
+      return originalDef.StartsWith(PERSPECTIVE_BASE + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
+             originalDef.StartsWith(PERSPECTIVE_FOR + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
+             originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
+             originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal);
+      // Every definition matched above takes a model and at least one event, so a match has two or more
+      // type arguments; the count needs no test of its own.
     });
   }
 

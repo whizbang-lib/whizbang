@@ -7,14 +7,12 @@ namespace Whizbang.Generators;
 /// Value type containing information about a discovered array type used in messages.
 /// This record uses value equality which is critical for incremental generator performance.
 /// </summary>
-/// <param name="ArrayTypeName">Fully qualified array type name (e.g., "global::Whizbang.Core.IEvent[]")</param>
 /// <param name="ElementTypeName">Fully qualified element type name (e.g., "global::Whizbang.Core.IEvent")</param>
 /// <param name="ElementSimpleName">Simple element type name for method generation (e.g., "IEvent")</param>
 /// <docs>extending/internals/json-serialization-customizations</docs>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithGenericTypeArray_GeneratesValidIdentifierAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithGuidArray_GeneratesArrayFactoryAsync</tests>
 public sealed record ArrayTypeInfo(
-    string ArrayTypeName,
     string ElementTypeName,
     string ElementSimpleName
 ) {
