@@ -734,6 +734,9 @@ public class PerspectiveDedupIntegrationTests {
 
     public async Task WaitForCallCountAsync(int count, TimeSpan timeout) {
       var waiter = _callCountWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      // The runner signals only the waiters registered when it runs, and each item runs once, so a
+      // count reached before this waiter existed would never be signaled: check after registering.
+      if (Volatile.Read(ref _callCount) >= count) { waiter.TrySetResult(); }
       await waiter.Task.WaitAsync(timeout);
     }
 
@@ -834,6 +837,8 @@ public class PerspectiveDedupIntegrationTests {
 
     public async Task WaitForCyclesAsync(int count, TimeSpan timeout) {
       var waiter = _cycleWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      // A count already reached completes the wait now rather than on some later cycle.
+      if (Volatile.Read(ref _cycleCount) >= count) { waiter.TrySetResult(); }
       await waiter.Task.WaitAsync(timeout);
     }
 
@@ -880,6 +885,8 @@ public class PerspectiveDedupIntegrationTests {
 
     public async Task WaitForCyclesAsync(int count, TimeSpan timeout) {
       var waiter = _cycleWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      // A count already reached completes the wait now rather than on some later cycle.
+      if (Volatile.Read(ref _cycleCount) >= count) { waiter.TrySetResult(); }
       await waiter.Task.WaitAsync(timeout);
     }
 
@@ -1085,6 +1092,9 @@ public class PerspectiveDedupIntegrationTests {
 
     public async Task WaitForCallCountAsync(int count, TimeSpan timeout) {
       var waiter = _callCountWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      // The runner signals only the waiters registered when it runs, and each item runs once, so a
+      // count reached before this waiter existed would never be signaled: check after registering.
+      if (Volatile.Read(ref _callCount) >= count) { waiter.TrySetResult(); }
       await waiter.Task.WaitAsync(timeout);
     }
 
