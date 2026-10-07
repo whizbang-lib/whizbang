@@ -52,7 +52,8 @@ public sealed partial class PgDurableSignalTailWorker(
   private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   private readonly ProbeCadenceMetrics? _probeMetrics = probeMetrics;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
-  private readonly Whizbang.Core.Workers.AdaptiveIdleBackoff _cadence = CreateBackoff(options?.Value ?? throw new ArgumentNullException(nameof(options)));
+  // Initializers run in declaration order, so the _options initializer above has already refused a null.
+  private readonly Whizbang.Core.Workers.AdaptiveIdleBackoff _cadence = CreateBackoff(options.Value);
 
   /// <summary>
   /// The fastest tail cadence, used while signals are flowing. Kept modest: the fast path is

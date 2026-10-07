@@ -67,7 +67,8 @@ public sealed partial class PgScheduleClaimer(
     cmd.Parameters.Add(new NpgsqlParameter("pc", NpgsqlDbType.Integer) { Value = _partitionCount });
     cmd.Parameters.Add(new NpgsqlParameter(nameof(limit), NpgsqlDbType.Integer) { Value = limit });
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    var claimed = result is null or DBNull ? 0 : Convert.ToInt32(result, CultureInfo.InvariantCulture);
+    // count(*) always yields one non-null row.
+    var claimed = Convert.ToInt32(result, CultureInfo.InvariantCulture);
     if (claimed > 0) {
       // #720: each spawned occurrence queued its doorbell inside the claim's transaction; ring them after the commit.
       await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken).ConfigureAwait(false);

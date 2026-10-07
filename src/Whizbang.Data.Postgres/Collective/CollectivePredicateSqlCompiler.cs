@@ -636,7 +636,8 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     if (ReferenceEquals(p, ctx.OuterParam)) {
       return ctx.OuterTableName;
     }
-    return ctx.InnerParam is not null && ReferenceEquals(p, ctx.InnerParam) ? ctx.InnerTableName : null;
+    // A parameter is never null, so it cannot match an absent inner parameter.
+    return ReferenceEquals(p, ctx.InnerParam) ? ctx.InnerTableName : null;
   }
 
   // The SQL qualifier ("" / "{outerTable}." / "{alias}.") for a row param, or null if it isn't a known one.
