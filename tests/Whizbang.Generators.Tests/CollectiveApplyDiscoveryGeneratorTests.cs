@@ -21,7 +21,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_DiscoversDefaultAttributedMethod_EmitsRegistryEntryAsync() {
-    const string source = $$"""
+    const string source = """
             using Whizbang.Core.Messaging;
             using Whizbang.Core.Perspectives;
 
@@ -62,7 +62,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_DiscoversQueryContextHandler_PassesQueryToInvokerAsync() {
-    const string source = $$"""
+    const string source = """
             using Whizbang.Core.Messaging;
             using Whizbang.Core.Perspectives;
 
@@ -94,7 +94,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_WithNoAttributedMethods_EmitsEmptyRegistryAsync() {
-    const string source = $$"""
+    const string source = """
             using Whizbang.Core.Messaging;
             using Whizbang.Core.Perspectives;
 
@@ -123,7 +123,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_WithCustomScopeHandling_EmitsCustomEnumValueAsync() {
-    const string source = $$"""
+    const string source = """
             using Whizbang.Core.Messaging;
             using Whizbang.Core.Perspectives;
 
@@ -154,7 +154,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_WithRawSqlSpecKind_EmitsRawSqlEnumValueAsync() {
-    const string source = $$"""
+    const string source = """
             using Whizbang.Core.Messaging;
             using Whizbang.Core.Perspectives;
 
@@ -183,7 +183,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_WithApplyKnobOverrides_EmitsOverridesOnEntryAsync() {
-    const string source = $$"""
+    const string source = """
             using Whizbang.Core.Messaging;
             using Whizbang.Core.Perspectives;
 
@@ -212,7 +212,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_WithoutApplyKnobs_EmitsZeroInheritSentinelsAsync() {
-    const string source = $$"""
+    const string source = """
             using Whizbang.Core.Messaging;
             using Whizbang.Core.Perspectives;
 
@@ -242,7 +242,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_WithMultipleHandlersOnSameClass_EmitsAllEntriesAsync() {
-    const string source = $$"""
+    const string source = """
             using Whizbang.Core.Messaging;
             using Whizbang.Core.Perspectives;
 
@@ -277,7 +277,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_EmittedCode_UsesNoReflectionAsync() {
-    const string source = $$"""
+    const string source = """
             using Whizbang.Core.Messaging;
             using Whizbang.Core.Perspectives;
 
