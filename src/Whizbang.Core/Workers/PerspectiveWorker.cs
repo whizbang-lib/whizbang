@@ -3291,7 +3291,9 @@ public partial class PerspectiveWorker(
     // N× the DB work; observed live as same-second full-count/0-row re-applies). Mirror of the
     // per-event path's _filterDuplicateWorkItems. Only the ALL-completed case skips — a mixed set
     // means a new collective event arrived and the cursor-driven dispatch below handles ordering.
-    if (sinkWorkIds.Length > 0 && sinkWorkIds.All(id => id == Guid.Empty || _processedEventCache.Contains(id))) {
+    // Both producers drop Guid.Empty before calling, and held-back rows are earlier runs' ids, so
+    // every id here is a real row; an empty set has nothing completed and is dispatched.
+    if (sinkWorkIds.Length > 0 && sinkWorkIds.All(_processedEventCache.Contains)) {
       _processedEventCache.Observer.OnEventsDeduped(
         sinkWorkIds, CollectiveRouting.SINK_PERSPECTIVE_NAME, streamId);
       return;

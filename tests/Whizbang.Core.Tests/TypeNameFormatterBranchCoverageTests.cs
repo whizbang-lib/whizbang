@@ -34,6 +34,19 @@ public class TypeNameFormatterBranchCoverageTests {
     await Assert.That(TypeNameFormatter.DisplayName(genericParameter)).IsEqualTo("T");
   }
 
+  /// <summary>
+  /// A registry walk names every type that has a CLR name, in order, and skips one that has none
+  /// rather than forwarding a null key to the table lookup.
+  /// </summary>
+  [Test]
+  public async Task ClrTypeNamesOf_SkipsATypeWithNoFullNameAsync() {
+    var genericParameter = typeof(List<>).GetGenericArguments()[0];
+
+    var names = TypeNameFormatter.ClrTypeNamesOf([typeof(string), genericParameter, typeof(int)]).ToList();
+
+    await Assert.That(names).IsEquivalentTo(["System.String", "System.Int32"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
   [Test]
   public async Task AssemblyQualifiedNameOrDisplay_ClosedType_IsTheAssemblyQualifiedNameAsync() {
     var name = TypeNameFormatter.AssemblyQualifiedNameOrDisplay(typeof(List<int>));

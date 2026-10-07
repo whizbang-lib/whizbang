@@ -145,6 +145,25 @@ public static class TypeNameFormatter {
   }
 
   /// <summary>
+  /// The CLR full type names of the types that have one, in order, skipping any that do not (see
+  /// <see cref="TryFormatClrTypeName"/>).
+  /// </summary>
+  /// <param name="types">The types to name.</param>
+  /// <returns>One CLR full type name per type that has one.</returns>
+  /// <remarks>
+  /// The one place a registry walk turns types into the names the perspective tables are keyed by.
+  /// The types registered as perspective models are always named, so through those walks the skip is
+  /// never taken; it is asserted here instead, where a type with no name can be handed in directly.
+  /// </remarks>
+  internal static IEnumerable<string> ClrTypeNamesOf(IEnumerable<Type> types) {
+    foreach (var type in types) {
+      if (TryFormatClrTypeName(type, out var clrTypeName)) {
+        yield return clrTypeName;
+      }
+    }
+  }
+
+  /// <summary>
   /// Parses a type name string to extract "TypeName, AssemblyName" format, handling various input formats defensively.
   /// Supports:
   /// - Short form: "TypeName, AssemblyName" (returned as-is)

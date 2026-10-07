@@ -448,7 +448,7 @@ public sealed partial class PerspectiveRebuilder(
     }
 
     var names = new List<string> { perspectiveName };
-    names.AddRange(announcers.Select(a => TypeNameFormatter.TryFormatClrTypeName(a, out var clr) ? clr : null).Where(n => n is not null).Cast<string>());
+    names.AddRange(TypeNameFormatter.ClrTypeNamesOf(announcers));
     var tables = await coordinator.GetPerspectiveTableNamesAsync(names, ct).ConfigureAwait(false);
     var followerTable = tables.FirstOrDefault(t => t.ClrTypeName == perspectiveName)?.TableName;
     var announcerTables = tables.Where(t => t.ClrTypeName != perspectiveName).Select(t => t.TableName).ToList();
