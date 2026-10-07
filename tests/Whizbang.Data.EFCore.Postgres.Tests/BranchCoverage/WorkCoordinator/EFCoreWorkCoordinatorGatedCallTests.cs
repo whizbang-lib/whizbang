@@ -46,7 +46,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.WorkCoordinator;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
-[Category("Shard5")]
+[Category("Shard4")]
 public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
   private const string HOLD_INSTRUMENT = "whizbang.gate.hold_duration_ms";
   private const string PERSPECTIVE = "Gate.Perspective";
