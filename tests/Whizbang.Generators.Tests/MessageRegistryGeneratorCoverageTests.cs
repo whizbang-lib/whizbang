@@ -467,8 +467,8 @@ namespace TestNamespace {
   }
 
   /// <summary>
-  /// A test entry that names only its line still becomes an entry, its missing names written empty
-  /// rather than as the text "null" or a failed load.
+  /// A test entry whose names are JSON nulls (a hand-edited map) still becomes an entry, its names
+  /// written empty rather than as the text "null" or a failed load.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -484,7 +484,7 @@ namespace TestNamespace {
 }
 """;
     const string testsMapJson = """
-{ "CodeToTests": { "CovSparseCommand": [ { "TestLine": 64 } ] } }
+{ "CodeToTests": { "CovSparseCommand": [ { "TestFile": null, "TestMethod": null, "TestLine": 64, "TestClass": null } ] } }
 """;
 
     var docsRepoPath = _createDocsRepo("{}", testsMapJson);

@@ -161,13 +161,10 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
         validationErrors.Add(error);
       } else {
         // Extract StreamId property name (only if valid)
-        var streamKeyProp = _extractStreamIdProperty(eventTypeSymbol);
-        if (streamKeyProp != null) {
-          eventStreamIds.Add(new EventStreamIdInfo(
-              EventTypeName: TypeNameUtilities.FullyQualified(eventTypeSymbol),
-              StreamIdPropertyName: streamKeyProp
-          ));
-        }
+        eventStreamIds.Add(new EventStreamIdInfo(
+            EventTypeName: TypeNameUtilities.FullyQualified(eventTypeSymbol),
+            StreamIdPropertyName: _extractStreamIdProperty(eventTypeSymbol)
+        ));
       }
     }
 
@@ -212,17 +209,18 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts the StreamId property name from an event type.
-  /// Returns the property name if exactly one [StreamId] is found, null otherwise.
+  /// Extracts the StreamId property name from an event type _validateEventStreamId accepted.
   /// Handles array types by extracting from the element type.
   /// Searches the type hierarchy to find [StreamId] on inherited properties.
   /// </summary>
-  private static string? _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {
-    // If this is an array type, look at the element type instead. A symbol that is not a named type
-    // after that — a type parameter, say — declares no properties at all, so it produces the same
-    // "no [StreamId] here" answer through the same null-propagating lookup.
-    var namedType = (eventTypeSymbol is IArrayTypeSymbol arrayType ? arrayType.ElementType : eventTypeSymbol) as INamedTypeSymbol;
-    return namedType?.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE)?.Name;
+  /// <remarks>
+  /// Called only for an event the validation accepted: a named type (after unwrapping an array) with
+  /// exactly one public [StreamId] property in its class chain. This lookup walks the same chain and
+  /// also sees non-public properties, so it always finds one.
+  /// </remarks>
+  private static string _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {
+    var namedType = (INamedTypeSymbol)(eventTypeSymbol is IArrayTypeSymbol arrayType ? arrayType.ElementType : eventTypeSymbol);
+    return namedType.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE)!.Name;
   }
 
   /// <summary>
