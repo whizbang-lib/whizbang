@@ -185,6 +185,11 @@ $candidates = @(gh api "repos/$Repository/actions/workflows/ci.yml/runs?status=s
   # newest entries were a day old, which picks runs whose artifacts have already expired.
   Sort-Object { [datetime]$_.created_at } -Descending)
 
+# Named in the log, so a stale run list (seen twice: its newest entry a day old, every artifact
+# already expired) identifies itself instead of surfacing later as "no TRX artifacts found".
+if ($candidates.Count -gt 0) {
+  Write-Information "Candidate runs since ${since}: $($candidates.Count); newest created $($candidates[0].created_at)" -InformationAction Continue
+}
 $jobsByRun = [ordered]@{}
 foreach ($run in $candidates) {
   if ($jobsByRun.Count -ge $Runs) { break }
