@@ -63,41 +63,8 @@ public abstract class LensEndpointBase<TModel> where TModel : class {
   /// </summary>
   /// <param name="sort">Sort string (e.g., "-createdAt,name,+status")</param>
   /// <returns>List of parsed sort expressions</returns>
-  protected static IReadOnlyList<SortExpression> ParseSortExpression(string? sort) {
-    if (string.IsNullOrWhiteSpace(sort)) {
-      return [];
-    }
-
-    var results = new List<SortExpression>();
-    var fields = sort.Split(',', StringSplitOptions.RemoveEmptyEntries);
-
-    foreach (var field in fields) {
-      var trimmed = field.Trim();
-      if (string.IsNullOrEmpty(trimmed)) {
-        continue;
-      }
-
-      bool descending;
-      string fieldName;
-
-      if (trimmed.StartsWith('-')) {
-        descending = true;
-        fieldName = trimmed[1..].Trim();
-      } else if (trimmed.StartsWith('+')) {
-        descending = false;
-        fieldName = trimmed[1..].Trim();
-      } else {
-        descending = false;
-        fieldName = trimmed;
-      }
-
-      if (!string.IsNullOrEmpty(fieldName)) {
-        results.Add(new SortExpression(fieldName, descending));
-      }
-    }
-
-    return results;
-  }
+  protected static IReadOnlyList<SortExpression> ParseSortExpression(string? sort) =>
+    LensQueryShaping.ParseSort(sort);
 }
 
 /// <summary>

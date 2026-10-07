@@ -432,6 +432,39 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
       .Because("a value the switch cannot classify must still serialize as SOMETHING sendable — throwing here would fail the whole publish over one stray metadata entry");
   }
 
+  /// <summary>
+  /// A metadata number too large for a double must not be sent as a different number. .NET parses
+  /// one to infinity and reports success, so a conversion that trusted the parse sent infinity in
+  /// place of the value the sender wrote. The original JSON text is sendable and loses nothing.
+  /// </summary>
+  [Test]
+  [Arguments("1e400")]
+  [Arguments("-1e400")]
+  public async Task PublishAsync_MetadataNumberBeyondDoubleRange_SendsOriginalTextAsync(string number) {
+    var (transport, client) = _createDecisionTransport();
+    var metadata = new Dictionary<string, JsonElement> { ["huge"] = AsbTransportTestData.Json(number) };
+    var destination = new TransportDestination("bulk-topic", "orders.created", metadata);
+
+    await transport.PublishAsync(AsbTransportTestData.CreateEnvelope(), destination);
+
+    var message = client.LastSender!.Sent[0];
+    await Assert.That(message.ApplicationProperties["huge"]).IsEqualTo(number)
+      .Because("a number no double can hold must arrive as the text the sender wrote, never as infinity");
+  }
+
+  /// <summary>A number a double holds exactly enough still goes out as a number, not as text.</summary>
+  [Test]
+  public async Task PublishAsync_MetadataFractionalNumber_SendsDoubleAsync() {
+    var (transport, client) = _createDecisionTransport();
+    var metadata = new Dictionary<string, JsonElement> { ["ratio"] = AsbTransportTestData.Json("1.5") };
+    var destination = new TransportDestination("bulk-topic", "orders.created", metadata);
+
+    await transport.PublishAsync(AsbTransportTestData.CreateEnvelope(), destination);
+
+    var message = client.LastSender!.Sent[0];
+    await Assert.That(message.ApplicationProperties["ratio"]).IsEqualTo(1.5);
+  }
+
   private static (AzureServiceBusTransport Transport, RaisableServiceBusClient Client, RecordingProvisioningAdminClient AdminClient)
       _createProvisioningTransport() {
     var client = new RaisableServiceBusClient();

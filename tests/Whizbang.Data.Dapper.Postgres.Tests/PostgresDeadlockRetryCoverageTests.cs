@@ -9,27 +9,54 @@ using Whizbang.Data.Postgres;
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
-/// Coverage for the generic <see cref="PostgresDeadlockRetry.ExecuteAsync{T}"/>'s trailing
-/// "Unreachable" guard. Every real transient-retry path returns or throws from inside the loop
-/// body, so the only way to fall through to the guard is a <c>maxAttempts</c> that makes the loop
-/// never execute at all (<c>attempt = 1 &lt;= maxAttempts</c> false from the start) — no
-/// <see cref="Npgsql.PostgresException"/>, no database, needed to reach it.
+/// A <c>maxAttempts</c> below one asks for no attempt at all, which is a caller's configuration
+/// error rather than a request. It is rejected before the action is touched: running it anyway
+/// would ignore the setting, and returning without running it (the defect in #1185) told the
+/// caller a write had succeeded when it never executed.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/PostgresDeadlockRetry.cs</code-under-test>
 public class PostgresDeadlockRetryCoverageTests {
-
-  // This line only exists because the compiler cannot see that the for-loop always returns or
-  // throws for every attempt from 1..maxAttempts when maxAttempts >= 1. A caller passing
-  // maxAttempts <= 0 (a config or call-site bug) must fail loudly with a clear signal rather than
-  // silently return default(T) — silently returning a bogus default would let a caller believe a
-  // database write succeeded when the operation never ran at all.
   [Test]
-  public async Task ExecuteAsyncOfT_WithZeroMaxAttempts_ThrowsInvalidOperationExceptionAsync() {
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task ExecuteAsync_WithNonPositiveMaxAttempts_ThrowsWithoutRunningTheActionAsync(int maxAttempts) {
+    var ran = false;
+
     await Assert.That(() => PostgresDeadlockRetry.ExecuteAsync(
-        async () => 1, maxAttempts: 0))
-      .ThrowsExactly<InvalidOperationException>()
-      .Because("maxAttempts <= 0 means the retry loop never runs a single attempt — falling "
-             + "through to a default(T) return instead of this throw would silently tell the "
-             + "caller the operation succeeded when it never executed");
+        () => {
+          ran = true;
+          return Task.CompletedTask;
+        }, maxAttempts))
+      .ThrowsExactly<ArgumentOutOfRangeException>();
+    await Assert.That(ran).IsFalse()
+      .Because("an action that never ran must not be reported as a success, and must not run at all");
+  }
+
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task ExecuteAsyncOfT_WithNonPositiveMaxAttempts_ThrowsWithoutRunningTheActionAsync(int maxAttempts) {
+    var ran = false;
+
+    await Assert.That(() => PostgresDeadlockRetry.ExecuteAsync(
+        () => {
+          ran = true;
+          return Task.FromResult(1);
+        }, maxAttempts))
+      .ThrowsExactly<ArgumentOutOfRangeException>();
+    await Assert.That(ran).IsFalse();
+  }
+
+  /// <summary>One attempt is the smallest valid setting, and it runs the action exactly once.</summary>
+  [Test]
+  public async Task ExecuteAsync_WithOneMaxAttempt_RunsTheActionOnceAsync() {
+    var runs = 0;
+
+    await PostgresDeadlockRetry.ExecuteAsync(() => {
+      runs++;
+      return Task.CompletedTask;
+    }, maxAttempts: 1);
+
+    await Assert.That(runs).IsEqualTo(1);
   }
 }
