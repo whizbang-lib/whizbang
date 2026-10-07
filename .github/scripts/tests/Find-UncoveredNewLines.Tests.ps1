@@ -373,6 +373,46 @@ Describe 'Format-WholeLibraryLine' {
   }
 }
 
+Describe 'Get-WholeLibraryGateResult' {
+  # The whole-library gate: every hand-written decision in the library is covered, or the job fails.
+  It 'passes when no hand-written outcome is untested' {
+    $summary = [pscustomobject]@{ Lines = 50; CoveredLines = 49; Outcomes = 7; CoveredOutcomes = 7; BlockUnion = $true }
+
+    $gate = Get-WholeLibraryGateResult $summary
+
+    $gate.Passed | Should -BeTrue
+    $gate.Untested | Should -Be 0
+  }
+
+  It 'fails on a single untested hand-written outcome, and says how many' {
+    $summary = [pscustomobject]@{ Lines = 50; CoveredLines = 50; Outcomes = 7; CoveredOutcomes = 6; BlockUnion = $true }
+
+    $gate = Get-WholeLibraryGateResult $summary
+
+    $gate.Passed | Should -BeFalse
+    $gate.Untested | Should -Be 1
+    $gate.Message | Should -Match '1 hand-written decision outcome'
+  }
+
+  It 'does not count a member excluded from coverage' {
+    # [ExcludeFromCodeCoverage] keeps a member out of the collector's reports entirely, so its lines carry
+    # no data here and its decisions are not outcomes: the untested `if` on line 4 is not counted.
+    $report = New-Report $TestDrive 'excluded.cobertura.xml' 'src/P/A.cs' @(
+      @{ n = 1; hits = 1; cov = '2/2' })
+    $source = @{ 'src/P/A.cs' = @(
+      'if (ready) {',
+      '}',
+      '[ExcludeFromCodeCoverage(Justification = "unreachable until the issue is fixed")]',
+      'void Excluded() { if (never) { Do(); } }') }
+
+    $whole = Get-WholeLibraryCoverage -Coverage (Read-CoberturaCoverage @($report)) -ReadSource { param($p) $source[$p] }
+    $gate = Get-WholeLibraryGateResult $whole
+
+    $whole.Outcomes | Should -Be 2
+    $gate.Passed | Should -BeTrue
+  }
+}
+
 Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
   It 'merges the per-process reports and their block data, and summarizes the whole library' {
     $sourceRoot = Join-Path $TestDrive 'repo'
@@ -397,6 +437,20 @@ Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
     $summary.CoveredOutcomes | Should -Be 5
     $summary.BlockUnion | Should -BeTrue
     $summary.Text | Should -Be 'Whole library: lines 87.5%, hand-written branches 83.3% (1 outcome untested)'
+    $summary.Untested | Should -Be 1
     (Read-CoberturaCoverage @($merged))[$script:FixturePath].Conditions[5] | Should -Be @(2, 2)
+  }
+
+  It 'fails with -FailOnWholeLibrary while any hand-written outcome in the library is untested' {
+    $sourceRoot = Join-Path $TestDrive 'repo-gate'
+    New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'src/Whizbang.Exp') -Force | Out-Null
+    Copy-Item (Join-Path $script:Fixture 'Calc.cs.txt') (Join-Path $sourceRoot $script:FixturePath)
+    $scriptPath = Join-Path -Path $PSScriptRoot -ChildPath '../../../scripts/Find-UncoveredNewLines.ps1'
+
+    $pwsh = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    $output = & $pwsh -NoProfile -File $scriptPath -CoverageRoot $script:Fixture -SourceRoot $sourceRoot -FailOnWholeLibrary
+
+    $LASTEXITCODE | Should -Be 1
+    ($output -join "`n") | Should -Match '1 hand-written decision outcome'
   }
 }

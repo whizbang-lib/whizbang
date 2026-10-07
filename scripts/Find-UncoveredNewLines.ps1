@@ -35,7 +35,10 @@
 
     The whole library: every run also prints, and with -SummaryOutFile saves, the coverage of all
     hand-written library code: lines, and outcomes of hand-written decisions by the same classifier.
-    It is informational (the PR comment's last row); -FailOnAny considers new code only.
+    It is gated at 100%: with -FailOnWholeLibrary the script exits 1 while any hand-written decision
+    outcome in the library is untested (CI fails the quality job on the same count). A member excluded
+    with [ExcludeFromCodeCoverage] is absent from the reports and so is never counted. -FailOnAny
+    considers new code only.
 
     Standard practice: every new line and hand-written branch is covered before a PR opens. Run this
     against the CI artifacts (`gh run download <run> -n coverage-unit -D coverage/unit`, and the same for
@@ -57,7 +60,7 @@
 
 .PARAMETER SummaryOutFile
     Optional path; the whole-library summary is written there as JSON (Lines, CoveredLines, Outcomes,
-    CoveredOutcomes, BlockUnion, Text).
+    CoveredOutcomes, Untested, BlockUnion, Text).
 
 .PARAMETER LibraryGapOutFile
     Optional path; the whole library's gap is written there, one per line: every library line no test
@@ -73,6 +76,10 @@
 
 .PARAMETER FailOnAny
     Exit with code 1 when any uncovered line or branch is found.
+
+.PARAMETER FailOnWholeLibrary
+    Exit with code 1 when any hand-written decision outcome anywhere in the library is untested: the
+    whole-library gate, which holds the library at 100% once it is there.
 
 .PARAMETER DownloadFromRun
     A GitHub Actions run id. Every coverage-* artifact of that run is downloaded into -CoverageRoot
@@ -90,6 +97,7 @@ param(
   [string]$OutFile,
   [string]$BranchOutFile,
   [switch]$FailOnAny,
+  [switch]$FailOnWholeLibrary,
   [string]$DownloadFromRun,
   [string]$SourceRoot,
   [string]$MergedOutFile,
@@ -452,8 +460,22 @@ function Format-Percent([long]$Covered, [long]$Total) {
 }
 
 <#
-  The whole-library line of the PR quality-gate comment and of /pr-health. Informational: the gate fails
-  on new code only.
+  Whether the whole library passes its gate: every hand-written decision outcome is taken by some test.
+  Counts only what the reports measured, so a member excluded with [ExcludeFromCodeCoverage] (absent from
+  the reports) is never counted; an exclusion is the documented decision, not an untested outcome.
+#>
+function Get-WholeLibraryGateResult($Summary) {
+  $untested = [long]($Summary.Outcomes - $Summary.CoveredOutcomes)
+  $noun = if ($untested -eq 1) { 'outcome' } else { 'outcomes' }
+  $message = if ($untested -eq 0) { '' } else {
+    "Whole-library gate: $untested hand-written decision $noun in the library no test takes. Every hand-written decision in the library is covered (cover it, remove it with a behavior-neutral refactor, or exclude it by ai-docs/coverage-exclusions.md); the list is in library-gap.txt."
+  }
+  return [pscustomobject]@{ Untested = $untested; Passed = ($untested -eq 0); Message = $message }
+}
+
+<#
+  The whole-library line of the PR quality-gate comment and of /pr-health. The gate on it is
+  Get-WholeLibraryGateResult.
 #>
 function Format-WholeLibraryLine($Summary) {
   $text = "Whole library: lines $(Format-Percent $Summary.CoveredLines $Summary.Lines), hand-written branches $(Format-Percent $Summary.CoveredOutcomes $Summary.Outcomes)"
@@ -622,15 +644,17 @@ if ($MergedOutFile) {
   Write-Host "Merged report: $MergedOutFile"
 }
 
-# 1c. The whole library, informational.
+# 1c. The whole library, gated at 100%.
 $whole = Get-WholeLibraryCoverage -Coverage $coverage -ReadSource $readSource
 $whole | Add-Member -NotePropertyName BlockUnion -NotePropertyValue $blockUnion
 $whole | Add-Member -NotePropertyName Text -NotePropertyValue (Format-WholeLibraryLine $whole)
+$wholeGate = Get-WholeLibraryGateResult $whole
+$whole | Add-Member -NotePropertyName Untested -NotePropertyValue $wholeGate.Untested
 Write-Host $whole.Text
 if ($SummaryOutFile) {
   $dir = Split-Path -Parent $SummaryOutFile
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-  $fields = $whole | Select-Object Lines, CoveredLines, Outcomes, CoveredOutcomes, BlockUnion, Text
+  $fields = $whole | Select-Object Lines, CoveredLines, Outcomes, CoveredOutcomes, Untested, BlockUnion, Text
   [System.IO.File]::WriteAllText($SummaryOutFile, ($fields | ConvertTo-Json))
 }
 if ($LibraryGapOutFile) {
@@ -638,6 +662,11 @@ if ($LibraryGapOutFile) {
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
   # Written even when empty: an empty list is the evidence of 100%.
   [System.IO.File]::WriteAllLines($LibraryGapOutFile, [string[]]$whole.Gap.ToArray())
+}
+
+if ($FailOnWholeLibrary -and -not $wholeGate.Passed) {
+  Write-Host "::error::$($wholeGate.Message)"
+  exit 1
 }
 
 if (-not $BaseRef) { exit 0 }
