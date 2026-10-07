@@ -144,6 +144,11 @@ public static class GeneratorTestHelpers {
       MetadataReference.CreateFromFile(typeof(Core.IEvent).GetTypeInfo().Assembly.Location), // Whizbang.Core
       MetadataReference.CreateFromFile(typeof(DbContext).GetTypeInfo().Assembly.Location), // EF Core
       MetadataReference.CreateFromFile(typeof(WhizbangDbContextAttribute).GetTypeInfo().Assembly.Location), // Whizbang.Data.EFCore.Custom
+      // System.Text.Json: without it a model using [JsonConverter] does not bind, the attribute resolves
+      // to an error type, and a generator looking for one silently finds nothing.
+      MetadataReference.CreateFromFile(typeof(System.Text.Json.JsonSerializer).GetTypeInfo().Assembly.Location),
+      MetadataReference.CreateFromFile(
+        typeof(System.Text.Json.Serialization.JsonConverterAttribute).GetTypeInfo().Assembly.Location),
       // [NotMapped] lives here. Without it the attribute does not bind, and a test about a
       // property being excluded would silently be reporting the reference list instead.
       MetadataReference.CreateFromFile(

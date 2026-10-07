@@ -141,6 +141,22 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
                 isEnabledByDefault: true);
             ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, validPerspectives.Length));
 
+            // A declared JSON converter is never consulted for a stored document, and saying nothing
+            // about it is how one sat in a consumer's model, documented as the fix, having never run.
+            foreach (var perspective in validPerspectives) {
+              if (perspective.DeclaredConverters.IsDefault) {
+                continue;
+              }
+              foreach (var declared in perspective.DeclaredConverters) {
+                ctx.ReportDiagnostic(Diagnostic.Create(
+                    DiagnosticDescriptors.PerspectiveModelJsonConverterIgnored,
+                    Location.None,
+                    declared.PropertyName,
+                    declared.ValueTypeName,
+                    declared.ConverterTypeName));
+              }
+            }
+
             // Report each discovered perspective
             foreach (var perspective in validPerspectives) {
               var modelDescriptor = new DiagnosticDescriptor(
@@ -494,6 +510,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Extract physical fields from model type
     var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);
+    var declaredConverters = _extractDeclaredConverters(modelType as INamedTypeSymbol);
     var (storedForms, storedFormProblems) = StoredFormDiscovery.From(modelType as INamedTypeSymbol);
 
     // Check for [WhizbangPerspective] attribute (optional)
@@ -518,6 +535,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         NamespaceHint: TypeNameUtilities.Display(symbol.ContainingNamespace),
         Keys: keys,
         PhysicalFields: physicalFields,
+        DeclaredConverters: declaredConverters,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
         PromotedIndexes: _promotedIndexes(modelType as INamedTypeSymbol),
         CompositeIndexes: _reachableComposites(modelType as INamedTypeSymbol),
@@ -640,7 +658,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         DocumentProperties: candidate.DocumentProperties,
         TableStorage: candidate.TableStorage,
         PerspectiveClrTypeName: candidate.PerspectiveClrTypeName,
-        ModelCopy: candidate.ModelCopy
+        ModelCopy: candidate.ModelCopy,
+        DeclaredConverters: candidate.DeclaredConverters
     );
   }
 
@@ -690,6 +709,57 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Extracts physical field information from a model type.
   /// Looks for [PhysicalField] and [VectorField] attributes on properties.
   /// </summary>
+  /// <summary>
+  /// Every converter the model declares with <c>[JsonConverter(typeof(...))]</c>, including on a nested
+  /// object's values, so the walk reaches what Entity Framework's own walk of the model will.
+  /// </summary>
+  /// <remarks>
+  /// Discovered here because this is where the symbol exists. The attribute is never read at run time:
+  /// each one found becomes a closed generic call in the generated context, which is what keeps the
+  /// output ahead-of-time compatible.
+  /// </remarks>
+  private static ImmutableArray<DeclaredConverterInfo> _extractDeclaredConverters(INamedTypeSymbol? modelType) {
+    if (modelType is null) {
+      return [];
+    }
+
+    var found = new System.Collections.Generic.List<DeclaredConverterInfo>();
+    var seen = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+    _collectDeclaredConverters(modelType, found, seen, depth: 0);
+    return [.. found];
+  }
+
+  private static void _collectDeclaredConverters(
+      ITypeSymbol type,
+      System.Collections.Generic.List<DeclaredConverterInfo> found,
+      System.Collections.Generic.HashSet<string> seen,
+      int depth) {
+    // A model is a tree of plain objects; the bound is only so a cyclic graph cannot spin here.
+    if (depth > 8 || !seen.Add(TypeNameUtilities.FullyQualified(type))) {
+      return;
+    }
+
+    foreach (var property in _enumerateInstanceProperties(type)) {
+      var attribute = property.GetAttributes().FirstOrDefault(a =>
+        a.AttributeClass is not null
+        && TypeNameUtilities.IsNamed(a.AttributeClass, "System.Text.Json.Serialization.JsonConverterAttribute"));
+
+      if (attribute?.ConstructorArguments.Length > 0
+          && attribute.ConstructorArguments[0].Value is INamedTypeSymbol converter) {
+        found.Add(new DeclaredConverterInfo(
+          property.Name,
+          TypeNameUtilities.FullyQualified(type),
+          TypeNameUtilities.FullyQualified(converter)));
+        continue;
+      }
+
+      // A nested object's values are inside the same document, so they are reached too.
+      if (property.Type is INamedTypeSymbol { SpecialType: SpecialType.None } nested && !nested.IsGenericType) {
+        _collectDeclaredConverters(nested, found, seen, depth + 1);
+      }
+    }
+  }
+
   private static ImmutableArray<PhysicalFieldInfo> _extractPhysicalFields(INamedTypeSymbol? modelType) {
     if (modelType is null) {
       return [];
@@ -1487,6 +1557,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    // convention plugin, and the rows it reads were written as numbers. After the extension, so");
       sb.AppendLine("    // the walk sees what the consumer configured too.");
       sb.AppendLine("    global::Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalConvention.Apply(modelBuilder);");
+
       sb.AppendLine("  }");
       sb.AppendLine();
       sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
@@ -3831,7 +3902,8 @@ internal sealed record PerspectiveModelInfo(
     ImmutableArray<string> DocumentProperties,
     TableStorageInfo? TableStorage = null,
     string PerspectiveClrTypeName = "",
-    ModelCopyInfo? ModelCopy = null);
+    ModelCopyInfo? ModelCopy = null,
+    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -3878,7 +3950,8 @@ internal sealed record PerspectiveModelCandidate(
     ImmutableArray<string> DocumentProperties,
     TableStorageInfo? TableStorage = null,
     string PerspectiveClrTypeName = "",
-    ModelCopyInfo? ModelCopy = null);
+    ModelCopyInfo? ModelCopy = null,
+    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default);
 
 /// <summary>
 /// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.
