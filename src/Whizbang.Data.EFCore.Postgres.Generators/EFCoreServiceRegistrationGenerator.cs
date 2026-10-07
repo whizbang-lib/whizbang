@@ -141,21 +141,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
                 isEnabledByDefault: true);
             ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, validPerspectives.Length));
 
-            // A declared JSON converter is never consulted for a stored document, and saying nothing
-            // about it is how one sat in a consumer's model, documented as the fix, having never run.
-            foreach (var perspective in validPerspectives) {
-              if (perspective.DeclaredConverters.IsDefault) {
-                continue;
-              }
-              foreach (var declared in perspective.DeclaredConverters) {
-                ctx.ReportDiagnostic(Diagnostic.Create(
-                    DiagnosticDescriptors.PerspectiveModelJsonConverterIgnored,
-                    Location.None,
-                    declared.PropertyName,
-                    declared.ValueTypeName,
-                    declared.ConverterTypeName));
-              }
-            }
+            _reportIgnoredConverters(ctx, validPerspectives);
 
             // Report each discovered perspective
             foreach (var perspective in validPerspectives) {
@@ -535,7 +521,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         NamespaceHint: TypeNameUtilities.Display(symbol.ContainingNamespace),
         Keys: keys,
         PhysicalFields: physicalFields,
-        DeclaredConverters: declaredConverters,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
         PromotedIndexes: _promotedIndexes(modelType as INamedTypeSymbol),
         CompositeIndexes: _reachableComposites(modelType as INamedTypeSymbol),
@@ -550,7 +535,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         // Issue #1002: a Split class with an init-only promoted field is hydrated through a copy.
         ModelCopy: !modelType.IsRecord && physicalFields.Any(f => f.IsSplit && f.IsInitOnly)
           ? ModelCopy.For((INamedTypeSymbol)modelType, context.SemanticModel.Compilation.Assembly)
-          : null
+          : null,
+        DeclaredConverters: declaredConverters
     );
   }
 
@@ -706,9 +692,24 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts physical field information from a model type.
-  /// Looks for [PhysicalField] and [VectorField] attributes on properties.
+  /// Warns once per declared JSON converter, because none is consulted for a stored document.
   /// </summary>
+  /// <remarks>
+  /// Saying nothing about it is how one sat in a consumer's model, documented as the fix, having never run.
+  /// </remarks>
+  private static void _reportIgnoredConverters(SourceProductionContext ctx, ImmutableArray<PerspectiveModelInfo> perspectives) {
+    foreach (var perspective in perspectives.Where(p => !p.DeclaredConverters.IsDefault)) {
+      foreach (var declared in perspective.DeclaredConverters) {
+        ctx.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.PerspectiveModelJsonConverterIgnored,
+            Location.None,
+            declared.PropertyName,
+            declared.ValueTypeName,
+            declared.ConverterTypeName));
+      }
+    }
+  }
+
   /// <summary>
   /// Every converter the model declares with <c>[JsonConverter(typeof(...))]</c>, including on a nested
   /// object's values, so the walk reaches what Entity Framework's own walk of the model will.
@@ -741,8 +742,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var property in _enumerateInstanceProperties(type)) {
       var attribute = property.GetAttributes().FirstOrDefault(a =>
-        a.AttributeClass is not null
-        && TypeNameUtilities.IsNamed(a.AttributeClass, "System.Text.Json.Serialization.JsonConverterAttribute"));
+        TypeNameUtilities.IsNamed(a.AttributeClass, "System.Text.Json.Serialization.JsonConverterAttribute"));
 
       if (attribute?.ConstructorArguments.Length > 0
           && attribute.ConstructorArguments[0].Value is INamedTypeSymbol converter) {
@@ -760,6 +760,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
   }
 
+  /// <summary>
+  /// Extracts physical field information from a model type.
+  /// Looks for [PhysicalField] and [VectorField] attributes on properties.
+  /// </summary>
   private static ImmutableArray<PhysicalFieldInfo> _extractPhysicalFields(INamedTypeSymbol? modelType) {
     if (modelType is null) {
       return [];
@@ -1557,7 +1561,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    // convention plugin, and the rows it reads were written as numbers. After the extension, so");
       sb.AppendLine("    // the walk sees what the consumer configured too.");
       sb.AppendLine("    global::Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalConvention.Apply(modelBuilder);");
-
       sb.AppendLine("  }");
       sb.AppendLine();
       sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
