@@ -656,9 +656,11 @@ public class GraphQLLensTypeGeneratorTests {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     const string scope = "(global::Whizbang.Transports.HotChocolate.GraphQLLensScopes)(9)";
-    await Assert.That(code).Contains($"base(\"OrdersRow\", {scope})");
-    await Assert.That(code).Contains($"base(\"OrdersRowFilterInput\", {scope})");
-    await Assert.That(code).Contains($"base(\"OrdersRowSortInput\", {scope})");
+    await Assert.That(code).Contains("descriptor.Name(\"OrdersRow\");");
+    await Assert.That(code).Contains("descriptor.Name(\"OrdersRowFilterInput\");");
+    await Assert.That(code).Contains("descriptor.Name(\"OrdersRowSortInput\");");
+    await Assert.That(code).Contains($"GraphQLLensScopeResolver.ResolveForOutput({scope}, descriptor.Extend().Context)");
+    await Assert.That(code).Contains($"GraphQLLensScopeResolver.ResolveForInput({scope}, descriptor.Extend().Context)");
   }
 
   [Test]
@@ -680,7 +682,7 @@ public class GraphQLLensTypeGeneratorTests {
     var result = GeneratorTestHelper.RunGenerator<GraphQLLensTypeGenerator>(source);
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
-    await Assert.That(code).Contains("base(\"OrdersRow\", (global::Whizbang.Transports.HotChocolate.GraphQLLensScopes)(0))");
+    await Assert.That(code).Contains("ResolveForOutput((global::Whizbang.Transports.HotChocolate.GraphQLLensScopes)(0), descriptor.Extend().Context)");
   }
 
   // --- Extraction guards ----------------------------------------------------

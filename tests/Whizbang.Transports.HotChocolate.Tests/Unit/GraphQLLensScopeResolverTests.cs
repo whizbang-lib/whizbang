@@ -5,7 +5,6 @@ using HotChocolate;
 using HotChocolate.Execution;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
-using Whizbang.Core.Lenses;
 
 namespace Whizbang.Transports.HotChocolate.Tests.Unit;
 
@@ -44,35 +43,63 @@ public class GraphQLLensScopeResolverTests {
 
   [Test]
   public async Task ResolveForInput_WithNullOptions_ThrowsAsync() {
-    await Assert.That(() => GraphQLLensScopeResolver.ResolveForInput(GraphQLLensScopes.All, null!))
+    await Assert.That(() => GraphQLLensScopeResolver.ResolveForInput(GraphQLLensScopes.All, (WhizbangGraphQLOptions)null!))
         .Throws<ArgumentNullException>();
   }
 
   [Test]
-  public async Task RowType_WithForeignValueUnderTheOptionsKey_UsesTheDefaultsAsync() {
-    // Something other than the options under the key is ignored: the defaults (data only) apply, never more.
-    var schema = await new ServiceCollection()
+  public async Task ResolveFromContext_WithOptionsPublished_UsesThemAsync() {
+    var probe = new ScopeProbeType();
+    _ = await new ServiceCollection()
         .AddGraphQL()
-        .AddQueryType<ScopeQuery>()
+        .AddQueryType(d => d.Name("Query").Field("ping").Resolve("pong"))
+        .AddType(probe)
+        .AddWhizbangLenses(options => {
+          options.DefaultScope = GraphQLLensScopes.All;
+          options.IncludeScopeInFilters = false;
+        })
+        .BuildSchemaAsync();
+
+    await Assert.That(probe.OutputScope).IsEqualTo(GraphQLLensScopes.All);
+    await Assert.That(probe.InputScope).IsEqualTo(GraphQLLensScopes.Data | GraphQLLensScopes.Metadata | GraphQLLensScopes.SystemFields);
+  }
+
+  [Test]
+  public async Task ResolveFromContext_WithForeignValueUnderTheOptionsKey_UsesTheDefaultsAsync() {
+    // Something other than the options under the key is ignored: the defaults (data only) apply, never more.
+    var probe = new ScopeProbeType();
+    _ = await new ServiceCollection()
+        .AddGraphQL()
+        .AddQueryType(d => d.Name("Query").Field("ping").Resolve("pong"))
+        .AddType(probe)
         .ConfigureSchema(builder => builder.SetContextData(GraphQLLensScopeResolver.OPTIONS_CONTEXT_KEY, "not options"))
         .BuildSchemaAsync();
 
-    var rowType = schema.GetType<ObjectType>("ResolverTestRow");
-    var fields = rowType.Fields.Where(f => !f.IsIntrospectionField).Select(f => f.Name).ToArray();
-    await Assert.That(fields).IsEquivalentTo(["data"]);
+    await Assert.That(probe.OutputScope).IsEqualTo(GraphQLLensScopes.Data);
+    await Assert.That(probe.InputScope).IsEqualTo(GraphQLLensScopes.Data);
   }
 
-  public sealed class ResolverTestModel {
-    public string Name { get; set; } = string.Empty;
+  [Test]
+  public async Task ResolveFromContext_WithNullContext_ThrowsAsync() {
+    await Assert.That(() => GraphQLLensScopeResolver.ResolveForOutput(GraphQLLensScopes.All, null!))
+        .Throws<ArgumentNullException>();
+    await Assert.That(() => GraphQLLensScopeResolver.ResolveForInput(GraphQLLensScopes.All, (global::HotChocolate.Types.Descriptors.IDescriptorContext)null!))
+        .Throws<ArgumentNullException>();
   }
 
-  public sealed class ResolverTestRowType : LensPerspectiveRowType<ResolverTestModel> {
-    public ResolverTestRowType() : base("ResolverTestRow", GraphQLLensScopes.None) { }
-  }
+  /// <summary>
+  /// Records what the context overloads resolve while the schema is built, the way generated lens types call them.
+  /// </summary>
+  public sealed class ScopeProbeType : ObjectType {
+    public GraphQLLensScopes OutputScope { get; private set; }
+    public GraphQLLensScopes InputScope { get; private set; }
 
-  public sealed class ScopeQuery {
-    [GraphQLType(typeof(NonNullType<ListType<NonNullType<ResolverTestRowType>>>))]
-    public IQueryable<PerspectiveRow<ResolverTestModel>> GetItems() =>
-        Enumerable.Empty<PerspectiveRow<ResolverTestModel>>().AsQueryable();
+    protected override void Configure(IObjectTypeDescriptor descriptor) {
+      descriptor.Name("ScopeProbe");
+      descriptor.Field("value").Resolve("v");
+      var context = descriptor.Extend().Context;
+      OutputScope = GraphQLLensScopeResolver.ResolveForOutput(GraphQLLensScopes.None, context);
+      InputScope = GraphQLLensScopeResolver.ResolveForInput(GraphQLLensScopes.None, context);
+    }
   }
 }

@@ -20,9 +20,18 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
   private const string GRAPHQL_LENS_ATTRIBUTE_NAME = "Whizbang.Transports.HotChocolate.GraphQLLensAttribute";
   private const string LENS_QUERY_INTERFACE_NAME = "Whizbang.Core.Lenses.ILensQuery";
   private const string SCOPES_TYPE_NAME = "global::Whizbang.Transports.HotChocolate.GraphQLLensScopes";
+  private const string SCOPE_RESOLVER_TYPE_NAME = "global::Whizbang.Transports.HotChocolate.GraphQLLensScopeResolver";
   private const string ROW_TYPE_SUFFIX = "LensRowType";
   private const string FILTER_TYPE_SUFFIX = "LensRowFilterInputType";
   private const string SORT_TYPE_SUFFIX = "LensRowSortInputType";
+
+  // Each scope flag and the PerspectiveRow members it exposes, in the order the generated types bind them.
+  private static readonly (string Flag, string[] Members)[] _rowParts = [
+      ("Data", ["Data"]),
+      ("Metadata", ["Metadata"]),
+      ("Scope", ["Scope"]),
+      ("SystemFields", ["Id", "CreatedAt", "UpdatedAt", "Version"])
+  ];
 
   /// <inheritdoc />
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -213,34 +222,51 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generate the lens's own row type, plus its filter and sort input types when those are enabled. Each passes
-  /// the lens's declared scope to its runtime base type, which resolves it against the system default when the
-  /// schema is built. The scope is emitted as its integer value so an undefined value reaches the runtime
-  /// resolution, which fails closed, instead of being dropped here.
+  /// Generate the lens's own row type, plus its filter and sort input types when those are enabled. Each binds
+  /// only the row parts its scope exposes, resolved against the system options when the schema is built. The
+  /// declared scope is emitted as its integer value so an undefined value reaches the runtime resolution, which
+  /// fails closed, instead of being dropped here.
   /// </summary>
   private static string _generateRowTypes(GraphQLLensInfo lens) {
     var pascalName = _pascalName(lens.QueryName);
-    var scope = $"({SCOPES_TYPE_NAME})({lens.Scope.ToString(CultureInfo.InvariantCulture)})";
     var sb = new StringBuilder();
 
-    _appendRowType(sb, lens, pascalName + ROW_TYPE_SUFFIX, "LensPerspectiveRowType", pascalName + "Row", scope);
+    _appendRowType(sb, lens, pascalName + ROW_TYPE_SUFFIX, pascalName + "Row",
+        "global::HotChocolate.Types.ObjectType", "global::HotChocolate.Types.IObjectTypeDescriptor", "ResolveForOutput");
     if (lens.EnableFiltering) {
-      _appendRowType(sb, lens, pascalName + FILTER_TYPE_SUFFIX, "LensPerspectiveRowFilterInputType", pascalName + "RowFilterInput", scope);
+      _appendRowType(sb, lens, pascalName + FILTER_TYPE_SUFFIX, pascalName + "RowFilterInput",
+          "global::HotChocolate.Data.Filters.FilterInputType", "global::HotChocolate.Data.Filters.IFilterInputTypeDescriptor", "ResolveForInput");
     }
     if (lens.EnableSorting) {
-      _appendRowType(sb, lens, pascalName + SORT_TYPE_SUFFIX, "LensPerspectiveRowSortInputType", pascalName + "RowSortInput", scope);
+      _appendRowType(sb, lens, pascalName + SORT_TYPE_SUFFIX, pascalName + "RowSortInput",
+          "global::HotChocolate.Data.Sorting.SortInputType", "global::HotChocolate.Data.Sorting.ISortInputTypeDescriptor", "ResolveForInput");
     }
 
     return sb.ToString();
   }
 
   private static void _appendRowType(
-      StringBuilder sb, GraphQLLensInfo lens, string className, string baseTypeName, string graphQLName, string scope) {
+      StringBuilder sb, GraphQLLensInfo lens, string className, string graphQLName,
+      string baseType, string descriptorType, string resolveMethod) {
+    var row = $"PerspectiveRow<{lens.ModelTypeName}>";
+    var declaredScope = $"({SCOPES_TYPE_NAME})({lens.Scope.ToString(CultureInfo.InvariantCulture)})";
+
     sb.AppendLine("/// <summary>");
     sb.AppendLine($"/// GraphQL type {graphQLName} for the {lens.QueryName} lens, limited to the row parts its scope exposes.");
     sb.AppendLine("/// </summary>");
-    sb.AppendLine($"public sealed class {className} : global::Whizbang.Transports.HotChocolate.{baseTypeName}<{lens.ModelTypeName}> {{");
-    sb.AppendLine($"  public {className}() : base(\"{graphQLName}\", {scope}) {{ }}");
+    sb.AppendLine($"public sealed class {className} : {baseType}<{row}> {{");
+    sb.AppendLine($"  protected override void Configure({descriptorType}<{row}> descriptor) {{");
+    sb.AppendLine($"    descriptor.Name(\"{graphQLName}\");");
+    sb.AppendLine("    descriptor.BindFieldsExplicitly();");
+    sb.AppendLine($"    var scope = {SCOPE_RESOLVER_TYPE_NAME}.{resolveMethod}({declaredScope}, descriptor.Extend().Context);");
+    foreach (var (flag, members) in _rowParts) {
+      sb.AppendLine($"    if (scope.HasFlag({SCOPES_TYPE_NAME}.{flag})) {{");
+      foreach (var member in members) {
+        sb.AppendLine($"      descriptor.Field(row => row.{member});");
+      }
+      sb.AppendLine("    }");
+    }
+    sb.AppendLine("  }");
     sb.AppendLine("}");
     sb.AppendLine();
   }

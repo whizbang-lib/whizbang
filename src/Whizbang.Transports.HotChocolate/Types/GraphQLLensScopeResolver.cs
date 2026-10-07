@@ -39,6 +39,18 @@ public static class GraphQLLensScopeResolver {
   }
 
   /// <summary>
+  /// Resolves the scope a lens's generated row type exposes, reading <see cref="WhizbangGraphQLOptions.DefaultScope"/>
+  /// from the schema being built. Called by the code the lens generator emits.
+  /// </summary>
+  /// <param name="declaredScope">The lens's <see cref="GraphQLLensAttribute.Scope"/>.</param>
+  /// <param name="context">The descriptor context of the type being configured.</param>
+  /// <returns>The parts of the row the lens exposes.</returns>
+  public static GraphQLLensScopes ResolveForOutput(GraphQLLensScopes declaredScope, IDescriptorContext context) {
+    ArgumentNullException.ThrowIfNull(context);
+    return Resolve(declaredScope, GetOptions(context).DefaultScope);
+  }
+
+  /// <summary>
   /// Resolves the scope a lens's filter and sort input types expose: the lens's own scope, further narrowed by
   /// <see cref="WhizbangGraphQLOptions.IncludeMetadataInFilters"/> and <see cref="WhizbangGraphQLOptions.IncludeScopeInFilters"/>.
   /// An input type never offers a part the lens does not expose.
@@ -56,6 +68,18 @@ public static class GraphQLLensScopeResolver {
       scope &= ~GraphQLLensScopes.Scope;
     }
     return scope;
+  }
+
+  /// <summary>
+  /// Resolves the scope a lens's generated filter or sort input type exposes, reading the options from the schema
+  /// being built. Called by the code the lens generator emits.
+  /// </summary>
+  /// <param name="declaredScope">The lens's <see cref="GraphQLLensAttribute.Scope"/>.</param>
+  /// <param name="context">The descriptor context of the type being configured.</param>
+  /// <returns>The parts of the row the lens's input types expose.</returns>
+  public static GraphQLLensScopes ResolveForInput(GraphQLLensScopes declaredScope, IDescriptorContext context) {
+    ArgumentNullException.ThrowIfNull(context);
+    return ResolveForInput(declaredScope, GetOptions(context));
   }
 
   /// <summary>
