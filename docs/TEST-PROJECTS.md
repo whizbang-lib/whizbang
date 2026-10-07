@@ -59,6 +59,7 @@ pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -T
 | `reusable-test-inmemory.yml` | 1 InMemory integration | 20 min |
 | `reusable-test-rabbitmq.yml` | 1 RabbitMQ integration | 45 min |
 | `reusable-test-servicebus.yml` | 1 ServiceBus integration | 45 min |
+| `reusable-test-integration.yml` | 4 in-process integration projects (tag `Integration`) | 20 min |
 
 ---
 
@@ -115,7 +116,23 @@ Use Testcontainers for real PostgreSQL. Run in `reusable-test-postgres.yml`.
 
 Located in `samples/ECommerce/`. Test the ECommerce sample application.
 
-### Sample Unit Tests (7 projects)
+### General Integration Tests (4 projects)
+
+In-process hosts and pipelines, no containers. Run in `reusable-test-integration.yml` ("Test · Integration (general)"), which
+selects integration projects tagged `Integration`. Until that suite existed no workflow selected the tag, and these
+never ran in CI (#1196).
+
+| Project | Purpose |
+|---------|---------|
+| `Whizbang.Core.Integration.Tests` | Core pipelines end to end |
+| `Whizbang.Migrate.Integration.Tests` | Migration tool flows |
+| `Whizbang.Transports.FastEndpoints.Integration.Tests` | FastEndpoints host |
+| `Whizbang.Transports.HotChocolate.Integration.Tests` | HotChocolate query execution |
+
+Every integration project must carry a tag some suite selects: `.github/scripts/tests/Get-TestSlice.Tests.ps1` fails
+otherwise.
+
+### Sample Unit Tests (8 projects)
 
 Fast tests for individual sample components.
 
@@ -123,13 +140,14 @@ Fast tests for individual sample components.
 |---------|-------|
 | `ECommerce.BFF.API.Tests` | BFF API endpoints |
 | `ECommerce.Contracts.Tests` | Contract/message validation |
+| `ECommerce.IntegrationTests` | Order command and line-item shape (in-memory checks; despite the name, a unit project) |
 | `ECommerce.InventoryWorker.Tests` | Inventory worker logic |
 | `ECommerce.NotificationWorker.Tests` | Notification worker logic |
 | `ECommerce.OrderService.Tests` | Order service logic |
 | `ECommerce.PaymentWorker.Tests` | Payment worker logic |
 | `ECommerce.ShippingWorker.Tests` | Shipping worker logic |
 
-### Sample Integration Tests (4 projects)
+### Sample Integration Tests (3 projects)
 
 Full system tests using Testcontainers (PostgreSQL, RabbitMQ, or Azure Service Bus emulator).
 
@@ -137,8 +155,7 @@ Full system tests using Testcontainers (PostgreSQL, RabbitMQ, or Azure Service B
 |---------|-----------|-------------|
 | `ECommerce.InMemory.Integration.Tests` | In-memory (no transport) | `reusable-test-inmemory.yml` |
 | `ECommerce.RabbitMQ.Integration.Tests` | RabbitMQ | `reusable-test-rabbitmq.yml` |
-| `ECommerce.Integration.Tests` | Azure Service Bus | `reusable-test-servicebus.yml` |
-| `ECommerce.IntegrationTests` | Aspire-based integration | (manual) |
+| `ECommerce.AzureServiceBus.Integration.Tests` | Azure Service Bus | `reusable-test-servicebus.yml` |
 
 ---
 

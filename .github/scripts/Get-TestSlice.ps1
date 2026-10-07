@@ -49,6 +49,8 @@ $script:Suites = [ordered]@{
   rabbitmq   = @{ Tag = 'RabbitMQ';        Extra = @() }
   servicebus = @{ Tag = 'AzureServiceBus'; Extra = @('samples/ECommerce/**/bin/Release') }
   azureblob  = @{ Tag = 'AzureBlob';       Extra = @() }
+  # In-process integration projects whose only suite tag is the plain "Integration" (#1196).
+  integration = @{ Tag = 'Integration';    Extra = @() }
 }
 
 # The integration projects in the solution that carry a tag, as repository-relative directories.
