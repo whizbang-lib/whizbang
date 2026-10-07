@@ -229,7 +229,7 @@ public class AzureServiceBusConnectionRetryCoverageTests {
         Task.FromException(new Azure.Messaging.ServiceBus.ServiceBusException("refused", Azure.Messaging.ServiceBus.ServiceBusFailureReason.ServiceCommunicationProblem))
     };
 
-    await Assert.That(async () => { await retry.CreateClientWithRetryAsync(UNREACHABLE_NAMESPACE, cancellationToken); })
+    await Assert.That(async () => await retry.CreateClientWithRetryAsync(UNREACHABLE_NAMESPACE, cancellationToken))
       .Throws<Azure.Messaging.ServiceBus.ServiceBusException>();
     await Assert.That(created).IsNotEmpty();
     await Assert.That(created.All(c => c.IsClosed)).IsTrue()

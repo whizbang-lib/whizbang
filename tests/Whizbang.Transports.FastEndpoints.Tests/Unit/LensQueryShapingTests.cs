@@ -31,18 +31,18 @@ public class LensQueryShapingTests {
   public async Task ParseSort_ReadsDirectionAndOrderAsync() {
     var parsed = LensQueryShaping.ParseSort("-createdAt, name ,+status");
 
-    await Assert.That(parsed).IsEquivalentTo(new[] {
+    await Assert.That(parsed).IsEquivalentTo([
       new SortExpression("createdAt", true),
       new SortExpression("name", false),
       new SortExpression("status", false),
-    });
+    ]);
   }
 
   [Test]
   public async Task ParseSort_SkipsEntriesWithNoFieldAsync() {
     var parsed = LensQueryShaping.ParseSort("-, + ,,name");
 
-    await Assert.That(parsed).IsEquivalentTo(new[] { new SortExpression("name", false) });
+    await Assert.That(parsed).IsEquivalentTo([new SortExpression("name", false)]);
   }
 
   [Test]

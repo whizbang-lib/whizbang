@@ -29,7 +29,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <summary>Transport identifier on poison-detection capability reports and quarantine metrics.</summary>
   private const string ASB_TRANSPORT_TAG = "azure-service-bus";
 
-  private readonly ServiceBusClient _client;
   private readonly IServiceBusAdminClient? _adminClient;
   private readonly ILogger<AzureServiceBusTransport> _logger;
   private readonly Dictionary<string, ServiceBusSender> _senders = [];
@@ -76,7 +75,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// The client this transport's namespace is reached through. A multi-namespace host has one per
   /// namespace, and draining a namespace's dead-letter queues needs that namespace's client.
   /// </summary>
-  internal ServiceBusClient Client => _client;
+  internal ServiceBusClient Client { get; }
 
   // ===== Adaptive session acceptors =====
   // One governor per session subscription; the sweep loop is shared (one PeriodicTimer per
@@ -127,7 +126,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ArgumentNullException.ThrowIfNull(client);
     ArgumentNullException.ThrowIfNull(jsonOptions);
 
-    _client = client;
+    Client = client;
     _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusTransport>.Instance;
     _adminClient = adminClient;
 
@@ -255,7 +254,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     // A head peek neither locks nor settles nor counts against delivery — the cheapest read that
     // can answer "how old is the front of this entity".
-    await using var receiver = _client.CreateReceiver(topic, subscription);
+    await using var receiver = Client.CreateReceiver(topic, subscription);
     var head = await receiver.PeekMessageAsync(fromSequenceNumber: null, cancellationToken)
       .ConfigureAwait(false);
     return head?.EnqueuedTime;
@@ -403,7 +402,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
   /// <inheritdoc />
   public ValueTask<bool> CheckConnectivityAsync(CancellationToken cancellationToken = default)
-    => ValueTask.FromResult(!_client.IsClosed);
+    => ValueTask.FromResult(!Client.IsClosed);
 
   /// <inheritdoc />
   /// <tests>No tests found</tests>
@@ -420,7 +419,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     try {
       // Verify client is not closed
-      if (_client.IsClosed) {
+      if (Client.IsClosed) {
         throw new InvalidOperationException("ServiceBusClient is closed and cannot be initialized");
       }
 
@@ -1000,7 +999,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       SessionIdleTimeout = _options.SessionIdleTimeout
     };
 
-    var sessionProcessor = _client.CreateSessionProcessor(topicName, subscriptionName, sessionProcessorOptions);
+    var sessionProcessor = Client.CreateSessionProcessor(topicName, subscriptionName, sessionProcessorOptions);
 
     AcceptorGovernorRegistration? registration = null;
     if (governor is not null) {
@@ -1291,7 +1290,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       PrefetchCount = _options.PrefetchCount
     };
 
-    var processor = _client.CreateProcessor(topicName, subscriptionName, processorOptions);
+    var processor = Client.CreateProcessor(topicName, subscriptionName, processorOptions);
     var subscription = new AzureServiceBusSubscription(processor, _logger);
 
     // Non-blocking: enqueue to collector, return immediately
@@ -1478,7 +1477,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           PrefetchCount = _options.PrefetchCount
         };
 
-        var processor = _client.CreateProcessor(
+        var processor = Client.CreateProcessor(
           topicName,
           subscriptionName,
           processorOptions
@@ -2464,7 +2463,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         await _ensureTopicExistsViaAdminAsync(topicName, cancellationToken);
       }
 
-      var sender = _client.CreateSender(topicName);
+      var sender = Client.CreateSender(topicName);
       _senders[topicName] = sender;
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -2510,7 +2509,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
     _senders.Clear();
 
-    // DON'T dispose _client - it's injected and managed by DI container
+    // DON'T dispose Client - it's injected and managed by DI container
     _logger.LogInformation("Transport disposed (client managed by DI)");
 
     _senderLock.Dispose();

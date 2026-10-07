@@ -231,14 +231,13 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<Whizbang.Core.Transports.ITransportDeadLetterDrainer>(sp => {
       var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
       var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
-      Func<Whizbang.Core.Transports.BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync =
-        async (import, ct) => {
-          using var scope = scopeFactory.CreateScope();
-          var coordinator = scope.ServiceProvider.GetService<Whizbang.Core.Messaging.IWorkCoordinator>()
-            ?? throw new InvalidOperationException(
-              "Broker DLQ import requires an IWorkCoordinator; none is registered — message stays on the broker DLQ.");
-          return await coordinator.ImportBrokerDeadLetterAsync(import, ct).ConfigureAwait(false);
-        };
+      async Task<bool> importAsync(Whizbang.Core.Transports.BrokerDeadLetterImport import, CancellationToken ct) {
+        using var scope = scopeFactory.CreateScope();
+        var coordinator = scope.ServiceProvider.GetService<Whizbang.Core.Messaging.IWorkCoordinator>()
+          ?? throw new InvalidOperationException(
+            "Broker DLQ import requires an IWorkCoordinator; none is registered — message stays on the broker DLQ.");
+        return await coordinator.ImportBrokerDeadLetterAsync(import, ct).ConfigureAwait(false);
+      }
 
       // One fleet per Service Bus namespace, each draining with its own namespace's client. A
       // multi-namespace host resolves a namespace router here, and every namespace behind it has
