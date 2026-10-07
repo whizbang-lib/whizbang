@@ -721,7 +721,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       // row and never saw the fresher write) must not overwrite a newer apply — this is what reverted
       // a per-item row from Completed to Running and stranded a production saga. A NULL on either
       // side can't be ordered, so it falls through to the stream-ownership guarantee in the claim path.
-      if (existingRow.Metadata?.CommitSequence is long storedCommitSequence
+      // A row's metadata is a required complex property over a NOT NULL column, so it is always there.
+      if (existingRow.Metadata.CommitSequence is long storedCommitSequence
           && metadata.CommitSequence is long incomingCommitSequence
           && incomingCommitSequence < storedCommitSequence) {
         if (ClearChangeTrackerAfterSave) {
