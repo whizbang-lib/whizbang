@@ -126,6 +126,8 @@ public class StoredFormMigrationSqlTests {
       .WithMessageContaining("document root");
     await Assert.That(() => StoredFormStep.ReplaceIndex("A", "", "ix", CREATE)).Throws<ArgumentException>();
     await Assert.That(() => StoredFormStep.ReplaceIndex("A", "integer); DROP TABLE t; --", "ix", CREATE)).Throws<ArgumentException>();
+    // Above 'z' as well as below 'a': a pipe would start an operator, and the type names are ASCII.
+    await Assert.That(() => StoredFormStep.ReplaceIndex("A", "text||text", "ix", CREATE)).Throws<ArgumentException>();
     await Assert.That(() => StoredFormStep.ReplaceIndex("A", null, " ", CREATE)).Throws<ArgumentException>();
     await Assert.That(() => StoredFormStep.ReplaceIndex("A", null, "ix", " ")).Throws<ArgumentException>();
     await Assert.That(() => StoredFormStep.ReplaceIndex("A", null, "ix", "DROP INDEX ix")).Throws<ArgumentException>()

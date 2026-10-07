@@ -767,6 +767,31 @@ public class PerspectiveFilterIndexAnalyzerTests {
     await Assert.That(_whiz302(diagnostics)).IsEmpty();
   }
 
+  /// <summary>
+  /// A read that no predicate encloses settles at the member declaration or at an anonymous method,
+  /// and is a value rather than a filter: a query-syntax projection or <c>let</c>, which carry no
+  /// lambda node, and a read inside a <c>delegate</c>, even one a filter's lambda holds. None of them
+  /// narrows the rows the query reads.
+  /// </summary>
+  /// <remarks>
+  /// Asserts no diagnostic at all, not only no WHIZ302: the walk that finds the deciding ancestor
+  /// expects one to exist, so a shape it had no verdict for would surface as the analyzer failing.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("return (from r in _rows select r.Data.JsonOnly).ToList();")]
+  [Arguments("return (from r in _rows let v = r.Data.JsonOnly select v).ToList();")]
+  // Inside a filter's lambda: the delegate is the nearer ancestor and settles it, where the lambda
+  // around it would otherwise make the read a filter.
+  [Arguments("return _rows.AsEnumerable().Where(r => ((System.Func<bool>)delegate { return r.Data.JsonOnly == \"ab\"; })()).ToList();")]
+  public async Task ReadOutsideAnyPredicate_IsNotReportedAsync(string body) {
+    var source = _repositoryOver(body);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(diagnostics).IsEmpty();
+  }
+
   /// <summary>Ordering needs the value itself, which containment never supplies.</summary>
   [Test]
   [RequiresAssemblyFiles]
