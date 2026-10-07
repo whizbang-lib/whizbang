@@ -48,6 +48,11 @@ public class JsonbContainmentRewriterGuardTests {
   /// <summary>A static member, whose expression chain ends at nothing rather than at a row.</summary>
   private static string Elsewhere => "x";
 
+  /// <summary>A static member named like the row's document, whose chain also ends at nothing.</summary>
+  private static class StaticDocument {
+    public static GuardModel Data { get; } = new();
+  }
+
   /// <summary>
   /// Carries <c>Equals</c> overloads of arities the rewriter does not expect.
   /// </summary>
@@ -91,6 +96,12 @@ public class JsonbContainmentRewriterGuardTests {
     public NestedGuard Data { get; init; } = new();
 
     public Oddity Odd { get; init; } = new();
+  }
+
+  /// <summary>A model this context never maps, so its row has no entity type to consult.</summary>
+  [SuppressIndexAdvisory("compile-only fixture, never run")]
+  public class UnmappedGuardModel {
+    public string Code { get; init; } = string.Empty;
   }
 
   /// <summary>A model whose document is one serialized value, as a polymorphic model's is.</summary>
@@ -319,6 +330,32 @@ public class JsonbContainmentRewriterGuardTests {
   public async Task AStaticMemberIsDeclinedAsync() =>
     await Assert.That(_plantsAMarkerFor<GuardModel>(_ => Elsewhere == "x")).IsFalse()
       .Because("nothing about a static read is a path into a document");
+
+  /// <summary>
+  /// A filter over a row the model does not map is declined.
+  /// </summary>
+  /// <remarks>
+  /// Whether a value converter rewrites the stored form is read from the row's mapping. With no
+  /// mapping there is no answer, and an unknown stored form is treated as converted, because a
+  /// containment test built in the wrong form matches nothing while the extraction it replaced works.
+  /// </remarks>
+  [Test]
+  public async Task AFilterOverARowTheModelDoesNotMapIsDeclinedAsync() =>
+    await Assert.That(_plantsAMarkerFor<UnmappedGuardModel>(r => r.Data.Code == "x")).IsFalse()
+      .Because("a stored form the model cannot describe may be converted, so no containment test is planted");
+
+  /// <summary>
+  /// A static member named <c>Data</c> is not mistaken for the row's document.
+  /// </summary>
+  /// <remarks>
+  /// The walk recognizes the document by its name and by the row it is read from. A static <c>Data</c>
+  /// has the name but is read from nothing, so the walk keeps climbing, finds the chain's end, and
+  /// declines: there is no row, so there is no column to test.
+  /// </remarks>
+  [Test]
+  public async Task AStaticMemberNamedLikeTheDocumentIsDeclinedAsync() =>
+    await Assert.That(_plantsAMarkerFor<GuardModel>(_ => StaticDocument.Data.Code == "x")).IsFalse()
+      .Because("a static Data is read from no row, so nothing about it is a path into a document");
 
   /// <summary>
   /// A model member named <c>Data</c> is not mistaken for the row's own.

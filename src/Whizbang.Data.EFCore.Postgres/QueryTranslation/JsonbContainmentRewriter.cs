@@ -452,11 +452,13 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
     string? document = null;
     Type? rowType = null;
 
+    // Only a member _isJsonMember accepted reaches here, and its chain ends at a row's document or at a
+    // range variable, so every link in it is read from an expression; none is static.
     for (Expression? current = member; current is MemberExpression link; current = link.Expression) {
-      if (_isDocumentRoot(link.Member.Name) && _isPerspectiveRow(link.Expression?.Type)) {
+      if (_isDocumentRoot(link.Member.Name) && _isPerspectiveRow(link.Expression!.Type)) {
         rootModel = link.Type;
         document = link.Member.Name;
-        rowType = link.Expression!.Type;
+        rowType = link.Expression.Type;
         break;
       }
 
