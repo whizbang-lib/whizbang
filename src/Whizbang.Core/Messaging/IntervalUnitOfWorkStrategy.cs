@@ -153,7 +153,9 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
     // Rotate: capture current unit and create new one for next batch
     await _unitLock.WaitAsync(ct);
     try {
-      if (_currentUnit?.Messages.Count > 0) {
+      // Under this lock a unit exists only with a message in it: QueueMessageAsync creates the unit
+      // and adds its first message while holding the same lock.
+      if (_currentUnit is not null) {
         unitToFlush = _currentUnit;
         _currentUnit = null;  // New unit created on next QueueMessageAsync
       }
