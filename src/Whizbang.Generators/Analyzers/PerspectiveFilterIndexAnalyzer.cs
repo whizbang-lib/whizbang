@@ -682,14 +682,13 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return false;
     }
 
+    // The nearest ancestor with an opinion on row selection. When it is a projection or a member
+    // declaration rather than a predicate, the caller's own check stands the reference down, so the
+    // comparison only has to be right for a predicate.
     var decider = node.Ancestors().First(ancestor => _rowSelectionVerdict(ancestor).HasValue);
-    return decider switch {
-      LambdaExpressionSyntax lambda when _feedsRowSelectingOperator(lambda) =>
-        declaration.FirstAncestorOrSelf<LambdaExpressionSyntax>() == lambda,
-      WhereClauseSyntax or OrderingSyntax =>
-        declaration.FirstAncestorOrSelf<QueryExpressionSyntax>() == decider.FirstAncestorOrSelf<QueryExpressionSyntax>(),
-      _ => true,
-    };
+    return decider is WhereClauseSyntax or OrderingSyntax
+      ? declaration.FirstAncestorOrSelf<QueryExpressionSyntax>() == decider.FirstAncestorOrSelf<QueryExpressionSyntax>()
+      : declaration.FirstAncestorOrSelf<LambdaExpressionSyntax>() == decider;
   }
 
   /// <summary>
