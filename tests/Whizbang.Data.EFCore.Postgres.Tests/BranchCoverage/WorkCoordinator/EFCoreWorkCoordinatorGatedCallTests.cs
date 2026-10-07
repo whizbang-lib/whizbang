@@ -129,6 +129,12 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
       var to = await c.RegisterTypeDefinitionAsync(EVENT_TYPE, "01", "01", 2);
       await c.RecordDefinitionLineageAsync(from.DefinitionId, to.DefinitionId, DefinitionRelationship.SchemaUpgradedTo, "gate-migration");
     });
+    // A lineage with no migration behind it (a rename, say) records a NULL reference, not the text "null".
+    register("RecordDefinitionLineageWithoutReference", "RecordDefinitionLineageAsync", async (c, _) => {
+      var from = await c.RegisterTypeDefinitionAsync(EVENT_TYPE, "10", "10", 1);
+      var to = await c.RegisterTypeDefinitionAsync(EVENT_TYPE, "11", "11", 2);
+      await c.RecordDefinitionLineageAsync(from.DefinitionId, to.DefinitionId, DefinitionRelationship.SchemaUpgradedTo, migrationRef: null);
+    });
     register("GetStateBasedStreamIds", "GetStateBasedStreamIdsAsync", (c, _) => c.GetStateBasedStreamIdsAsync([_newId()]));
     register("SyncEphemeralTypeGrace", "SyncEphemeralTypeGraceAsync", (c, _) =>
       c.SyncEphemeralTypeGraceAsync([new EphemeralTypeGrace(EVENT_TYPE, 60)]));
