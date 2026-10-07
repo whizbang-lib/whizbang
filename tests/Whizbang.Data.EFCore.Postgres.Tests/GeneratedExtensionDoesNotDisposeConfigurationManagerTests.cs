@@ -55,7 +55,7 @@ public class GeneratedExtensionDoesNotDisposeConfigurationManagerTests {
     // Pre-populate the connection string the generated factory expects — covers
     // the post-fix path which resolves it lazily when NpgsqlDataSource is
     // resolved (we don't resolve it here so no actual DB connection is required).
-    configManager["ConnectionStrings:workcoordination-db"] = _FAKE_CONNECTION_STRING;
+    configManager["ConnectionStrings:db"] = _FAKE_CONNECTION_STRING;
 
     var services = new ServiceCollection();
     services.AddSingleton<IConfiguration>(_ => configManager);
@@ -88,7 +88,7 @@ public class GeneratedExtensionDoesNotDisposeConfigurationManagerTests {
     var configManager = new ConfigurationManager();
     var probe = new ProbeSource();
     configManager.Sources.Add(probe);
-    configManager["ConnectionStrings:workcoordination-db"] = _FAKE_CONNECTION_STRING;
+    configManager["ConnectionStrings:db"] = _FAKE_CONNECTION_STRING;
 
     var services = new ServiceCollection();
     services.AddSingleton<IConfiguration>(_ => configManager);

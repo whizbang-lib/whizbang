@@ -228,7 +228,7 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
 
     await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<PostgresOptions>();
-    await Assert.That(options.CommandTimeoutSeconds).IsEqualTo(120)
+    await Assert.That(options.InitialRetryAttempts).IsEqualTo(5)
       .Because("configureOptions is null on the convenience path, so defaults apply.");
 
     await Assert.That(provider.GetRequiredService<IDbConnectionFactory>()).IsTypeOf<PostgresConnectionFactory>();
@@ -330,7 +330,7 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
       configureOptions: options => {
         invoked = true;
         configuredInstance = options;
-        options.CommandTimeoutSeconds = 42;
+        options.InitialRetryAttempts = 42;
         options.MaxInFlightCommands = 7;
       });
 
@@ -342,7 +342,7 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
 
     await Assert.That(resolved).IsSameReferenceAs(configuredInstance)
       .Because("The exact PostgresOptions instance passed to configureOptions must be the registered singleton.");
-    await Assert.That(resolved.CommandTimeoutSeconds).IsEqualTo(42);
+    await Assert.That(resolved.InitialRetryAttempts).IsEqualTo(42);
     await Assert.That(resolved.MaxInFlightCommands).IsEqualTo(7);
   }
 
@@ -378,14 +378,14 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
       _connectionString!, jsonOptions, initializeSchema: false, perspectiveSchemaSql: null,
       configureOptions: options => {
         invoked = true;
-        options.CommandTimeoutSeconds = 33;
+        options.InitialRetryAttempts = 33;
       });
 
     await Assert.That(invoked).IsTrue();
 
     await using var provider = services.BuildServiceProvider();
 
-    await Assert.That(provider.GetRequiredService<PostgresOptions>().CommandTimeoutSeconds).IsEqualTo(33);
+    await Assert.That(provider.GetRequiredService<PostgresOptions>().InitialRetryAttempts).IsEqualTo(33);
     await Assert.That(provider.GetRequiredService<JsonSerializerOptions>()).IsSameReferenceAs(jsonOptions);
 
     // Each of these resolutions executes a factory lambda in the schemaSql overload body.

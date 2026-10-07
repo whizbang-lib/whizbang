@@ -291,7 +291,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Extract connection string name from attribute, or derive from class name
     var connectionStringName = _extractConnectionStringNameFromAttribute(attribute)
-        ?? _deriveConnectionStringName(symbol.Name);
+        ?? DEFAULT_CONNECTION_STRING_NAME;
 
     return new DbContextInfo(
         ClassName: symbol.Name,
@@ -333,20 +333,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     return null;
   }
 
-  /// <summary>
-  /// Generator-side mirror of
-  /// <c>Whizbang.Core.Naming.WhizbangNamingConvention.DeriveConnectionStringName</c>.
-  /// </summary>
-  /// <remarks>
-  /// The source generator runs in the Roslyn process and cannot reference
-  /// <c>Whizbang.Core</c> at compile time, so the convention is intentionally
-  /// duplicated here. The companion
-  /// <c>SourceGeneratorConnectionStringNameConventionTests</c> in
-  /// <c>Whizbang.Data.EFCore.Postgres.Tests</c> asserts that this private mirror
-  /// and the public <c>WhizbangNamingConvention.DeriveConnectionStringName</c>
-  /// agree on every fixture — drift between the two becomes a failing build
-  /// instead of a silent production divergence.
-  /// </remarks>
   /// <summary>
   /// Emits the ONE canonical turnkey <c>AddDbContext</c> registration block — <c>UseNpgsql</c> with
   /// <c>UseVector()</c> (when vector fields exist), <c>UseWhizbangFunctions()</c> (the JsonbSet etc.
@@ -406,14 +392,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
   }
 
-  private static string _deriveConnectionStringName(string className) {
-    // Convention: strip a trailing "DbContext" suffix, lowercase, append "-db".
-    // "ChatDbContext" → "chat-db", "AppServiceDbContext" → "appservice-db".
-    var name = className.EndsWith("DbContext", StringComparison.Ordinal)
-        ? className[..^9]
-        : className;
-    return name.ToLowerInvariant() + "-db";
-  }
+  /// <summary>
+  /// The connection string a context reads when its <c>[WhizbangDbContext]</c> names none. A copy of
+  /// <c>Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME</c>, because the
+  /// generator cannot reference <c>Whizbang.Core</c>; <c>Generator_WithoutConnectionStringName_DefaultsToDbAsync</c>
+  /// pins it to the same value.
+  /// </summary>
+  private const string DEFAULT_CONNECTION_STRING_NAME = "db";
 
   /// <summary>
   /// Derives PostgreSQL schema name from DbContext namespace.
@@ -3845,7 +3830,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 /// <param name="Namespace">Containing namespace</param>
 /// <param name="Schema">PostgreSQL schema name derived from namespace (e.g., "inventory", "bff")</param>
 /// <param name="Keys">Array of keys that identify which perspectives should be included. Default: [""]</param>
-/// <param name="ConnectionStringName">Connection string name for turnkey setup. Default: "{className}-db"</param>
+/// <param name="ConnectionStringName">Connection string name for turnkey setup. Default: "db"</param>
 internal sealed record DbContextInfo(
     string ClassName,
     string FullyQualifiedName,

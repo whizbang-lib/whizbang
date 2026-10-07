@@ -58,14 +58,12 @@ public class PostgresOptions {
   #region Command Timeout Options
 
   /// <summary>
-  /// Command timeout in seconds for database operations like process_work_batch.
-  /// Controls how long a single SQL command can run before being canceled.
-  /// Default: 120 seconds. Coordinator commands batch handler results and composite fan-outs; under a
-  /// bulk-import backlog a single commit batch has been observed at 13-30 s. A timeout shorter than the
-  /// worst batch cancels the commit and loses its completions, which then re-claim as lease expiries.
+  /// Retired: no command ever read this value. A timeout is set as <c>Command Timeout</c> on the
+  /// connection string the work runs on; the work coordinator keeps its own fixed budget. Setting the
+  /// <c>Whizbang:Postgres:CommandTimeoutSeconds</c> key logs a warning at startup.
   /// </summary>
-  /// <docs>data/postgres#command-timeout</docs>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_FullOverloadRegistrationTests.cs:AddWhizbangPostgres_EntriesConvenienceOverload_RegistersCoreServicesWithDefaultOptionsAsync</tests>
+  /// <docs>operations/configuration/configuration-reference#command-timeouts</docs>
+  [Obsolete("No command reads this. Set 'Command Timeout' on the connection string the work runs on; see the command-timeouts section of the configuration reference.")]
   public int CommandTimeoutSeconds { get; set; } = 120;
 
   #endregion

@@ -261,7 +261,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // Add connection string to configuration for generated turnkey extensions
     // The generated code derives "inventory-db" from "InventoryDbContext"
     builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
-      ["ConnectionStrings:inventory-db"] = postgresConnection
+      ["ConnectionStrings:db"] = postgresConnection
     });
 
     // Register service instance provider with unique instance ID
@@ -284,7 +284,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
     // - AddDbContext<InventoryDbContext> with UseNpgsql
     // - IDbContextFactory<InventoryDbContext> singleton registration
-    // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
+    // Connection string is provided via config ("ConnectionStrings:db" above)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
@@ -411,7 +411,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // Add connection string to configuration for generated turnkey extensions
     // The generated code derives "bff-db" from "BffDbContext"
     builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
-      ["ConnectionStrings:bff-db"] = postgresConnection
+      ["ConnectionStrings:db"] = postgresConnection
     });
 
     // Register service instance provider with unique instance ID
@@ -435,7 +435,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
     // - AddDbContext<BffDbContext> with UseNpgsql
     // - IDbContextFactory<BffDbContext> singleton registration
-    // Connection string is provided via config ("ConnectionStrings:bff-db" above)
+    // Connection string is provided via config ("ConnectionStrings:db" above)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 

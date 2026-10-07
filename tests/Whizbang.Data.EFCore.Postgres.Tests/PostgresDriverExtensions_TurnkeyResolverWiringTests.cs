@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Naming;
 using Whizbang.Core.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -26,8 +27,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
 
-  // A representative consumer production config shape: ConnectionStrings:appservice-db
-  // (pgbouncer pooled) + ConnectionStrings:appservice-db-direct (port-5432
+  // A representative consumer production config shape: ConnectionStrings:db
+  // (pgbouncer pooled) + ConnectionStrings:db-direct (port-5432
   // direct, the notification path).
   private const string PRODUCTION_LIKE_POOLED_STRING =
     "Server=db.example.com;Database=appservice_db;Port=6432;User Id=app_user;Password=fake_test_password;Ssl Mode=Require;";
@@ -43,8 +44,8 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
   public async Task NoExplicitKey_NoTurnkeyDerivation_ResolverFindsNothingAsync() {
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
-        ["ConnectionStrings:appservice-db"] = PRODUCTION_LIKE_POOLED_STRING,
-        ["ConnectionStrings:appservice-db-direct"] = PRODUCTION_LIKE_DIRECT_STRING,
+        ["ConnectionStrings:db"] = PRODUCTION_LIKE_POOLED_STRING,
+        ["ConnectionStrings:db-direct"] = PRODUCTION_LIKE_DIRECT_STRING,
       })
       .Build();
 
@@ -67,15 +68,15 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
   /// variant.
   /// </summary>
   [Test]
-  public async Task TurnkeyDerivationFromAppServiceDbContext_ResolverPicksDirectVariantAsync() {
+  public async Task TurnkeyDefaultName_ResolverPicksDirectVariantAsync() {
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
-        ["ConnectionStrings:appservice-db"] = PRODUCTION_LIKE_POOLED_STRING,
-        ["ConnectionStrings:appservice-db-direct"] = PRODUCTION_LIKE_DIRECT_STRING,
+        ["ConnectionStrings:db"] = PRODUCTION_LIKE_POOLED_STRING,
+        ["ConnectionStrings:db-direct"] = PRODUCTION_LIKE_DIRECT_STRING,
       })
       .Build();
 
-    var derivedKey = PostgresDriverExtensions._deriveConnectionStringName("AppServiceDbContext");
+    var derivedKey = WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
     var options = new WhizbangNotificationOptions { ConnectionStringKey = derivedKey };
 
     var resolution = NotificationConnectionStringResolver.Resolve(
@@ -98,8 +99,8 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
   public async Task ExplicitConnectionStringKey_OverridesTurnkeyDerivationAsync() {
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
-        ["ConnectionStrings:appservice-db"] = PRODUCTION_LIKE_POOLED_STRING,
-        ["ConnectionStrings:appservice-db-direct"] = PRODUCTION_LIKE_DIRECT_STRING,
+        ["ConnectionStrings:db"] = PRODUCTION_LIKE_POOLED_STRING,
+        ["ConnectionStrings:db-direct"] = PRODUCTION_LIKE_DIRECT_STRING,
         ["ConnectionStrings:custom-override"] = "Host=other.example.com;Username=u;Password=p;",
       })
       .Build();
@@ -112,14 +113,14 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
       .Configure(o => o.ConnectionStringKey = "custom-override");
     services.PostConfigure<WhizbangNotificationOptions>(o => {
       if (string.IsNullOrWhiteSpace(o.ConnectionStringKey)) {
-        o.ConnectionStringKey = PostgresDriverExtensions._deriveConnectionStringName("AppServiceDbContext");
+        o.ConnectionStringKey = WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
       }
     });
 
     var sp = services.BuildServiceProvider();
     var resolved = sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value;
 
-    // The explicit "custom-override" wins; "appservice-db" (turnkey-derived)
+    // The explicit "custom-override" wins; "db" (the turnkey default)
     // is ignored.
     await Assert.That(resolved.ConnectionStringKey).IsEqualTo("custom-override");
 
@@ -137,7 +138,7 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
   public async Task TurnkeyPostConfigure_SetsConnectionStringKeyOnResolvedOptionsAsync() {
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
-        ["ConnectionStrings:appservice-db-direct"] = PRODUCTION_LIKE_DIRECT_STRING,
+        ["ConnectionStrings:db-direct"] = PRODUCTION_LIKE_DIRECT_STRING,
       })
       .Build();
 
@@ -147,15 +148,38 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
     // This is the same shape PostgresDriverExtensions.Postgres uses.
     services.PostConfigure<WhizbangNotificationOptions>(o => {
       if (string.IsNullOrWhiteSpace(o.ConnectionStringKey)) {
-        o.ConnectionStringKey = PostgresDriverExtensions._deriveConnectionStringName("AppServiceDbContext");
+        o.ConnectionStringKey = WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
       }
     });
 
     var sp = services.BuildServiceProvider();
     var resolved = sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value;
 
-    await Assert.That(resolved.ConnectionStringKey).IsEqualTo("appservice-db");
+    await Assert.That(resolved.ConnectionStringKey).IsEqualTo("db");
 
+    var resolution = NotificationConnectionStringResolver.Resolve(resolved, config, fallback: null);
+    await Assert.That(resolution.ConnectionString).IsEqualTo(PRODUCTION_LIKE_DIRECT_STRING);
+  }
+
+  /// <summary>
+  /// The real turnkey chain, with no name passed to <c>WithEFCore</c>: notifications read
+  /// <c>ConnectionStrings:db</c> (and <c>db-direct</c>), whatever the context class is called.
+  /// </summary>
+  [Test]
+  public async Task WithEFCore_WithoutAName_ReadsTheDbConnectionStringAsync() {
+    var config = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["ConnectionStrings:db-direct"] = PRODUCTION_LIKE_DIRECT_STRING,
+      })
+      .Build();
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(config);
+    _ = new Whizbang.Core.Perspectives.WhizbangPerspectiveBuilder(services).WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    var resolved = sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value;
+
+    await Assert.That(resolved.ConnectionStringKey).IsEqualTo("db");
     var resolution = NotificationConnectionStringResolver.Resolve(resolved, config, fallback: null);
     await Assert.That(resolution.ConnectionString).IsEqualTo(PRODUCTION_LIKE_DIRECT_STRING);
   }

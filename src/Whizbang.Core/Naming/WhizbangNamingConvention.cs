@@ -10,52 +10,21 @@ namespace Whizbang.Core.Naming;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The motivating bug — fixed by introducing this class — was a silent
-/// divergence between two implementations of the same convention. The
-/// EF source generator derived the connection-string key one way; the
-/// runtime PostConfigure derived it the same way <em>in source code</em>
-/// but read from a different field at runtime, producing a different
-/// value. The two halves of the turnkey path disagreed and the notification
-/// workers fell back to the pooled (pgbouncer) connection while EF used
-/// the correct one.
-/// </para>
-/// <para>
-/// Every caller must funnel through these helpers. The companion
-/// <c>WhizbangNamingConventionTests</c> + the source-generator regression
-/// test pin the outputs character-for-character so a future change
-/// surfaces on the test report instead of in a production log.
+/// The EF Core source generator and the runtime turnkey path must agree on every name here: when
+/// they once derived the connection string name separately, EF Core and the notification workers
+/// read different keys and LISTEN/NOTIFY silently fell back to the pooled connection. The generator
+/// keeps a copy (it cannot reference this assembly); a generator test and a turnkey test pin both to "db".
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+/// <docs>operations/configuration/configuration-reference#connectionstrings-conventions</docs>
 public static class WhizbangNamingConvention {
 
+#pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
   /// <summary>
-  /// Derives the <c>ConnectionStrings:{Name}</c> key Whizbang uses by default
-  /// for a given <c>DbContext</c> class name. The convention strips a trailing
-  /// <c>"DbContext"</c> suffix, lowercases the remainder, and appends
-  /// <c>"-db"</c>.
+  /// The connection string a database reads when its <c>DbContext</c> names none:
+  /// <c>ConnectionStrings:db</c>, with <c>db-direct</c> for notifications and <c>db-init</c> for
+  /// schema initialization. The same in every service, since each service has its own configuration.
   /// </summary>
-  /// <param name="dbContextClassName">The simple name of the DbContext class
-  /// (e.g., <c>"AppServiceDbContext"</c>, <c>"ChatDbContext"</c>).</param>
-  /// <returns>The convention-derived key
-  /// (e.g., <c>"appservice-db"</c>, <c>"chat-db"</c>).</returns>
-  /// <remarks>
-  /// Examples:
-  /// <list type="bullet">
-  /// <item><description><c>"AppServiceDbContext"</c> → <c>"appservice-db"</c></description></item>
-  /// <item><description><c>"ChatDbContext"</c> → <c>"chat-db"</c></description></item>
-  /// <item><description><c>"InventoryDbContext"</c> → <c>"inventory-db"</c></description></item>
-  /// <item><description><c>"Foo"</c> (no suffix) → <c>"foo-db"</c></description></item>
-  /// </list>
-  /// </remarks>
-  public static string DeriveConnectionStringName(string dbContextClassName) {
-    ArgumentNullException.ThrowIfNull(dbContextClassName);
-    if (dbContextClassName.Length == 0) {
-      throw new ArgumentException("DbContext class name must be non-empty.", nameof(dbContextClassName));
-    }
-    var name = dbContextClassName.EndsWith("DbContext", StringComparison.Ordinal)
-      ? dbContextClassName[..^9]
-      : dbContextClassName;
-    return name.ToLowerInvariant() + "-db";
-  }
+  public const string DEFAULT_CONNECTION_STRING_NAME = "db";
+#pragma warning restore CA1707
 }

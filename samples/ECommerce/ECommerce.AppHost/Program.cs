@@ -114,7 +114,7 @@ messagingInfra.WithQueueBinding("bff-inbox-queue", "inbox", "bff-service");
 // The preLaunchTask in VSCode builds all services once before launching Aspire
 var orderService = builder.AddProject("orderservice", "../ECommerce.OrderService.API/ECommerce.OrderService.API.csproj")
     .WithArgs("--no-build")
-    .WithReference(ordersDb)
+    .WithReference(ordersDb, "db")
     .WithReference(messagingInfra)
     .WaitFor(ordersDb)
     .WaitFor(messagingInfra)
@@ -122,28 +122,28 @@ var orderService = builder.AddProject("orderservice", "../ECommerce.OrderService
 
 var inventoryWorker = builder.AddProject("inventoryworker", "../ECommerce.InventoryWorker/ECommerce.InventoryWorker.csproj")
     .WithArgs("--no-build")
-    .WithReference(inventoryDb)
+    .WithReference(inventoryDb, "db")
     .WithReference(messagingInfra)
     .WaitFor(inventoryDb)
     .WaitFor(messagingInfra);
 
 var paymentWorker = builder.AddProject("paymentworker", "../ECommerce.PaymentWorker/ECommerce.PaymentWorker.csproj")
     .WithArgs("--no-build")
-    .WithReference(paymentDb)
+    .WithReference(paymentDb, "db")
     .WithReference(messagingInfra)
     .WaitFor(paymentDb)
     .WaitFor(messagingInfra);
 
 var shippingWorker = builder.AddProject("shippingworker", "../ECommerce.ShippingWorker/ECommerce.ShippingWorker.csproj")
     .WithArgs("--no-build")
-    .WithReference(shippingDb)
+    .WithReference(shippingDb, "db")
     .WithReference(messagingInfra)
     .WaitFor(shippingDb)
     .WaitFor(messagingInfra);
 
 var notificationWorker = builder.AddProject("notificationworker", "../ECommerce.NotificationWorker/ECommerce.NotificationWorker.csproj")
     .WithArgs("--no-build")
-    .WithReference(notificationDb)
+    .WithReference(notificationDb, "db")
     .WithReference(messagingInfra)
     .WaitFor(notificationDb)
     .WaitFor(messagingInfra);
@@ -156,7 +156,7 @@ var angularApp = builder.AddNpmApp("ui", "../ECommerce.UI", "start")
 
 var bffService = builder.AddProject("bff", "../ECommerce.BFF.API/ECommerce.BFF.API.csproj")
     .WithArgs("--no-build")
-    .WithReference(bffDb)
+    .WithReference(bffDb, "db")
     .WithReference(messagingInfra)
     .WithReference(angularApp)  // BFF can discover Angular URL for CORS
     .WaitFor(bffDb)

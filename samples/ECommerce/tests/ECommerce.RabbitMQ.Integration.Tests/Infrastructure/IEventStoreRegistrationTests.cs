@@ -33,9 +33,9 @@ public class IEventStoreRegistrationTests {
     var connectionString = "Host=localhost;Port=5432;Database=test;Username=test;Password=test";
 
     // Add connection string to configuration (required by generated turnkey code)
-    // The generated code derives "inventory-db" from "InventoryDbContext"
+    // A context that names no connection string reads ConnectionStrings:db
     builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
-      ["ConnectionStrings:inventory-db"] = connectionString
+      ["ConnectionStrings:db"] = connectionString
     });
 
     // Register service instance provider
