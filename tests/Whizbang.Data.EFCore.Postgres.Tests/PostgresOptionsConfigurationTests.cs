@@ -70,6 +70,47 @@ public class PostgresOptionsConfigurationTests {
       .Because("a key under another database's name must not leak into this one");
   }
 
+  /// <summary>
+  /// A key directly under <c>Whizbang:Postgres</c> is the default for every database, so a service
+  /// with one database sets <c>Whizbang__Postgres__CommandTimeoutSeconds</c> without repeating the
+  /// database's name.
+  /// </summary>
+  [Test]
+  public async Task SectionLevelKey_IsTheDefaultForEveryDatabaseAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton(_config(
+      ("Whizbang:Postgres:CommandTimeoutSeconds", "60"),
+      ("Whizbang:Postgres:MaxInFlightCommands", "7")));
+    services.AddWhizbangPostgresOptionsBinding("orders-db");
+    services.AddWhizbangPostgresOptionsBinding("billing-db");
+
+    await using var provider = services.BuildServiceProvider();
+    var monitor = provider.GetRequiredService<IOptionsMonitor<PostgresOptions>>();
+
+    await Assert.That(monitor.Get("orders-db").CommandTimeoutSeconds).IsEqualTo(60);
+    await Assert.That(monitor.Get("billing-db").CommandTimeoutSeconds).IsEqualTo(60);
+    await Assert.That(provider.GetRequiredService<IOptions<PostgresOptions>>().Value.CommandTimeoutSeconds).IsEqualTo(60)
+      .Because("the unnamed instance is the first database's, and the default reaches it too");
+    await Assert.That(monitor.Get("billing-db").MaxInFlightCommands).IsEqualTo(7);
+  }
+
+  /// <summary>A key under a database's name overrides the section-level default for that database only.</summary>
+  [Test]
+  public async Task DatabaseKey_OverridesTheSectionLevelDefaultAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton(_config(
+      ("Whizbang:Postgres:CommandTimeoutSeconds", "60"),
+      ("Whizbang:Postgres:orders-db:CommandTimeoutSeconds", "30")));
+    services.AddWhizbangPostgresOptionsBinding("orders-db");
+    services.AddWhizbangPostgresOptionsBinding("billing-db");
+
+    await using var provider = services.BuildServiceProvider();
+    var monitor = provider.GetRequiredService<IOptionsMonitor<PostgresOptions>>();
+
+    await Assert.That(monitor.Get("orders-db").CommandTimeoutSeconds).IsEqualTo(30);
+    await Assert.That(monitor.Get("billing-db").CommandTimeoutSeconds).IsEqualTo(60);
+  }
+
   [Test]
   public async Task UnnamedInstance_IsTheFirstRegisteredDatabasesAsync() {
     var services = new ServiceCollection();

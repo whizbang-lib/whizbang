@@ -925,9 +925,14 @@ public static class WorkerPipelineExtensions {
       return new Microsoft.Extensions.Options.ConfigureOptions<DeadLetterRecoveryOptions>(options => {
         if (configuration is not null) {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          // The per-reason policies are positional records the generated binder cannot build from a
+          // partial entry (it fails startup), so it is shown the section without them and they are
+          // bound field by field afterwards.
+          var recovery = configuration.GetSection("Whizbang:DeadLetterRecovery");
           Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
-            configuration.GetSection("Whizbang:DeadLetterRecovery"), options);
+            new Whizbang.Core.Configuration.ConfigurationSectionWithout(recovery, DeadLetterRecoveryPolicyBinder.SECTION), options);
 #pragma warning restore IL2026
+          DeadLetterRecoveryPolicyBinder.Bind(recovery, options);
         }
       });
     });

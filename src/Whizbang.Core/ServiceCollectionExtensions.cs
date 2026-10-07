@@ -514,6 +514,14 @@ public static class ServiceCollectionExtensions {
       if (!string.IsNullOrEmpty(enableLoggingValue) && bool.TryParse(enableLoggingValue, out var enableLogging)) {
         options.EnableStructuredLogging = enableLogging;
       }
+
+      if (bool.TryParse(section["EnableWorkerBatchSpans"], out var workerBatchSpans)) {
+        options.EnableWorkerBatchSpans = workerBatchSpans;
+      }
+
+      if (bool.TryParse(section["EnablePerspectiveEventSpans"], out var perspectiveEventSpans)) {
+        options.EnablePerspectiveEventSpans = perspectiveEventSpans;
+      }
     }
 
     private static void _bindTracedHandlers(IConfigurationSection section, TracingOptions options) {

@@ -237,6 +237,9 @@ public static class OffloadServiceCollectionExtensions {
     // AddOptions registers IOptions/IOptionsMonitor/IOptionsSnapshot for the
     // type even when no Configure is called — defaults still resolve.
     services.AddOptions<MessageBodyOffloadOptions>();
+    // Every Whizbang:BodyOffload knob, applied after any code callback, whatever the provider.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Microsoft.Extensions.Options.IPostConfigureOptions<MessageBodyOffloadOptions>, MessageBodyOffloadOptionsPostConfigure>());
     return services.AddWhizbangPostSerializeHook<BodyOffloadPostSerializeHook>();
   }
 }

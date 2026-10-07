@@ -111,12 +111,16 @@ public static class ServiceCollectionExtensions {
     Action<AzureServiceBusOptions>? configureOptions
   ) {
     // Registration-time snapshot: DI-shape decisions (whether the admin client is registered)
-    // must be made while the container is still mutable, so they see the code callback only.
-    // Runtime knobs are resolved through the options pipeline below, where configuration
-    // (Whizbang:Transports:AzureServiceBus) post-configures OVER the callback — an operator
-    // can correct any runtime value without a redeploy.
+    // must be made while the container is still mutable. They see the code callback, then any
+    // setting in the configuration the host has already registered, so configuration wins here as
+    // it does for the runtime knobs below. Configuration registered only through a factory cannot
+    // be read yet, and leaves the code value in charge of the registration.
     var registrationOptions = new AzureServiceBusOptions();
     configureOptions?.Invoke(registrationOptions);
+    AzureServiceBusOptionsPostConfigure.ApplyRegistrationTimeSettings(
+      services.LastOrDefault(d => d.ServiceType == typeof(Microsoft.Extensions.Configuration.IConfiguration))?.ImplementationInstance
+        as Microsoft.Extensions.Configuration.IConfiguration,
+      registrationOptions);
 
     services.AddOptions<AzureServiceBusOptions>();
     if (configureOptions is not null) {
