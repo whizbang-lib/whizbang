@@ -322,6 +322,43 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
   }
 
   /// <summary>
+  /// Each connection takes the command timeout keyed by its own name: the pool applies
+  /// Whizbang:Postgres:&lt;name&gt;:CommandTimeoutSeconds, and schema initialization passes the
+  /// &lt;name&gt;-init key's value to the initializer.
+  /// </summary>
+  [Test]
+  public async Task Generator_EachConnection_TakesItsOwnTimeoutKeyAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_SNIPPET}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var turnkey = result.GeneratedSources.First(s => s.HintName.Contains("TestDbContextExtensions")).SourceText.ToString();
+    var registration = result.GeneratedSources.First(s => s.HintName.Contains("EFCoreModelRegistration")).SourceText.ToString();
+    var schema = result.GeneratedSources.First(s => s.HintName.Contains("TestDbContext_SchemaExtensions")).SourceText.ToString();
+    await Assert.That(turnkey).Contains("PostgresCommandTimeouts.Apply(config, resolvedConnectionStringKey, connStringBuilder)");
+    await Assert.That(registration).Contains("PostgresCommandTimeouts.Apply(config, resolvedConnectionStringKey, connStringBuilder)");
+    await Assert.That(registration).Contains("PostgresCommandTimeouts.Configured(config, initConnectionStringKey + \"-init\")");
+    await Assert.That(schema).Contains("commandTimeoutSeconds ?? Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(initConnectionString)");
+  }
+
+  /// <summary>
   /// The derived name earlier releases used strips "DbContext" only when the class name ends with it;
   /// any other class name is lowercased with "-db" appended.
   /// </summary>

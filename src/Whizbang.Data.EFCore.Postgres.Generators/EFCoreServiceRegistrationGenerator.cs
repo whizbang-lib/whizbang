@@ -2214,6 +2214,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("        if (int.TryParse(poolSection[\"CommandTimeout\"], out var commandTimeout))");
       sb.AppendLine("          connStringBuilder.CommandTimeout = commandTimeout;");
       sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
+      sb.AppendLine("      // This connection's own timeout key wins (Whizbang:Postgres:<name>:CommandTimeoutSeconds).");
+      sb.AppendLine("      global::Whizbang.Data.Postgres.PostgresCommandTimeouts.Apply(config, resolvedConnectionStringKey, connStringBuilder);");
       sb.AppendLine("      connectionString = connStringBuilder.ToString();");
       sb.AppendLine();
       sb.AppendLine("      var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);");
@@ -2363,6 +2365,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("          if (int.TryParse(poolSection[\"CommandTimeout\"], out var commandTimeout))");
     sb.AppendLine("            connStringBuilder.CommandTimeout = commandTimeout;");
     sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
+    sb.AppendLine("        // This connection's own timeout key wins (Whizbang:Postgres:<name>:CommandTimeoutSeconds).");
+    sb.AppendLine("        global::Whizbang.Data.Postgres.PostgresCommandTimeouts.Apply(config, resolvedConnectionStringKey, connStringBuilder);");
     sb.AppendLine("        connectionString = connStringBuilder.ToString();");
     sb.AppendLine();
     sb.AppendLine("        var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);");
@@ -2430,6 +2434,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      var config = scope.ServiceProvider.GetService<Microsoft.Extensions.Configuration.IConfiguration>();");
     sb.AppendLine($"      var initConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(config, \"{defaultConnectionStringKey}\", {_legacyLiteral(dbContext)}, logger);");
     sb.AppendLine("      var initConnStr = config?.GetConnectionString(initConnectionStringKey + \"-init\");");
+    sb.AppendLine("      // Schema initialization's own timeout key (Whizbang:Postgres:<name>-init:CommandTimeoutSeconds), with or without an -init string.");
+    sb.AppendLine("      var initCommandTimeoutSeconds = global::Whizbang.Data.Postgres.PostgresCommandTimeouts.Configured(config, initConnectionStringKey + \"-init\");");
     sb.AppendLine();
     sb.AppendLine("      if (initConnStr != null) {");
     sb.AppendLine("        if (logger is not null) {");
@@ -2452,14 +2458,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb, "initOptionsBuilder", "initDataSource", hasVectorFields, hasPhysicalFields, "        ");
     sb.AppendLine("        var initOptions = initOptionsBuilder.Options;");
     sb.AppendLine($"        await using var initDbContext = new {dbContext.FullyQualifiedName}(initOptions);");
-    sb.AppendLine("        await initDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, initConnStr, scope.ServiceProvider, ct);");
+    sb.AppendLine("        await initDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, initConnStr, scope.ServiceProvider, ct, initCommandTimeoutSeconds);");
     sb.AppendLine("      } else {");
     sb.AppendLine($"        var dbContext = scope.ServiceProvider.GetService<{dbContext.FullyQualifiedName}>();");
     sb.AppendLine("        if (dbContext == null) {");
     sb.AppendLine($"          logger?.LogDebug(\"{{DbContextName}} not registered in DI, skipping initialization\", \"{dbContext.ClassName}\");");
     sb.AppendLine("          return;");
     sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
-    sb.AppendLine("        await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, null, scope.ServiceProvider, ct);");
+    sb.AppendLine("        await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, null, scope.ServiceProvider, ct, initCommandTimeoutSeconds);");
     sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();

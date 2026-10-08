@@ -58,12 +58,13 @@ public class PostgresOptions {
   #region Command Timeout Options
 
   /// <summary>
-  /// Retired: no command ever read this value. A timeout is set as <c>Command Timeout</c> on the
-  /// connection string the work runs on; the work coordinator keeps its own fixed budget. Setting the
-  /// <c>Whizbang:Postgres:CommandTimeoutSeconds</c> key logs a warning at startup.
+  /// Retired: no command ever read this value. Each connection has its own timeout key, named like its
+  /// connection string (<c>Whizbang:Postgres:db:CommandTimeoutSeconds</c>, <c>…:db-direct:…</c>,
+  /// <c>…:db-init:…</c>); the work coordinator keeps its own fixed budget. Setting
+  /// <c>Whizbang:Postgres:CommandTimeoutSeconds</c> directly under the section logs a warning at startup.
   /// </summary>
   /// <docs>operations/configuration/configuration-reference#command-timeouts</docs>
-  [Obsolete("No command reads this. Set 'Command Timeout' on the connection string the work runs on; see the command-timeouts section of the configuration reference.")]
+  [Obsolete("No command reads this. Each connection has its own key: Whizbang:Postgres:<connection>:CommandTimeoutSeconds, e.g. db, db-direct, db-init.")]
   public int CommandTimeoutSeconds { get; set; } = 120;
 
   #endregion

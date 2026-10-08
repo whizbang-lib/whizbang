@@ -36,7 +36,7 @@ internal sealed class PostgresOptionsPostConfigure(
     var section = root.GetSection(_resolve(database));
     _bind(root, options);
     _bind(section, options);
-    _reportRetiredKey(root, section);
+    _reportRetiredKey(root);
   }
 
   /// <summary>
@@ -55,16 +55,16 @@ internal sealed class PostgresOptionsPostConfigure(
   }
 
   /// <summary>
-  /// <c>CommandTimeoutSeconds</c> never reached a command. Rather than let a setting that does nothing
-  /// pass silently, startup says once where a timeout is actually set.
+  /// <c>CommandTimeoutSeconds</c> directly under the section never reached a command, and one value for
+  /// every connection would put a query timeout on schema initialization. Each connection has its own
+  /// key (<c>Whizbang:Postgres:&lt;connection&gt;:CommandTimeoutSeconds</c>, see
+  /// <see cref="PostgresCommandTimeouts"/>), so startup says once where to set it instead.
   /// </summary>
-  private void _reportRetiredKey(params IConfigurationSection[] sections) {
-    foreach (var section in sections) {
-      if (section[RETIRED_COMMAND_TIMEOUT_KEY] is not null
-          && Interlocked.Exchange(ref _retiredKeyReported, 1) == 0
-          && logger is not null) {
-        PostgresOptionsLog.RetiredCommandTimeout(logger, ConfigurationPath.Combine(section.Path, RETIRED_COMMAND_TIMEOUT_KEY));
-      }
+  private void _reportRetiredKey(IConfigurationSection root) {
+    if (root[RETIRED_COMMAND_TIMEOUT_KEY] is not null
+        && Interlocked.Exchange(ref _retiredKeyReported, 1) == 0
+        && logger is not null) {
+      PostgresOptionsLog.RetiredCommandTimeout(logger, ConfigurationPath.Combine(root.Path, RETIRED_COMMAND_TIMEOUT_KEY));
     }
   }
 
@@ -84,8 +84,10 @@ internal sealed class PostgresOptionsPostConfigure(
 internal static partial class PostgresOptionsLog {
   [LoggerMessage(
       Level = LogLevel.Warning,
-      Message = "{Key} is set but has no effect: it is retired, and no command ever read it. Set "
-              + "'Command Timeout' on the connection string the work runs on instead (the -init string "
-              + "for schema initialization); the work coordinator keeps its own fixed budget")]
+      Message = "{Key} is set but has no effect: it is retired, and no command ever read it. Each "
+              + "connection has its own key, named like its connection string: "
+              + "Whizbang:Postgres:db:CommandTimeoutSeconds, Whizbang:Postgres:db-direct:CommandTimeoutSeconds, "
+              + "Whizbang:Postgres:db-init:CommandTimeoutSeconds ('Command Timeout' in the connection string "
+              + "also works); the work coordinator keeps its own fixed budget")]
   public static partial void RetiredCommandTimeout(ILogger logger, string key);
 }

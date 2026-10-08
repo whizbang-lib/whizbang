@@ -198,4 +198,25 @@ public class NotificationDataSourceAutoDiscoveryTests {
       }
     }
   }
+
+  /// <summary>
+  /// The notification connection takes the timeout keyed by the connection it uses:
+  /// Whizbang:Postgres:&lt;name&gt;-direct for the direct string, Whizbang:Postgres:&lt;name&gt; when it falls
+  /// back to the pooled one.
+  /// </summary>
+  [Test]
+  [Arguments("ConnectionStrings:db-direct", "Whizbang:Postgres:db-direct:CommandTimeoutSeconds")]
+  [Arguments("ConnectionStrings:db", "Whizbang:Postgres:db:CommandTimeoutSeconds")]
+  public async Task NotificationConnection_TakesItsConnectionsTimeoutKeyAsync(string connectionString, string timeoutKey) {
+    var services = _host(new Dictionary<string, string?> {
+      ["Whizbang:Database:ConnectionStringKey"] = "db",
+      [connectionString] = CREDENTIAL_BEARING,
+      [timeoutKey] = "66",
+    });
+    await using var provider = services.BuildServiceProvider();
+
+    var notification = provider.GetRequiredService<INotificationDataSource>();
+
+    await Assert.That(new NpgsqlConnectionStringBuilder(notification.DataSource!.ConnectionString).CommandTimeout).IsEqualTo(66);
+  }
 }

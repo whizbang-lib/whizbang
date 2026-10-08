@@ -116,7 +116,6 @@ public class PostgresOptionsConfigurationTests {
   /// </summary>
   [Test]
   [Arguments("Whizbang:Postgres:CommandTimeoutSeconds")]
-  [Arguments("Whizbang:Postgres:orders-db:CommandTimeoutSeconds")]
   public async Task RetiredCommandTimeoutSeconds_IsReportedAtStartupAsync(string key) {
     var logged = new List<string>();
     var services = new ServiceCollection();
@@ -128,11 +127,15 @@ public class PostgresOptionsConfigurationTests {
     _ = provider.GetRequiredService<IOptionsMonitor<PostgresOptions>>().Get("orders-db");
 
     await Assert.That(logged).Count().IsEqualTo(1);
-    await Assert.That(logged[0]).Contains(key).And.Contains("Command Timeout");
+    await Assert.That(logged[0]).Contains(key).And.Contains("Whizbang:Postgres:db-init:CommandTimeoutSeconds");
   }
 
+  /// <summary>
+  /// A key under a connection's name is that connection's own timeout, not the retired key: only the
+  /// one directly under the section is reported, and only once.
+  /// </summary>
   [Test]
-  public async Task RetiredKeyAtBothLevels_IsReportedOnceAsync() {
+  public async Task PerConnectionTimeoutKey_IsNotReported_TheRetiredKeyOnceAsync() {
     var logged = new List<string>();
     var services = new ServiceCollection();
     services.AddLogging(b => b.AddProvider(new ListLoggerProvider(logged)));
@@ -146,6 +149,21 @@ public class PostgresOptionsConfigurationTests {
     _ = provider.GetRequiredService<IOptions<PostgresOptions>>().Value;
 
     await Assert.That(logged).Count().IsEqualTo(1);
+    await Assert.That(logged[0]).StartsWith("Whizbang:Postgres:CommandTimeoutSeconds");
+  }
+
+  [Test]
+  public async Task PerConnectionTimeoutKey_Alone_ReportsNothingAsync() {
+    var logged = new List<string>();
+    var services = new ServiceCollection();
+    services.AddLogging(b => b.AddProvider(new ListLoggerProvider(logged)));
+    services.AddSingleton(_config(("Whizbang:Postgres:orders-db:CommandTimeoutSeconds", "30")));
+    services.AddWhizbangPostgresOptionsBinding("orders-db");
+
+    await using var provider = services.BuildServiceProvider();
+    _ = provider.GetRequiredService<IOptionsMonitor<PostgresOptions>>().Get("orders-db");
+
+    await Assert.That(logged).IsEmpty();
   }
 
   [Test]
