@@ -81,7 +81,8 @@ public static class PostgresPinnedPoolServiceCollectionExtensions {
       var configuration = sp.GetService<IConfiguration>();
       var resolved = configuration?.GetConnectionString(opts.ConnectionStringName);
       if (!string.IsNullOrWhiteSpace(resolved)) {
-        return resolved;
+        // The connection's own timeout key (Whizbang:Postgres:<name>:CommandTimeoutSeconds) wins.
+        return PostgresCommandTimeouts.ApplyTo(configuration, opts.ConnectionStringName, resolved);
       }
     }
     return opts.ConnectionString;

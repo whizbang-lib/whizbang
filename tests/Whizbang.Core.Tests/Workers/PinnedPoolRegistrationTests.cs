@@ -154,6 +154,27 @@ public class PinnedPoolRegistrationTests {
   }
 
   [Test]
+  public async Task Register_ConnectionStringName_TakesThatConnectionsTimeoutKeyAsync() {
+    var services = new ServiceCollection();
+    var config = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["ConnectionStrings:app-db-direct"] = "Host=test;Database=test;Username=x;Password=x",
+        ["Whizbang:Postgres:app-db-direct:CommandTimeoutSeconds"] = "33",
+      })
+      .Build();
+    services.AddSingleton<IConfiguration>(config);
+    services.AddWhizbangPinnedWorkerPool(opts => {
+      opts.Enabled = true;
+      opts.ConnectionStringName = "app-db-direct";
+    });
+    services.AddWhizbangPostgresPinnedPool();
+
+    var pool = (PinnedConnectionPool)services.BuildServiceProvider().GetRequiredService<IPinnedConnectionPool>();
+
+    await Assert.That(new Npgsql.NpgsqlConnectionStringBuilder(pool.ConnectionStringForTesting).CommandTimeout).IsEqualTo(33);
+  }
+
+  [Test]
   public async Task Register_ConnectionStringName_TakesPrecedenceOverInlineAsync() {
     var services = new ServiceCollection();
     var config = new ConfigurationBuilder()

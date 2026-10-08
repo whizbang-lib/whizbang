@@ -56,14 +56,16 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// <param name="initConnectionString">Optional direct PostgreSQL connection string (bypasses PgBouncer). Falls back to DbContext connection if null.</param>
   /// <param name="serviceProvider">Optional service provider. When present, IMessageTypeCatalog is resolved and the message type registry is reconciled via reconcile_message_type_registry(). Skipped if null or catalog is not registered.</param>
   /// <param name="cancellationToken">Cancellation token</param>
+  /// <param name="commandTimeoutSeconds">Schema initialization's own timeout key (Whizbang:Postgres:&lt;name&gt;-init:CommandTimeoutSeconds), which wins over the init string's Command Timeout; null when not set.</param>
   public static async Task EnsureWhizbangDatabaseInitializedAsync(
     this __DBCONTEXT_FQN__ dbContext,
     ILogger? logger = null,
     string? initConnectionString = null,
     IServiceProvider? serviceProvider = null,
-    CancellationToken cancellationToken = default) {
+    CancellationToken cancellationToken = default,
+    int? commandTimeoutSeconds = null) {
 
-    _schemaCommandTimeout.Value = Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(initConnectionString);
+    _schemaCommandTimeout.Value = commandTimeoutSeconds ?? Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(initConnectionString);
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
     var phases = new System.Collections.Generic.List<(string Name, long Ms, string Status)>();

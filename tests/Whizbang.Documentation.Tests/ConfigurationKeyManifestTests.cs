@@ -155,6 +155,9 @@ public class ConfigurationKeyManifestTests {
     "ConnectionPool:MinPoolSize",
     "ConnectionPool:Timeout",
     "ConnectionPool:CommandTimeout",
+    // Each connection's timeout key (PostgresCommandTimeouts), read where the connection is built: the
+    // generated pool, the notification connection, the pinned pool and schema initialization.
+    "Whizbang:Postgres:*:CommandTimeoutSeconds",
   ];
 
   private const string MANIFEST_HEADER =
