@@ -30,4 +30,9 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The audit command's reader, OSV client and formatter are internal; their tests live here. -->
+    <InternalsVisibleTo Include="Whizbang.CLI.Tests" />
+  </ItemGroup>
+
 </Project>

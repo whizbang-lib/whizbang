@@ -77,10 +77,11 @@ pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -T
 
 Located in `tests/` directory. Fast tests that use mocks (Rocks) and don't require external dependencies.
 
-### Library Unit Tests (19 projects)
+### Library Unit Tests (20 projects)
 
 | Project | Tests |
 |---------|-------|
+| `Whizbang.CLI.Tests` | `whizbang` CLI tool: the `audit` command (OSV faked over a stub HTTP handler) |
 | `Whizbang.Core.Tests` | Core dispatcher, messaging, observability |
 | `Whizbang.Data.Schema.Tests` | Schema validation |
 | `Whizbang.Data.Tests` | Data layer abstractions |

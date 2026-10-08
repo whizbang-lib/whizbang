@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Globalization;
+using Whizbang.CLI.Audit;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Data.Dapper.Sqlite.Schema;
 using Whizbang.Data.Postgres.Schema;
@@ -10,8 +11,10 @@ using Whizbang.Migrate.Commands;
 
 const string version = "0.1.0";
 
-// Show branded banner with tool info
-WhizbangBanner.PrintHeader("Whizbang CLI", version);
+// Show branded banner with tool info (not in front of a JSON report, which must parse on its own)
+if (!AuditCommand.SuppressesBanner(args)) {
+  WhizbangBanner.PrintHeader("Whizbang CLI", version);
+}
 
 // Parse command-line arguments
 if (args.Length == 0 || args[0] == "--help" || args[0] == "-h") {
@@ -32,6 +35,7 @@ try {
     "stored-forms" => await _handleStoredFormsCommandAsync(args),
     "streams" => await _handleStreamsCommandAsync(args),
     "redeliver" => await _handleRedeliverCommandAsync(args),
+    "audit" => await AuditCommand.RunAsync(args[1..], Console.Out, Console.Error),
     _ => throw new InvalidOperationException($"Unknown command: {args[0]}")
   };
 } catch (Exception ex) {
@@ -710,6 +714,7 @@ void _showHelp() {
   Console.WriteLine("  stored-forms    List pending and applied stored-form migrations of perspective data");
   Console.WriteLine("  streams         Purge durable streams from a service's store (dry run, audited)");
   Console.WriteLine("  redeliver       Ask an origin service to republish the stored events of a list of streams");
+  Console.WriteLine("  audit           Check the Whizbang packages a project uses against published security advisories");
   Console.WriteLine();
   Console.WriteLine("Options:");
   Console.WriteLine("  --help, -h      Show this help message");

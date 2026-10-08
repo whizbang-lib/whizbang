@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
+    <!-- Unit: Fast tests, no external infrastructure needed. OSV is faked with a stub HttpMessageHandler. -->
+    <WhizbangTestType>Unit</WhizbangTestType>
+    <!-- Don't capture test output so Console.WriteLine appears in terminal -->
+    <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../tools/Whizbang.CLI/Whizbang.CLI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- project.assets.json files from a real `dotnet restore`, trimmed of file lists and with
+         machine paths replaced. Tests copy them into a temporary project's obj/ folder. -->
+    <None Include="Audit/Fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
