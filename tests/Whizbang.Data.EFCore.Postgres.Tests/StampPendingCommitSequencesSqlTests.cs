@@ -25,8 +25,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <item><description>Only rows whose inserting xmin is below
 /// <c>pg_snapshot_xmin(pg_current_snapshot())</c> get stamped. While a concurrent
 /// transaction is in-flight, ALL rows with xmin &gt;= that tx's xmin are deferred.</description></item>
-/// <item><description>Stamping is in xmin order. Within a single batch, lower xmin
-/// gets lower <c>commit_sequence</c>.</description></item>
+/// <item><description>Rows eligible together are numbered in insertion order, and a stream's rows
+/// always in version order (migration 197; <c>CommitSequenceStreamOrderSqlTests</c>).</description></item>
 /// <item><description>Already-stamped rows are skipped (<c>commit_sequence IS NULL</c>
 /// filter).</description></item>
 /// <item><description><c>p_batch_size</c> caps work per call (default 1000).</description></item>
@@ -92,7 +92,7 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task Stamp_MultipleRowsInsertedSequentially_StampsInXminOrderAsync() {
+  public async Task Stamp_MultipleRowsInsertedSequentially_StampsInInsertionOrderAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
@@ -101,7 +101,7 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     var event2 = (Guid)TrackedGuid.New();
     var event3 = (Guid)TrackedGuid.New();
 
-    // Sequential inserts → sequential xmins → must stamp in same order.
+    // Sequential inserts → must stamp in the same order.
     await _insertEventStoreRowAsync(conn, event1, streamId, version: 1);
     await _insertEventStoreRowAsync(conn, event2, streamId, version: 2);
     await _insertEventStoreRowAsync(conn, event3, streamId, version: 3);
@@ -187,7 +187,7 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     var seq1 = await _readCommitSequenceAsync(connStamper, r1);
     var seq2 = await _readCommitSequenceAsync(connStamper, r2);
     await Assert.That(seq1!.Value).IsLessThan(seq2!.Value)
-      .Because("r1's xmin is lower → it must get the lower commit_sequence (xmin order = stamping order)");
+      .Because("r1 was inserted first and is the stream's earlier version, so it must get the lower commit_sequence");
   }
 
   [Test]

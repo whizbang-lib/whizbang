@@ -282,3 +282,24 @@ digest_close.idle.wh_event_store.blocks_per_call.events_20000	24.2	blocks/call		
 digest_close.idle.wh_event_store.blocks_per_call.events_80000	22	blocks/call		recorded: was 2,594 before 193
 digest_close.idle.wh_event_store.seq_scans_per_call.events_20000	0	scans/call	0	GATED: was 1 per call before 193
 digest_close.idle.wh_event_store.seq_scans_per_call.events_80000	0	scans/call	0	GATED: was 1 per call before 193
+
+# --- Commit-order stamp, by backlog depth -----------------------------------------------------
+# Three stamps of 1,000 rows behind 10,000, 40,000 and 160,000 unstamped events (streams of ten).
+# The stamp chose its batch by sorting every unstamped row by transaction id, which no index can
+# serve: 20, 80 and 320 tuples read per stamped row before 197, the backlog divided by the batch.
+# It now walks an insertion-order index and stops at the batch: 4 tuples per row at every depth.
+#
+# The ceiling is on tuples read per stamped row, and it is a property of the design: the walk, each
+# stream's prefix, the lock and the update each read the row once. Blocks are recorded and not gated:
+# the update writes every index of the event store for each row it stamps (about 28 blocks a row),
+# which swamps the selection at this batch size and grows with the indexes, not the backlog.
+stamp.backlog_10000.wh_event_store.blocks_per_stamped_row	28.4	blocks/row		recorded: was 20.4 before 197 (two more partial indexes; the update dominates)
+stamp.backlog_10000.wh_event_store.seq_scans_per_stamp	0	scans/stamp		recorded: was 2 before 197
+stamp.backlog_10000.wh_event_store.tuples_read_per_stamped_row	4	tuples/row	8	GATED: was 20 before 197
+stamp.backlog_160000.wh_event_store.blocks_per_stamped_row	35.8	blocks/row		recorded: was 28.6 before 197
+stamp.backlog_160000.wh_event_store.seq_scans_per_stamp	0	scans/stamp		recorded: was 2 before 197
+stamp.backlog_160000.wh_event_store.tuples_read_per_stamped_row	4	tuples/row	8	GATED: was 320 before 197; sixteen times the backlog must not cost more
+stamp.backlog_40000.wh_event_store.blocks_per_stamped_row	29.6	blocks/row		recorded: was 21.6 before 197
+stamp.backlog_40000.wh_event_store.seq_scans_per_stamp	0	scans/stamp		recorded: was 2 before 197
+stamp.backlog_40000.wh_event_store.tuples_read_per_stamped_row	4	tuples/row	8	GATED: was 80 before 197
+
