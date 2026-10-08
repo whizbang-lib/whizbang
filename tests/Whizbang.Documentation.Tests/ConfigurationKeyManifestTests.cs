@@ -29,7 +29,7 @@ using Whizbang.Transports.RabbitMQ;
 namespace Whizbang.Documentation.Tests;
 
 /// <summary>
-/// Locks the configuration keys the library reads to <c>docs/configuration-keys.txt</c>, the list the
+/// Locks the configuration keys the library reads to <c>tests/Whizbang.Documentation.Tests/Baselines/configuration-keys.txt</c>, the list the
 /// documentation site checks every key it documents against.
 /// </summary>
 /// <remarks>
@@ -170,7 +170,7 @@ public class ConfigurationKeyManifestTests {
 
     return Path.Combine(
       dir?.FullName ?? throw new InvalidOperationException("Whizbang.slnx not found above the test binary."),
-      "docs", "configuration-keys.txt");
+      "tests", "Whizbang.Documentation.Tests", "Baselines", "configuration-keys.txt");
   }
 
   [Test]
@@ -193,7 +193,7 @@ public class ConfigurationKeyManifestTests {
     var removed = manifested.Except(recorded, StringComparer.OrdinalIgnoreCase).ToList();
 
     await Assert.That(added.Count + removed.Count).IsEqualTo(0)
-      .Because("the library's configuration keys changed. Read now but not in docs/configuration-keys.txt: ["
+      .Because("the library's configuration keys changed. Read now but not in Baselines/configuration-keys.txt: ["
         + string.Join(", ", added) + "]. Listed but no longer read: [" + string.Join(", ", removed) + "]. "
         + "Regenerate with WHIZBANG_UPDATE_CONFIGURATION_KEYS=1 and update the documentation to match.");
   }
