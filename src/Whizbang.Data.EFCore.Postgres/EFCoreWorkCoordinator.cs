@@ -2185,10 +2185,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // 171: the claim says in-band, as a notice on this connection, when its outbox acquisition filled
     // its bound. Listened for only for the length of this command.
     var outboxAcquisitionFull = false;
+    // 196 (#1226): the claim no longer writes this instance's registration row; it says when the row
+    // is missing or stale, and the caller registers after the claim.
+    var registrationStale = false;
     void OnClaimNotice(object? sender, NpgsqlNoticeEventArgs e) {
-      if (string.Equals(e.Notice.MessageText, OutboxClaimNotices.ACQUISITION_FULL, StringComparison.Ordinal)) {
-        outboxAcquisitionFull = true;
-      }
+      outboxAcquisitionFull |= string.Equals(e.Notice.MessageText, OutboxClaimNotices.ACQUISITION_FULL, StringComparison.Ordinal);
+      registrationStale |= string.Equals(e.Notice.MessageText, OutboxClaimNotices.REGISTRATION_STALE, StringComparison.Ordinal);
     }
     conn.Notice += OnClaimNotice;
     try {
@@ -2252,7 +2254,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       InboxStreamIds = inboxStreamIds,
       InboxStreams = ClaimedInboxStreamFolder.Fold(rows),
       Outstanding = outstanding,
-      OutboxAcquisitionFull = outboxAcquisitionFull
+      OutboxAcquisitionFull = outboxAcquisitionFull,
+      InstanceRegistrationStale = registrationStale
     };
   }
 
@@ -5661,6 +5664,9 @@ internal class OrphanedEventRow {
 internal static class OutboxClaimNotices {
   /// <summary>Raised when the outbox acquisition leased its whole row bound (171).</summary>
   internal const string ACQUISITION_FULL = "whizbang.outbox_acquisition_full=true";
+
+  /// <summary>Raised when the calling instance's registration row is missing or stale (196).</summary>
+  internal const string REGISTRATION_STALE = "whizbang.instance_registration_stale=true";
 }
 
 internal static partial class EFCoreWorkCoordinatorLog {

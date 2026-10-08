@@ -2790,6 +2790,17 @@ public record WorkBatch {
   public bool OutboxAcquisitionFull { get; init; }
 
   /// <summary>
+  /// True when the claim found the calling instance's registration row missing or stale. The claim
+  /// never writes that row (#1226): a write inside the claim's transaction held the row until the
+  /// claim committed, and a heartbeat for the same instance waited for the whole claim. The caller
+  /// registers instead, in a statement of its own, once the claim has returned. False when the store
+  /// does not report it.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerRegistrationTests.cs:AClaimThatReportsAStaleRegistration_IsFollowedByARegistrationOnThePinnedConnectionAsync</tests>
+  public bool InstanceRegistrationStale { get; init; }
+
+  /// <summary>
   /// This instance's untruncated outstanding-work counts, taken in the SAME round trip and snapshot
   /// as the claim, when the request asked for them (<see cref="ClaimWorkRequest.IncludeOutstanding"/>)
   /// and the store supports it. Null means "not measured here" — the caller must fall back to

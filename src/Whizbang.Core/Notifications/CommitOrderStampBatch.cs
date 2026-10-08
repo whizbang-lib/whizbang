@@ -8,28 +8,24 @@ namespace Whizbang.Core.Notifications;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Each call to <c>stamp_pending_commit_sequences</c> costs a scan and a sort of the unstamped set,
-/// because the only column that orders it is a system column no index can cover. The cost is therefore
-/// paid per call rather than per row, and draining a backlog of N rows in fixed steps of B costs about
-/// N/B of those scans. A store adopting commit sequences for the first time has its whole history
-/// pending, which is where that arithmetic stops being academic: at a thousand rows a call, four million
-/// rows is four thousand scans.
+/// Each call to <c>stamp_pending_commit_sequences</c> used to cost a scan and a sort of the unstamped set,
+/// because the column that ordered it was a system column no index can cover, so draining a backlog of N
+/// rows in fixed steps of B cost about N/B of those scans (#1060). Since migration 197 the stamp walks an
+/// insertion-order index and stops at its batch, so a call costs what it stamps (#1062) and the number of
+/// calls no longer multiplies a scan.
 /// </para>
 /// <para>
-/// So the batch grows while there is clearly more work and returns to the configured size once there is
-/// not. A full batch is the signal: the function returns how many it stamped, and a call that filled its
-/// limit means rows were left behind. Nothing has to be counted to learn this, which matters — a probe
-/// for the backlog size would be one more scan of the thing that is already too expensive to scan.
+/// The batch still grows while there is clearly more work and returns to the configured size once there
+/// is not, because a call has a fixed cost of its own (a round trip, the visibility horizon, a transaction
+/// under the role fence) that a large backlog should pay as few times as it can. A full batch is the
+/// signal: the function returns how many it stamped, and a call that filled its limit means rows were left
+/// behind. Nothing has to be counted to learn this.
 /// </para>
 /// <para>
 /// Growth is geometric rather than a jump to the maximum so that a short burst is served by a small
-/// batch and only a real backlog reaches the large ones. A batch holds its rows locked and the sequence
-/// advanced for the length of its call, so the ceiling is a bound on that, not a target.
-/// </para>
-/// <para>
-/// This does not make the drain proportional to the work: each call still scans the whole pending set.
-/// It makes the number of those scans small. The proportional fix needs an ordering key an index can
-/// cover, which changes what the stamp considers "order" and is tracked separately.
+/// batch and only a real backlog reaches the large ones. A batch holds its rows locked, the sequence
+/// advanced and, under role assignment, the role row shared for the length of its call, so the ceiling is
+/// a bound on that, not a target: a holder's own vote waits for the call to commit.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>

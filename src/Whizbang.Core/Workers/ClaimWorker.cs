@@ -410,8 +410,9 @@ public sealed partial class ClaimWorker : BackgroundService {
     // HeartbeatWorker performs the UPSERT but ticks on its own cadence, so without this the
     // registry would briefly carry no row for this pod — which skews peers' rank denominators
     // and delays instance-lifecycle signals. This is an optimization, not a correctness
-    // requirement: claim_work repairs its own registration before it ranks, so a missed or
-    // failed registration here self-heals on the first claim. Failures are non-fatal.
+    // requirement: a claim that finds the row missing or stale says so, and the claim loop
+    // registers again right after it (#1226), so a missed or failed registration here is put
+    // back after the first claim. Failures are non-fatal.
     try {
       await _initialHeartbeatAsync(stoppingToken);
     } catch (OperationCanceledException) {
@@ -919,6 +920,14 @@ public sealed partial class ClaimWorker : BackgroundService {
       OutboxRunLength: Math.Max(1, _options.OutboxRunLength)), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
 
+    // #1226: the claim reads this instance's registration and never writes it, because a write inside
+    // the claim's transaction held the row until the claim committed and every heartbeat for this
+    // instance waited behind it. When the claim found the row missing or stale, register now: the
+    // claim has returned, so this is a statement of its own, on the same pinned connection.
+    if (batch.InstanceRegistrationStale) {
+      await _refreshRegistrationAsync(coordinator, ct);
+    }
+
     _recordClaimShape(batch, allowSteal);
     if (_budgetEngaged) {
       await _observeOutstandingAsync(batch, coordinator, ct);
@@ -1115,12 +1124,29 @@ public sealed partial class ClaimWorker : BackgroundService {
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
+    await _registerAsync(coordinator, ct);
+  }
+
+  /// <summary>
+  /// Registers again after a claim that found this instance's row missing or stale. A failure is
+  /// reported and the claim's batch is still returned: the work it leased is this instance's either
+  /// way, and the next claim that finds the row stale asks again.
+  /// </summary>
+  private async Task _refreshRegistrationAsync(IWorkCoordinator coordinator, CancellationToken ct) {
+    try {
+      await _registerAsync(coordinator, ct);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogRegistrationRefreshFailed(_logger, ex);
+    }
+  }
+
+  /// <summary>The registration: this instance's identity through <c>record_heartbeat</c>.</summary>
+  private Task<bool> _registerAsync(IWorkCoordinator coordinator, CancellationToken ct) =>
+    coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
       HostName: _instanceProvider.HostName,
       ProcessId: _instanceProvider.ProcessId), ct);
-  }
 
 
   /// <summary>
@@ -1253,8 +1279,13 @@ public sealed partial class ClaimWorker : BackgroundService {
   static partial void LogDisabled(ILogger logger);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
-    Message = "ClaimWorker initial heartbeat failed; first claim_work calls may raise until HeartbeatWorker registers the instance")]
+    Message = "ClaimWorker initial registration failed; the first claim will report the row missing and the claim loop will register again after it")]
   static partial void LogInitialHeartbeatFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 20, Level = LogLevel.Warning,
+    Message = "ClaimWorker could not register after a claim found this instance's registration missing or stale; "
+            + "the next claim that finds it stale asks again, and HeartbeatWorker beats on its own cadence")]
+  static partial void LogRegistrationRefreshFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Information,
     Message = "ClaimWorker NOTIFY gate reconnected after {UnavailableMs}ms — running catch-up claim")]
