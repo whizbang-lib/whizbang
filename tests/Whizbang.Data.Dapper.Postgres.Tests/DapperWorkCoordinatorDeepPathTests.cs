@@ -146,6 +146,34 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
     await Assert.That(batch.PerspectiveStreamIds[0]).IsEqualTo(streamId);
     await Assert.That(batch.OutboxStreamIds.Count).IsEqualTo(0);
     await Assert.That(batch.InboxStreamIds.Count).IsEqualTo(0);
+    await Assert.That(batch.InstanceRegistrationStale).IsFalse()
+      .Because("the caller registered just before the claim, so the claim has nothing to ask for");
+  }
+
+  [Test]
+  public async Task ClaimWorkAsync_UnregisteredCaller_ReportsTheRegistrationStaleAsync() {
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await _seedEventStoreRowAsync(conn, eventId, streamId, version: 1, commitSequence: 10L);
+    await _seedPerspectiveEventAsync(
+      conn, workId, streamId, "ClaimPerspective", eventId,
+      instanceId, DateTimeOffset.UtcNow.AddMinutes(5), attempts: 0);
+
+    var batch = await c.ClaimWorkAsync(new ClaimWorkRequest(
+      instanceId, "svc-claim", "host-claim", 1,
+      MaxStreams: 50, PartitionCount: 100, LeaseSeconds: 300));
+
+    await Assert.That(batch.InstanceRegistrationStale).IsTrue()
+      .Because("the claim no longer writes the caller's row (#1226); it reports the row missing so the caller can "
+        + "register after the claim, outside its transaction");
+    await Assert.That(await conn.ExecuteScalarAsync<long>(
+        "SELECT count(*) FROM wh_service_instances WHERE instance_id = @i", new { i = instanceId })).IsEqualTo(0L);
   }
 
   [Test]

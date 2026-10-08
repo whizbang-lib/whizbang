@@ -225,10 +225,16 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
     // recorded rather than thrown so the rounds carry on, and the assertion is that there was none.
     const int iterations = 8;
     const int roundCap = 600;
-    var actors = Enumerable.Range(0, 4).Select(_ => new Actor(Guid.CreateVersion7())).ToArray();
+    var instanceIds = Enumerable.Range(0, 4).Select(_ => Guid.CreateVersion7()).ToArray();
+    var actors = instanceIds.Select(id => new Actor(id)).ToArray();
     var deadlocks = new ConcurrentBag<string>();
     var failOnce = new ConcurrentDictionary<Guid, byte>();
     await using var control = await _openAsync();
+    // Registered, as ClaimWorker registers before its first claim: the claim no longer writes the
+    // caller's row (196), so four unregistered instances would each rank alone and see no live peer.
+    foreach (var id in instanceIds) {
+      await _registerAsync(control, id);
+    }
     foreach (var actor in actors) {
       await actor.OpenAsync(ConnectionString);
     }
@@ -323,10 +329,25 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
         WHERE source = 'outbox' AND work_stream_id IS NOT NULL";
       cmd.Parameters.AddWithValue("inst", instanceId);
       var offered = new HashSet<Guid>();
-      await using (var reader = await cmd.ExecuteReaderAsync()) {
+      var registrationStale = false;
+      void OnNotice(object? sender, NpgsqlNoticeEventArgs e) =>
+        registrationStale |= e.Notice.MessageText == "whizbang.instance_registration_stale=true";
+      _sessions[0].Notice += OnNotice;
+      try {
+        await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync()) {
           offered.Add(reader.GetGuid(0));
         }
+      } finally {
+        _sessions[0].Notice -= OnNotice;
+      }
+      // What ClaimWorker does (196): the claim never writes this instance's row, so the instance registers
+      // after a claim that found it stale, in a statement of its own.
+      if (registrationStale) {
+        await using var beat = _sessions[0].CreateCommand();
+        beat.CommandText = "SELECT record_heartbeat(@inst, 'test', 'test-host', 1)";
+        beat.Parameters.AddWithValue("inst", instanceId);
+        await beat.ExecuteNonQueryAsync();
       }
       lock (_lock) {
         _nextOffered = [.. offered];

@@ -1022,24 +1022,35 @@ public partial class DapperWorkCoordinator(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
-    // Phase C lands the full envelope-deserializing path. For now Dapper backend
-    // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
-    var rows = await connection.QueryAsync<ClaimWorkRow>(
-      "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp)",
-      new {
-        Id = request.InstanceId,
-        Svc = request.ServiceName,
-        Host = request.HostName,
-        Pid = request.ProcessId,
-        Max = request.MaxStreams,
-        Part = request.PartitionCount,
-        Lease = request.LeaseSeconds,
-        Fresh = request.FreshWorkShare,
-        // 145: acquisition row bound (null = bounded by the stream count) and the steal flag.
-        Rows = request.MaxAcquireRows,
-        Steal = request.AllowSteal,
-        Persp = request.MaxPerspectiveStreams
-      });
+    // 196 (#1226): the claim no longer writes this instance's registration row; it raises a notice
+    // when the row is missing or stale, and the caller registers after the claim.
+    var registrationStale = false;
+    void OnClaimNotice(object? sender, NpgsqlNoticeEventArgs e) =>
+      registrationStale |= string.Equals(e.Notice.MessageText, REGISTRATION_STALE_NOTICE, StringComparison.Ordinal);
+    connection.Notice += OnClaimNotice;
+    IEnumerable<ClaimWorkRow> rows;
+    try {
+      // Phase C lands the full envelope-deserializing path. For now Dapper backend
+      // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
+      rows = await connection.QueryAsync<ClaimWorkRow>(
+        "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp)",
+        new {
+          Id = request.InstanceId,
+          Svc = request.ServiceName,
+          Host = request.HostName,
+          Pid = request.ProcessId,
+          Max = request.MaxStreams,
+          Part = request.PartitionCount,
+          Lease = request.LeaseSeconds,
+          Fresh = request.FreshWorkShare,
+          // 145: acquisition row bound (null = bounded by the stream count) and the steal flag.
+          Rows = request.MaxAcquireRows,
+          Steal = request.AllowSteal,
+          Persp = request.MaxPerspectiveStreams
+        });
+    } finally {
+      connection.Notice -= OnClaimNotice;
+    }
     var perspectiveStreamIds = new List<Guid>();
     var sawOutboxOrInbox = false;
     foreach (var r in rows) {
@@ -1062,9 +1073,13 @@ public partial class DapperWorkCoordinator(
       OutboxWork = [],
       InboxWork = [],
       PerspectiveWork = [],
-      PerspectiveStreamIds = perspectiveStreamIds
+      PerspectiveStreamIds = perspectiveStreamIds,
+      InstanceRegistrationStale = registrationStale
     };
   }
+
+  /// <summary>Raised by <c>claim_work</c> when the calling instance's registration is missing or stale (196).</summary>
+  internal const string REGISTRATION_STALE_NOTICE = "whizbang.instance_registration_stale=true";
 
   // --- helpers shared by the new methods ---
 

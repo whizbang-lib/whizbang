@@ -310,20 +310,27 @@ public class PostgresFunctionTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task ClaimWork_PurgedInstanceRegistration_ReregistersInstanceAsync() {
-    // The real repair. claim_work already receives the full identity, so when its own registration
-    // has been reaped by stale-instance cleanup it can restore a correct, fully-identified row
-    // instead of failing. Without this, a pod whose heartbeat lapsed under load stayed locked out
-    // forever: cleanup deleted the row, every subsequent claim aborted, and nothing on the claim
-    // path was left to put the row back.
+  public async Task ClaimWork_PurgedInstanceRegistration_IsReportedAndTheCallersRegistrationRestoresItAsync() {
+    // A pod whose heartbeat lapsed under load has its row reaped by stale-instance cleanup. claim_work
+    // used to put the row back itself, inside the claim's transaction, which made every heartbeat for
+    // that instance wait for the whole claim (#1226). It now reports the missing row, and the caller's
+    // registration (record_heartbeat, with the identity the claim already carries) restores a correct,
+    // fully-identified row in a statement of its own.
     var purgedInstance = _idProvider.NewGuid();
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await _seedPendingOutboxWorkAsync(connection, _idProvider.NewGuid());
 
-    await connection.QueryAsync<dynamic>(@"
-      SELECT * FROM claim_work(@instanceId, 'RecoveredService', 'recovered-host', 4242)",
-      new { instanceId = purgedInstance });
+    var notices = await _claimCapturingNoticesAsync(connection, purgedInstance, "RecoveredService", "recovered-host", 4242);
+
+    await Assert.That(notices).Contains(REGISTRATION_STALE_NOTICE);
+    await Assert.That(await connection.QuerySingleOrDefaultAsync<ServiceInstanceRow>(@"
+      SELECT instance_id, service_name, host_name, process_id, last_heartbeat_at
+      FROM wh_service_instances WHERE instance_id = @id",
+      new { id = purgedInstance })).IsNull();
+
+    await connection.ExecuteAsync(
+      "SELECT record_heartbeat(@id, 'RecoveredService', 'recovered-host', 4242)", new { id = purgedInstance });
 
     var row = await connection.QuerySingleOrDefaultAsync<ServiceInstanceRow>(@"
       SELECT instance_id, service_name, host_name, process_id, last_heartbeat_at
@@ -339,7 +346,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task ClaimWork_StaleInstanceRegistration_RefreshesHeartbeatAsync() {
+  public async Task ClaimWork_StaleInstanceRegistration_IsReportedNotRewrittenAsync() {
     var staleInstance = _idProvider.NewGuid();
     var staleTime = DateTimeOffset.UtcNow.AddMinutes(-15);
 
@@ -350,17 +357,15 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { id = staleInstance, time = staleTime });
     await _seedPendingOutboxWorkAsync(connection, _idProvider.NewGuid());
 
-    await connection.QueryAsync<dynamic>(@"
-      SELECT * FROM claim_work(@instanceId, 'StaleService', 'stale-host', 7)",
-      new { instanceId = staleInstance });
+    var notices = await _claimCapturingNoticesAsync(connection, staleInstance, "StaleService", "stale-host", 7);
 
     var heartbeat = await connection.QuerySingleAsync<DateTimeOffset>(@"
       SELECT last_heartbeat_at FROM wh_service_instances WHERE instance_id = @id",
       new { id = staleInstance });
 
-    // Must be durable, not merely reflected in this call's ranking — otherwise the next claim
-    // re-enters the same stale state and the pod never recovers.
-    await Assert.That(heartbeat).IsGreaterThan(DateTimeOffset.UtcNow.AddMinutes(-1));
+    // A write here would hold the row until the claim commits, and the heartbeat would wait behind it.
+    await Assert.That(heartbeat).IsEqualTo(staleTime).Within(TimeSpan.FromMilliseconds(1));
+    await Assert.That(notices).Contains(REGISTRATION_STALE_NOTICE);
   }
 
   [Test]
@@ -390,9 +395,9 @@ public class PostgresFunctionTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task ClaimWork_RegistrationRepair_DoesNotRevivePeersAsync() {
-    // The repair is scoped to the caller. A genuinely dead peer must stay excluded, or the rank
-    // denominator inflates and every instance claims only a fraction of the work.
+  public async Task ClaimWork_StaleCaller_DoesNotRevivePeersAsync() {
+    // Only the caller is counted live without a fresh row. A genuinely dead peer must stay excluded, or the
+    // rank denominator inflates and every instance claims only a fraction of the work.
     var staleCaller = _idProvider.NewGuid();
     var deadPeer = _idProvider.NewGuid();
     var staleTime = DateTimeOffset.UtcNow.AddMinutes(-15);
@@ -1706,6 +1711,25 @@ public class PostgresFunctionTests : PostgresTestBase {
       INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, created_at)
       VALUES (@messageId, 'test-destination', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, NOW())",
       new { messageId, streamId = messageId });
+
+  private const string REGISTRATION_STALE_NOTICE = "whizbang.instance_registration_stale=true";
+
+  /// <summary>One claim, returning the notices it raised (196: a missing or stale registration is one).</summary>
+  private static async Task<List<string>> _claimCapturingNoticesAsync(
+      System.Data.IDbConnection connection, Guid instanceId, string service, string host, int processId) {
+    var npgsql = (Npgsql.NpgsqlConnection)connection;
+    var notices = new List<string>();
+    void OnNotice(object? sender, Npgsql.NpgsqlNoticeEventArgs e) => notices.Add(e.Notice.MessageText);
+    npgsql.Notice += OnNotice;
+    try {
+      await connection.QueryAsync<dynamic>(
+        "SELECT * FROM claim_work(@instanceId, @service, @host, @processId)",
+        new { instanceId, service, host, processId });
+    } finally {
+      npgsql.Notice -= OnNotice;
+    }
+    return notices;
+  }
 
   private sealed record ServiceInstanceRow(
     Guid instance_id,
