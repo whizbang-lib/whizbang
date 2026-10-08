@@ -14,6 +14,9 @@ namespace Whizbang.CLI.Audit;
   DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
   WriteIndented = true)]
 [JsonSerializable(typeof(ProjectAssetsFile))]
+[JsonSerializable(typeof(OsvBatchRequest))]
+[JsonSerializable(typeof(OsvBatchResponse))]
+[JsonSerializable(typeof(OsvVulnerability))]
 internal sealed partial class AuditJsonContext : JsonSerializerContext;
 
 /// <summary>
@@ -22,7 +25,7 @@ internal sealed partial class AuditJsonContext : JsonSerializerContext;
 /// </summary>
 internal sealed class ProjectAssetsFile {
   /// <summary>Resolved dependencies, keyed by target framework, then by <c>id/version</c>.</summary>
-  public Dictionary<string, Dictionary<string, ProjectAssetsTargetEntry>> Targets { get; init; } = [];
+  public Dictionary<string, Dictionary<string, ProjectAssetsTargetEntry>> Targets { get; set; } = [];
 }
 
 /// <summary>One resolved dependency in a target framework.</summary>
