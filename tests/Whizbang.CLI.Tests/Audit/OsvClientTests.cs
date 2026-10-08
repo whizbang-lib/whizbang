@@ -91,7 +91,7 @@ public class OsvClientTests {
     var advisory = matches[0].Advisory;
     await Assert.That(advisory.Id).IsEqualTo("GHSA-test-0001");
     await Assert.That(advisory.Summary).IsEqualTo("Summary of GHSA-test-0001");
-    await Assert.That(advisory.Aliases).IsEquivalentTo(new List<string> { "CVE-2026-0001" });
+    await Assert.That(advisory.Aliases).IsEquivalentTo(["CVE-2026-0001"]);
     await Assert.That(advisory.DatabaseSpecific!.Severity).IsEqualTo("CRITICAL");
     await Assert.That(advisory.Affected[0].Package!.Name).IsEqualTo(CORE);
     await Assert.That(advisory.Affected[0].Ranges[0].Events[1].Fixed).IsEqualTo("1.0.1");
@@ -109,7 +109,7 @@ public class OsvClientTests {
     var matches = await client.FindAdvisoriesAsync([_core, _data], CancellationToken.None);
 
     await Assert.That(handler.Requests.Count(r => r.Method == HttpMethod.Get)).IsEqualTo(1);
-    await Assert.That(matches.Select(m => m.Package)).IsEquivalentTo(new[] { _core, _data });
+    await Assert.That(matches.Select(m => m.Package)).IsEquivalentTo([_core, _data]);
   }
 
   [Test]
@@ -137,11 +137,11 @@ public class OsvClientTests {
     await Assert.That(second[0].GetProperty("package").GetProperty("name").GetString()).IsEqualTo(DATA);
     await Assert.That(second[0].GetProperty("version").GetString()).IsEqualTo("1.0.0");
     await Assert.That(second[0].GetProperty("page_token").GetString()).IsEqualTo("tok-2");
-    await Assert.That(matches.Select(m => (m.Package.Id, m.Advisory.Id))).IsEquivalentTo(new[] {
+    await Assert.That(matches.Select(m => (m.Package.Id, m.Advisory.Id))).IsEquivalentTo([
       (CORE, "GHSA-page-0001"),
       (DATA, "GHSA-page-0002"),
       (DATA, "GHSA-page-0003"),
-    });
+    ]);
   }
 
   [Test]

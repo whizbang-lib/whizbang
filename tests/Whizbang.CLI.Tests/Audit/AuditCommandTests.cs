@@ -26,8 +26,8 @@ public class AuditCommandTests {
       TimeProvider? time = null,
       CancellationToken cancellationToken = default) {
     osv ??= new StubOsvHandler();
-    using var output = new StringWriter();
-    using var error = new StringWriter();
+    await using var output = new StringWriter();
+    await using var error = new StringWriter();
     var exitCode = await AuditCommand.RunAsync(args, output, error, () => osv, time ?? TimeProvider.System, cancellationToken);
     return new Run(exitCode, output.ToString(), error.ToString(), osv);
   }
@@ -311,13 +311,28 @@ public class AuditCommandTests {
     // connection, so this runs offline.
     using var workspace = new AuditWorkspace();
     var project = workspace.AddProject("App", "App", assetsJson: null);
-    using var output = new StringWriter();
-    using var error = new StringWriter();
+    await using var output = new StringWriter();
+    await using var error = new StringWriter();
 
     var exitCode = await AuditCommand.RunAsync(["--project", project], output, error);
 
     await Assert.That(exitCode).IsEqualTo(AuditCommand.EXIT_NOT_CHECKED);
     await Assert.That(error.ToString()).Contains("Run dotnet restore first");
+  }
+
+  [Test]
+  public async Task RunAsync_RealTransport_CreatesItsConnectionOnlyToHonorCancellationAsync() {
+    // With packages to check, the CLI's overload builds a real socket handler. A canceled run
+    // stops before anything is sent, so this also runs offline.
+    using var workspace = new AuditWorkspace();
+    await using var output = new StringWriter();
+    await using var error = new StringWriter();
+    using var canceled = new CancellationTokenSource();
+    await canceled.CancelAsync();
+
+    await Assert.ThrowsAsync<OperationCanceledException>(
+      () => AuditCommand.RunAsync(["--project", _sampleProject(workspace)], output, error, canceled.Token));
+    await Assert.That(output.ToString()).IsEmpty();
   }
 
   [Test]

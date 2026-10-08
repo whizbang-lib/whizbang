@@ -26,13 +26,13 @@ public class ProjectAssetsReaderTests {
 
     var packages = ProjectAssetsReader.ReadWhizbangPackages(project);
 
-    await Assert.That(packages).IsEquivalentTo(new[] {
+    await Assert.That(packages).IsEquivalentTo([
       _whizbang("Core", V2615),
       _whizbang("Data.EFCore.Custom", V2615),
       _whizbang("Data.EFCore.Postgres", V2615),
       _whizbang("Data.Postgres", V2615),
       _whizbang("Data.Schema", V2615),
-    });
+    ]);
   }
 
   [Test]
@@ -58,7 +58,7 @@ public class ProjectAssetsReaderTests {
 
     var packages = ProjectAssetsReader.ReadWhizbangPackages(project);
 
-    await Assert.That(packages).IsEquivalentTo(new[] { _whizbang("Core", "1.0.0") });
+    await Assert.That(packages).IsEquivalentTo([_whizbang("Core", "1.0.0")]);
   }
 
   [Test]
@@ -71,7 +71,7 @@ public class ProjectAssetsReaderTests {
 
     var packages = ProjectAssetsReader.ReadWhizbangPackages(project);
 
-    await Assert.That(packages).IsEquivalentTo(new[] { _whizbang("Core", "1.0.0"), _whizbang("Core", "1.1.0") });
+    await Assert.That(packages).IsEquivalentTo([_whizbang("Core", "1.0.0"), _whizbang("Core", "1.1.0")]);
   }
 
   [Test]
@@ -96,7 +96,7 @@ public class ProjectAssetsReaderTests {
 
     var packages = ProjectAssetsReader.ReadWhizbangPackages(workspace.Root);
 
-    await Assert.That(packages).IsEquivalentTo(new[] { _whizbang("Core", "0.2610.0") });
+    await Assert.That(packages).IsEquivalentTo([_whizbang("Core", "0.2610.0")]);
   }
 
   [Test]
@@ -209,7 +209,7 @@ public class ProjectAssetsReaderTests {
     // A restore still writing the file is a read that fails, which is a check that did not run.
     using var workspace = new AuditWorkspace();
     var project = workspace.AddProject("App", "App", AuditWorkspace.Fixture("Worker"));
-    using var writer = new FileStream(AuditWorkspace.AssetsPath(project), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    await using var writer = new FileStream(AuditWorkspace.AssetsPath(project), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 
     var exception = Assert.Throws<AuditCheckException>(() => ProjectAssetsReader.ReadWhizbangPackages(project));
 

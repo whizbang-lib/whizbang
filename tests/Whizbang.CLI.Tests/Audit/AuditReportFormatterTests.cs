@@ -68,7 +68,7 @@ public class AuditReportFormatterTests {
 
   [Test]
   public async Task FormatText_FindingWithoutCveFixOrSummary_SaysWhatIsMissingAsync() {
-    var report = new AuditReport([_core], [_finding(cve: null, summary: null, fixedVersion: null, severity: AdvisorySeverity.Unknown)], AdvisorySeverity.Moderate);
+    var report = new AuditReport([_core], [_finding(cve: null, severity: AdvisorySeverity.Unknown, summary: null, fixedVersion: null)], AdvisorySeverity.Moderate);
 
     var text = AuditReportFormatter.FormatText(report);
 

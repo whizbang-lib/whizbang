@@ -33,6 +33,25 @@ public class AuditReportTests {
   }
 
   [Test]
+  [Arguments("8.0.4", "8.0.5")]
+  [Arguments("6.0.9", "6.0.10")]
+  public async Task Build_RealOsvRecord_ReadsCveSeverityAndTheFixForTheResolvedLineAsync(string resolved, string expectedFix) {
+    // A GitHub-reviewed advisory exactly as api.osv.dev serves it (details trimmed): distribution
+    // aliases before the CVE, severity under database_specific, and the same package listed twice,
+    // once per fixed line. The command filters to Whizbang packages before it asks, but the record
+    // shape is the same for every NuGet package, so a published one pins the parsing.
+    var json = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Audit", "Fixtures", "GHSA-8g4q-xg66-9fp4.osv.json"));
+    var package = new ResolvedPackage("System.Text.Json", resolved);
+
+    var finding = _single(json, package);
+
+    await Assert.That(finding.Cve).IsEqualTo("CVE-2024-43485");
+    await Assert.That(finding.Severity).IsEqualTo(AdvisorySeverity.High);
+    await Assert.That(finding.FixedVersion).IsEqualTo(expectedFix);
+    await Assert.That(finding.Summary).StartsWith("Microsoft Security Advisory CVE-2024-43485");
+  }
+
+  [Test]
   public async Task Build_CveAmongOtherAliases_IsPickedOutAsync() {
     // Real records list distribution ids before the CVE (BIT-..., then CVE-...).
     var record = StubOsvHandler.Advisory("GHSA-test-0002", CORE)
