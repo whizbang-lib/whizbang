@@ -290,8 +290,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     // Extract connection string name from attribute, or derive from class name
-    var connectionStringName = _extractConnectionStringNameFromAttribute(attribute)
-        ?? DEFAULT_CONNECTION_STRING_NAME;
+    var explicitConnectionStringName = _extractConnectionStringNameFromAttribute(attribute);
+    var connectionStringName = explicitConnectionStringName ?? DEFAULT_CONNECTION_STRING_NAME;
 
     return new DbContextInfo(
         ClassName: symbol.Name,
@@ -301,7 +301,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Namespace: TypeNameUtilities.NamespaceName(symbol.ContainingNamespace),
         Schema: schema ?? "public", // Should never be null, but satisfy compiler
         Keys: keys,
-        ConnectionStringName: connectionStringName
+        ConnectionStringName: connectionStringName,
+        // The name earlier releases derived from the class, read as a fallback only when the context
+        // names no connection string (see WhizbangNamingConvention.ResolveConnectionStringName).
+        LegacyConnectionStringName: explicitConnectionStringName is null ? _legacyConnectionStringName(symbol.Name) : null
     );
   }
 
@@ -399,6 +402,20 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// pins it to the same value.
   /// </summary>
   private const string DEFAULT_CONNECTION_STRING_NAME = "db";
+
+  /// <summary>
+  /// The name earlier releases derived from a context's class (<c>OrderServiceDbContext</c> →
+  /// <c>orderservice-db</c>). A copy of <c>WhizbangNamingConvention.LegacyConnectionStringName</c>, which
+  /// the generator cannot reference.
+  /// </summary>
+  private static string _legacyConnectionStringName(string className) {
+    var name = className.EndsWith("DbContext", StringComparison.Ordinal) ? className[..^"DbContext".Length] : className;
+    return name.ToLowerInvariant() + "-db";
+  }
+
+  /// <summary>The legacy name as a C# expression for generated code: a string literal, or <c>null</c>.</summary>
+  private static string _legacyLiteral(DbContextInfo dbContext) =>
+    dbContext.LegacyConnectionStringName is null ? "null" : $"\"{dbContext.LegacyConnectionStringName}\"";
 
   /// <summary>
   /// Derives PostgreSQL schema name from DbContext namespace.
@@ -2135,6 +2152,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("      string? connectionStringName = null) {");
       sb.AppendLine();
       sb.AppendLine($"    var connectionStringKey = connectionStringName ?? \"{dbContext.ConnectionStringName}\";");
+      sb.AppendLine("    // Read only when nothing is configured under the key (see ResolveConnectionStringName).");
+      sb.AppendLine(dbContext.LegacyConnectionStringName is null
+        ? "    string? legacyConnectionStringKey = null;"
+        : $"    var legacyConnectionStringKey = connectionStringName is null ? \"{dbContext.LegacyConnectionStringName}\" : null;");
       sb.AppendLine();
       sb.AppendLine("    // Funnel the resolved key through to Whizbang notification options so the");
       sb.AppendLine("    // LISTEN/NOTIFY + commit-order stamper resolver looks up the same");
@@ -2142,9 +2163,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    // Mirrors the same emit in the DbContextRegistrationRegistry callback so both");
       sb.AppendLine("    // wiring paths land at the SAME key. Guarded so an explicit");
       sb.AppendLine("    // Whizbang:Database:ConnectionStringKey in appsettings still wins.");
-      sb.AppendLine("    services.PostConfigure<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>(opts => {");
+      sb.AppendLine("    services.AddOptions<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>().PostConfigure<System.IServiceProvider>((opts, sp) => {");
       sb.AppendLine("      if (string.IsNullOrWhiteSpace(opts.ConnectionStringKey)) {");
-      sb.AppendLine("        opts.ConnectionStringKey = connectionStringKey;");
+      sb.AppendLine("        opts.ConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(");
+      sb.AppendLine("          sp.GetService<IConfiguration>(), connectionStringKey, legacyConnectionStringKey);");
       sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
       sb.AppendLine("    });");
       sb.AppendLine();
@@ -2173,8 +2195,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    // ChangeToken.OnChange subscription downstream.");
       sb.AppendLine("    services.AddSingleton<NpgsqlDataSource>(sp => {");
       sb.AppendLine("      var config = sp.GetRequiredService<IConfiguration>();");
-      sb.AppendLine("      var connectionString = config.GetConnectionString(connectionStringKey)");
-      sb.AppendLine("          ?? throw new InvalidOperationException($\"Connection string '{connectionStringKey}' not found in configuration.\");");
+      sb.AppendLine("      var resolvedConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(");
+      sb.AppendLine("          config, connectionStringKey, legacyConnectionStringKey,");
+      sb.AppendLine("          sp.GetService<global::Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger(\"Whizbang.ConnectionStrings\"));");
+      sb.AppendLine("      var connectionString = config.GetConnectionString(resolvedConnectionStringKey)");
+      sb.AppendLine("          ?? throw new InvalidOperationException($\"Connection string '{resolvedConnectionStringKey}' not found in configuration.\");");
       sb.AppendLine();
       sb.AppendLine("      // Apply connection pool settings from configuration (ConnectionPool section)");
       sb.AppendLine("      var connStringBuilder = new NpgsqlConnectionStringBuilder(connectionString);");
@@ -2284,6 +2309,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("      // Use override if provided, otherwise fall back to attribute/derived default");
     sb.AppendLine($"      var connectionStringKey = connectionStringNameOverride ?? \"{defaultConnectionStringKey}\";");
+    sb.AppendLine("      // Read only when nothing is configured under the key (see ResolveConnectionStringName).");
+    sb.AppendLine(dbContext.LegacyConnectionStringName is null
+      ? "      string? legacyConnectionStringKey = null;"
+      : $"      var legacyConnectionStringKey = connectionStringNameOverride is null ? \"{dbContext.LegacyConnectionStringName}\" : null;");
     sb.AppendLine();
     sb.AppendLine("      // Funnel the resolved key through to Whizbang notification options so the");
     sb.AppendLine("      // LISTEN/NOTIFY + commit-order stamper resolver looks up the same");
@@ -2293,9 +2322,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      // the class-name convention), and notifications silently fall back to the pooled");
     sb.AppendLine("      // (pgbouncer) connection. Guarded so an explicit Whizbang:Database:ConnectionStringKey");
     sb.AppendLine("      // in appsettings still wins.");
-    sb.AppendLine("      services.PostConfigure<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>(opts => {");
+    sb.AppendLine("      services.AddOptions<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>().PostConfigure<System.IServiceProvider>((opts, sp) => {");
     sb.AppendLine("        if (string.IsNullOrWhiteSpace(opts.ConnectionStringKey)) {");
-    sb.AppendLine("          opts.ConnectionStringKey = connectionStringKey;");
+    sb.AppendLine("          opts.ConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(");
+    sb.AppendLine("            sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>(), connectionStringKey, legacyConnectionStringKey);");
     sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
     sb.AppendLine("      });");
     sb.AppendLine();
@@ -2314,8 +2344,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      // IFeatureManager / appsettings reloadOnChange / AAC refresh all stay alive.");
     sb.AppendLine("      services.AddSingleton<Npgsql.NpgsqlDataSource>(sp => {");
     sb.AppendLine("        var config = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();");
-    sb.AppendLine("        var connectionString = config.GetConnectionString(connectionStringKey)");
-    sb.AppendLine("            ?? throw new InvalidOperationException($\"Connection string '{connectionStringKey}' not found in configuration.\");");
+    sb.AppendLine("        var resolvedConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(");
+    sb.AppendLine("            config, connectionStringKey, legacyConnectionStringKey,");
+    sb.AppendLine("            sp.GetService<global::Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger(\"Whizbang.ConnectionStrings\"));");
+    sb.AppendLine("        var connectionString = config.GetConnectionString(resolvedConnectionStringKey)");
+    sb.AppendLine("            ?? throw new InvalidOperationException($\"Connection string '{resolvedConnectionStringKey}' not found in configuration.\");");
     sb.AppendLine();
     sb.AppendLine("        // Apply connection pool settings from configuration (ConnectionPool section)");
     sb.AppendLine("        var connStringBuilder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);");
@@ -2395,11 +2428,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("      // Convention: try \"{Name}-init\" connection string first (direct Postgres, bypasses PgBouncer)");
     sb.AppendLine("      var config = scope.ServiceProvider.GetService<Microsoft.Extensions.Configuration.IConfiguration>();");
-    sb.AppendLine($"      var initConnStr = config?.GetConnectionString(\"{defaultConnectionStringKey}-init\");");
+    sb.AppendLine($"      var initConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(config, \"{defaultConnectionStringKey}\", {_legacyLiteral(dbContext)}, logger);");
+    sb.AppendLine("      var initConnStr = config?.GetConnectionString(initConnectionStringKey + \"-init\");");
     sb.AppendLine();
     sb.AppendLine("      if (initConnStr != null) {");
     sb.AppendLine("        if (logger is not null) {");
-    sb.AppendLine($"          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.UsingInitConnectionString(logger, \"{defaultConnectionStringKey}\");");
+    sb.AppendLine("          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.UsingInitConnectionString(logger, initConnectionStringKey);");
     sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_8);
     sb.AppendLine("        // Build dedicated DbContext with direct Postgres connection for initialization");
     sb.AppendLine("        var initDsBuilder = new Npgsql.NpgsqlDataSourceBuilder(initConnStr);");
@@ -3837,7 +3871,8 @@ internal sealed record DbContextInfo(
     string Namespace,
     string Schema,
     string[] Keys,
-    string ConnectionStringName);
+    string ConnectionStringName,
+    string? LegacyConnectionStringName = null);
 
 /// <summary>
 /// Information about a discovered perspective and its TModel type.

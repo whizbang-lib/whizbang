@@ -183,4 +183,28 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
     var resolution = NotificationConnectionStringResolver.Resolve(resolved, config, fallback: null);
     await Assert.That(resolution.ConnectionString).IsEqualTo(PRODUCTION_LIKE_DIRECT_STRING);
   }
+
+  /// <summary>
+  /// A service still configured under the name earlier releases derived from the context's class
+  /// (WorkCoordinationDbContext → workcoordination-db) keeps its notifications on the direct
+  /// connection until the keys are renamed, instead of silently falling back to the pooled one.
+  /// </summary>
+  [Test]
+  public async Task WithEFCore_WithoutAName_FallsBackToTheLegacyNameWhenDbIsAbsentAsync() {
+    var config = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["ConnectionStrings:workcoordination-db-direct"] = PRODUCTION_LIKE_DIRECT_STRING,
+      })
+      .Build();
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(config);
+    _ = new Whizbang.Core.Perspectives.WhizbangPerspectiveBuilder(services).WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    var resolved = sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value;
+
+    await Assert.That(resolved.ConnectionStringKey).IsEqualTo("workcoordination-db");
+    var resolution = NotificationConnectionStringResolver.Resolve(resolved, config, fallback: null);
+    await Assert.That(resolution.ConnectionString).IsEqualTo(PRODUCTION_LIKE_DIRECT_STRING);
+  }
 }

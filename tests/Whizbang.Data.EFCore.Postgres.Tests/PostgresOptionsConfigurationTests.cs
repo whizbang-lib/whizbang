@@ -245,6 +245,50 @@ public class PostgresOptionsConfigurationTests {
       .Because("an operator retunes the database's cap from configuration, without a redeploy");
   }
 
+  /// <summary>
+  /// A service still configured under the derived name keeps its per-database section
+  /// (Whizbang:Postgres:&lt;legacy name&gt;) until its keys are renamed.
+  /// </summary>
+  [Test]
+  public async Task Driver_WithOnlyTheLegacyName_BindsTheLegacySectionAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton(_config(
+      ("ConnectionStrings:driverselectortest-db", OFFLINE_CONNECTION_STRING),
+      ("Whizbang:Postgres:driverselectortest-db:MaxInFlightCommands", "6")));
+    services.AddWhizbang();
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddSingleton(dataSource);
+    services.AddDbContext<DriverSelectorTestDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services)
+      .WithEFCore<DriverSelectorTestDbContext>()
+      .WithDriver.Postgres;
+
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetRequiredService<IOptions<PostgresOptions>>().Value.MaxInFlightCommands).IsEqualTo(6);
+  }
+
+  [Test]
+  public async Task LegacySectionFallback_IsReportedOnceAsync() {
+    var logged = new List<string>();
+    var services = new ServiceCollection();
+    services.AddLogging(b => b.AddProvider(new ListLoggerProvider(logged)));
+    services.AddSingleton(_config(
+      ("ConnectionStrings:orders-db", OFFLINE_CONNECTION_STRING),
+      ("Whizbang:Postgres:orders-db:MaxInFlightCommands", "4")));
+    services.AddWhizbangPostgresOptionsBinding("db", "orders-db");
+
+    await using var provider = services.BuildServiceProvider();
+    var unnamed = provider.GetRequiredService<IOptions<PostgresOptions>>().Value;
+    var named = provider.GetRequiredService<IOptionsMonitor<PostgresOptions>>().Get("db");
+
+    await Assert.That(unnamed.MaxInFlightCommands).IsEqualTo(4);
+    await Assert.That(named.MaxInFlightCommands).IsEqualTo(4);
+    await Assert.That(logged).Count().IsEqualTo(1);
+    await Assert.That(logged[0]).Contains("orders-db");
+  }
+
   [Test]
   public async Task AddWhizbangPostgresOptionsBinding_RejectsMissingArgumentsAsync() {
     await Assert.That(() => PostgresOptionsConfiguration.AddWhizbangPostgresOptionsBinding(null!, "orders-db"))

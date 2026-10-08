@@ -285,6 +285,72 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
   }
 
   /// <summary>
+  /// A context that names no connection string falls back to the name earlier releases derived from its
+  /// class while its keys are renamed: every generated lookup (pool, notifications, -init) resolves the
+  /// name through WhizbangNamingConvention.ResolveConnectionStringName with that legacy name.
+  /// </summary>
+  [Test]
+  public async Task Generator_WithoutConnectionStringName_FallsBackToTheLegacyNameAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_SNIPPET}}
+
+      [WhizbangDbContext]
+      public class OrderServiceDbContext : DbContext {
+        public OrderServiceDbContext(DbContextOptions<OrderServiceDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var turnkey = result.GeneratedSources.First(s => s.HintName.Contains("OrderServiceDbContextExtensions")).SourceText.ToString();
+    var registration = result.GeneratedSources.First(s => s.HintName.Contains("EFCoreModelRegistration")).SourceText.ToString();
+    foreach (var text in new[] { turnkey, registration }) {
+      await Assert.That(text).Contains("? \"orderservice-db\" : null");
+      await Assert.That(text).Contains("WhizbangNamingConvention.ResolveConnectionStringName(");
+    }
+    await Assert.That(registration).Contains("ResolveConnectionStringName(config, \"db\", \"orderservice-db\"");
+  }
+
+  /// <summary>A context that names its connection string has no legacy name to fall back to.</summary>
+  [Test]
+  public async Task Generator_WithConnectionStringName_HasNoLegacyFallbackAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_SNIPPET}}
+
+      [WhizbangDbContext(ConnectionStringName = "reporting")]
+      public class ReportingDbContext : DbContext {
+        public ReportingDbContext(DbContextOptions<ReportingDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var registration = result.GeneratedSources.First(s => s.HintName.Contains("EFCoreModelRegistration")).SourceText.ToString();
+    await Assert.That(registration).DoesNotContain("reporting-db");
+    await Assert.That(registration).Contains("ResolveConnectionStringName(config, \"reporting\", null");
+  }
+
+  /// <summary>
   /// Schema initialization takes its command timeout from the initialization connection string when
   /// that string sets one (SchemaCommandTimeout.Resolve), and every schema command uses that one value
   /// rather than a fixed constant.
@@ -355,8 +421,10 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
     await Assert.That(registration).IsNotNull();
     var registrationText = registration!.SourceText.ToString();
     await Assert.That(registrationText).Contains("connectionStringNameOverride ?? \"db\"");
-    await Assert.That(registrationText).Contains("GetConnectionString(\"db-init\")");
-    await Assert.That(registrationText).DoesNotContain("orderservice-db");
+    await Assert.That(registrationText).Contains("ResolveConnectionStringName(config, \"db\",");
+    await Assert.That(registrationText).Contains("GetConnectionString(initConnectionStringKey + \"-init\")");
+    await Assert.That(registrationText).DoesNotContain("?? \"orderservice-db\"")
+      .Because("the derived name is only a fallback, never the default");
   }
 
   #endregion
