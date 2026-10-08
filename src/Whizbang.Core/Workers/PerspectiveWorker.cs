@@ -5569,13 +5569,6 @@ public class PerspectiveWorkerOptions {
   public int AbandonStaleInstanceThresholdSeconds { get; set; } = 30;
 
   /// <summary>
-  /// Optional metadata to attach to this service instance.
-  /// Can include version, environment, etc.
-  /// Supports any JSON value type via JsonElement.
-  /// </summary>
-  public Dictionary<string, JsonElement>? InstanceMetadata { get; set; }
-
-  /// <summary>
   /// Keep completed checkpoints for debugging (default: false).
   /// When enabled, completed checkpoints are preserved instead of deleted.
   /// </summary>
