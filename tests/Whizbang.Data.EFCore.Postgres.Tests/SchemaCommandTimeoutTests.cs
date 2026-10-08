@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// application's short query timeout must never reach it.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/SchemaCommandTimeout.cs</code-under-test>
+[Category("Shard3")]
 public class SchemaCommandTimeoutTests {
   [Test]
   [Arguments("Host=db;Command Timeout=900", 900)]
