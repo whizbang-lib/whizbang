@@ -771,6 +771,50 @@ public class ServiceCollectionExtensionsTests {
     await Assert.That(tracingOptions.TracedMessages["ReseedSystemEvent"]).IsEqualTo(TraceVerbosity.Verbose);
   }
 
+  /// <summary>
+  /// The two span switches are operator knobs like the rest of the section: an appsettings or
+  /// environment value turns each one on without a rebuild.
+  /// </summary>
+  [Test]
+  [Arguments("true", true)]
+  [Arguments("false", false)]
+  public async Task AddWhizbang_TracingSpanSwitches_BoundFromIConfigurationAsync(string value, bool expected) {
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["Whizbang:Tracing:EnableWorkerBatchSpans"] = value,
+        ["Whizbang:Tracing:EnablePerspectiveEventSpans"] = value,
+      })
+      .Build();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IConfiguration>(configuration);
+    _ = services.AddWhizbang();
+
+    var tracingOptions = services.BuildServiceProvider().GetRequiredService<IOptions<TracingOptions>>().Value;
+
+    await Assert.That(tracingOptions.EnableWorkerBatchSpans).IsEqualTo(expected);
+    await Assert.That(tracingOptions.EnablePerspectiveEventSpans).IsEqualTo(expected);
+  }
+
+  [Test]
+  public async Task AddWhizbang_TracingSpanSwitches_UnreadableValueKeepsTheDefaultAsync() {
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["Whizbang:Tracing:EnableWorkerBatchSpans"] = "sometimes",
+        ["Whizbang:Tracing:EnablePerspectiveEventSpans"] = "",
+      })
+      .Build();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IConfiguration>(configuration);
+    _ = services.AddWhizbang();
+
+    var tracingOptions = services.BuildServiceProvider().GetRequiredService<IOptions<TracingOptions>>().Value;
+
+    await Assert.That(tracingOptions.EnableWorkerBatchSpans).IsFalse();
+    await Assert.That(tracingOptions.EnablePerspectiveEventSpans).IsFalse();
+  }
+
   [Test]
   public async Task AddWhizbang_TracingOptions_BoundFromIConfigurationAsync() {
     // Arrange

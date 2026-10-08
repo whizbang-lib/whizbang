@@ -27,7 +27,7 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.AddServiceDefaults();
 
 // Get connection strings from Aspire configuration
-// Note: PostgreSQL connection string "inventorydb" is resolved by .WithEFCore<InventoryDbContext>().WithDriver.Postgres
+// Note: PostgreSQL connection string "db" is resolved by .WithEFCore<InventoryDbContext>().WithDriver.Postgres
 
 #if AZURESERVICEBUS
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")

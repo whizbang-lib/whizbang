@@ -327,7 +327,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Add connection string to configuration for generated turnkey extensions
     // The generated code derives "inventory-db" from "InventoryDbContext"
     builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
-      ["ConnectionStrings:inventory-db"] = postgresConnectionString
+      ["ConnectionStrings:db"] = postgresConnectionString
     });
 
     // Register service instance provider (unique instance ID per test)
@@ -361,7 +361,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
     // - AddDbContext<InventoryDbContext> with UseNpgsql
     // - IDbContextFactory<InventoryDbContext> singleton registration
-    // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
+    // Connection string is provided via config ("ConnectionStrings:db" above)
 
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
@@ -473,7 +473,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Add connection string to configuration for generated turnkey extensions
     // The generated code derives "bff-db" from "BffDbContext"
     builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
-      ["ConnectionStrings:bff-db"] = postgresConnectionString
+      ["ConnectionStrings:db"] = postgresConnectionString
     });
 
     // Register service instance provider (unique instance ID per test)
@@ -513,7 +513,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
     // - AddDbContext<BffDbContext> with UseNpgsql
     // - IDbContextFactory<BffDbContext> singleton registration
-    // Connection string is provided via config ("ConnectionStrings:bff-db" above)
+    // Connection string is provided via config ("ConnectionStrings:db" above)
 
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services

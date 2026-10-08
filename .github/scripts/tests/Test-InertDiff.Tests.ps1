@@ -17,6 +17,7 @@ Describe 'inert-paths.txt' {
       @{ path = 'scripts/unbounded-fanout-baseline.txt' }, @{ path = 'src/Whizbang.Data.Postgres/Migrations/constants.txt' },
       @{ path = 'src/Whizbang.Data.Postgres/Migrations/001_Initial.sql' },
       @{ path = 'tests/Whizbang.Observability.Tests/Baselines/metrics.txt' },
+      @{ path = 'tests/Whizbang.Documentation.Tests/Baselines/configuration-keys.txt' },
       @{ path = 'samples/ECommerce/tests/ECommerce.Integration.TestUtilities/Fixtures/seed.json' },
       @{ path = 'tests/Whizbang.Transports.HotChocolate.Tests/Fixtures/schema.graphql' },
       # build, version and analysis inputs

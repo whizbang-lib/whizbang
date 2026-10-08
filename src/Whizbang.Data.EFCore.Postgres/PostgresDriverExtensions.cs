@@ -382,8 +382,7 @@ public static class PostgresDriverExtensions {
 
         // TURNKEY: Apply the same connection-string-name convention to the
         // notification options that .WithDriver.Postgres already uses for EF
-        // Core (derived from TDbContext via WithEFCore<T>(...) — e.g.,
-        // AppServiceDbContext → "appservice-db"). The resolver will then try
+        // Core (the name passed to WithEFCore<T>(...), else "db"). The resolver will then try
         // ConnectionStrings:{name}-direct first (the bypass-pgbouncer variant
         // that some deployments already configure) and fall back to
         // ConnectionStrings:{name}. Operators only need to override this in
@@ -392,7 +391,7 @@ public static class PostgresDriverExtensions {
         // Late-binding via PostConfigure so an explicit
         // Whizbang:Database:ConnectionStringKey in appsettings still wins.
         var derivedConnectionStringName = selector.ConnectionStringName
-          ?? _deriveConnectionStringName(selector.DbContextType.Name);
+          ?? Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
         if (!string.IsNullOrWhiteSpace(derivedConnectionStringName)) {
           // #1012: the same name keys this database's PostgresOptions section,
           // Whizbang:Postgres:<name>, which overrides the code values per key.
@@ -408,16 +407,6 @@ public static class PostgresDriverExtensions {
       }
     }
   }
-
-  /// <summary>
-  /// Thin shim around <see cref="Whizbang.Core.Naming.WhizbangNamingConvention.DeriveConnectionStringName"/>
-  /// so existing call sites and tests don't need to change. The actual convention
-  /// lives in <c>Whizbang.Core</c> so it can be referenced from any consumer code
-  /// (and re-used by the source generator's regression test) without taking a
-  /// runtime dependency on this assembly.
-  /// </summary>
-  internal static string _deriveConnectionStringName(string dbContextClassName)
-    => Whizbang.Core.Naming.WhizbangNamingConvention.DeriveConnectionStringName(dbContextClassName);
 
   /// <summary>
   /// Lightweight event-store DB reachability probe: opens a pooled connection and runs <c>SELECT 1</c>.

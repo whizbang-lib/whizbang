@@ -424,6 +424,16 @@ internal sealed class ConfigureCommitOrderStamperOptionsFromConfiguration(IConfi
         System.Globalization.CultureInfo.InvariantCulture, out var lockKey)) {
       options.AdvisoryLockKey = lockKey;
     }
+
+    if (TimeSpan.TryParse(section["FencedRetryInterval"], System.Globalization.CultureInfo.InvariantCulture, out var fencedRetry)) {
+      options.FencedRetryInterval = fencedRetry;
+    }
+
+    if (TimeSpan.TryParse(section["NotifyHealthyPollingInterval"], System.Globalization.CultureInfo.InvariantCulture, out var notifyHealthy)) {
+#pragma warning disable CS0618 // obsolete but still honored, so still settable until it is removed
+      options.NotifyHealthyPollingInterval = notifyHealthy;
+#pragma warning restore CS0618
+    }
   }
 }
 
