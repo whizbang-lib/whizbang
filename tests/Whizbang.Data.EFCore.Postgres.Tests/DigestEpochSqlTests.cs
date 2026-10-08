@@ -92,6 +92,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     body.Parameters.AddWithValue("meta",
       deliveryGuarantee is int g ? $"{{\"deliveryGuarantee\":{g}}}" : "{}");
     await body.ExecuteNonQueryAsync();
+    await EmitChainDigestFold.FoldAsync(conn, eventId);
   }
 
   /// <summary>Seeds one RECEIVED-lane event carrying the origin's stamp; the local commit sequence
@@ -121,6 +122,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
         """;
     body.Parameters.AddWithValue("event", eventId);
     await body.ExecuteNonQueryAsync();
+    await EmitChainDigestFold.FoldAsync(conn, eventId);
   }
 
   private static async Task<int> _closeAsync(NpgsqlConnection conn, int settleSeconds = 3600, int maxEpochs = 100) {

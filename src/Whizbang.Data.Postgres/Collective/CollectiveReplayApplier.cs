@@ -97,9 +97,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     // Each collective's stream and commit position: the stream says which collectives share an ordering key, the
     // position says the order the live sink applied them in.
     var positions = await _toListAsync(
-      _eventStoreQuery.Query
-        .Where(r => typeNames.Contains(r.EventType) && r.Scope!.TenantId == tenantId)
-        .Select(r => new CollectivePosition(r.StreamId, r.Id, r.CommitSequence)),
+      CollectivePositions(_eventStoreQuery.Query, typeNames, tenantId),
       cancellationToken).ConfigureAwait(false);
     if (positions.Count == 0) {
       return streamEvents;
@@ -159,7 +157,25 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   }
 
   /// <summary>Where one collective sits: its stream, its id and its commit sequence.</summary>
-  private sealed record CollectivePosition(Guid StreamId, Guid EventId, long? CommitSequence);
+  internal sealed record CollectivePosition(Guid StreamId, Guid EventId, long? CommitSequence);
+
+  /// <summary>
+  /// The event-store read that finds every collective of <paramref name="typeNames"/> in one tenant, and where each
+  /// one sits.
+  /// </summary>
+  /// <remarks>
+  /// A provider translates <c>Scope.TenantId</c> to <c>scope ->> 't'</c> with the key as a literal, which is the
+  /// expression <c>idx_event_store_type_tenant</c> is built on, and the type list to <c>event_type = ANY(...)</c>,
+  /// the index's leading key. A key bound as a parameter could never match that index, so the read would scan
+  /// every row of the requested types. Kept as its own member so the emitted SQL and its plan can be pinned.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectivePositionQueryPlanTests.cs:CollectivePositions_SendsTheTenantKeyAsALiteralAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectivePositionQueryPlanTests.cs:CollectivePositions_OnALargeStore_ReadsTheTypeAndTenantIndexAsync</tests>
+  internal static IQueryable<CollectivePosition> CollectivePositions(
+      IQueryable<EventStoreRecord> events, List<string> typeNames, string? tenantId) =>
+    events
+      .Where(r => typeNames.Contains(r.EventType) && r.Scope!.TenantId == tenantId)
+      .Select(r => new CollectivePosition(r.StreamId, r.Id, r.CommitSequence));
 
   /// <inheritdoc/>
   public object ApplyInMemory(Type modelType, object currentModel, Guid streamId, IEvent collectiveEvent) {

@@ -140,6 +140,34 @@ cluster-wide, not per backend: autovacuum's reads of the pages a fill just wrote
 measured window and read as poll cost. Vacuum the fill before measuring, or the number is not the
 poll's. Tuple counters do not have this problem.
 
+## Finding 1, round three: the outbox acquisition walked a live peer's backlog
+
+The inbox acquisition got its window in 159; the outbox acquisition did not. It chose its heads by
+walking every pending outbox row in arrival order and testing each for ownership until it had a
+batch. Under a load the oldest pending rows are the unleased tails of streams a live peer owns (the
+peer leases a run at a time, 171), so every other instance's poll walked all of them and found
+nothing. Two calls captured with `EXPLAIN` on a deployed database visited 79,590,235 and 79,583,173
+shared buffers to return 13 and 29 rows, almost all cache hits: the same pages, every poll.
+
+Migration 194 gives it the inbox's shape: two lanes (unowned rows by arrival, expired leases by
+expiry), each stopped at eight times the heads the call chooses, with ownership tested against sets
+built once per call. `OutboxAcquisitionWindowSqlTests` gates the call at 750 shared buffers over a
+40,000-row peer backlog (2,664 before), and `OutboxAcquisitionCostScenarioTests` measures 105 outbox
+blocks a poll at both depths (726 and 2,673 before).
+
+The trade is the inbox's and is pinned by a test: a takeable stream whose head arrived behind more
+of a live peer's rows than the window holds is not reached until those rows drain.
+
+A long claim also held the instance's own registration row whenever the heartbeat had gone stale:
+`claim_work`'s self-heal writes `last_heartbeat_at` inside the claim's transaction, so
+`record_heartbeat` for that instance waited for the whole claim (measured: 5.6 s behind a claim
+held open for 6 s, against 0.2 s with a fresh registration). A slow claim made the heartbeat late,
+and a late heartbeat made the next claim hold the row. Bounding the claim bounds the wait; it does
+not remove the coupling.
+
+**Rule:** the same as round two, for every acquisition: the bound is on rows examined, not on rows
+found.
+
 ## Finding 2: maintenance ran at the peak
 
 `close_digest_epochs` occupied about two backends on the consumer and one on the producer for a
@@ -157,6 +185,14 @@ whole ten-minute sample; `perform_maintenance` about two on the producer. Two ca
   every count.
 
 **Rule:** settledness is measured on every work table, and the sweep says why it waited.
+
+The closure still read the whole event store on every call to learn which lanes exist (`SELECT
+DISTINCT COALESCE(origin_service_id, zero)`, no index on the expression): 138,603 buffers and 622 ms
+per call on a 4,000,000-event store with nothing left to close. Migration 193 reads the lanes from
+what already records them (the frontier rows, the digest buckets, the integrity ledger and the lane
+index), one index entry per lane: 107 buffers. A local lane none of whose events has a digest bucket
+is not found until one is folded; `DigestEpochLaneDiscoverySqlTests` pins both the cost and that
+decision.
 
 ## Finding 3: the stamper sorted every unstamped row on every wake
 
