@@ -303,3 +303,21 @@ stamp.backlog_40000.wh_event_store.blocks_per_stamped_row	29.6	blocks/row		recor
 stamp.backlog_40000.wh_event_store.seq_scans_per_stamp	0	scans/stamp		recorded: was 2 before 197
 stamp.backlog_40000.wh_event_store.tuples_read_per_stamped_row	4	tuples/row	8	GATED: was 80 before 197
 
+# --- Liveness calls under concurrent load -----------------------------------------------------
+# Claims for two instances, heartbeats, the holder's renewal vote and a peer's vote, the lapsed-
+# bridge expiry, the due-schedule claim and the retry notification, each on its own connection and
+# all at once, while the commit-order stamper runs 40 fenced stamps of 1,000 over 200,000 unstamped
+# events. A sampler names each wait's blocking statement (pg_blocking_pids); the run prints them.
+#
+# Sample counts depend on the machine and the run's length, so only one is gated: the bridge expiry
+# waited 4,523 samples before 198, behind the fenced stamper's transaction and behind the holder's
+# vote, and now looks before it locks, so it waits for nothing. The holder's vote still waits for its
+# own fenced stamp by design (the fence holds the role row FOR SHARE): 4,515 samples before 197 and
+# 198, behind the stamper and the expiry; after, behind the stamper only, whose transaction now costs
+# what its batch stamps. Heartbeats, schedule claims and retry notifications waited for nothing.
+liveness.under_load.notify_scheduled_retry_due.lock_wait_samples	0	samples		recorded
+liveness.under_load.record_heartbeat.lock_wait_samples	0	samples		recorded
+liveness.under_load.stamps	40	stamps		recorded
+liveness.under_load.wh_claim_due_schedules.lock_wait_samples	0	samples		recorded
+liveness.under_load.wh_end_lapsed_bridge.lock_wait_samples	0	samples	0	GATED: was 4,523 before 198; nothing to end must wait for nothing
+liveness.under_load.wh_vote_role.lock_wait_samples	2064	samples		recorded: was 4,515 before 197 and 198; the remaining waits are behind the holder's own fenced stamp
