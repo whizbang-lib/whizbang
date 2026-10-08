@@ -185,6 +185,13 @@ public class JsonbContainmentSqlMatrixTests {
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options;
 
+  /// <summary>
+  /// The mode is process static and <see cref="_newContext"/> sets it, so it is put back after every test: a class that
+  /// runs later in the same process must find the default, not whichever mode this class tested last.
+  /// </summary>
+  [After(Test)]
+  public void RestoreTheContainmentMode() => JsonbContainmentSwitch.Reset();
+
   private static MatrixDbContext _newContext(ContainmentMode mode) {
     PhysicalFieldRegistry.Register<MatrixModel>("PhysGuid", "phys_guid");
     PhysicalFieldRegistry.Register<MatrixModel>("PhysInt", "phys_int");

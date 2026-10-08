@@ -261,15 +261,24 @@ public class PhysicalJsonbContainmentSqlTests {
     [JsonIgnore]
     public JsonbBare? Bare { get; set; }
 
-    private static int _registered;
+    private static int _contextsRegistered;
 
+    /// <summary>
+    /// Registers the model's serializer contexts once and its column mappings on every call.
+    /// </summary>
+    /// <remarks>
+    /// The two halves differ on purpose. A serializer context is appended to a registry that has no removal, so it is
+    /// registered once per process. The column mappings live in <see cref="PhysicalFieldRegistry"/>, which other test
+    /// classes in this assembly clear before each of their tests, so they are put back every time: registering a
+    /// mapping overwrites it, and a once-per-process guard here made every later test read the columns as document
+    /// members after any of those classes had run.
+    /// </remarks>
     internal static void Register() {
-      if (Interlocked.Exchange(ref _registered, 1) == 1) {
-        return;
+      if (Interlocked.Exchange(ref _contextsRegistered, 1) == 0) {
+        JsonContextRegistry.RegisterContext(JsonbColumnsJsonContext.Default);
+        JsonContextRegistry.RegisterContext(new BareResolver());
       }
 
-      JsonContextRegistry.RegisterContext(JsonbColumnsJsonContext.Default);
-      JsonContextRegistry.RegisterContext(new BareResolver());
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(GridFilter), "grid_filter");
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Counts), "counts");
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Tags), "tags");
