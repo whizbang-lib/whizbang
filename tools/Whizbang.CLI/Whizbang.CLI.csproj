@@ -20,7 +20,6 @@
     <ToolCommandName>whizbang</ToolCommandName>
     <PackageId>SoftwareExtravaganza.Whizbang.CLI</PackageId>
     <Version>0.1.0</Version>
-    <Authors>Whizbang Contributors</Authors>
     <Description>Command-line tool for Whizbang schema management and utilities</Description>
     <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
     <WhizbangPackageTier>Application</WhizbangPackageTier>

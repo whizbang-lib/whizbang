@@ -16,7 +16,6 @@
     <ToolCommandName>whizbang-lsp</ToolCommandName>
     <PackageId>SoftwareExtravaganza.Whizbang.LanguageServer</PackageId>
     <Version>0.1.0</Version>
-    <Authors>Whizbang Contributors</Authors>
     <Description>Language Server Protocol implementation for Whizbang - provides IDE features, debug session awareness, and transport keepalive</Description>
     <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
     <WhizbangPackageTier>Application</WhizbangPackageTier>
