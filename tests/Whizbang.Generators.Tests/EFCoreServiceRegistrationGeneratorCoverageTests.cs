@@ -321,6 +321,37 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
     await Assert.That(registration).Contains("ResolveConnectionStringName(config, \"db\", \"orderservice-db\"");
   }
 
+  /// <summary>
+  /// The derived name earlier releases used strips "DbContext" only when the class name ends with it;
+  /// any other class name is lowercased with "-db" appended.
+  /// </summary>
+  [Test]
+  public async Task Generator_ClassWithoutDbContextSuffix_FallsBackToItsLowercasedNameAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_SNIPPET}}
+
+      [WhizbangDbContext]
+      public class InventoryStore : DbContext {
+        public InventoryStore(DbContextOptions<InventoryStore> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var registration = result.GeneratedSources.First(s => s.HintName.Contains("EFCoreModelRegistration")).SourceText.ToString();
+    await Assert.That(registration).Contains("ResolveConnectionStringName(config, \"db\", \"inventorystore-db\"");
+  }
+
   /// <summary>A context that names its connection string has no legacy name to fall back to.</summary>
   [Test]
   public async Task Generator_WithConnectionStringName_HasNoLegacyFallbackAsync() {

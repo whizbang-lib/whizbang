@@ -207,4 +207,28 @@ public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
     var resolution = NotificationConnectionStringResolver.Resolve(resolved, config, fallback: null);
     await Assert.That(resolution.ConnectionString).IsEqualTo(PRODUCTION_LIKE_DIRECT_STRING);
   }
+
+  /// <summary>
+  /// A name passed to WithEFCore is the database's name outright: notifications read it, with no
+  /// fallback to the class-derived name even when only that one is configured.
+  /// </summary>
+  [Test]
+  public async Task WithEFCore_WithAName_ReadsThatNameWithoutFallbackAsync() {
+    var config = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["ConnectionStrings:reporting-direct"] = PRODUCTION_LIKE_DIRECT_STRING,
+        ["ConnectionStrings:workcoordination-db-direct"] = PRODUCTION_LIKE_POOLED_STRING,
+      })
+      .Build();
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(config);
+    _ = new Whizbang.Core.Perspectives.WhizbangPerspectiveBuilder(services).WithEFCore<WorkCoordinationDbContext>("reporting").WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    var resolved = sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value;
+
+    await Assert.That(resolved.ConnectionStringKey).IsEqualTo("reporting");
+    var resolution = NotificationConnectionStringResolver.Resolve(resolved, config, fallback: null);
+    await Assert.That(resolution.ConnectionString).IsEqualTo(PRODUCTION_LIKE_DIRECT_STRING);
+  }
 }
