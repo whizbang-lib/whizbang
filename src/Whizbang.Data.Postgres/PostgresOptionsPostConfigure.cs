@@ -19,11 +19,13 @@ namespace Whizbang.Data.Postgres;
 internal sealed class PostgresOptionsPostConfigure(
   IConfiguration configuration,
   PostgresDefaultDatabase defaultDatabase,
+  IEnumerable<PostgresLegacyDatabaseName> legacyNames,
   ILogger<PostgresOptionsPostConfigure>? logger = null)
   : IPostConfigureOptions<PostgresOptions> {
 
   private const string RETIRED_COMMAND_TIMEOUT_KEY = "CommandTimeoutSeconds";
   private int _retiredKeyReported;
+  private int _legacyNameReported;
 
   public void PostConfigure(string? name, PostgresOptions options) {
     ArgumentNullException.ThrowIfNull(options);
@@ -31,9 +33,25 @@ internal sealed class PostgresOptionsPostConfigure(
     var root = configuration.GetSection(PostgresOptionsConfiguration.CONFIGURATION_SECTION);
     // A key directly under the section is the default for every database, so a service with one
     // database need not repeat its name; a key under the database's own name overrides it.
+    var section = root.GetSection(_resolve(database));
     _bind(root, options);
-    _bind(root.GetSection(database), options);
-    _reportRetiredKey(root, root.GetSection(database));
+    _bind(section, options);
+    _reportRetiredKey(root, section);
+  }
+
+  /// <summary>
+  /// The section name for <paramref name="database"/>: its own, or the name an earlier release derived
+  /// while only that one is configured. Reported once, like the connection pool's own fallback.
+  /// </summary>
+  private string _resolve(string database) {
+    var legacy = legacyNames.LastOrDefault(l => l.Name == database)?.LegacyName;
+    var resolved = Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(configuration, database, legacy);
+    if (resolved != database && Interlocked.Exchange(ref _legacyNameReported, 1) == 0) {
+      // Resolve again with the logger, which reports the fallback once.
+      Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(configuration, database, legacy, logger);
+    }
+
+    return resolved;
   }
 
   /// <summary>

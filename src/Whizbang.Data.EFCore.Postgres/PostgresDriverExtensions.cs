@@ -390,18 +390,22 @@ public static class PostgresDriverExtensions {
         //
         // Late-binding via PostConfigure so an explicit
         // Whizbang:Database:ConnectionStringKey in appsettings still wins.
-        var derivedConnectionStringName = selector.ConnectionStringName
+        var connectionStringName = selector.ConnectionStringName
           ?? Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
-        if (!string.IsNullOrWhiteSpace(derivedConnectionStringName)) {
-          // #1012: the same name keys this database's PostgresOptions section,
-          // Whizbang:Postgres:<name>, which overrides the code values per key.
-          selector.Services.AddWhizbangPostgresOptionsBinding(derivedConnectionStringName);
-          selector.Services.PostConfigure<WhizbangNotificationOptions>(options => {
-            if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
-              options.ConnectionStringKey = derivedConnectionStringName;
-            }
-          });
-        }
+        // An unnamed context still configured under the name earlier releases derived from its class
+        // keeps working until its keys are renamed (see ResolveConnectionStringName).
+        var legacyConnectionStringName = selector.ConnectionStringName is null
+          ? Whizbang.Core.Naming.WhizbangNamingConvention.LegacyConnectionStringName(selector.DbContextType.Name)
+          : null;
+        // #1012: the same name keys this database's PostgresOptions section,
+        // Whizbang:Postgres:<name>, which overrides the code values per key.
+        selector.Services.AddWhizbangPostgresOptionsBinding(connectionStringName, legacyConnectionStringName);
+        selector.Services.AddOptions<WhizbangNotificationOptions>().PostConfigure<IServiceProvider>((options, sp) => {
+          if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
+            options.ConnectionStringKey = Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(
+              sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>(), connectionStringName, legacyConnectionStringName);
+          }
+        });
 
         return new WhizbangPerspectiveBuilder(selector.Services);
       }

@@ -49,4 +49,18 @@ public static class PostgresOptionsConfiguration {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<PostgresOptions>, PostgresOptionsPostConfigure>());
     return services;
   }
+
+  /// <summary>
+  /// Registers <paramref name="databaseName"/> as above, falling back to the section under
+  /// <paramref name="legacyName"/> (the name an earlier release derived from the context's class) while
+  /// only that name is configured.
+  /// </summary>
+  internal static IServiceCollection AddWhizbangPostgresOptionsBinding(this IServiceCollection services, string databaseName, string? legacyName) {
+    services.AddWhizbangPostgresOptionsBinding(databaseName);
+    if (legacyName is not null) {
+      services.AddSingleton(new PostgresLegacyDatabaseName(databaseName, legacyName));
+    }
+
+    return services;
+  }
 }
