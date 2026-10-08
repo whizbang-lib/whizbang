@@ -15,7 +15,7 @@
        time: median, p90, max, coefficient of variation, which suite was slowest per run, and the
        spread between the sharded suite's shards.
 
-    2. Class cost. For the last -TrxRuns of those runs, each shard's TRX results. A shard's time is
+    2. Class cost. For the last -TrxRuns (default 10) of those runs, each shard's TRX results. A shard's time is
        NOT the sum of its test durations: tests that need a database queue for one (CREATE DATABASE
        copies a template and serializes on its lock), so most of a shard's time is spent between test
        bodies. Each test is therefore charged the gap from its own start to the next test's start,
@@ -37,7 +37,8 @@
     Recent full-matrix CI runs to measure suite timings over. Default 25.
 
 .PARAMETER TrxRuns
-    Recent runs whose shard TRX results are analyzed for class cost. Default 5.
+    Recent runs whose shard TRX results are analyzed for class cost. Default 10: two 5-run samples
+    taken hours apart disagreed by about 3 minutes on one shard and proposed different moves.
 
 .PARAMETER ShardCount
     Shards to balance across. 0 (default) keeps the current count.
@@ -58,7 +59,7 @@
 
 param(
     [Parameter()] [int]$Runs = 25,
-    [Parameter()] [int]$TrxRuns = 5,
+    [Parameter()] [int]$TrxRuns = 10,
     [Parameter()] [int]$ShardCount = 0,
     [Parameter()] [double]$ToleranceMinutes = 1.0,
     [Parameter()] [switch]$Apply,
@@ -185,6 +186,11 @@ $candidates = @(gh api "repos/$Repository/actions/workflows/ci.yml/runs?status=s
   # newest entries were a day old, which picks runs whose artifacts have already expired.
   Sort-Object { [datetime]$_.created_at } -Descending)
 
+# Named in the log, so a stale run list (seen twice: its newest entry a day old, every artifact
+# already expired) identifies itself instead of surfacing later as "no TRX artifacts found".
+if ($candidates.Count -gt 0) {
+  Write-Information "Candidate runs since ${since}: $($candidates.Count); newest created $($candidates[0].created_at)" -InformationAction Continue
+}
 $jobsByRun = [ordered]@{}
 foreach ($run in $candidates) {
   if ($jobsByRun.Count -ge $Runs) { break }
@@ -250,7 +256,13 @@ foreach ($runId in @($candidates | ForEach-Object { [string]$_.id } | Select-Obj
   foreach ($artifact in $artifacts) {
     $shard = [int]($artifact.name.Substring($ShardArtifactPrefix.Length))
     $dir = Join-Path -Path $work -ChildPath "$runId-$shard"
-    gh run download $runId --repo $Repository --name $artifact.name --dir $dir | Out-Null
+    # Reported, never discarded: a download that fails silently leaves nothing to measure, and the
+    # only symptom is "no TRX artifacts found" with no hint why.
+    $downloadOutput = gh run download $runId --repo $Repository --name $artifact.name --dir $dir 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "Could not download $($artifact.name) from run ${runId}: $($downloadOutput -join ' ')"
+      continue
+    }
     foreach ($trx in Get-ChildItem -Path $dir -Recurse -Filter '*.trx') {
       [xml]$xml = [System.IO.File]::ReadAllText($trx.FullName)
       $classOf = @{}

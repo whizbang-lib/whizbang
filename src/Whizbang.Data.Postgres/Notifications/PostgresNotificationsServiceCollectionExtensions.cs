@@ -234,6 +234,11 @@ public static class PostgresNotificationsServiceCollectionExtensions {
         return new NotificationDataSource(dataSource: null, ownsDataSource: false);
       }
       var builder = new NpgsqlDataSourceBuilder(connectionString);
+      // The connection's own timeout key (Whizbang:Postgres:<key>-direct, or <key> when the pooled
+      // string was used) wins over a Command Timeout written in the string.
+      if (_timeoutConnectionName(options, resolution.Source) is { } timeoutConnection) {
+        PostgresCommandTimeouts.Apply(configuration, timeoutConnection, builder.ConnectionStringBuilder);
+      }
       // Multi-schema deployments: the shared LISTEN connection also issues table/function
       // SQL (alive-lock claim, resync probes) that lives in the SERVICE schema. Apply the
       // resolved search path unless the connection string already carries one.
@@ -294,6 +299,14 @@ public static class PostgresNotificationsServiceCollectionExtensions {
   /// the first entry whose string carries a Postgres credential marker.
   /// Returns null when none qualify.
   /// </summary>
+  /// <summary>The connection whose timeout key applies to the notification connection, if it came from a named key.</summary>
+  private static string? _timeoutConnectionName(WhizbangNotificationOptions options, NotificationConnectionStringResolver.ResolutionSource source) =>
+    source switch {
+      NotificationConnectionStringResolver.ResolutionSource.DirectKey => options.ConnectionStringKey + "-direct",
+      NotificationConnectionStringResolver.ResolutionSource.PooledKeyFallback => options.ConnectionStringKey,
+      _ => null
+    };
+
   private static string? _findFirstCredentialBearingConnectionString(IConfiguration configuration) {
     return configuration.GetSection("ConnectionStrings").GetChildren()
       .Select(child => child.Value)
@@ -423,6 +436,16 @@ internal sealed class ConfigureCommitOrderStamperOptionsFromConfiguration(IConfi
     if (long.TryParse(section["AdvisoryLockKey"], System.Globalization.NumberStyles.Integer,
         System.Globalization.CultureInfo.InvariantCulture, out var lockKey)) {
       options.AdvisoryLockKey = lockKey;
+    }
+
+    if (TimeSpan.TryParse(section["FencedRetryInterval"], System.Globalization.CultureInfo.InvariantCulture, out var fencedRetry)) {
+      options.FencedRetryInterval = fencedRetry;
+    }
+
+    if (TimeSpan.TryParse(section["NotifyHealthyPollingInterval"], System.Globalization.CultureInfo.InvariantCulture, out var notifyHealthy)) {
+#pragma warning disable CS0618 // obsolete but still honored, so still settable until it is removed
+      options.NotifyHealthyPollingInterval = notifyHealthy;
+#pragma warning restore CS0618
     }
   }
 }

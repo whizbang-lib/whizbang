@@ -238,3 +238,86 @@ idle_band.control_poll.blocks_per_call	3713	blocks/call		the same poll with no i
 idle_band.busy_poll.seq_scans_per_call	2	scans/call	10	a sequential scan of wh_inbox_state on the claim path is a plan defect on any machine
 idle_band.busy_poll.seq_tuples_per_call	2	tuples/call	500	THE gate here, verified to fire: reverting the probe to MAX(an expression) read 20,502 and failed the run
 idle_band.withheld_backlog.extra_blocks_per_call	125	blocks/call	800	what a withheld band of 20,000 rows adds to a poll refusing to touch it; a loose backstop only -- the same regression reached 398 and stayed under it, which is why the tuple count above is the real gate
+
+# --- Claim poll, backlog owned by a live peer -------------------------------------------------
+# 100 streams a live peer owns, with 100 and then 400 unleased rows behind each, polled by another
+# instance that may take none of them. The outbox acquisition used to choose its heads by walking
+# every pending row in arrival order and testing each for ownership, so this poll walked the peer's
+# whole backlog to find nothing: 726 and 2,673 blocks a poll before 194, growing with the depth.
+# A deployed database captured the same shape at 79,590,235 shared buffers for 13 rows.
+#
+# The ceiling is on outbox blocks per poll at every depth, and it is a property of the design: the
+# acquisition examines a window of eight times the heads it chooses, so a poll's cost is set by the
+# batch it asked for. 105 at both depths after 194. The scan counts are recorded without a ceiling:
+# they are the claim's orphan guards stopping at their first row, not reads of the backlog.
+#
+# The liveness round (one heartbeat, one role vote, one due-schedule claim) is recorded against the
+# same loaded database, without a ceiling. These calls were reported at 8 to 16 seconds on average;
+# what they do is a few dozen blocks, so their seconds were spent waiting, not working.
+claim.peer_backlog.wh_outbox.blocks_per_poll.depth_100	105	blocks/poll	400	GATED: was 726 before 194; the window fixes a poll's cost by its batch
+claim.peer_backlog.wh_outbox.blocks_per_poll.depth_400	105	blocks/poll	400	GATED: was 2,673 before 194; four times the backlog must not cost more
+claim.peer_backlog.wh_outbox.seq_scans_per_poll.depth_100	2	scans/poll		recorded, not gated: the orphan guards' LIMIT 1 probes, unchanged by 194
+claim.peer_backlog.wh_outbox.seq_scans_per_poll.depth_400	2	scans/poll		recorded, not gated: same reason
+liveness.heartbeat_vote_schedule.blocks_per_round	36.8	blocks/round		recorded, not gated: the evidence that the reported waits were not work
+
+# --- Event-store reads, by store size ---------------------------------------------------------
+# A settled store of 20,000 and then 80,000 events: half local, half received from two origins,
+# 50 tenants, about one event in a hundred a collective.
+#
+# digest_close: close_digest_epochs with nothing left to close. It found its lanes with SELECT
+# DISTINCT over the whole event store on every call: one sequential scan per call, 664 and 2,594
+# blocks before 193. It now reads its lanes one index entry per lane: 24 and 22 blocks.
+#
+# collective_positions: a collective replay's read of every collective of a few types in one
+# tenant. No index covered either key, so each read scanned the store: 162 blocks per row returned
+# before 195, at both sizes. It is now an index range per type: 2.5 and 1.7 blocks per row.
+#
+# The ceilings are on sequential scans of the event store, and they are design properties: neither
+# read has any reason to visit a row it does not return. Blocks are recorded beside them.
+collective_positions.wh_event_store.blocks_per_row.events_20000	2.5	blocks/row		recorded: was 162 before 195
+collective_positions.wh_event_store.blocks_per_row.events_80000	1.7	blocks/row		recorded: was 161.4 before 195
+collective_positions.wh_event_store.seq_scans_per_read.events_20000	0	scans/read	0	GATED: was 1 per read before 195
+collective_positions.wh_event_store.seq_scans_per_read.events_80000	0	scans/read	0	GATED: was 1 per read before 195
+digest_close.idle.wh_event_store.blocks_per_call.events_20000	24.2	blocks/call		recorded: was 664.2 before 193
+digest_close.idle.wh_event_store.blocks_per_call.events_80000	22	blocks/call		recorded: was 2,594 before 193
+digest_close.idle.wh_event_store.seq_scans_per_call.events_20000	0	scans/call	0	GATED: was 1 per call before 193
+digest_close.idle.wh_event_store.seq_scans_per_call.events_80000	0	scans/call	0	GATED: was 1 per call before 193
+
+# --- Commit-order stamp, by backlog depth -----------------------------------------------------
+# Three stamps of 1,000 rows behind 10,000, 40,000 and 160,000 unstamped events (streams of ten).
+# The stamp chose its batch by sorting every unstamped row by transaction id, which no index can
+# serve: 20, 80 and 320 tuples read per stamped row before 197, the backlog divided by the batch.
+# It now walks an insertion-order index and stops at the batch: 4 tuples per row at every depth.
+#
+# The ceiling is on tuples read per stamped row, and it is a property of the design: the walk, each
+# stream's prefix, the lock and the update each read the row once. Blocks are recorded and not gated:
+# the update writes every index of the event store for each row it stamps (about 28 blocks a row),
+# which swamps the selection at this batch size and grows with the indexes, not the backlog.
+stamp.backlog_10000.wh_event_store.blocks_per_stamped_row	28.4	blocks/row		recorded: was 20.4 before 197 (two more partial indexes; the update dominates)
+stamp.backlog_10000.wh_event_store.seq_scans_per_stamp	0	scans/stamp		recorded: was 2 before 197
+stamp.backlog_10000.wh_event_store.tuples_read_per_stamped_row	4	tuples/row	8	GATED: was 20 before 197
+stamp.backlog_160000.wh_event_store.blocks_per_stamped_row	35.8	blocks/row		recorded: was 28.6 before 197
+stamp.backlog_160000.wh_event_store.seq_scans_per_stamp	0	scans/stamp		recorded: was 2 before 197
+stamp.backlog_160000.wh_event_store.tuples_read_per_stamped_row	4	tuples/row	8	GATED: was 320 before 197; sixteen times the backlog must not cost more
+stamp.backlog_40000.wh_event_store.blocks_per_stamped_row	29.6	blocks/row		recorded: was 21.6 before 197
+stamp.backlog_40000.wh_event_store.seq_scans_per_stamp	0	scans/stamp		recorded: was 2 before 197
+stamp.backlog_40000.wh_event_store.tuples_read_per_stamped_row	4	tuples/row	8	GATED: was 80 before 197
+
+# --- Liveness calls under concurrent load -----------------------------------------------------
+# Claims for two instances, heartbeats, the holder's renewal vote and a peer's vote, the lapsed-
+# bridge expiry, the due-schedule claim and the retry notification, each on its own connection and
+# all at once, while the commit-order stamper runs 40 fenced stamps of 1,000 over 200,000 unstamped
+# events. A sampler names each wait's blocking statement (pg_blocking_pids); the run prints them.
+#
+# Sample counts depend on the machine and the run's length, so only one is gated: the bridge expiry
+# waited 4,523 samples before 198, behind the fenced stamper's transaction and behind the holder's
+# vote, and now looks before it locks, so it waits for nothing. The holder's vote still waits for its
+# own fenced stamp by design (the fence holds the role row FOR SHARE): 4,515 samples before 197 and
+# 198, behind the stamper and the expiry; after, behind the stamper only, whose transaction now costs
+# what its batch stamps. Heartbeats, schedule claims and retry notifications waited for nothing.
+liveness.under_load.notify_scheduled_retry_due.lock_wait_samples	0	samples		recorded
+liveness.under_load.record_heartbeat.lock_wait_samples	0	samples		recorded
+liveness.under_load.stamps	40	stamps		recorded
+liveness.under_load.wh_claim_due_schedules.lock_wait_samples	0	samples		recorded
+liveness.under_load.wh_end_lapsed_bridge.lock_wait_samples	0	samples	0	GATED: was 4,523 before 198; nothing to end must wait for nothing
+liveness.under_load.wh_vote_role.lock_wait_samples	2064	samples		recorded: was 4,515 before 197 and 198; the remaining waits are behind the holder's own fenced stamp

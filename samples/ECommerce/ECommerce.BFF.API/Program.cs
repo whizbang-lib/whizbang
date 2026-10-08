@@ -46,7 +46,7 @@ builder.Logging.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Debug);
 builder.AddServiceDefaults();
 
 // Get connection strings from Aspire configuration
-// Note: PostgreSQL connection string "bffdb" is resolved by .WithEFCore<BffDbContext>().WithDriver.Postgres
+// Note: PostgreSQL connection string "db" is resolved by .WithEFCore<BffDbContext>().WithDriver.Postgres
 
 #if AZURESERVICEBUS
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")

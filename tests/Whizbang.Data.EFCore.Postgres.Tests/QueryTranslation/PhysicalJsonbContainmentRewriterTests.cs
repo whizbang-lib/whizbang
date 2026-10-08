@@ -218,6 +218,29 @@ public class PhysicalJsonbContainmentRewriterTests {
     await Assert.That(counter.Count).IsEqualTo(0);
   }
 
+  // ------------------------------------------------------------------
+  // Order independence
+  // ------------------------------------------------------------------
+
+  /// <summary>
+  /// The column mappings this class reads live in <see cref="PhysicalFieldRegistry"/>, which is process static, and
+  /// four other classes in this assembly clear it before each of their tests. When the shared model registered its
+  /// columns only once per process, any of those classes running in between left every later test here reading the
+  /// columns as document members: a whole-project run failed this class and its SQL twin while either passed alone.
+  /// </summary>
+  [Test]
+  public async Task AfterAnotherClassClearsTheFieldRegistry_TheFilterIsStillClaimedAsync() {
+    Model.Register();
+    // What ComplexTypeJsonMappingTests, FullLinqSupportTests, UnifiedQuerySyntaxTests and PhysicalFieldRegistryTests
+    // do before each of their tests, in the same process.
+    PhysicalFieldRegistry.Clear();
+    var tag = "red";
+
+    await Assert.That(_containments(r => r.Data.Tags.Contains(tag))).IsEqualTo(1)
+      .Because("registering the shared model has to put its columns back whenever another class cleared them, or "
+        + "the result of this class depends on which classes ran before it");
+  }
+
   private static Model _local(Model model) => model;
 
   private sealed class BareDbContext(DbContextOptions<BareDbContext> options) : DbContext(options) {

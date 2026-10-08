@@ -382,8 +382,7 @@ public static class PostgresDriverExtensions {
 
         // TURNKEY: Apply the same connection-string-name convention to the
         // notification options that .WithDriver.Postgres already uses for EF
-        // Core (derived from TDbContext via WithEFCore<T>(...) — e.g.,
-        // AppServiceDbContext → "appservice-db"). The resolver will then try
+        // Core (the name passed to WithEFCore<T>(...), else "db"). The resolver will then try
         // ConnectionStrings:{name}-direct first (the bypass-pgbouncer variant
         // that some deployments already configure) and fall back to
         // ConnectionStrings:{name}. Operators only need to override this in
@@ -391,33 +390,27 @@ public static class PostgresDriverExtensions {
         //
         // Late-binding via PostConfigure so an explicit
         // Whizbang:Database:ConnectionStringKey in appsettings still wins.
-        var derivedConnectionStringName = selector.ConnectionStringName
-          ?? _deriveConnectionStringName(selector.DbContextType.Name);
-        if (!string.IsNullOrWhiteSpace(derivedConnectionStringName)) {
-          // #1012: the same name keys this database's PostgresOptions section,
-          // Whizbang:Postgres:<name>, which overrides the code values per key.
-          selector.Services.AddWhizbangPostgresOptionsBinding(derivedConnectionStringName);
-          selector.Services.PostConfigure<WhizbangNotificationOptions>(options => {
-            if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
-              options.ConnectionStringKey = derivedConnectionStringName;
-            }
-          });
-        }
+        var connectionStringName = selector.ConnectionStringName
+          ?? Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
+        // An unnamed context still configured under the name earlier releases derived from its class
+        // keeps working until its keys are renamed (see ResolveConnectionStringName).
+        var legacyConnectionStringName = selector.ConnectionStringName is null
+          ? Whizbang.Core.Naming.WhizbangNamingConvention.LegacyConnectionStringName(selector.DbContextType.Name)
+          : null;
+        // #1012: the same name keys this database's PostgresOptions section,
+        // Whizbang:Postgres:<name>, which overrides the code values per key.
+        selector.Services.AddWhizbangPostgresOptionsBinding(connectionStringName, legacyConnectionStringName);
+        selector.Services.AddOptions<WhizbangNotificationOptions>().PostConfigure<IServiceProvider>((options, sp) => {
+          if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
+            options.ConnectionStringKey = Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(
+              sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>(), connectionStringName, legacyConnectionStringName);
+          }
+        });
 
         return new WhizbangPerspectiveBuilder(selector.Services);
       }
     }
   }
-
-  /// <summary>
-  /// Thin shim around <see cref="Whizbang.Core.Naming.WhizbangNamingConvention.DeriveConnectionStringName"/>
-  /// so existing call sites and tests don't need to change. The actual convention
-  /// lives in <c>Whizbang.Core</c> so it can be referenced from any consumer code
-  /// (and re-used by the source generator's regression test) without taking a
-  /// runtime dependency on this assembly.
-  /// </summary>
-  internal static string _deriveConnectionStringName(string dbContextClassName)
-    => Whizbang.Core.Naming.WhizbangNamingConvention.DeriveConnectionStringName(dbContextClassName);
 
   /// <summary>
   /// Lightweight event-store DB reachability probe: opens a pooled connection and runs <c>SELECT 1</c>.

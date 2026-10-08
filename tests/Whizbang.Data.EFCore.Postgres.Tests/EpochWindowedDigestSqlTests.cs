@@ -80,6 +80,7 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
         """;
     body.Parameters.AddWithValue("event", eventId);
     await body.ExecuteNonQueryAsync();
+    await EmitChainDigestFold.FoldAsync(conn, eventId);
   }
 
   private static async Task<int> _closeAsync(NpgsqlConnection conn) {

@@ -41,7 +41,7 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     await connection.ExecuteAsync(
       new CommandDefinition(
-        "SELECT deregister_instance(@instanceId)", new { instanceId }, cancellationToken: cancellationToken));
+        "SELECT deregister_instance(@instanceId)", new { instanceId }, commandTimeout: CoordinatorCommandTimeout.SECONDS, cancellationToken: cancellationToken));
   }
 
   /// <inheritdoc />
@@ -56,7 +56,8 @@ public partial class DapperWorkCoordinator(
     // plausible number rather than an error.
     var (inbox_rows, outbox_rows, perspective_rows) = await connection.QuerySingleAsync<(long inbox_rows, long outbox_rows, long perspective_rows)>(
       "SELECT inbox_rows, outbox_rows, perspective_rows FROM count_outstanding_work(@instanceId)",
-      new { instanceId });
+      new { instanceId },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
     return new OutstandingWork {
       InboxRows = inbox_rows,
       OutboxRows = outbox_rows,
@@ -73,7 +74,8 @@ public partial class DapperWorkCoordinator(
         (SELECT COUNT(*) FROM wh_perspective_events WHERE processed_at IS NULL) as PendingPerspectiveEvents,
         (SELECT COUNT(*) FROM wh_outbox WHERE processed_at IS NULL) as PendingOutbox,
         (SELECT COUNT(*) FROM wh_inbox_state WHERE processed_at IS NULL) as PendingInbox,
-        (SELECT COUNT(*) FROM wh_active_streams) as ActiveStreams");
+        (SELECT COUNT(*) FROM wh_active_streams) as ActiveStreams",
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
 
   /// <summary>
@@ -88,7 +90,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var rows = (await connection.QueryAsync<(string table_name, long rows_recomputed)>(
       "SELECT table_name, rows_recomputed FROM recompute_partition_numbers(@partitionCount)",
-      new { partitionCount })).ToList();
+      new { partitionCount },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS)).ToList();
 
     long get(string table) => rows.FirstOrDefault(r => r.table_name == table).rows_recomputed;
     return new PartitionRecomputeResult {
@@ -118,7 +121,8 @@ public partial class DapperWorkCoordinator(
           messages = json,
           now,
           partitionCount
-        });
+        },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
       // #720: ring the doorbells the store queued, after its commit.
       await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
@@ -152,10 +156,12 @@ public partial class DapperWorkCoordinator(
       // command, so the pair is one round trip and Postgres orders them for us.
       await connection.ExecuteAsync(
         "SELECT * FROM store_inbox_messages(@messages::jsonb, NULL::uuid, NULL::timestamptz, @now, @partitionCount)",
-        new { messages = json, now, partitionCount });
+        new { messages = json, now, partitionCount },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
       projection = await connection.ExecuteScalarAsync<string>(
         Whizbang.Data.Postgres.InboxRedeliveryObservationSql.ObservationQuery(string.Empty),
-        new { observedIds });
+        new { observedIds },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
       // #720: ring the doorbells the store queued, after its commit.
       await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
@@ -183,7 +189,8 @@ public partial class DapperWorkCoordinator(
           messages = json,
           now,
           partitionCount
-        });
+        },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
       // #720: ring the doorbells the store queued, after its commit.
       await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
@@ -201,7 +208,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     return await connection.ExecuteScalarAsync<int>(
       "SELECT cleanup_completed_streams(@streamIds)",
-      new { streamIds = streamIds.ToArray() });
+      new { streamIds = streamIds.ToArray() },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
 
   internal string SerializeFailures(MessageFailure[] failures) {
@@ -258,7 +266,8 @@ public partial class DapperWorkCoordinator(
         ProcessedEventIds = processedEventIdsJson,
         Status = (short)completion.Status,
         Error = (string?)null
-      });
+      },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
 
   /// <summary>
@@ -283,7 +292,8 @@ public partial class DapperWorkCoordinator(
         ProcessedEventIds = processedEventIdsJson,
         Status = (short)failure.Status,
         failure.Error
-      });
+      },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
 
   /// <summary>
@@ -298,7 +308,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     return await connection.QuerySingleAsync<int>(
       "SELECT complete_perspective_events(@p_event_work_ids, @p_debug_mode)",
-      new { p_event_work_ids = workItemIds, p_debug_mode = debugMode });
+      new { p_event_work_ids = workItemIds, p_debug_mode = debugMode },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
 
   /// <summary>
@@ -315,7 +326,8 @@ public partial class DapperWorkCoordinator(
     var now = DateTimeOffset.UtcNow;
     var results = await connection.QueryAsync<StreamEventRow>(
       "SELECT * FROM get_stream_events(@p_instance_id, @p_stream_ids, @p_now)",
-      new { p_instance_id = instanceId, p_stream_ids = streamIds, p_now = now });
+      new { p_instance_id = instanceId, p_stream_ids = streamIds, p_now = now },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
     return [.. results.Select(r => new StreamEventData {
       StreamId = r.out_stream_id,
@@ -355,7 +367,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var rows = await connection.QueryAsync<OutboxBatchRowDto>(
       "SELECT * FROM fetch_outbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
-      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes });
+      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
     return [.. rows.Select(_toOutboxBatchRow)];
   }
@@ -381,7 +394,8 @@ public partial class DapperWorkCoordinator(
         p_after_ids = streams.Select(s => s.LastPublishedMessageId).ToArray(),
         p_run_length = runLength,
         p_max_bytes = maxBytes
-      });
+      },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
     // Mapped exactly as fetch_outbox_batch is, whose shape the continuation returns.
     return [.. rows.Select(_toOutboxBatchRow)];
@@ -413,7 +427,8 @@ public partial class DapperWorkCoordinator(
     var rows = await connection.QueryAsync<InboxBatchRowDto>(
       "SELECT * FROM fetch_inbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
       // NULL = count bound only, the pre-byte-budget behavior.
-      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes });
+      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
     return [.. rows.Select(r => new InboxBatchRow {
       MessageId = r.message_id,
@@ -444,7 +459,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var rows = await connection.QueryAsync<PendingPerspectiveEventDto>(
       "SELECT * FROM fetch_pending_perspective_events(@p_stream_id, @p_perspective_name, @p_instance_id)",
-      new { p_stream_id = streamId, p_perspective_name = perspectiveName, p_instance_id = instanceId });
+      new { p_stream_id = streamId, p_perspective_name = perspectiveName, p_instance_id = instanceId },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
     return [.. rows.Select(r => new PendingPerspectiveEvent(r.out_event_work_id, r.out_event_id, r.out_commit_sequence))];
   }
@@ -471,7 +487,8 @@ public partial class DapperWorkCoordinator(
         p_instance_id = instanceId,
         p_lease_expiry = leaseExpiry,
         p_now = now,
-      });
+      },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
     return [.. rows.Select(r => new PendingPerspectiveEvent(r.out_event_work_id, r.out_event_id, r.out_commit_sequence))];
   }
@@ -485,7 +502,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var rows = await connection.QueryAsync<PendingPerspectiveEventDto>(
       "SELECT * FROM wh_collective_sink_queue(@p_stream_id)",
-      new { p_stream_id = streamId });
+      new { p_stream_id = streamId },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
     return [.. rows.Select(r => new CollectiveSinkQueueEntry(r.out_event_work_id, r.out_event_id, r.out_commit_sequence))];
   }
@@ -504,7 +522,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var rows = await connection.QueryAsync<EventBodyRowDto>(
       "SELECT * FROM fetch_events_by_ids(@p_event_ids)",
-      new { p_event_ids = idArr });
+      new { p_event_ids = idArr },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
     return [.. rows.Select(r => new StreamEventData {
       StreamId = r.out_stream_id,
@@ -603,7 +622,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var result = await connection.QueryFirstOrDefaultAsync<CursorQueryResult>(
       "SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM wh_perspective_cursors WHERE stream_id = @StreamId AND perspective_name = @PerspectiveName",
-      new { StreamId = streamId, PerspectiveName = perspectiveName });
+      new { StreamId = streamId, PerspectiveName = perspectiveName },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
     if (result == null) {
       return null;
@@ -622,9 +642,8 @@ public partial class DapperWorkCoordinator(
   public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
-    await using var command = connection.CreateCommand();
+    await using var command = CoordinatorCommandTimeout.Apply(connection.CreateCommand());
     command.CommandText = "SELECT * FROM public.perform_maintenance()";
-    command.CommandTimeout = 30;
 
     await using var reader = await command.ExecuteReaderAsync(cancellationToken);
     var results = new List<MaintenanceResult>();
@@ -647,9 +666,8 @@ public partial class DapperWorkCoordinator(
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
-    await using var command = connection.CreateCommand();
+    await using var command = CoordinatorCommandTimeout.Apply(connection.CreateCommand());
     command.CommandText = "SELECT * FROM public.purge_orphan_inbox(@handled_types)";
-    command.CommandTimeout = 30;
     var param = command.CreateParameter();
     param.ParameterName = "handled_types";
     param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
@@ -686,8 +704,7 @@ public partial class DapperWorkCoordinator(
       IReadOnlyList<string> messageTypeNames,
       CancellationToken cancellationToken = default) {
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
-    await using var command = __scope.Connection.CreateCommand();
-    command.CommandTimeout = 30;
+    await using var command = CoordinatorCommandTimeout.Apply(__scope.Connection.CreateCommand());
     return await Whizbang.Data.Postgres.StreamsWithPendingMessagesSql.ExecuteAsync(
       command, "public", streamIds, messageTypeNames, cancellationToken);
   }
@@ -725,9 +742,8 @@ public partial class DapperWorkCoordinator(
     }
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
-    await using var command = connection.CreateCommand();
+    await using var command = CoordinatorCommandTimeout.Apply(connection.CreateCommand());
     command.CommandText = sql;
-    command.CommandTimeout = 30;
     var param = Whizbang.Data.Postgres.PostgresArrayHelper.ToVarcharArray([.. messageTypeNames]);
     param.ParameterName = "type_names";
     command.Parameters.Add(param);
@@ -824,7 +840,8 @@ public partial class DapperWorkCoordinator(
         request.LifecyclePhase,
         request.LibraryVersion,
         request.StaleThresholdSeconds
-      });
+      },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
 
   /// <inheritdoc />
@@ -833,7 +850,8 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
     var due = await connection.ExecuteScalarAsync<int>(
-      "SELECT COALESCE(SUM(stream_count), 0)::int FROM notify_scheduled_retry_due()");
+      "SELECT COALESCE(SUM(stream_count), 0)::int FROM notify_scheduled_retry_due()",
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
     if (due > 0) {
       // #720: the probe queued a doorbell per due stream; ring them after its commit.
       await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
@@ -852,7 +870,8 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
     return await connection.ExecuteScalarAsync<int>(
-      "SELECT complete_outbox_published(@Ids, @DebugMode)", new { Ids = idArray, DebugMode = debugMode });
+      "SELECT complete_outbox_published(@Ids, @DebugMode)", new { Ids = idArray, DebugMode = debugMode },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
 
   /// <inheritdoc />
@@ -876,7 +895,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     await connection.ExecuteAsync(
       "SELECT complete_perspective(@Cursors::jsonb, @Ids, @DebugMode)",
-      new { Cursors = cursorsJson, Ids = idArray, DebugMode = debugMode });
+      new { Cursors = cursorsJson, Ids = idArray, DebugMode = debugMode },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
     // #720: ring the doorbells the completion queued, after its commit.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
@@ -896,7 +916,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     await connection.ExecuteAsync(
       "SELECT report_failures(@Category, @Failures::jsonb)",
-      new { Category = category.ToSqlCategory(), Failures = failuresJson });
+      new { Category = category.ToSqlCategory(), Failures = failuresJson },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
 
   /// <inheritdoc />
@@ -915,7 +936,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     return await connection.ExecuteScalarAsync<int>(
       "SELECT renew_leases(@Category, @Ids, @LeaseSeconds)",
-      new { Category = category.ToSqlCategory(), Ids = idArray, LeaseSeconds = leaseSeconds });
+      new { Category = category.ToSqlCategory(), Ids = idArray, LeaseSeconds = leaseSeconds },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
 
   /// <inheritdoc />
@@ -926,7 +948,8 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
     await connection.ExecuteAsync(
-      "SELECT commit_handler_result(@Payload::jsonb)", new { Payload = payload });
+      "SELECT commit_handler_result(@Payload::jsonb)", new { Payload = payload },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
     // #720: ring the doorbells the commit queued, after the commit.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
@@ -952,7 +975,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var rows = await connection.QueryAsync<HandlerBatchRow>(
       "SELECT handler_id AS HandlerId, success AS Success, error_message AS ErrorMessage FROM commit_handler_batch(@Results::jsonb)",
-      new { Results = batchJson });
+      new { Results = batchJson },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
     // #720: ring the doorbells the commits queued, after the commits.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     return [.. rows.Select(r => new HandlerBatchResult(r.HandlerId, r.Success, r.ErrorMessage))];
@@ -971,7 +995,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     await connection.ExecuteAsync(
       "SELECT flush_completions(@Outbox, @Cursors::jsonb, @Persp, @Failures::jsonb)",
-      new { Outbox = outboxIds, Cursors = cursorsJson, Persp = perspIds, Failures = failuresJson });
+      new { Outbox = outboxIds, Cursors = cursorsJson, Persp = perspIds, Failures = failuresJson },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
     // #720: ring the doorbells the flush queued, after its commit.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
@@ -990,7 +1015,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     var rows = await connection.QueryAsync<SyncInquiryRow>(
       "SELECT inquiry_id AS InquiryId, stream_id AS StreamId, pending_count AS PendingCount, processed_count AS ProcessedCount FROM resolve_sync_inquiries(@Inq::jsonb)",
-      new { Inq = json });
+      new { Inq = json },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
     return [.. rows.Select(r => new SyncInquiryResult {
       InquiryId = r.InquiryId,
       StreamId = r.StreamId,
@@ -1009,7 +1035,8 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var row = await __scope.Connection.QuerySingleAsync<AppliedStatusRow>(
       "SELECT event_id AS EventId, state AS State FROM wh_perspective_applied_status(@Name::text, @EventId::uuid, @StreamId::uuid, @Version::integer)",
-      new { Name = inquiry.PerspectiveName, inquiry.EventId, inquiry.StreamId, Version = inquiry.StreamPosition });
+      new { Name = inquiry.PerspectiveName, inquiry.EventId, inquiry.StreamId, Version = inquiry.StreamPosition },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
     return new Whizbang.Core.Perspectives.Sync.AppliedEventStatus(
       (Whizbang.Core.Perspectives.Sync.AppliedEventState)row.State, row.EventId);
   }
@@ -1022,24 +1049,36 @@ public partial class DapperWorkCoordinator(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
-    // Phase C lands the full envelope-deserializing path. For now Dapper backend
-    // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
-    var rows = await connection.QueryAsync<ClaimWorkRow>(
-      "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp)",
-      new {
-        Id = request.InstanceId,
-        Svc = request.ServiceName,
-        Host = request.HostName,
-        Pid = request.ProcessId,
-        Max = request.MaxStreams,
-        Part = request.PartitionCount,
-        Lease = request.LeaseSeconds,
-        Fresh = request.FreshWorkShare,
-        // 145: acquisition row bound (null = bounded by the stream count) and the steal flag.
-        Rows = request.MaxAcquireRows,
-        Steal = request.AllowSteal,
-        Persp = request.MaxPerspectiveStreams
-      });
+    // 196 (#1226): the claim no longer writes this instance's registration row; it raises a notice
+    // when the row is missing or stale, and the caller registers after the claim.
+    var registrationStale = false;
+    void OnClaimNotice(object? sender, NpgsqlNoticeEventArgs e) =>
+      registrationStale |= string.Equals(e.Notice.MessageText, REGISTRATION_STALE_NOTICE, StringComparison.Ordinal);
+    connection.Notice += OnClaimNotice;
+    IEnumerable<ClaimWorkRow> rows;
+    try {
+      // Phase C lands the full envelope-deserializing path. For now Dapper backend
+      // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
+      rows = await connection.QueryAsync<ClaimWorkRow>(
+        "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp)",
+        new {
+          Id = request.InstanceId,
+          Svc = request.ServiceName,
+          Host = request.HostName,
+          Pid = request.ProcessId,
+          Max = request.MaxStreams,
+          Part = request.PartitionCount,
+          Lease = request.LeaseSeconds,
+          Fresh = request.FreshWorkShare,
+          // 145: acquisition row bound (null = bounded by the stream count) and the steal flag.
+          Rows = request.MaxAcquireRows,
+          Steal = request.AllowSteal,
+          Persp = request.MaxPerspectiveStreams
+        },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    } finally {
+      connection.Notice -= OnClaimNotice;
+    }
     var perspectiveStreamIds = new List<Guid>();
     var sawOutboxOrInbox = false;
     foreach (var r in rows) {
@@ -1062,9 +1101,13 @@ public partial class DapperWorkCoordinator(
       OutboxWork = [],
       InboxWork = [],
       PerspectiveWork = [],
-      PerspectiveStreamIds = perspectiveStreamIds
+      PerspectiveStreamIds = perspectiveStreamIds,
+      InstanceRegistrationStale = registrationStale
     };
   }
+
+  /// <summary>Raised by <c>claim_work</c> when the calling instance's registration is missing or stale (196).</summary>
+  internal const string REGISTRATION_STALE_NOTICE = "whizbang.instance_registration_stale=true";
 
   // --- helpers shared by the new methods ---
 

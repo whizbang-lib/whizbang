@@ -138,15 +138,17 @@ public sealed class WhizbangDbContextAttribute(params string[]? keys) : Attribut
   /// <strong>Connection String Naming Convention:</strong>
   /// </para>
   /// <list type="bullet">
-  /// <item>Default: "{ContextName}-db" where ContextName is the class name minus "DbContext" suffix</item>
-  /// <item>Example: ChatDbContext → "chat-db"</item>
-  /// <item>Set this property to override the default (e.g., "chat-service-db")</item>
+  /// <item>Default: "db", whatever the class is called: <c>ConnectionStrings:db</c>, with
+  /// <c>db-direct</c> for notifications and <c>db-init</c> for schema initialization. Each service
+  /// has its own configuration, so the name need not say which service it is.</item>
+  /// <item>Contexts in one service that share a database share the default.</item>
+  /// <item>Set this property only for a second, separate database (e.g., "reporting")</item>
   /// </list>
   /// </remarks>
   /// <example>
   /// <code>
-  /// [WhizbangDbContext(ConnectionStringName = "chat-service-db")]
-  /// public partial class ChatDbContext : DbContext { }
+  /// [WhizbangDbContext(ConnectionStringName = "reporting")]
+  /// public partial class ReportingDbContext : DbContext { }
   /// </code>
   /// </example>
   /// <docs>extending/features/vector-search#turnkey-setup</docs>

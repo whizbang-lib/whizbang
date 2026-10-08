@@ -79,6 +79,28 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
   }
 
   [Test]
+  public async Task FencedRetryInterval_ParsesUnderInvariantCultureAsync() {
+    var bound = _bind(new Dictionary<string, string?> {
+      ["Whizbang:Database:Stamper:FencedRetryInterval"] = "00:00:00.5",
+    });
+    await Assert.That(bound.FencedRetryInterval).IsEqualTo(TimeSpan.FromMilliseconds(500));
+  }
+
+  /// <summary>
+  /// The relaxed cadence is obsolete but still honored, so it stays settable from configuration
+  /// until it is removed: an operator tuning it today must see the value take effect.
+  /// </summary>
+  [Test]
+  public async Task NotifyHealthyPollingInterval_ParsesUnderInvariantCultureAsync() {
+    var bound = _bind(new Dictionary<string, string?> {
+      ["Whizbang:Database:Stamper:NotifyHealthyPollingInterval"] = "00:01:00",
+    });
+#pragma warning disable CS0618 // the knob is obsolete but still honored; binding it is what is tested
+    await Assert.That(bound.NotifyHealthyPollingInterval).IsEqualTo(TimeSpan.FromMinutes(1));
+#pragma warning restore CS0618
+  }
+
+  [Test]
   public async Task Constructor_NullConfiguration_ThrowsArgumentNullExceptionAsync() {
     await Assert.That(() => new ConfigureCommitOrderStamperOptionsFromConfiguration(null!))
       .Throws<ArgumentNullException>();
@@ -108,6 +130,8 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
       ["Whizbang:Database:Stamper:BatchSize"] = "not-a-number",
       ["Whizbang:Database:Stamper:DisableStamper"] = "not-a-bool",
       ["Whizbang:Database:Stamper:AdvisoryLockKey"] = "not-a-long",
+      ["Whizbang:Database:Stamper:FencedRetryInterval"] = "not-a-timespan",
+      ["Whizbang:Database:Stamper:NotifyHealthyPollingInterval"] = "not-a-timespan",
     });
 
     await Assert.That(bound.PollingInterval).IsEqualTo(defaults.PollingInterval);
@@ -115,5 +139,9 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
     await Assert.That(bound.BatchSize).IsEqualTo(defaults.BatchSize);
     await Assert.That(bound.DisableStamper).IsEqualTo(defaults.DisableStamper);
     await Assert.That(bound.AdvisoryLockKey).IsEqualTo(defaults.AdvisoryLockKey);
+    await Assert.That(bound.FencedRetryInterval).IsEqualTo(defaults.FencedRetryInterval);
+#pragma warning disable CS0618 // obsolete but still honored
+    await Assert.That(bound.NotifyHealthyPollingInterval).IsEqualTo(defaults.NotifyHealthyPollingInterval);
+#pragma warning restore CS0618
   }
 }

@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///     <c>[WhizbangDbContext(ConnectionStringName=...)]</c> attribute into the
 ///     EF wiring (e.g., <c>"appservice-db"</c>).
 ///   - The runtime PostConfigure in
-///     <c>PostgresDriverExtensions._deriveConnectionStringName</c> derived a
+///     the runtime derived a
 ///     DIFFERENT key from the class name (e.g., <c>"app-db"</c> for
 ///     <c>AppDbContext</c>) and used THAT for
 ///     <see cref="WhizbangNotificationOptions.ConnectionStringKey"/>.

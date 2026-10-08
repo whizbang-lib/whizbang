@@ -156,8 +156,9 @@ serializes those copies on the template's lock, and each shard's container there
 one such test per second while its CPU sits mostly idle.
 
 So the script charges each test the gap from its start to the next test's start. Those gaps sum
-exactly to the shard's test window, and a class's cost is the median of its sums over the last five
-runs. Rebalancing starts from the current assignment and moves the class that best closes the gap
+exactly to the shard's test window, and a class's cost is the median of its sums over the last ten
+runs. Five proved too few: two 5-run samples taken hours apart put one shard at 5.9 and 8.8 minutes and
+proposed different moves. Rebalancing starts from the current assignment and moves the class that best closes the gap
 between the heaviest and lightest shard, never one larger than half of it, so each rebalance is a
 small diff of `[Category("ShardN")]` changes rather than a reshuffle.
 

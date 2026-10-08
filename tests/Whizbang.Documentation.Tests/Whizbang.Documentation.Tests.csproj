@@ -11,6 +11,14 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <!-- Every package that binds configuration, so the key manifest test can record what each reads. -->
+    <ProjectReference Include="../../src/Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Transports.RabbitMQ/Whizbang.Transports.RabbitMQ.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Hosting.AspNet/Whizbang.Hosting.AspNet.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate/Whizbang.Transports.HotChocolate.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Sagas/Whizbang.Sagas.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Offloads.AzureBlob/Whizbang.Offloads.AzureBlob.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />

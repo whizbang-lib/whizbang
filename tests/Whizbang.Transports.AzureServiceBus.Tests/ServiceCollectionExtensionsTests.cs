@@ -439,22 +439,64 @@ public class ServiceCollectionExtensionsTests {
     await Assert.That(opsRateSource!.Component).IsEqualTo("transport");
   }
 
+  /// <summary>
+  /// AutoProvisionInfrastructure decides at registration time whether the admin client is
+  /// registered, so it is read then, from the configuration the host has already registered. The
+  /// options pipeline binds it too, so the resolved value agrees with the registration it shaped.
+  /// </summary>
   [Test]
-  public async Task AddAzureServiceBusTransport_AutoProvisionInfrastructure_IsCodeOnlyAsync() {
-    // Arrange — AutoProvisionInfrastructure shapes DI at registration time (whether the admin
-    // client is registered), so it is deliberately NOT configuration-bindable: a config value
-    // could not re-shape a container that is already built.
+  public async Task AddAzureServiceBusTransport_AutoProvisionInfrastructureFromConfiguration_ShapesTheRegistrationAsync() {
     var services = new ServiceCollection();
     services.AddSingleton(_configWith(("AutoProvisionInfrastructure", "false")));
 
-    // Act
     services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING);
     await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
 
-    // Assert — the code default stands and the admin client stays registered
-    await Assert.That(options.AutoProvisionInfrastructure).IsTrue()
-      .Because("AutoProvisionInfrastructure is a registration-time DI-shape decision, not a runtime knob");
+    await Assert.That(options.AutoProvisionInfrastructure).IsFalse();
+    await Assert.That(services.Count(sd => sd.ServiceType == typeof(IServiceBusAdminClient))).IsEqualTo(0)
+      .Because("provisioning switched off in configuration must not register the admin client");
+  }
+
+  /// <summary>Configuration overrides the code callback here as it does for every other knob.</summary>
+  [Test]
+  public async Task AddAzureServiceBusTransport_AutoProvisionInfrastructureFromConfiguration_OverridesTheCodeValueAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton(_configWith(("AutoProvisionInfrastructure", "true")));
+
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING, o => o.AutoProvisionInfrastructure = false);
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+
+    await Assert.That(options.AutoProvisionInfrastructure).IsTrue();
+    await Assert.That(services.Count(sd => sd.ServiceType == typeof(IServiceBusAdminClient))).IsEqualTo(1);
+  }
+
+  /// <summary>An unreadable value leaves the code value in charge of both the registration and the options.</summary>
+  [Test]
+  public async Task AddAzureServiceBusTransport_AutoProvisionInfrastructureUnreadable_KeepsTheCodeValueAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton(_configWith(("AutoProvisionInfrastructure", "perhaps")));
+
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING);
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+
+    await Assert.That(options.AutoProvisionInfrastructure).IsTrue();
+    await Assert.That(services.Count(sd => sd.ServiceType == typeof(IServiceBusAdminClient))).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Configuration registered only through a factory cannot be read while the container is still
+  /// being built, so the registration follows the code value; that limitation is documented.
+  /// </summary>
+  [Test]
+  public async Task AddAzureServiceBusTransport_ConfigurationOnlyFromAFactory_RegistrationFollowsTheCodeValueAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(_ => _configWith(("AutoProvisionInfrastructure", "false")));
+
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING);
+
     await Assert.That(services.Count(sd => sd.ServiceType == typeof(IServiceBusAdminClient))).IsEqualTo(1);
   }
 

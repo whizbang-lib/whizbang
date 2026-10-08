@@ -609,7 +609,6 @@ public class PerspectiveWorkerCoverageTests {
     await Assert.That(options.PartitionCount).IsEqualTo(10_000);
     await Assert.That(options.IdleThresholdPolls).IsEqualTo(2);
     await Assert.That(options.PerspectiveBatchSize).IsEqualTo(100);
-    await Assert.That(options.InstanceMetadata).IsNull();
   }
 
   [Test]
@@ -623,9 +622,6 @@ public class PerspectiveWorkerCoverageTests {
       PartitionCount = 5000,
       IdleThresholdPolls = 5,
       PerspectiveBatchSize = 50,
-      InstanceMetadata = new Dictionary<string, JsonElement> {
-        ["version"] = JsonSerializer.SerializeToElement("1.0")
-      }
     };
 
     // Assert
@@ -636,7 +632,6 @@ public class PerspectiveWorkerCoverageTests {
     await Assert.That(options.PartitionCount).IsEqualTo(5000);
     await Assert.That(options.IdleThresholdPolls).IsEqualTo(5);
     await Assert.That(options.PerspectiveBatchSize).IsEqualTo(50);
-    await Assert.That(options.InstanceMetadata).IsNotNull();
   }
 
   #endregion
@@ -1594,10 +1589,9 @@ public class PerspectiveWorkerCoverageTests {
 
   #endregion
 
-  // DELETED (Category 1): Worker_WithInstanceMetadata_PassesMetadataToRequestAsync
-  // InstanceMetadata was a property of the removed work-batch request. The channel architecture
-  // routes metadata through HeartbeatRequest instead; this test has no equivalent in the
-  // new path. PerspectiveWorkerOptions.InstanceMetadata is unused post commit C.
+  // DELETED: Worker_WithInstanceMetadata_PassesMetadataToRequestAsync
+  // The metadata was a property of the removed work-batch request; the channel architecture routes it
+  // through HeartbeatRequest instead. The option that fed it read nothing after that and is gone (#1232).
 
   #region Helpers
 

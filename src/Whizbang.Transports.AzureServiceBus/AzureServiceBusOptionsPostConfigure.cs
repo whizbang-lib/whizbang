@@ -14,15 +14,17 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// can correct any runtime knob from configuration — appsettings.json or environment variables
 /// (<c>Whizbang__Transports__AzureServiceBus__SessionIdleTimeout</c>) — without a redeploy.
 /// <para>
-/// <see cref="AzureServiceBusOptions.AutoProvisionInfrastructure"/> is deliberately NOT bound:
-/// it shapes dependency-injection registrations (whether the admin client is registered) at
-/// registration time, and configuration cannot re-shape a container that is already built.
+/// <see cref="AzureServiceBusOptions.AutoProvisionInfrastructure"/> shapes dependency-injection
+/// registrations (whether the admin client is registered), so it is also read at registration time
+/// through <see cref="ApplyRegistrationTimeSettings"/>, from the configuration the host has already
+/// registered as an instance. It is bound here too, so the resolved options agree with the
+/// registration it shaped.
 /// </para>
 /// </summary>
 /// <docs>messaging/transports/azure-service-bus#configuration-options</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_BindsEveryRuntimeKnobFromConfigurationAsync</tests>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_ConfigurationOverridesCodeCallbackAsync</tests>
-/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_AutoProvisionInfrastructure_IsCodeOnlyAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_AutoProvisionInfrastructureFromConfiguration_ShapesTheRegistrationAsync</tests>
 internal sealed class AzureServiceBusOptionsPostConfigure(IConfiguration? configuration)
   : IPostConfigureOptions<AzureServiceBusOptions> {
 
@@ -35,6 +37,8 @@ internal sealed class AzureServiceBusOptionsPostConfigure(IConfiguration? config
     if (section?.Exists() != true) {
       return;
     }
+
+    _bindAutoProvision(section, options);
 
     _bindTimeSpan(section, "SendTimeout", v => options.SendTimeout = v);
     _bindInt(section, "MaxConcurrentCalls", v => options.MaxConcurrentCalls = v);
@@ -90,6 +94,25 @@ internal sealed class AzureServiceBusOptionsPostConfigure(IConfiguration? config
     var value = section[key];
     if (!string.IsNullOrWhiteSpace(value)) {
       apply(value);
+    }
+  }
+
+  /// <summary>
+  /// Applies the settings that decide what gets registered, from configuration available while the
+  /// container is still being built.
+  /// </summary>
+  /// <param name="configuration">The host's configuration, when registered as an instance; else null.</param>
+  /// <param name="options">The registration-time options snapshot.</param>
+  internal static void ApplyRegistrationTimeSettings(IConfiguration? configuration, AzureServiceBusOptions options) {
+    var section = configuration?.GetSection(CONFIGURATION_SECTION);
+    if (section?.Exists() == true) {
+      _bindAutoProvision(section, options);
+    }
+  }
+
+  private static void _bindAutoProvision(IConfiguration section, AzureServiceBusOptions options) {
+    if (bool.TryParse(section[nameof(AzureServiceBusOptions.AutoProvisionInfrastructure)], out var autoProvision)) {
+      options.AutoProvisionInfrastructure = autoProvision;
     }
   }
 }

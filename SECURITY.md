@@ -6,6 +6,15 @@ Security fixes are made on `develop` and ship in the next release. Only the late
 [nuget.org](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/) is supported; upgrade
 to it to receive a fix. Older releases and prereleases are not patched.
 
+## Published Advisories
+
+Advisories for this repository are published as GitHub Security Advisories and are the source of truth
+for affected and patched versions: <https://github.com/whizbang-lib/whizbang/security/advisories>.
+They also feed the OSV database, so Dependabot and SBOM tooling pick them up automatically.
+
+Maintainers writing one: see `.claude/skills/security-advisory/SKILL.md` for the field set, the
+description form, and the wording rules that keep an advisory accurate after the release it describes.
+
 ## Reporting a Vulnerability
 
 **Please do not report security vulnerabilities through public GitHub issues.**

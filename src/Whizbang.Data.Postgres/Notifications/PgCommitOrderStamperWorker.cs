@@ -123,10 +123,10 @@ public sealed partial class PgCommitOrderStamperWorker(
   /// Fires when a wake found nothing unstamped and the stamp was not run.
   /// </summary>
   /// <remarks>
-  /// The stamp's eligibility query sorts every unstamped row by transaction id before taking a
-  /// batch, and it used to run on every wake whether or not anything was unstamped: about half a
-  /// core per busy database on the backstop tick under a bulk load. The partial-index existence
-  /// probe costs nothing, so it decides whether the stamp runs at all.
+  /// The stamp used to run on every wake whether or not anything was unstamped, and its eligibility
+  /// query then sorted every unstamped row before taking a batch: about half a core per busy database
+  /// on the backstop tick under a bulk load. The stamp now walks an index and stops at its batch
+  /// (migration 197), and the partial-index existence probe still decides whether it runs at all.
   /// </remarks>
   public event Action? OnStampSkipped;
 
