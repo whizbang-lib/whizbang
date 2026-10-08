@@ -170,7 +170,7 @@ public class OutboxAcquisitionWindowSqlTests : EFCoreTestBase {
       }
     }
 
-    await Assert.That(claimed).IsEquivalentTo(new[] { orphan })
+    await Assert.That(claimed).IsEquivalentTo([orphan])
       .Because("the peer's rows are not this instance's to take, and the orphaned row is, wherever it sits in "
         + "arrival order: a lease that lapsed on a vanished instance must be reclaimed on the next poll");
   }

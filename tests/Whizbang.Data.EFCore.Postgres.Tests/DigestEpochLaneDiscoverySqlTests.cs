@@ -148,7 +148,7 @@ public class DigestEpochLaneDiscoverySqlTests : EFCoreTestBase {
     await _closeAsync(conn);
 
     var lanes = await _frontierLanesAsync(conn);
-    await Assert.That(lanes).IsEquivalentTo(new[] { ZERO, LANE_A, LANE_B })
+    await Assert.That(lanes).IsEquivalentTo([ZERO, LANE_A, LANE_B])
       .Because("lane discovery changed how it reads, not what it finds: one frontier per origin the store holds");
   }
 
