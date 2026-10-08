@@ -190,7 +190,7 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     await Assert.That(provider.GetRequiredService<IDutyElector>()).IsTypeOf<PgRoleElector>();
     var options = provider.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value;
     await Assert.That(options.Roles).Contains(Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE);
-    await Assert.That(options.HoldLegacySessionLock).IsTrue().Because("the bridge is on by default in this release");
+    await Assert.That(options.HoldLegacySessionLock).IsFalse().Because("the bridge is off by default; a deploy rolling from a pre-role-assignment release turns it on for that one deploy");
     var stamperKey = options.LegacyLockKeys[Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE];
     await Assert.That(stamperKey("svc")).IsEqualTo(Whizbang.Data.Postgres.CommitOrderStamperLockKey.Compute(
       "svc", new Whizbang.Core.Notifications.CommitOrderStamperOptions().AdvisoryLockKey))

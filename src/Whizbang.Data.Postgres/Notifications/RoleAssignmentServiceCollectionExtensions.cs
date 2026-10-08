@@ -31,8 +31,9 @@ public static class RoleAssignmentServiceCollectionExtensions {
   /// </summary>
   /// <remarks>
   /// The options also bind from <c>Whizbang:Database:RoleAssignment</c>. The legacy-lock bridge
-  /// (<see cref="RoleAssignmentOptions.HoldLegacySessionLock"/>) is on by default in this release, so a
-  /// rolling deploy from a release that held duties by session lock never has both acting.
+  /// (<see cref="RoleAssignmentOptions.HoldLegacySessionLock"/>) is off by default. Set it to true for
+  /// one deploy when rolling from a release that held duties by session lock, so that deploy never has
+  /// both an old and a new holder acting.
   /// </remarks>
   /// <param name="services">The service collection.</param>
   /// <param name="configure">Optional tuning.</param>
