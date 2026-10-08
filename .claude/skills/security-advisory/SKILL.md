@@ -17,11 +17,13 @@ The reporting channel and response commitments live in `SECURITY.md` — do not 
 
 ## 1. An advisory is timeless
 
-Never describe the project's current moment. Describe the affected set.
+Never describe the project's current moment. Describe the affected set, with exact versions: a published
+version never changes, so an exact version is both concrete and timeless.
 
 | Don't | Do |
 |---|---|
-| "Whizbang is pre-1.0, and 1.0 will be the first production-ready release." | "All affected versions are 0.x pre-releases." |
+| "Whizbang is pre-1.0, and 1.0 will be the first production-ready release." | "Every published version from 0.4.0-alpha.1 (2026-02-07) up to, but not including, 0.2614.0." |
+| "All affected versions are 0.x pre-releases." / "Older versions are affected." | Name the first affected version, the last affected release and the fixed release. |
 | "This is not yet fixed." | Leave the patched-version field empty. |
 | "Currently only the Dapper path is affected." | "The Dapper work coordinator is affected; the EF Core path is not." |
 | "A fix will ship in the next release." | "Fixed in 0.2615.0." |
@@ -32,21 +34,44 @@ still**. If a point in time genuinely matters (disclosure date, embargo lift), w
 A forward-looking promise is worse than vague: it is a claim that goes false on its own. "1.0 will be the
 first production-ready release" is wrong the day 1.0 ships, and wrong differently if 1.0 is renumbered.
 
-## 2. Version ranges live in the structured fields, not the prose
+## 2. Exact versions, the same in the fields and in the prose
 
-GitHub's affected-versions and patched-version fields are what becomes the OSV record
-(`introduced` / `fixed` events) that scanners act on. Prose that repeats a range drifts out of step with
-the metadata, and the metadata is the half that is machine-read.
+GitHub's affected-versions and patched-version fields become the OSV record (`introduced` / `fixed`
+events) that scanners act on. The prose states the same facts in words a person can act on. Both must be
+**exact**: a category ("pre-releases", "older versions", "production-ready", "0.x") tells a reader nothing
+they can check against their lock file.
 
-- Set the ecosystem (`NuGet`), the affected package(s), the affected range and the patched version.
-- Whizbang ships many packages from one repo. List **every** affected package id, not just
-  `SoftwareExtravaganza.Whizbang.Core` — a consumer who only references the transport or data package must
-  still match.
-- Say "all affected versions are 0.x pre-releases" in prose only as a *property of the set*, never as a
-  statement about the project.
-- The one version prose may carry is the upgrade instruction, "Upgrade to <first patched version> or
-  later.", because it stays true after every later release. It must name exactly the version in the
-  patched field; never restate the affected range.
+- Set the ecosystem (`NuGet`), every affected package id, the affected range **with its lower bound**, and
+  the patched version. Whizbang ships many packages from one repo: list every affected id, not just
+  `SoftwareExtravaganza.Whizbang.Core`, so a consumer who only references the transport or data package
+  still matches.
+- The prose names the same packages and states, in this order:
+  - the first affected published version and its date, and why it is the first ("the first with GraphQL
+    lenses");
+  - the fixed release and its date, and "Upgrade to <fixed version> or later.";
+  - the releases the range covers ("the releases 0.9.3 through 0.2612.0");
+  - any version a reader might wrongly assume is affected or fixed: an earlier version that predates the
+    code, a number that was never released, prerelease builds that already contain the fix.
+- The prose and the fields must agree exactly. Change one, change the other.
+- To state compatibility, cite the rule, not a category: "every affected version is below 1.0.0, where
+  semantic versioning makes no compatibility promise (SemVer 2.0.0, item 4)", not "pre-releases carry no
+  promise".
+
+### Finding the exact boundaries
+
+Never take the lower bound from the first package version. The vulnerable code usually arrived later.
+
+1. **First affected version.** Find the code that is wrong (the file or symbol the fix changes), then the
+   earliest release tag that contains it, including `archive/v*` tags:
+   `git grep -l <symbol> <tag> -- <path>`, walking the tags in version order. Confirm the defect is present
+   there, not just the file. Check every published version below it is genuinely clean.
+2. **Map tags to published versions.** `https://api.nuget.org/v3-flatcontainer/<id>/index.json` lists them;
+   a prerelease is not tagged, so read the commit it was built from in its `.nuspec`
+   (`<repository … commit="…">`) at `https://api.nuget.org/v3-flatcontainer/<id>/<version>/<id>.nuspec`.
+3. **First build with the fix.** For the prereleases published around the fix, test each `.nuspec` commit:
+   `git merge-base --is-ancestor <fix merge commit> <commit>`. The first that contains it is the one to name.
+4. **Fixed release.** The first stable release whose tag contains the fix. Confirm the package is on
+   nuget.org at that version before publishing (section 5).
 
 ## 3. The description follows the CVE form
 
@@ -113,8 +138,10 @@ up, going stale silently while contradicting the machine-readable record.
 ## Checklist before publishing
 
 - [ ] No banned time words; no forward-looking promises.
-- [ ] Affected range and patched version set in the structured fields; prose restates neither, beyond
-      "Upgrade to <patched version> or later."
+- [ ] Exact boundaries found by the procedure in section 2, not from the first package version.
+- [ ] Structured range has its lower bound; the prose states the same first affected version (with date),
+      fixed release (with date), covered releases, and "Upgrade to <fixed version> or later."
+- [ ] No category stands in for a version ("pre-releases", "older versions", "production-ready").
 - [ ] Every affected package id listed, not just `Whizbang.Core`.
 - [ ] Impact paragraph first; what is *not* affected stated explicitly.
 - [ ] CWE as specific as the defect allows; CVSS vector recorded and consistent with the prose.
