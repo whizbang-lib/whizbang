@@ -58,14 +58,23 @@ public class PostgresOptions {
   #region Command Timeout Options
 
   /// <summary>
-  /// Command timeout in seconds for database operations like process_work_batch.
-  /// Controls how long a single SQL command can run before being canceled.
-  /// Default: 120 seconds. Coordinator commands batch handler results and composite fan-outs; under a
-  /// bulk-import backlog a single commit batch has been observed at 13-30 s. A timeout shorter than the
-  /// worst batch cancels the commit and loses its completions, which then re-claim as lease expiries.
+  /// Retired. No command has ever read this value, so setting it changed nothing. A timeout belongs to the
+  /// connection it applies to, and the three that exist are set elsewhere:
+  /// application queries take the pooled connection string's <c>Command Timeout</c>; the work coordinator
+  /// keeps its own fixed budget (<see cref="CoordinatorCommandBudget.SECONDS"/>) so a short application
+  /// timeout cannot cancel a commit batch and lose its completions; schema initialization takes the
+  /// <c>-init</c> connection string's <c>Command Timeout</c> when it sets one
+  /// (<see cref="SchemaCommandBudget"/>).
   /// </summary>
+  /// <remarks>
+  /// Still bound, so a deployment that sets the key gets one startup warning naming the replacements
+  /// rather than silence. It is removed at 1.0.
+  /// </remarks>
   /// <docs>data/postgres#command-timeout</docs>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_FullOverloadRegistrationTests.cs:AddWhizbangPostgres_EntriesConvenienceOverload_RegistersCoreServicesWithDefaultOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/RetiredCommandTimeoutKeyTests.cs</tests>
+  [Obsolete("No command reads this. Application queries use the pooled connection string's Command Timeout, "
+    + "the work coordinator uses CoordinatorCommandBudget.SECONDS, and schema initialization uses the -init "
+    + "connection string's Command Timeout. Remove the key; it is removed from the type at 1.0.")]
   public int CommandTimeoutSeconds { get; set; } = 120;
 
   #endregion

@@ -16,6 +16,8 @@ using Whizbang.Data.Postgres;
 
 #pragma warning disable CA1707 // Test method names use underscores by convention
 
+#pragma warning disable CS0618 // CommandTimeoutSeconds is retired (#1230); these cases assert it still BINDS, which is what makes the deprecation warning possible
+
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>

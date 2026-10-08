@@ -63,6 +63,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     IServiceProvider? serviceProvider = null,
     CancellationToken cancellationToken = default) {
 
+    // DDL runs on the '-init' connection string when the deployment provides one, so that string's
+    // Command Timeout is the operator's lever over how long a migration may take.
+    _schemaCommandTimeoutSeconds =
+      global::Whizbang.Data.Postgres.SchemaCommandBudget.ForInitConnection(initConnectionString);
+
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
     var phases = new System.Collections.Generic.List<(string Name, long Ms, string Status)>();
@@ -127,7 +132,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         // than whether the scripts appeared to work.
         var canElect = await Whizbang.Data.Postgres.SchemaBootstrapPhase.ApplyAsync(
           segmentConnectionFactory, lockId, GetBootstrapScripts(), "__SCHEMA__",
-          SCHEMA_COMMAND_TIMEOUT_SECONDS, logger, cancellationToken);
+          _schemaCommandTimeoutSeconds, logger, cancellationToken);
 
         // Phase 1 — join the registry, then contend for the duty. Registration has to come first:
         // the capability function refuses an instance it cannot find, and that refusal would say
@@ -208,12 +213,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             "__SCHEMA__")),
           GetPhysicalColumnRewrites()));
         await Whizbang.Data.Postgres.CanonicalTemporalRewritePhase.ApplyAsync(
-          rewriteConnectionFactory, lockId, rewrites, SCHEMA_COMMAND_TIMEOUT_SECONDS, logger,
+          rewriteConnectionFactory, lockId, rewrites, _schemaCommandTimeoutSeconds, logger,
           cancellationToken);
         // An index a migration dropped because it cast a converted key to the old type is built again for the new
         // type, concurrently, now that the conversion has committed. One that cannot be is left to the schema pass.
         await global::Whizbang.Data.Postgres.StoredFormIndexRebuild.ApplyAsync(
-          rewriteConnectionFactory, storedFormMigrations, SCHEMA_COMMAND_TIMEOUT_SECONDS, logger, cancellationToken);
+          rewriteConnectionFactory, storedFormMigrations, _schemaCommandTimeoutSeconds, logger, cancellationToken);
       } catch (Exception ex) when (ex is not OperationCanceledException
           and not Whizbang.Data.Postgres.StoredFormConversionBlockedException) {
         // A conversion blocked by values it cannot read is the one failure that stops startup: it names the
@@ -525,7 +530,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           // Set command timeout to 10 minutes for DDL operations.
           // Multiple services may be running DDL concurrently (different schemas)
           // and lock contention on catalog tables can cause delays.
-          dbContext.Database.SetCommandTimeout(TimeSpan.FromSeconds(SCHEMA_COMMAND_TIMEOUT_SECONDS));
+          dbContext.Database.SetCommandTimeout(TimeSpan.FromSeconds(_schemaCommandTimeoutSeconds));
 
           logger?.LogInformation("Starting database initialization for {DbContext} (schema: __SCHEMA__, infra={InfraChanged}, persp={PerspChanged})...",
             "__DBCONTEXT_CLASS__", infraChanged, perspChanged);
@@ -865,7 +870,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var connection = dbContext.Database.GetDbConnection();
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = sql;
-    cmd.CommandTimeout = SCHEMA_COMMAND_TIMEOUT_SECONDS;
+    cmd.CommandTimeout = _schemaCommandTimeoutSeconds;
     if (dbContext.Database.CurrentTransaction is not null) {
       cmd.Transaction = dbContext.Database.CurrentTransaction.GetDbTransaction();
     }
@@ -890,15 +895,19 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// </remarks>
   private const int MAX_BATCH_PASSES = 10_000;
 
-  /// How long any one schema statement may take.
+  /// How long any one schema statement may take: the '-init' connection string's Command Timeout when
+  /// it sets one, otherwise ten minutes.
   /// </summary>
   /// <remarks>
   /// A rewrite of a stored format is one statement over every row of a table, which legitimately
   /// takes far longer than an ordinary command, and a schema pass that gives up half way leaves the
-  /// service unable to start. Named here because both the EF path and the boundary path need it to
-  /// be the same number.
+  /// service unable to start. Held in a field rather than a constant because the budget now comes from
+  /// the connection DDL runs on; set once at the top of initialization, read by both the EF path and
+  /// the boundary path so the two cannot disagree. Initialization is once per process per context, and
+  /// a repeat assignment writes the same value, so the shared field needs no lock.
   /// </remarks>
-  private const int SCHEMA_COMMAND_TIMEOUT_SECONDS = 600;
+  private static int _schemaCommandTimeoutSeconds =
+    global::Whizbang.Data.Postgres.SchemaCommandBudget.DEFAULT_SECONDS;
 
   private static string _renderFormatBraces(string sql) => sql.Replace("{{", "{").Replace("}}", "}");
 
@@ -977,7 +986,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       var extensionConnection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
       var extensionTransaction = dbContext.Database.CurrentTransaction?.GetDbTransaction() as Npgsql.NpgsqlTransaction;
       await Whizbang.Data.Postgres.OptionalExtensionBlocks.ApplyAsync(
-        extensionConnection, extensionTransaction, _renderFormatBraces(sql), SCHEMA_COMMAND_TIMEOUT_SECONDS, logger, cancellationToken);
+        extensionConnection, extensionTransaction, _renderFormatBraces(sql), _schemaCommandTimeoutSeconds, logger, cancellationToken);
       return;
     }
 
@@ -1007,7 +1016,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     await Whizbang.Data.Postgres.SchemaCommandBoundary.ApplyAsync(
       segmentConnectionFactory,
       _renderFormatBraces(sql),
-      SCHEMA_COMMAND_TIMEOUT_SECONDS,
+      _schemaCommandTimeoutSeconds,
       logger,
       cancellationToken);
   }

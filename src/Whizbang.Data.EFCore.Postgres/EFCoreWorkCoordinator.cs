@@ -5393,7 +5393,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     await using var command = connection.CreateCommand().WithCoordinatorTimeout();
     command.CommandText = $"SELECT * FROM \"{schema}\".perform_maintenance()";
-    command.CommandTimeout = 30;
 
     await using var reader = await command.ExecuteReaderAsync(cancellationToken);
     var results = new List<MaintenanceResult>();
@@ -5424,7 +5423,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     await using var command = connection.CreateCommand().WithCoordinatorTimeout();
     command.CommandText = $"SELECT * FROM \"{schema}\".purge_orphan_inbox(@handled_types)";
-    command.CommandTimeout = 30;
     var param = command.CreateParameter();
     param.ParameterName = "handled_types";
     param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;

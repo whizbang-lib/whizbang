@@ -23,6 +23,8 @@ using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
 
+#pragma warning disable CS0618 // CommandTimeoutSeconds is retired (#1230); these cases assert it still BINDS, which is what makes the deprecation warning possible
+
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
