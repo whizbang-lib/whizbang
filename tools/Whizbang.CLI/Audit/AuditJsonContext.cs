@@ -17,6 +17,7 @@ namespace Whizbang.CLI.Audit;
 [JsonSerializable(typeof(OsvBatchRequest))]
 [JsonSerializable(typeof(OsvBatchResponse))]
 [JsonSerializable(typeof(OsvVulnerability))]
+[JsonSerializable(typeof(AuditJsonReport))]
 internal sealed partial class AuditJsonContext : JsonSerializerContext;
 
 /// <summary>
