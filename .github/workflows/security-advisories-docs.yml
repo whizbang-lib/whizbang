@@ -1,0 +1,115 @@
+name: Security advisories docs
+
+run-name: "Docs · security advisories refresh"
+
+# Keeps the docs site's Security Advisories page in step with the published advisories. The docs
+# repo's src/scripts/build-security-advisories.mjs reads them from OSV (api.osv.dev), unauthenticated,
+# so a draft advisory can never reach the page; this job runs it against docs develop and, only when an
+# advisory or the package list changed, publishes the regenerated data and page the same way the
+# test-status job in ci.yml does (branch, PR, instant merge, then a docs release to main).
+#
+# It runs here rather than in the docs repo because the docs repo holds no token of its own: a PR it
+# opened with GITHUB_TOKEN would never trigger its CI. The page is committed, not only built, because
+# Read the Docs mirrors the committed markdown and never runs the site's build.
+on:
+  schedule:
+    - cron: '30 6 * * *'  # daily; OSV picks up a published GitHub advisory within hours
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-advisories-docs
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh the docs security advisories page
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read   # every write goes through DOCS_REPO_PUSH_TOKEN, so the docs PR triggers its CI
+    env:
+      DOCS_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+    steps:
+      - name: Check for docs push token
+        id: token
+        run: |
+          if [ -n "$DOCS_TOKEN" ]; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "DOCS_REPO_PUSH_TOKEN not set — skipping the security advisories refresh"
+          fi
+
+      - name: Checkout docs repo
+        if: steps.token.outputs.have == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: whizbang-lib/whizbang-lib.github.io
+          ref: develop
+          token: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+          path: docs-repo
+
+      # The generator needs no dependencies (Node's built-in fetch) and no token: it must stay
+      # unauthenticated. It writes changed=true|false to GITHUB_OUTPUT; a failed fetch keeps the
+      # committed data and reports changed=false, so an OSV outage publishes nothing.
+      - name: Regenerate from OSV
+        id: gen
+        if: steps.token.outputs.have == 'true'
+        working-directory: docs-repo
+        run: |
+          if [ ! -f src/scripts/build-security-advisories.mjs ]; then
+            echo "::notice::The generator is not on docs develop yet; nothing to refresh."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          node src/scripts/build-security-advisories.mjs
+
+      # The docs develop ruleset requires PRs (0 approvals, no required checks), so publish = push
+      # branch + create PR + instant merge, as for test-status.
+      - name: Publish to docs develop
+        id: publish
+        if: steps.gen.outputs.changed == 'true'
+        working-directory: docs-repo
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+        run: |
+          git config user.name "whizbang-ci"
+          git config user.email "ci@whizba.ng"
+          git add src/assets/data/security-advisories.json src/assets/docs/v1.0.0/fundamentals/security/security-advisories.md
+          if git diff --cached --quiet; then
+            echo "Security advisories unchanged — nothing to publish"
+            exit 0
+          fi
+          BRANCH="security-advisories/${{ github.run_id }}"
+          git checkout -b "$BRANCH"
+          # -s: the DCO sign-off gate requires it on every pull request commit.
+          git commit -s -m "chore(security): refresh the security advisories page from OSV"
+          git push --force origin "$BRANCH"
+          gh pr create --base develop --head "$BRANCH" \
+            --title "chore(security): refresh the security advisories page" \
+            --body "Automated refresh from OSV (api.osv.dev) by [whizbang run ${{ github.run_id }}](https://github.com/whizbang-lib/whizbang/actions/runs/${{ github.run_id }}): an advisory affecting a Whizbang package, or the package list, changed." \
+            || echo "PR for $BRANCH already exists (prior attempt) — merging it with the force-pushed content"
+          for i in 1 2 3 4 5; do
+            if gh pr merge "$BRANCH" --squash --delete-branch; then
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "merge attempt $i failed; retrying in 5s"
+            sleep 5
+          done
+          echo "::warning::Could not merge the security advisories PR — leaving it open for manual merge"
+
+      # Carries the change on to main, which deploys the site; Read the Docs builds the committed page.
+      - name: Release docs to main
+        if: steps.publish.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+        run: |
+          gh workflow run start-release.yml \
+            --repo whizbang-lib/whizbang-lib.github.io \
+            --ref develop \
+            -f release_type=patch \
+            -f auto_merge=true
