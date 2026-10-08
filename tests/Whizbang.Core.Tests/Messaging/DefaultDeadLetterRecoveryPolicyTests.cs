@@ -92,16 +92,16 @@ public class DefaultDeadLetterRecoveryPolicyTests {
 
   [Test]
   public async Task GetPolicy_UnknownReasonNotInDictionary_FallsBackToUnknownEntryAsync() {
-    // The Unknown entry exists in defaults and serves as the fallback. Build options with
-    // ONLY the Unknown entry to verify the fallback path explicitly.
-    var opts = new DeadLetterRecoveryOptions {
-      PolicyByReason = new Dictionary<MessageFailureReason, RecoveryPolicy> {
-        [MessageFailureReason.Unknown] = new("FallbackTest", 99, TimeSpan.FromMinutes(7), HoldForReviewAfterExhaustion: true),
-      },
-    };
+    // The Unknown entry exists in defaults and serves as the fallback. Exercise it against the SHIPPED map,
+    // using a reason that genuinely has no default of its own, rather than replacing the map with a single
+    // entry: the fallback that matters is the one production takes.
+    var opts = new DeadLetterRecoveryOptions();
+    opts.UsePolicy(MessageFailureReason.Unknown,
+      new("FallbackTest", 99, TimeSpan.FromMinutes(7), HoldForReviewAfterExhaustion: true));
+    var uncovered = Enum.GetValues<MessageFailureReason>()
+      .First(r => !opts.PolicyByReason.ContainsKey(r));
     var policy = _newPolicy(opts);
-    // Pass a reason NOT in the dictionary; should hit the fallback path.
-    var result = policy.GetPolicy(_entry(MessageFailureReason.Throttled));
+    var result = policy.GetPolicy(_entry(uncovered));
     await Assert.That(result.Name).IsEqualTo("FallbackTest");
     await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(99);
     await Assert.That(result.Cooldown).IsEqualTo(TimeSpan.FromMinutes(7));

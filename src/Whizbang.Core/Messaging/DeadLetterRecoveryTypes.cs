@@ -331,7 +331,13 @@ public sealed class DeadLetterRecoveryOptions {
   /// Per-<see cref="MessageFailureReason"/> recovery rules. Defaults follow the
   /// design doc's matrix (see plans/dlq-recovery.md).
   /// </summary>
-  public Dictionary<MessageFailureReason, RecoveryPolicy> PolicyByReason { get; set; } = new() {
+  /// <remarks>
+  /// Read-only by design, so the generated configuration binder does not try to construct a
+  /// <see cref="RecoveryPolicy"/> from a partial section. It is a positional record, and the binder needs every
+  /// constructor argument: naming one field threw at startup. <c>DeadLetterRecoveryPolicyConfigurationBinder</c>
+  /// binds this map field by field instead, so an entry overrides only what it names.
+  /// </remarks>
+  private readonly Dictionary<MessageFailureReason, RecoveryPolicy> _policyByReason = new() {
     [MessageFailureReason.Throttled] = new("AggressiveRetry", 3, TimeSpan.FromMinutes(30), HoldForReviewAfterExhaustion: false),
     [MessageFailureReason.TransportException] = new("MediumRetry", 3, TimeSpan.FromHours(1), HoldForReviewAfterExhaustion: false),
     [MessageFailureReason.LeaseExpired] = new("AggressiveRetry", 5, TimeSpan.FromSeconds(0), HoldForReviewAfterExhaustion: false),
@@ -354,6 +360,21 @@ public sealed class DeadLetterRecoveryOptions {
     // consumer. The fix is in the producer (split the work, or raise the type's limit), so hold it.
     [MessageFailureReason.MessagePayloadTooLarge] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
   };
+
+  /// <summary>
+  /// Replaces the policy for one failure reason. The configuration binder and code-side configuration both
+  /// go through here, so the map has one writer.
+  /// </summary>
+  /// <param name="reason">The failure reason the policy applies to.</param>
+  /// <param name="policy">The policy to use for it.</param>
+  public void UsePolicy(MessageFailureReason reason, RecoveryPolicy policy) {
+    ArgumentNullException.ThrowIfNull(policy);
+    _policyByReason[reason] = policy;
+  }
+
+  /// <summary>Per-<see cref="MessageFailureReason"/> recovery rules, as configured.</summary>
+  public IReadOnlyDictionary<MessageFailureReason, RecoveryPolicy> PolicyByReason => _policyByReason;
+
 }
 
 /// <summary>

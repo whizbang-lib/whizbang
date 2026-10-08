@@ -928,6 +928,9 @@ public static class WorkerPipelineExtensions {
           Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
             configuration.GetSection("Whizbang:DeadLetterRecovery"), options);
 #pragma warning restore IL2026
+          // PolicyByReason is read-only, so the line above skips it. Bind it field by field, which is the only
+          // way a partial entry can work against a positional record (#1231).
+          Whizbang.Core.Messaging.DeadLetterRecoveryPolicyConfigurationBinder.Apply(options, configuration);
         }
       });
     });
