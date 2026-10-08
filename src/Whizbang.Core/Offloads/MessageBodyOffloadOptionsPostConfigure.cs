@@ -15,11 +15,11 @@ namespace Whizbang.Core.Offloads;
 /// <remarks>
 /// Read by hand rather than through the reflection binder, so it stays trimming- and AOT-safe. A key
 /// that is absent or does not parse leaves the value it already had. A host that registers no
-/// configuration keeps the code values.
+/// configuration gets an empty one, and keeps the code values.
 /// </remarks>
 /// <docs>operations/configuration/configuration-reference#whizbangbodyoffload--messagebodyoffloadoptions</docs>
 /// <tests>tests/Whizbang.Core.Tests/Offloads/MessageBodyOffloadOptionsBindingTests.cs</tests>
-internal sealed class MessageBodyOffloadOptionsPostConfigure(IConfiguration? configuration = null)
+internal sealed class MessageBodyOffloadOptionsPostConfigure(IConfiguration configuration)
   : IPostConfigureOptions<MessageBodyOffloadOptions> {
 
   /// <summary>The section every body-offload knob binds from.</summary>
@@ -27,8 +27,8 @@ internal sealed class MessageBodyOffloadOptionsPostConfigure(IConfiguration? con
 
   public void PostConfigure(string? name, MessageBodyOffloadOptions options) {
     ArgumentNullException.ThrowIfNull(options);
-    var section = configuration?.GetSection(CONFIGURATION_SECTION);
-    if (section?.Exists() != true) {
+    var section = configuration.GetSection(CONFIGURATION_SECTION);
+    if (!section.Exists()) {
       return;
     }
 

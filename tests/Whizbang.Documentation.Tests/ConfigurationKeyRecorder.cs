@@ -15,20 +15,16 @@ namespace Whizbang.Documentation.Tests;
 /// enumerated that section's children: the names there are the consumer's own (one entry per
 /// subscription, per provider, per handler), and the manifest writes that segment as <c>*</c>.
 /// </remarks>
-internal sealed class ConfigurationKeyRecorder : ConfigurationProvider, IConfigurationSource {
+/// <param name="seeds">
+/// Values for the few keys that gate further reads (a cipher name, for one), so the reads behind the
+/// gate run and are recorded too. Everything else reads as absent.
+/// </param>
+internal sealed class ConfigurationKeyRecorder(IReadOnlyDictionary<string, string>? seeds = null)
+  : ConfigurationProvider, IConfigurationSource {
   internal const string PLACEHOLDER = "__any__";
 
   private readonly ConcurrentDictionary<string, byte> _reads = new(StringComparer.OrdinalIgnoreCase);
-  private readonly IReadOnlyDictionary<string, string> _seeds;
-
-  /// <summary>Creates a recorder that answers only the given seed keys.</summary>
-  /// <param name="seeds">
-  /// Values for the few keys that gate further reads (a cipher name, for one), so the reads behind
-  /// the gate run and are recorded too. Everything else reads as absent.
-  /// </param>
-  public ConfigurationKeyRecorder(IReadOnlyDictionary<string, string>? seeds = null) {
-    _seeds = seeds ?? new Dictionary<string, string>();
-  }
+  private readonly IReadOnlyDictionary<string, string> _seeds = seeds ?? new Dictionary<string, string>();
 
   /// <summary>Every key read, with consumer-named segments written as <c>*</c>.</summary>
   public IReadOnlyCollection<string> Keys =>
@@ -46,7 +42,7 @@ internal sealed class ConfigurationKeyRecorder : ConfigurationProvider, IConfigu
   public override IEnumerable<string> GetChildKeys(IEnumerable<string> earlierKeys, string? parentPath) {
     // One placeholder level per section, never beneath a placeholder: enough for a binder to see
     // its section and enumerate it once, without recursing forever.
-    if (parentPath is not null && parentPath.Split(':').Contains(PLACEHOLDER)) {
+    if (parentPath?.Split(':').Contains(PLACEHOLDER) == true) {
       return earlierKeys;
     }
 
