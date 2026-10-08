@@ -53,9 +53,6 @@ they can check against their lock file.
   - any version a reader might wrongly assume is affected or fixed: an earlier version that predates the
     code, a number that was never released, prerelease builds that already contain the fix.
 - The prose and the fields must agree exactly. Change one, change the other.
-- To state compatibility, cite the rule, not a category: "every affected version is below 1.0.0, where
-  semantic versioning makes no compatibility promise (SemVer 2.0.0, item 4)", not "pre-releases carry no
-  promise".
 
 ### Finding the exact boundaries
 
@@ -89,9 +86,14 @@ Then expand, in this order:
    and the one that does not. Be explicit about what is *not* affected; it is as load-bearing as what is.
 3. **Mechanism** — why it happens, at the level of the design decision that was wrong. Enough for a
    reviewer to confirm the fix addresses the cause.
-4. **Workarounds** — a configuration change that mitigates without upgrading, or "None; upgrade to
+4. **Upgrade effects** — when the fix changes behavior a consumer can see (a renamed type, a field no
+   longer returned, a stricter default), list each change exactly, say which clients or code it breaks, and
+   give the step that restores what they need, without reopening the hole. Never justify the change by
+   versioning policy ("0.x makes no compatibility promise", "SemVer item 4"): the reader needs to know what
+   to do, not why we were allowed to break it.
+5. **Workarounds** — a configuration change that mitigates without upgrading, or "None; upgrade to
    <version> or later."
-5. **Credit** — the reporter, by the name they chose, unless they asked not to be named.
+6. **Credit** — the reporter, by the name they chose, unless they asked not to be named.
 
 **No proof of concept, no exploit steps, no working payload.** Describe the class of problem and the
 affected path. A reviewer needs the mechanism; an attacker must not be handed the recipe.
@@ -142,6 +144,8 @@ up, going stale silently while contradicting the machine-readable record.
 - [ ] Structured range has its lower bound; the prose states the same first affected version (with date),
       fixed release (with date), covered releases, and "Upgrade to <fixed version> or later."
 - [ ] No category stands in for a version ("pre-releases", "older versions", "production-ready").
+- [ ] Every visible behavior change from the fix is listed with the client step it needs; none is justified
+      by versioning policy.
 - [ ] Every affected package id listed, not just `Whizbang.Core`.
 - [ ] Impact paragraph first; what is *not* affected stated explicitly.
 - [ ] CWE as specific as the defect allows; CVSS vector recorded and consistent with the prose.
