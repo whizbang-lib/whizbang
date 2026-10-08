@@ -89,6 +89,49 @@ public class ClaimWorkRegistrationSqlTests : EFCoreTestBase {
     await _execAsync(claimer, "ROLLBACK");
   }
 
+  /// <summary>
+  /// A heartbeat that finds a stale peer reaps it inline, and the reap releases the peer's leases with plain updates
+  /// of the work tables. When a claim has just taken one of those rows, the reap waits for the claim, and the
+  /// heartbeat with it (#1217, migration 199).
+  /// </summary>
+  [Test]
+  public async Task ClaimWork_HeldOpen_AHeartbeatThatFindsAStalePeerDoesNotWaitAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _registerAsync(conn, _self, stale: false);
+    await _registerAsync(conn, _peer, stale: true);
+    // The dead peer's lease has lapsed, so the claim takes its row.
+    await _execAsync(conn, $@"
+      INSERT INTO wh_outbox
+        (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, stream_id,
+         partition_number, instance_id, lease_expiry)
+      VALUES (gen_random_uuid(), 'test-topic', 'TestEvent', '{{}}', '{{}}', 0, 1, NOW() - INTERVAL '1 hour',
+              gen_random_uuid(), 1, '{_peer}', NOW() - INTERVAL '1 minute')");
+
+    await using var claimer = await _newConnectionAsync();
+    await _execAsync(claimer, "BEGIN");
+    _ = await _claimAsync(claimer, _self);
+    await Assert.That(await _scalarAsync<long>(claimer,
+        $"SELECT count(*) FROM wh_outbox WHERE instance_id = '{_self}'")).IsEqualTo(1L)
+      .Because("the claim has to hold the dead peer's row for the reap to have anything to wait on");
+
+    await using var beater = await _newConnectionAsync();
+    await _execAsync(beater, "SET lock_timeout = '250ms'");
+    var accepted = await _scalarAsync<bool>(beater,
+      $"SELECT record_heartbeat('{_self}'::uuid, 'test', 'test-host', 1, '{{}}'::jsonb, 'Running', '1.0.0', 150)");
+
+    await Assert.That(accepted).IsTrue()
+      .Because("the reap inside a heartbeat is opportunistic (maintenance reaps too), so it must step aside rather "
+        + "than make the heartbeat wait for a claim");
+
+    await _execAsync(claimer, "ROLLBACK");
+    _ = await _scalarAsync<bool>(beater,
+      $"SELECT record_heartbeat('{_self}'::uuid, 'test', 'test-host', 1, '{{}}'::jsonb, 'Running', '1.0.0', 150)");
+    await Assert.That(await _scalarAsync<long>(beater,
+        $"SELECT count(*) FROM wh_service_instances WHERE instance_id = '{_peer}'")).IsEqualTo(0L)
+      .Because("once nothing holds the peer's rows, the next heartbeat reaps it as before");
+  }
+
   [Test]
   public async Task ClaimWork_StaleRegistration_LeavesTheRowAlone_AndAsksForRegistrationAsync() {
     await using var ctx = CreateDbContext();
