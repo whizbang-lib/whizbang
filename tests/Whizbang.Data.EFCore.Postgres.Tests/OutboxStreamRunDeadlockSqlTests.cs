@@ -218,7 +218,20 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
   // --- all of it at once ---------------------------------------------------------------------------
 
   [Test]
-  public async Task ConcurrentClaimsDrainsContinuationsCompletionsAndFailureReleases_NeverDeadlockAsync() {
+  public Task ConcurrentClaimsDrainsContinuationsCompletionsAndFailureReleases_NeverDeadlockAsync() =>
+    _concurrentRoundsAsync(registerInstances: true);
+
+  [Test]
+  public Task ConcurrentClaims_WithNoInstanceRegistered_NeverDeadlockAsync() =>
+    // #1238. The same rounds with the four instances left unregistered, which is the shape that
+    // deadlocked: with no row in wh_service_instances and no whizbang-<id> application name on these
+    // connections, every instance ranks alone AND sees no live peer, so each one's window admits every
+    // stream instead of its partition's share. The overlap is then total, and two acquisitions take rows
+    // of the same streams in whatever order their plans produce. A fleet meets this in production when
+    // every heartbeat goes stale at once behind a pooler that hides the application name.
+    _concurrentRoundsAsync(registerInstances: false);
+
+  private async Task _concurrentRoundsAsync(bool registerInstances) {
     // Four instances drain one outbox. Each round releases every instance's claim, drain fetch,
     // continuation and completion flush (with its failure releases) together on one signal, over
     // streams the instances share, and the round ends when all of them have returned. A deadlock is
@@ -232,8 +245,11 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
     await using var control = await _openAsync();
     // Registered, as ClaimWorker registers before its first claim: the claim no longer writes the
     // caller's row (196), so four unregistered instances would each rank alone and see no live peer.
-    foreach (var id in instanceIds) {
-      await _registerAsync(control, id);
+    // The unregistered case is the point of the sibling test above, not an oversight here.
+    if (registerInstances) {
+      foreach (var id in instanceIds) {
+        await _registerAsync(control, id);
+      }
     }
     foreach (var actor in actors) {
       await actor.OpenAsync(ConnectionString);
