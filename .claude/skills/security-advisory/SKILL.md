@@ -44,6 +44,9 @@ the metadata, and the metadata is the half that is machine-read.
   still match.
 - Say "all affected versions are 0.x pre-releases" in prose only as a *property of the set*, never as a
   statement about the project.
+- The one version prose may carry is the upgrade instruction, "Upgrade to <first patched version> or
+  later.", because it stays true after every later release. It must name exactly the version in the
+  patched field; never restate the affected range.
 
 ## 3. The description follows the CVE form
 
@@ -62,7 +65,7 @@ Then expand, in this order:
 3. **Mechanism** — why it happens, at the level of the design decision that was wrong. Enough for a
    reviewer to confirm the fix addresses the cause.
 4. **Workarounds** — a configuration change that mitigates without upgrading, or "None; upgrade to
-   <version>."
+   <version> or later."
 5. **Credit** — the reporter, by the name they chose, unless they asked not to be named.
 
 **No proof of concept, no exploit steps, no working payload.** Describe the class of problem and the
@@ -94,17 +97,24 @@ An advisory is not finished when it reads well:
   package.
 - Add the advisory's `GHSA-…` id to the release notes for the version that fixes it.
 
-## 6. The docs site points at the advisories; it never copies them
+## 6. The docs site renders the published advisories; nobody maintains a list by hand
 
-The documentation site carries a security page that links to the repository's advisories list,
-`SECURITY.md`, and the supported-versions statement. It does **not** enumerate advisories: GHSA, and the
-OSV record it generates, are the source of truth, and a hand-maintained list in the docs is the §1 failure
-one level up — it goes stale silently and contradicts the machine-readable record.
+The documentation site's security page is **generated** from the OSV record, never typed: a build step
+queries `api.osv.dev` for every published package id (unauthenticated, so a draft advisory can never reach
+it), commits the result as data, and the page renders from that. The page says "as of <date>" and links
+the live list, <https://github.com/whizbang-lib/whizbang/security/advisories>, so a snapshot can be
+behind GHSA but never contradict it. A failed fetch keeps the last committed data and warns; it never
+fails the build or renders an empty list.
+
+So publishing an advisory needs no docs change: once GHSA exports it to OSV, the next generator run
+picks it up. Never add an advisory to the docs by hand; a hand-maintained list is the §1 failure one level
+up, going stale silently while contradicting the machine-readable record.
 
 ## Checklist before publishing
 
 - [ ] No banned time words; no forward-looking promises.
-- [ ] Affected range and patched version set in the structured fields; prose does not restate them.
+- [ ] Affected range and patched version set in the structured fields; prose restates neither, beyond
+      "Upgrade to <patched version> or later."
 - [ ] Every affected package id listed, not just `Whizbang.Core`.
 - [ ] Impact paragraph first; what is *not* affected stated explicitly.
 - [ ] CWE as specific as the defect allows; CVSS vector recorded and consistent with the prose.
