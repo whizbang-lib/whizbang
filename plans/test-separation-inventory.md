@@ -194,7 +194,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Hosting.RabbitMQ.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.LanguageServer.Tests | 18 | 0 | 0 | 0 | 18 | 0 |
 | Whizbang.Migrate.Tests | 39 | 0 | 0 | 23 | 62 | 0 |
-| Whizbang.Observability.Tests | 21 | 3 | 0 | 0 | 24 | 0 |
+| Whizbang.Observability.Tests | 23 | 0 | 0 | 0 | 23 | 0 |
 | Whizbang.Offloads.AzureBlob.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
 | Whizbang.Offloads.InMemory.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.Partitioning.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
@@ -209,7 +209,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 399 | 1 | 40 | 2209 | 12 |
+| **Total** | 1771 | 396 | 1 | 40 | 2208 | 12 |
 
 ## Worklist: non-unit types by project
 
@@ -740,13 +740,7 @@ All 18 types are unit-pure.
 
 ### Whizbang.Observability.Tests
 
-3 of 24 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| EnvelopeRegistryTests | `tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs` | 11 | Component | Parallel |  |  |
-| MessageTracingTests | `tests/Whizbang.Observability.Tests/MessageTracingTests.cs` | 63 | Component | TaskDelay |  |  |
-| PolicyDecisionTrailTests | `tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs` | 8 | Component | TaskDelay |  |  |
+All 23 types are unit-pure.
 
 ### Whizbang.Offloads.AzureBlob.Tests
 
