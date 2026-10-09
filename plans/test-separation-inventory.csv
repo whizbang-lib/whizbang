@@ -2199,7 +2199,6 @@
 "Whizbang.Sagas.Tests","tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogAsyncTests.cs","TryRecoverViaWatchdogAsyncTests","48","Test","8","Unit","","","",""
 "Whizbang.Sagas.Tests","tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogTickAsyncTests.cs","TryRecoverViaWatchdogTickAsyncTests","27","Test","29","Unit","","","",""
 "Whizbang.Sagas.Tests","tests/Whizbang.Sagas.Tests/StrandedSagaRecoveryIntegrationTests.cs","StrandedSagaRecoveryIntegrationTests","31","Test","3","Unit","","","",""
-"Whizbang.Sequencing.Tests","tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs","InMemorySequenceProviderTests","18","Test","12","Component","TaskRun Parallel Stopwatch","TaskRun L43,L104; Parallel L281; Stopwatch L250","",""
 "Whizbang.SignalR.Tests","tests/Whizbang.SignalR.Tests/DependencyInjection/SignalRServiceCollectionExtensionsTests.cs","SignalRServiceCollectionExtensionsTests","18","Test","4","Unit","","","",""
 "Whizbang.SignalR.Tests","tests/Whizbang.SignalR.Tests/DependencyInjection/SignalRTagExtensionsTests.cs","SignalRTagExtensionsTests","18","Test","2","Unit","","","",""
 "Whizbang.SignalR.Tests","tests/Whizbang.SignalR.Tests/Hooks/SignalRNotificationHookTests.cs","SignalRNotificationHookTests","24","Test","7","Unit","","","",""
