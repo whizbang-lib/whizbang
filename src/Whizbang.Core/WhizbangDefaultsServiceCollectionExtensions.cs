@@ -98,6 +98,7 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     // may substitute its own families first.
     services.TryAddSingleton<Minting.ICompositeFactory, Minting.CompositeFactory>();
     services.TryAddSingleton<Workers.IInstanceAliveLockSource>(Workers.NullInstanceAliveLockSource.Instance);
+    services.TryAddSingleton<Workers.IInstanceConnectionModeSource>(Workers.NullInstanceConnectionModeSource.Instance);
     services.TryAddSingleton<Workers.IOccurrencePublishGate, Workers.NoOpOccurrencePublishGate>();
     // Both resolvers read the message-type catalog; over the null catalog they resolve nothing, which is
     // what "no resolver" meant before. Generated registrations supply the same types over a real catalog.
