@@ -356,7 +356,8 @@ public class RabbitMQTransportTests {
   }
 
   [Test]
-  public async Task Subscription_Dispose_CancelsConsumerAsync() {
+  [Timeout(30000)] // hang guard only: the wait is DisposalCompletion, the token fails a test it never signals
+  public async Task Subscription_Dispose_CancelsConsumerAsync(CancellationToken ct) {
     // Arrange
     var fakeChannel = new FakeChannel();
     var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
@@ -374,22 +375,26 @@ public class RabbitMQTransportTests {
       logger: null
     );
 
-    await transport.InitializeAsync();
+    await transport.InitializeAsync(ct);
 
     var metadata = new Dictionary<string, JsonElement> {
       ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
     var subscription = await transport.SubscribeAsync(
-      async (_, envelopeType, ct) => await Task.CompletedTask,
-      destination
+      async (_, envelopeType, handlerCt) => await Task.CompletedTask,
+      destination,
+      ct
     );
+
+    var rabbitSubscription = (RabbitMQSubscription)subscription;
 
     // Act
     subscription.Dispose();
 
-    // Give the fire-and-forget disposal task time to complete
-    await Task.Delay(100);
+    // Dispose() returns before its cleanup runs. Wait on the signal for the exact transition asserted
+    // below: DisposalCompletion completes only after the consumer is cancelled and the channel disposed.
+    await rabbitSubscription.DisposalCompletion.WaitAsync(ct);
 
     // Assert - Verify consumer was canceled
     await Assert.That(fakeChannel.BasicCancelAsyncCalled).IsTrue();

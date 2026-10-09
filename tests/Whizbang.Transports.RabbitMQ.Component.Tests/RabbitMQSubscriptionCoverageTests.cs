@@ -56,7 +56,8 @@ public class RabbitMQSubscriptionCoverageTests {
   /// silently leaked or half-closed channel.
   /// </summary>
   [Test]
-  public async Task Dispose_WhenChannelDisposeThrows_LogsTheErrorInsteadOfLosingItAsync() {
+  [Timeout(30000)]
+  public async Task Dispose_WhenChannelDisposeThrows_LogsTheErrorInsteadOfLosingItAsync(CancellationToken ct) {
     var channel = new FakeChannel {
       ExceptionToThrowOnDispose = new InvalidOperationException("channel refused to close"),
     };
@@ -72,6 +73,11 @@ public class RabbitMQSubscriptionCoverageTests {
     await Assert.That(channel.IsDisposed).IsFalse()
       .Because("Dispose() throws before FakeChannel marks itself disposed — the catch arm must "
              + "still run rather than propagate the exception out of the fire-and-forget task");
+
+    // A shutdown awaiting DisposalCompletion must not hang or fault on a channel that refused to
+    // close: the failure is logged above and the signal still completes.
+    await subscription.DisposalCompletion.WaitAsync(ct);
+    await Assert.That(subscription.DisposalCompletion.IsCompletedSuccessfully).IsTrue();
   }
 
   /// <summary>Minimal recording logger, local to this file's dispose-catch test.</summary>

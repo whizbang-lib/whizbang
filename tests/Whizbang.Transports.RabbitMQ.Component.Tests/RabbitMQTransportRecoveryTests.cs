@@ -112,7 +112,8 @@ public class RabbitMQTransportRecoveryTests {
   }
 
   [Test]
-  public async Task Subscription_WhenApplicationInitiatedShutdown_DoesNotFireOnDisconnectedAsync() {
+  [Timeout(30000)] // hang guard only: the wait is DisposalCompletion, the token fails a test it never signals
+  public async Task Subscription_WhenApplicationInitiatedShutdown_DoesNotFireOnDisconnectedAsync(CancellationToken ct) {
     // Arrange
     var fakeChannel = new FakeChannel();
     var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
@@ -130,7 +131,7 @@ public class RabbitMQTransportRecoveryTests {
       logger: null
     );
 
-    await transport.InitializeAsync();
+    await transport.InitializeAsync(ct);
 
     var metadata = new Dictionary<string, JsonElement> {
       ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
@@ -138,16 +139,18 @@ public class RabbitMQTransportRecoveryTests {
     var destination = new TransportDestination("test-exchange", "#", metadata);
 
     var subscription = await transport.SubscribeAsync(
-      async (_, envelopeType, ct) => await Task.CompletedTask,
-      destination
+      async (_, envelopeType, handlerCt) => await Task.CompletedTask,
+      destination,
+      ct
     );
 
     var disconnectedEventFired = false;
     subscription.OnDisconnected += (sender, args) => disconnectedEventFired = true;
 
-    // Act - Dispose subscription (application-initiated)
+    // Act - Dispose subscription (application-initiated), then wait on the signal that its cleanup
+    // (consumer cancel and channel dispose, the step that would raise a shutdown) has finished.
     subscription.Dispose();
-    await Task.Delay(150); // Wait for fire-and-forget disposal
+    await ((RabbitMQSubscription)subscription).DisposalCompletion.WaitAsync(ct);
 
     // Assert - OnDisconnected should NOT fire for application-initiated shutdown
     await Assert.That(disconnectedEventFired).IsFalse();
