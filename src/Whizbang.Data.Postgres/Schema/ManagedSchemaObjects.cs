@@ -121,6 +121,20 @@ public sealed class ManagedSchemaObjectSet {
   /// <summary>Declares an object of any kind.</summary>
   public ManagedSchemaObjectSet Add(string table, string name, ManagedObjectKind kind, string declaredBy) => _add(table, name, kind, declaredBy);
 
+  /// <summary>
+  /// A set of the declarations a schema generator emits as <c>(table, kind, name, declared by)</c>, where the kind is
+  /// <c>index</c> or <c>constraint</c>: the Dapper driver's <c>PerspectiveSchemas.ManagedObjects</c>.
+  /// </summary>
+  public static ManagedSchemaObjectSet FromDeclarations(
+      IEnumerable<(string Table, string Kind, string Name, string DeclaredBy)> declarations) {
+    ArgumentNullException.ThrowIfNull(declarations);
+    var set = new ManagedSchemaObjectSet();
+    foreach (var (table, kind, name, declaredBy) in declarations) {
+      set.Add(table, name, ManagedSchemaCatalog.ParseKind(kind), declaredBy);
+    }
+    return set;
+  }
+
   /// <summary>Pins an object so it is never dropped.</summary>
   public ManagedSchemaObjectSet Pin(string table, string name, string? reason, string declaredBy) {
     ArgumentException.ThrowIfNullOrWhiteSpace(table);
@@ -209,3 +223,14 @@ public sealed record KeptObject(string Table, string Name, ManagedObjectKind Kin
 public sealed record ReconcilePlan(
   IReadOnlyList<LedgerWrite> Records, IReadOnlyList<PlannedDrop> Drops, IReadOnlyList<KeptObject> Kept,
   IReadOnlyList<DeclaredSchemaObject> Missing);
+
+/// <summary>
+/// One context's managed-object manifest, registered by the generated service registration (keyed by the context's
+/// type) so the maintenance step and tools can reconcile it without reflection.
+/// </summary>
+/// <param name="DbContextType">The context the manifest belongs to.</param>
+/// <param name="Schema">The context's schema, bare.</param>
+/// <param name="Declare">Builds a fresh set of everything the context's generated schema declares.</param>
+/// <docs>fundamentals/perspectives/managed-schema-objects</docs>
+[EditorBrowsable(EditorBrowsableState.Advanced)]
+public sealed record ManagedSchemaManifest(Type DbContextType, string Schema, Func<ManagedSchemaObjectSet> Declare);

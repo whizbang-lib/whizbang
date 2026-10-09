@@ -6,6 +6,7 @@ using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core.Data;
 using Whizbang.Data.Postgres;
@@ -88,6 +89,19 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
+  /// What the perspectives declare (<c>PerspectiveSchemas.ManagedObjects</c>); when set, every initialization ends with
+  /// the managed-object reconcile, which records the perspective tables' objects and retires the Whizbang-built ones
+  /// no longer declared (#1252). Null leaves every object in place.
+  /// </summary>
+  public ManagedSchemaObjectSet? ManagedObjects { get; init; }
+
+  /// <summary>The reconcile's settings; the defaults when not set.</summary>
+  public ManagedSchemaSettings ManagedObjectSettings { get; init; } = ManagedSchemaSettings.Read(null);
+
+  /// <summary>Where the reconcile reports what it dropped and kept.</summary>
+  public ILogger? ManagedObjectLogger { get; init; }
+
+  /// <summary>
   /// Initializes the Whizbang schema by generating SQL from C# schema definitions.
   /// Optionally executes perspective schema SQL if provided.
   /// Uses hash-based change detection to skip unchanged migrations.
@@ -133,6 +147,22 @@ public sealed class PostgresSchemaInitializer {
     // tables are there.
     await _executeApplicationObjectsAsync(
       connection, _applicationObjects?.AfterPerspectives, "after", cancellationToken);
+
+    // The managed-object reconcile, after everything above is in place. Never fatal, as on the EF Core driver: a
+    // reconcile that cannot finish leaves every object where it is, and the next start tries again.
+    if (ManagedObjects is { } declared) {
+      try {
+        await using var current = new NpgsqlCommand("SELECT current_schema()", connection);
+        var schema = (string)(await current.ExecuteScalarAsync(cancellationToken))!;
+        await ManagedSchemaReconciler.RunAsync(
+          connection, schema, declared, ManagedObjectSettings, SchemaInitializationLockKey.Compute(schema),
+          instanceId: null, ManagedObjectLogger, cancellationToken);
+      } catch (Exception ex) when (ex is NpgsqlException or InvalidOperationException) {
+        if (ManagedObjectLogger is { } logger) {
+          _logReconcileFailed(logger, ex);
+        }
+      }
+    }
   }
 
   /// <summary>
@@ -983,4 +1013,8 @@ public sealed class PostgresSchemaInitializer {
   private static bool _isSafeIdentifier(string identifier) {
     return !string.IsNullOrEmpty(identifier) && identifier.All(c => char.IsLetterOrDigit(c) || c == '_');
   }
+
+  private static readonly Action<ILogger, Exception?> _logReconcileFailed = LoggerMessage.Define(
+    LogLevel.Warning, new EventId(1252, "ManagedObjectReconcileFailed"),
+    "The managed-object reconcile failed; it runs again at the next start");
 }

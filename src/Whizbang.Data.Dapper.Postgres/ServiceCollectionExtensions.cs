@@ -15,6 +15,7 @@ using Whizbang.Core.Policies;
 using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Schema;
 
 namespace Whizbang.Data.Dapper.Postgres;
 
@@ -71,6 +72,32 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperGateWiringTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperGatePrecedenceTests.cs</tests>
+  public static IServiceCollection AddWhizbangPostgres(
+    this IServiceCollection services,
+    string connectionString,
+    JsonSerializerOptions jsonOptions,
+    bool initializeSchema,
+    KeyValuePair<string, string>[] perspectiveEntries,
+    Action<PostgresOptions>? configureOptions) =>
+    AddWhizbangPostgres(services, connectionString, jsonOptions, initializeSchema, perspectiveEntries, managedObjects: null,
+      configureOptions);
+
+  /// <summary>
+  /// Registers all Whizbang PostgreSQL stores with per-perspective hash tracking, and the managed-object reconcile:
+  /// each schema initialization records the perspective tables' objects and retires the Whizbang-built ones the
+  /// perspectives no longer declare (#1252).
+  /// </summary>
+  /// <param name="services">The service collection to register services with.</param>
+  /// <param name="connectionString">The PostgreSQL connection string.</param>
+  /// <param name="jsonOptions">The JSON serializer options configured with the application's WhizbangJsonContext.</param>
+  /// <param name="initializeSchema">Whether to automatically initialize the Whizbang schema on startup.</param>
+  /// <param name="perspectiveEntries">Per-perspective SQL entries from <c>PerspectiveSchemas.Entries</c>.</param>
+  /// <param name="managedObjects">
+  /// What those entries build, from <c>PerspectiveSchemas.ManagedObjects</c>; null leaves every object in place.
+  /// </param>
+  /// <param name="configureOptions">Configures the driver's options.</param>
+  /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperManagedObjectsTests.cs</tests>
   [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
   public static IServiceCollection AddWhizbangPostgres(
     this IServiceCollection services,
@@ -78,7 +105,8 @@ public static class ServiceCollectionExtensions {
     JsonSerializerOptions jsonOptions,
     bool initializeSchema,
     KeyValuePair<string, string>[] perspectiveEntries,
-    Action<PostgresOptions>? configureOptions) {
+    (string Table, string Kind, string Name, string DeclaredBy)[]? managedObjects,
+    Action<PostgresOptions>? configureOptions = null) {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
     ArgumentNullException.ThrowIfNull(jsonOptions);
     ArgumentNullException.ThrowIfNull(perspectiveEntries);
@@ -101,7 +129,9 @@ public static class ServiceCollectionExtensions {
 
     // Initialize schema with per-perspective hash tracking
     if (initializeSchema) {
-      var initializer = new PostgresSchemaInitializer(connectionString, perspectiveEntries);
+      var initializer = new PostgresSchemaInitializer(connectionString, perspectiveEntries) {
+        ManagedObjects = managedObjects is null ? null : ManagedSchemaObjectSet.FromDeclarations(managedObjects),
+      };
       initializer.InitializeSchema();
       connectionRetry.WaitForSchemaReadyAsync(connectionString).GetAwaiter().GetResult();
     }

@@ -69,20 +69,23 @@ SELECT __SCHEMA__.drop_all_overloads('wh_pin_object');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ManagedObjectsLedgerTests.cs:Pin_RecordsThePinWithItsReasonAndWhoSetItAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ManagedObjectsLedgerTests.cs:Pin_AnObjectTheLedgerAlreadyHas_KeepsItsClassificationAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ManagedObjectsLedgerTests.cs:Pin_InTheDatabase_LeavesTheCodePinAloneAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__.wh_pin_object(p_table TEXT, p_object TEXT, p_reason TEXT)
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ManagedSchemaLedgerTests.cs:Pin_FromTheCli_IsRecordedAsTheClisAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_pin_object(p_table TEXT, p_object TEXT, p_reason TEXT, p_source TEXT DEFAULT 'sql')
 RETURNS TEXT AS $$
+DECLARE
+  v_source TEXT := CASE WHEN p_source = 'cli' THEN 'cli' ELSE 'sql' END;
 BEGIN
   INSERT INTO __SCHEMA__.wh_managed_objects AS m (table_name, object_name, db_pinned, db_pin_source, db_pinned_by, db_pinned_at, db_pin_reason)
-  VALUES (p_table, p_object, TRUE, 'sql', current_user, NOW(), p_reason)
+  VALUES (p_table, p_object, TRUE, v_source, current_user, NOW(), p_reason)
   ON CONFLICT (table_name, object_name) DO UPDATE
-    SET db_pinned = TRUE, db_pin_source = 'sql', db_pinned_by = current_user, db_pinned_at = NOW(), db_pin_reason = p_reason;
+    SET db_pinned = TRUE, db_pin_source = v_source, db_pinned_by = current_user, db_pinned_at = NOW(), db_pin_reason = p_reason;
   RETURN 'pinned';
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__.wh_pin_object(TEXT, TEXT, TEXT) IS
-  'Sets the database pin on a managed object so Whizbang never drops it (source sql, by the current user). '
-  'Startup never changes a database pin. Returns pinned.';
+COMMENT ON FUNCTION __SCHEMA__.wh_pin_object(TEXT, TEXT, TEXT, TEXT) IS
+  'Sets the database pin on a managed object so Whizbang never drops it (by the current user; source sql, or cli '
+  'when the Whizbang CLI set it). Startup never changes a database pin. Returns pinned.';
 
 SELECT __SCHEMA__.drop_all_overloads('wh_unpin_object');
 

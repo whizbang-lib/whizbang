@@ -142,6 +142,46 @@ public class DocumentIndexInitializationTests {
   }
 
   /// <summary>
+  /// An index the model declares and someone dropped by hand is built again at the next start, though nothing
+  /// in the model changed and the schema pass would otherwise skip the table.
+  /// </summary>
+  [Test]
+  [Timeout(180000)]
+  public async Task ADeclaredIndexDroppedByHand_IsBuiltAgainAtTheNextStartAsync(CancellationToken cancellationToken) {
+    await _initializeAsync(cancellationToken);
+    var declared = await _indexesAsync(UNDECLARED, "Status");
+    await Assert.That(declared).Count().IsEqualTo(1);
+    await _execAsync($"DROP INDEX {declared[0]}");
+
+    await _initializeAsync(cancellationToken);
+
+    await Assert.That(await _indexesAsync(UNDECLARED, "Status")).IsEquivalentTo(declared);
+  }
+
+  /// <summary>
+  /// An index the model pins with <c>[KeepSchemaObject]</c> survives every start, and the ledger records the pin
+  /// as the model's.
+  /// </summary>
+  [Test]
+  [Timeout(180000)]
+  public async Task AnObjectTheModelPins_IsKeptAndRecordedAsPinnedByCodeAsync(CancellationToken cancellationToken) {
+    await _initializeAsync(cancellationToken);
+    await _execAsync($"CREATE INDEX idx_document_index_opted_out_legacy ON {OPTED_OUT} ((data ->> 'Code'))");
+
+    await _initializeAsync(cancellationToken);
+    await _initializeAsync(cancellationToken);
+
+    await Assert.That(await _indexesAsync(OPTED_OUT, "Code")).IsEquivalentTo(["idx_document_index_opted_out_legacy"]);
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    await using var command = new NpgsqlCommand("""
+      SELECT code_pinned::text || '|' || code_pin_source || '|' || code_pin_reason FROM wh_managed_objects
+      WHERE object_name = 'idx_document_index_opted_out_legacy'
+      """, db);
+    await Assert.That(await command.ExecuteScalarAsync(cancellationToken)).IsEqualTo("true|code|the reporting job reads it");
+  }
+
+  /// <summary>
   /// Indexes an earlier path created under its own names are not joined by twins with the
   /// schema's names when the pass runs again.
   /// </summary>

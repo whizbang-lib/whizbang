@@ -40,14 +40,19 @@ public sealed record ManagedSchemaSettings(
       return new ManagedSchemaSettings(ReconcileMode.Apply, [], [], DropAfterFleetConverged: true);
     }
 
+    // Every key is read before any is validated, so one bad value cannot hide another key from a reader.
+    var mode = section["Mode"];
+    var dropAfterFleetConverged = section["DropAfterFleetConverged"];
+    var pins = section.GetSection("Pins").GetChildren()
+      .Where(p => !string.IsNullOrWhiteSpace(p.Value))
+      .Select(p => p.Value!)
+      .ToList();
+    var drop = section.GetSection("Drop").GetChildren().ToList();
     return new ManagedSchemaSettings(
-      _mode(section["Mode"]),
-      _keepKinds(section.GetSection("Drop")),
-      section.GetSection("Pins").GetChildren()
-        .Where(p => !string.IsNullOrWhiteSpace(p.Value))
-        .Select(p => p.Value!)
-        .ToList(),
-      _bool(section["DropAfterFleetConverged"], "DropAfterFleetConverged") ?? true);
+      _mode(mode),
+      _keepKinds(drop),
+      pins,
+      _bool(dropAfterFleetConverged, "DropAfterFleetConverged") ?? true);
   }
 
   /// <summary>
@@ -67,9 +72,9 @@ public sealed record ManagedSchemaSettings(
         $"{SECTION}:Mode is '{value}'; it must be one of Apply, AddOnly, ReportOnly, Off.");
   }
 
-  private static List<ManagedObjectKind> _keepKinds(IConfigurationSection drop) {
+  private static List<ManagedObjectKind> _keepKinds(List<IConfigurationSection> drop) {
     var keep = new List<ManagedObjectKind>();
-    foreach (var child in drop.GetChildren()) {
+    foreach (var child in drop) {
       if (!Enum.TryParse<ManagedObjectKind>(child.Key, ignoreCase: true, out var kind) || !Enum.IsDefined(kind)) {
         throw new InvalidOperationException(
           $"{SECTION}:Drop:{child.Key} names no object kind; the kinds are {string.Join(", ", Enum.GetNames<ManagedObjectKind>())}.");

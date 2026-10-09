@@ -346,12 +346,18 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// line; inner lines are offset relative to it.
   /// </summary>
   private static void _emitTurnkeyDbContextRegistration(
-      System.Text.StringBuilder sb, string dbContextFqn, bool hasVectorFields, bool hasPhysicalFields, string indent) {
+      System.Text.StringBuilder sb, DbContextInfo dbContext, bool hasVectorFields, bool hasPhysicalFields, string indent) {
+    var dbContextFqn = dbContext.FullyQualifiedName;
     sb.AppendLine($"{indent}services.AddDbContext<{dbContextFqn}>((sp, options) => {{");
     _emitNpgsqlConfiguration(
       sb, "options", "sp.GetRequiredService<Npgsql.NpgsqlDataSource>()",
       hasVectorFields, hasPhysicalFields, $"{indent}  ");
     sb.AppendLine($"{indent}}});");
+    // What the context's schema declares, keyed by the context, so the managed-object maintenance step reconciles it
+    // between starts without reflection. Keyed and replaced, so registering twice leaves one.
+    sb.AppendLine($"{indent}services.RemoveAllKeyed<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof({dbContextFqn}));");
+    sb.AppendLine($"{indent}services.AddKeyedSingleton<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof({dbContextFqn}), new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(");
+    sb.AppendLine($"{indent}  typeof({dbContextFqn}), {_csharpString(dbContext.Schema)}, global::{_generatedNamespace(dbContext.Namespace)}.{dbContext.ClassName}SchemaExtensions.GetManagedSchemaObjects));");
   }
 
   /// <summary>
@@ -526,6 +532,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         PromotedIndexes: _promotedIndexes(modelType as INamedTypeSymbol),
         CompositeIndexes: _reachableComposites(modelType as INamedTypeSymbol),
         DocumentMatching: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol),
+        KeptObjects: KeepSchemaObjectDiscovery.From(modelType as INamedTypeSymbol),
         CoalesceBody: _buildDataCoalesceStatements(modelType),
         StoredForms: storedForms,
         StoredFormProblems: storedFormProblems,
@@ -637,6 +644,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         PromotedIndexes: candidate.PromotedIndexes,
         CompositeIndexes: candidate.CompositeIndexes,
         DocumentMatching: candidate.DocumentMatching,
+        KeptObjects: candidate.KeptObjects,
         CoalesceBody: candidate.CoalesceBody,
         StoredForms: candidate.StoredForms,
         StoredFormProblems: candidate.StoredFormProblems,
@@ -2255,7 +2263,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    // (the (sp, options) AddDbContext overload). This keeps config access deferred");
       sb.AppendLine("    // and avoids the temp-provider/CM-disposal trap.");
       // Single source of truth for the DbContext options (see _emitTurnkeyDbContextRegistration).
-      _emitTurnkeyDbContextRegistration(sb, dbContext.FullyQualifiedName, hasVectorFields, hasPhysicalFields, "    ");
+      _emitTurnkeyDbContextRegistration(sb, dbContext, hasVectorFields, hasPhysicalFields, "    ");
       sb.AppendLine();
       sb.AppendLine("    // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
       sb.AppendLine("    // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
@@ -2409,7 +2417,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // UseWhizbangFunctions). Previously this duplicate re-registration silently omitted UseWhizbangFunctions,
     // so after the fixture's ReassertGeneratedModelRegistration re-ran it, the live DbContext lost the
     // JsonbSet translator and collective-apply ExecuteUpdate threw "could not be translated".
-    _emitTurnkeyDbContextRegistration(sb, dbContext.FullyQualifiedName, hasVectorFields, hasPhysicalFields, "      ");
+    _emitTurnkeyDbContextRegistration(sb, dbContext, hasVectorFields, hasPhysicalFields, "      ");
     sb.AppendLine();
     sb.AppendLine("      // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
     sb.AppendLine("      // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
@@ -3367,10 +3375,19 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var perspSql = new StringBuilder();
       _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
       _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
-      var declaredBy = _csharpString(perspective.ModelTypeName);
+      var model = perspective.ModelTypeName.StartsWith("global::", StringComparison.Ordinal)
+        ? perspective.ModelTypeName.Substring("global::".Length)
+        : perspective.ModelTypeName;
+      var declaredBy = _csharpString(model);
       foreach (var (kind, name) in ManagedObjectNames.Extract(perspSql.ToString())) {
         var method = kind == "constraint" ? "Constraint" : "Index";
         sb.AppendLine($"    objects.{method}(\"{perspective.TableName}\", {_csharpString(name)}, {declaredBy});");
+      }
+      // [KeepSchemaObject]: the model's code pins, set again at every start and released when the attribute goes.
+      foreach (var kept in perspective.KeptObjects.IsDefault ? ImmutableArray<KeptSchemaObjectInfo>.Empty : perspective.KeptObjects) {
+        var reason = kept.Reason is null ? "null" : _csharpString(kept.Reason);
+        sb.AppendLine($"    objects.Pin(\"{perspective.TableName}\", {_csharpString(kept.Name)}, {reason}, "
+          + $"{_csharpString(model + " [KeepSchemaObject]")});");
       }
     }
     return sb.ToString();
@@ -3954,7 +3971,8 @@ internal sealed record PerspectiveModelInfo(
     TableStorageInfo? TableStorage = null,
     string PerspectiveClrTypeName = "",
     ModelCopyInfo? ModelCopy = null,
-    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default);
+    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default,
+    ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -4000,7 +4018,8 @@ internal sealed record PerspectiveModelCandidate(
     TableStorageInfo? TableStorage = null,
     string PerspectiveClrTypeName = "",
     ModelCopyInfo? ModelCopy = null,
-    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default);
+    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default,
+    ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default);
 
 /// <summary>
 /// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.

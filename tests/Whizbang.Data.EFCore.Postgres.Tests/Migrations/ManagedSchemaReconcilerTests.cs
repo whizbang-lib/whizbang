@@ -152,6 +152,38 @@ public class ManagedSchemaReconcilerTests {
   }
 
   [Test]
+  public async Task ADeclaredObjectDroppedByHand_NamesItsTableForRebuildingAsync() {
+    await _reconcileAsync();
+    await using var db = await _openAsync();
+    await _execAsync(db, "DROP INDEX idx_job_status");
+
+    var tables = await ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(db, SCHEMA, _declared(), CancellationToken.None);
+
+    await Assert.That(tables).IsEquivalentTo([TABLE]);
+  }
+
+  [Test]
+  public async Task ADeclaredObjectThatWasNeverBuilt_IsNotRebuiltAtEveryStartAsync() {
+    await _reconcileAsync();
+    await using var db = await _openAsync();
+
+    var tables = await ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(
+      db, SCHEMA, _declared().Index(TABLE, "idx_job_trgm", "JobModel.Code [Indexed(Substring)]"), CancellationToken.None);
+
+    await Assert.That(tables).IsEmpty()
+      .Because("an index the server never built (an extension it refused) is reported, not retried under the lock forever");
+  }
+
+  [Test]
+  public async Task WithNoLedger_NothingIsNamedForRebuildingAsync() {
+    await using var db = await _openAsync();
+    await _execAsync(db, "DROP TABLE wh_managed_objects");
+
+    await Assert.That(await ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(
+      db, SCHEMA, _declared(), CancellationToken.None)).IsEmpty();
+  }
+
+  [Test]
   public async Task APinSetWithSql_KeepsTheObjectAsync() {
     await _reconcileAsync();
     await using (var db = await _openAsync()) {

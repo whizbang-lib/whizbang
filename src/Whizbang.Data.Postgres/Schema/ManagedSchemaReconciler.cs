@@ -112,6 +112,38 @@ public static class ManagedSchemaReconciler {
     }
   }
 
+  /// <summary>
+  /// The perspective tables missing an object the model declares and the ledger has seen: built once, then dropped by
+  /// hand. Schema initialization forgets these tables' hashes so its pass builds them again at this start.
+  /// </summary>
+  /// <remarks>
+  /// An object the ledger has never seen is left out: one the server never built (an index in an optional-extension
+  /// block it refused) would otherwise send every start through the schema pass under the lock, to fail the same way.
+  /// It is reported missing by the reconcile instead. Nothing is named when the schema has no ledger yet.
+  /// </remarks>
+  /// <param name="connection">An open connection.</param>
+  /// <param name="schema">The schema, bare.</param>
+  /// <param name="declared">What the model declares.</param>
+  /// <param name="cancellationToken">Cancels the read.</param>
+  public static async Task<IReadOnlyList<string>> TablesMissingDeclaredObjectsAsync(
+      NpgsqlConnection connection, string schema, ManagedSchemaObjectSet declared, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(connection);
+    ArgumentNullException.ThrowIfNull(declared);
+    var ledgerTable = PgIdentifier.Quote(schema) + ".wh_managed_objects";
+    if (await _scalarAsync<string?>(connection, "SELECT to_regclass(@t)::text", cancellationToken, ("t", ledgerTable)) is null) {
+      return [];
+    }
+    var live = (await ManagedSchemaCatalog.ReadLiveAsync(connection, schema, cancellationToken))
+      .Select(o => (o.Table, o.Name)).ToHashSet();
+    var seen = (await ManagedSchemaCatalog.ReadLedgerAsync(connection, ledgerTable, cancellationToken))
+      .Select(r => (r.Table, r.Name)).ToHashSet();
+    return [.. declared.Objects
+      .Where(o => !live.Contains((o.Table, o.Name)) && seen.Contains((o.Table, o.Name)))
+      .Select(o => o.Table)
+      .Distinct(StringComparer.Ordinal)
+      .Order(StringComparer.Ordinal)];
+  }
+
   private static async Task<T> _scalarAsync<T>(
       NpgsqlConnection connection, string sql, CancellationToken cancellationToken, params (string Name, object Value)[] parameters) {
     await using var command = new NpgsqlCommand(sql, connection);
