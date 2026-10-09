@@ -207,9 +207,9 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.FastEndpoints.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
 | Whizbang.Transports.HotChocolate.Tests | 20 | 1 | 0 | 0 | 21 | 0 |
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
-| Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
+| Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 0 | 23 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 399 | 1 | 40 | 2209 | 12 |
+| **Total** | 1769 | 399 | 1 | 39 | 2208 | 12 |
 
 ## Worklist: non-unit types by project
 
@@ -843,11 +843,7 @@ All 13 types are unit-pure.
 
 ### Whizbang.Transports.RabbitMQ.Tests
 
-1 of 29 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| RabbitMQConnectionRetryTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs` | 25 | Other | NetworkClient |  |  |
+All 28 types are unit-pure.
 
 ### Whizbang.Transports.Tests
 
