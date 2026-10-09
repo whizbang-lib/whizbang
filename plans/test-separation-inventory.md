@@ -186,7 +186,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Core.Tests | 1149 | 344 | 0 | 6 | 1499 | 7 |
 | Whizbang.Data.Schema.Tests | 30 | 0 | 0 | 0 | 30 | 0 |
 | Whizbang.Data.Tests | 11 | 0 | 0 | 0 | 11 | 0 |
-| Whizbang.Documentation.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
+| Whizbang.Documentation.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.Execution.Tests | 1 | 7 | 0 | 0 | 8 | 0 |
 | Whizbang.Generators.Tests | 250 | 0 | 0 | 4 | 254 | 0 |
 | Whizbang.Hosting.AspNet.Tests | 19 | 10 | 0 | 0 | 29 | 0 |
@@ -209,7 +209,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 399 | 1 | 40 | 2209 | 12 |
+| **Total** | 1769 | 398 | 1 | 40 | 2208 | 12 |
 
 ## Worklist: non-unit types by project
 
@@ -642,11 +642,7 @@ All 17 types are unit-pure.
 
 ### Whizbang.Documentation.Tests
 
-1 of 3 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| ConfigurationKeyManifestTests | `tests/Whizbang.Documentation.Tests/ConfigurationKeyManifestTests.cs` | 1 | Component | StartAsync, FileSystem |  |  |
+All 1 types are unit-pure.
 
 ### Whizbang.Execution.Tests
 

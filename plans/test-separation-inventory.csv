@@ -1727,8 +1727,6 @@
 "Whizbang.Data.Tests","tests/Whizbang.Data.Tests/SqliteDateTimeOffsetHandlerTests.cs","SqliteDateTimeOffsetHandlerTests","29","Test","5","Unit","","","",""
 "Whizbang.Data.Tests","tests/Whizbang.Data.Tests/SqliteGuidHandlerTests.cs","SqliteGuidHandlerTests","24","Test","6","Unit","","","",""
 "Whizbang.Data.Tests","tests/Whizbang.Data.Tests/TrackedGuidHandlerTests.cs","TrackedGuidHandlerTests","26","Test","3","Unit","","","",""
-"Whizbang.Documentation.Tests","tests/Whizbang.Documentation.Tests/ConfigurationKeyManifestTests.cs","ConfigurationKeyManifestTests","47","Test","1","Component","StartAsync FileSystem","StartAsync L112; FileSystem L176,L196,L199","",""
-"Whizbang.Documentation.Tests","tests/Whizbang.Documentation.Tests/ConfigurationKeyRecorder.cs","ConfigurationKeyRecorder","22","Helper","0","Unit","","","",""
 "Whizbang.Documentation.Tests","tests/Whizbang.Documentation.Tests/XmlDocumentationTests.cs","XmlDocumentationTests","12","Test","2","Unit","","","",""
 "Whizbang.Execution.Tests","tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs","ExecutionStatePoolTests","21","Test","5","Unit","","","",""
 "Whizbang.Execution.Tests","tests/Whizbang.Execution.Tests/ExecutionStrategyContractTests.cs","ExecutionStrategyContractTests","22","Test","10","Component","StartAsync TaskDelay","StartAsync L72,L96,L116,L141,L161,L192,L193,L227,L246,L310; TaskDelay L172,L323","",""
