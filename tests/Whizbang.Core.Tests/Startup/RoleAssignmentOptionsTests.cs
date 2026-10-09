@@ -27,8 +27,10 @@ public class RoleAssignmentOptionsTests {
     await Assert.That(options.MissedRenewalsBeforeLapse).IsEqualTo(3);
     await Assert.That(options.Lease).IsEqualTo(TimeSpan.FromSeconds(15));
     await Assert.That(options.CooldownAfterLapse).IsEqualTo(TimeSpan.FromSeconds(15));
-    await Assert.That(options.HoldLegacySessionLock).IsTrue()
-      .Because("consumers upgrading from session-lock releases roll through this one, and old and new must never both act");
+    await Assert.That(options.HoldLegacySessionLock).IsFalse()
+      .Because("the bridge costs a pinned connection per held role and is only needed while an instance "
+        + "older than role assignment is still running; a deploy rolling from such a release sets it true "
+        + "for that one deploy");
     await Assert.That(options.Manages(StartupDuties.MAINTAINER)).IsTrue();
     await Assert.That(options.Manages(StartupDuties.MIGRATOR)).IsTrue()
       .Because("the migrator's vote is part of the schema bootstrap, so it can be held by assignment");
