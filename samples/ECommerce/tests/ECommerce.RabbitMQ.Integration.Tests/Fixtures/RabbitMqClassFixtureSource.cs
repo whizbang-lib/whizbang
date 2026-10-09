@@ -23,7 +23,7 @@ public sealed class RabbitMqClassFixtureSource : IDisposable {
   public RabbitMqClassFixtureSource() {
     // Create RabbitMQ container with management plugin enabled
     _rabbitMqContainer = new RabbitMqBuilder()
-      .WithImage("rabbitmq:3.13-management-alpine")
+      .WithImage(CiImages.RABBITMQ)  // Testcontainers applies the CI mirror prefix itself
       .WithUsername("guest")
       .WithPassword("guest")
       .WithPortBinding(15672, true)  // Expose Management API port

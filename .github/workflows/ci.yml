@@ -754,6 +754,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     # The three Postgres-tagged projects run sequentially inside one job (shared containers),
     # and EFCore alone is ~87% of it — so EFCore is sliced five ways by shard category while
     # Dapper and Soak ride their own runners. Every tagged project appears in exactly one shard;
@@ -799,6 +800,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     uses: ./.github/workflows/reusable-test-inmemory.yml
     with:
       artifact-name: build-inmemory-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
@@ -809,6 +811,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
     with:
       artifact-name: build-rabbitmq-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
@@ -822,6 +825,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     # The two AzureServiceBus-tagged projects run sequentially inside one job (shared
     # containers), so one project per runner halves the suite's wall-clock.
     strategy:
@@ -840,6 +844,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     uses: ./.github/workflows/reusable-test-azureblob.yml
     with:
       artifact-name: build-azureblob-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
@@ -849,6 +854,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     uses: ./.github/workflows/reusable-test-integration.yml
     with:
       artifact-name: build-integration-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)

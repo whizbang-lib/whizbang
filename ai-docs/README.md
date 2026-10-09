@@ -21,6 +21,7 @@ This directory contains focused documentation topics to help Claude Code underst
 - [schema-initialization-connections.md](schema-initialization-connections.md) — two traps that each shipped once: statements that need a commit between them, and why there is almost never a connection string to open a second connection from
 - [load-under-bulk-import.md](load-under-bulk-import.md) — where a bulk load's database CPU went, measured: the claim poll priced by the backlog, maintenance running at the peak, the stamper sorting on every wake, DDL at startup under load, idle polling; the rule each became, and how to measure without being misled by cumulative counters
 - [test-sharding.md](test-sharding.md) — how CI splits slow test projects across runners, and the guard that stops a class silently running in no shard
+- [ci-image-mirror.md](ci-image-mirror.md): how CI pulls Docker Hub images from a GHCR mirror, the guard that fails on an unlisted image, and how to add one
 - [coverage-exclusions.md](coverage-exclusions.md) — when `[ExcludeFromCodeCoverage]` is right, when it hides real coverage, and how to pin the invariant that makes a guard unreachable
   - **When to use:** Tests pass sometimes but fail other times
   - **Critical:** Static resources need `[NotInParallel]`, wait for ALL events affecting asserted data
