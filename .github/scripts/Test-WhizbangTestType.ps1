@@ -71,8 +71,21 @@ function ConvertFrom-ConstantAst {
     { $_ -is [System.Management.Automation.Language.VariableExpressionAst] -and $Ast.VariablePath.UserPath -in @('true', 'false', 'null') } {
       return @{ true = $true; false = $false; null = $null }[$Ast.VariablePath.UserPath]
     }
-    { $_ -is [System.Management.Automation.Language.ArrayLiteralAst] } { return , @($Ast.Elements | ForEach-Object { ConvertFrom-ConstantAst -Ast $_ }) }
-    { $_ -is [System.Management.Automation.Language.ArrayExpressionAst] } { return , @($Ast.SubExpression.Statements | ForEach-Object { ConvertFrom-ConstantAst -Ast $_ }) }
+    # Arrays are returned whole (the leading comma), so one holding a single item, or none, stays an
+    # array; @('a', 'b') is an array expression around an array literal, so its items are flattened.
+    { $_ -is [System.Management.Automation.Language.ArrayLiteralAst] } {
+      $items = [System.Collections.Generic.List[object]]::new()
+      foreach ($element in $Ast.Elements) { $items.Add((ConvertFrom-ConstantAst -Ast $element)) }
+      return , $items.ToArray()
+    }
+    { $_ -is [System.Management.Automation.Language.ArrayExpressionAst] } {
+      $items = [System.Collections.Generic.List[object]]::new()
+      foreach ($statement in $Ast.SubExpression.Statements) {
+        $value = ConvertFrom-ConstantAst -Ast $statement
+        if ($value -is [object[]]) { $items.AddRange($value) } else { $items.Add($value) }
+      }
+      return , $items.ToArray()
+    }
     { $_ -is [System.Management.Automation.Language.HashtableAst] } {
       $table = [ordered]@{}
       foreach ($pair in $Ast.KeyValuePairs) { $table[[string](ConvertFrom-ConstantAst -Ast $pair.Item1)] = ConvertFrom-ConstantAst -Ast $pair.Item2 }

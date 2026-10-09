@@ -8,6 +8,7 @@ BeforeAll {
 
   function New-FakeRepo([hashtable[]]$Projects, [string[]]$InSolution) {
     $repo = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $repo -Force | Out-Null
     foreach ($p in $Projects) {
       $dir = Join-Path -Path $repo -ChildPath $p.Dir
       New-Item -ItemType Directory -Path $dir -Force | Out-Null

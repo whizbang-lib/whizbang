@@ -262,7 +262,7 @@ Describe 'Get-CiSuiteListProblem' {
 
 Describe 'ConvertFrom-ConstantAst' {
   It 'reads strings, numbers, booleans, null, arrays and nested hashtables' {
-    $ast = [System.Management.Automation.Language.Parser]::ParseInput('$x = [ordered]@{ A = "s"; B = 2; C = $true; D = $false; E = $null; F = @(''p'', ''q''); G = ''r'', ''t''; H = @{ I = @() }; J = "$y" }', [ref]$null, [ref]$null)
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput('$x = [ordered]@{ A = "s"; B = 2; C = $true; D = $false; E = $null; F = @(''p'', ''q''); G = ''r'', ''t''; H = @{ I = @() }; J = "$y"; K = @(''only'') }', [ref]$null, [ref]$null)
     $assignment = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)
     $value = ConvertFrom-ConstantAst -Ast $assignment.Right
     $value.A | Should -Be 's'
@@ -274,6 +274,8 @@ Describe 'ConvertFrom-ConstantAst' {
     $value.G | Should -Be @('r', 't')
     @($value.H.I).Count | Should -Be 0
     $value.J | Should -Be '$y'
+    $value.K -is [object[]] | Should -BeTrue -Because 'a one-item array stays an array'
+    $value.K | Should -Be @('only')
   }
 
   It 'refuses an expression that is not a constant' {
