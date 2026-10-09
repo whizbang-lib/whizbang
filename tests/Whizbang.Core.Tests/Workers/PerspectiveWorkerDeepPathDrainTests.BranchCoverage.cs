@@ -8,6 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Workers;
 
@@ -121,6 +122,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 4 }),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 5 }),
       drainChannel: drainChannel);
+    var releases = new System.Collections.Concurrent.ConcurrentQueue<PerspectiveWorker.AffinityGateRelease>();
+    worker.OnStreamAffinityGateReleased += releases.Enqueue;
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -149,8 +152,68 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
     await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(1)
       .Because("the second drain ran only after the abandoned apply ended and marked the event processed");
+    await Assert.That(releases.ToArray()).IsEquivalentTo(
+      [
+        new PerspectiveWorker.AffinityGateRelease(streamId, PERSPECTIVE, Abandoned: true),
+        new PerspectiveWorker.AffinityGateRelease(streamId, PERSPECTIVE, Abandoned: false)
+      ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the abandoned apply released the gate when it ended, then the second drain took and released it");
     await Assert.That(worker.SnapshotAffinityHolds(TimeSpan.Zero)).IsEmpty()
       .Because("the gate went free when the abandoned apply ended");
+  }
+
+  [Test]
+  public async Task Stop_WhileAnAbandonedApplyStillRuns_WaitsForItToEndAndReleaseItsGateAsync() {
+    // Stopping cancels the lease token too (it is linked to the worker's), so the executor abandons an
+    // apply still in the runner. The worker must not finish stopping while that apply runs: a stopped
+    // worker that still held a gate, or still had an apply of its running, is not stopped.
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7())]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("stopping"))]);
+    var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var runner = new DrainRunner { FirstApplyHangsUntil = hang.Task };
+    var drainChannel = new DrainedSignalingChannel(streamId);
+    var logger = new CapturingLogger<PerspectiveWorker>();
+    var (worker, _, _) = _createWorker(
+      coordinator, eventStore, _registry(runner),
+      configure: opts => opts.DrainLoopMaxIterations = 1,
+      cooldownCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      logger: logger,
+      drainChannel: drainChannel);
+    var released = new TaskCompletionSource<PerspectiveWorker.AffinityGateRelease>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStreamAffinityGateReleased += r => released.TrySetResult(r);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var waiting = logger.WaitForAsync(e => e.Message.Contains("waiting for 1 abandoned apply", StringComparison.Ordinal));
+    try {
+      await drainChannel.WriteAsync(streamId, cts.Token);
+      await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+      await cts.CancelAsync();
+      // The consumer has left the gate scope while the runner still hangs: the apply was abandoned.
+      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+
+      // Either the worker finishes stopping, or it says it is waiting for the abandoned apply. The apply
+      // cannot end until this test releases it, so only the second is correct.
+      var first = await Task.WhenAny(worker.ExecuteTask!, waiting).WaitAsync(TimeSpan.FromSeconds(10));
+      await Assert.That(first == waiting).IsTrue()
+        .Because("the worker waits for an abandoned apply to end before it finishes stopping");
+      await Assert.That(worker.SnapshotAffinityHolds(TimeSpan.Zero).Single().Path).IsEqualTo("drain-abandoned");
+    } finally {
+      hang.TrySetResult();
+    }
+
+    var release = await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(release).IsEqualTo(new PerspectiveWorker.AffinityGateRelease(streamId, PERSPECTIVE, Abandoned: true))
+      .Because("the gate went free when the abandoned apply ended, and the release says it was abandoned");
+    await Assert.That(worker.SnapshotAffinityHolds(TimeSpan.Zero)).IsEmpty()
+      .Because("a stopped worker holds no gate");
   }
 
   /// <summary>

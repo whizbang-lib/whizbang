@@ -16,6 +16,7 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.Workers;
@@ -388,6 +389,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     var (worker, _, _) = _buildBranchWorker(new RecordingWorkCoordinator(), registry, new BranchSetup());
     var apply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var secondEntered = false;
+    var releases = new ConcurrentQueue<PerspectiveWorker.AffinityGateRelease>();
+    worker.OnStreamAffinityGateReleased += releases.Enqueue;
 
     await worker.WithStreamAffinityGateAsync(streamId, perspectiveName, keepHeldUntil => {
       keepHeldUntil(apply.Task);
@@ -414,6 +417,50 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(secondEntered).IsTrue()
       .Because("the gate is released the moment the handed-over apply ends");
     await Assert.That(worker.SnapshotAffinityHolds(TimeSpan.Zero)).IsEmpty();
+    await Assert.That(releases.ToArray()).IsEquivalentTo(
+      [
+        new PerspectiveWorker.AffinityGateRelease(streamId, perspectiveName, Abandoned: true),
+        new PerspectiveWorker.AffinityGateRelease(streamId, perspectiveName, Abandoned: false)
+      ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the handed-over apply's release says it was abandoned; the contender's own release does not");
+  }
+
+  [Test]
+  public async Task WithStreamAffinityGate_ReleasedSubscriberThrows_LogsItAndTheGateIsStillFreeAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.ThrowingReleaseSubscriberPerspective";
+    var registry = new SingleRunnerRegistry(perspectiveName, new RecordingRunner(), [typeof(DeepChannelEvent)]);
+    var logger = new CapturingLogger<PerspectiveWorker>();
+    var (worker, _, _) = _buildBranchWorker(new RecordingWorkCoordinator(), registry, new BranchSetup { Logger = logger });
+    worker.OnStreamAffinityGateReleased += _ => throw new InvalidOperationException("monitoring subscriber failed");
+
+    await worker.WithStreamAffinityGateAsync(streamId, perspectiveName, _ => Task.CompletedTask, CancellationToken.None);
+
+    var warning = logger.Snapshot().Single(e => e.Level == LogLevel.Warning
+      && e.Message.Contains("OnStreamAffinityGateReleased", StringComparison.Ordinal));
+    await Assert.That(warning.Exception).IsTypeOf<InvalidOperationException>()
+      .Because("a throwing subscriber is logged with what it threw, never swallowed silently");
+    await Assert.That(worker.SnapshotAffinityHolds(TimeSpan.Zero)).IsEmpty()
+      .Because("the hold is cleared before subscribers run and the gate is released after them, even when one throws");
+    var next = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, _ => Task.CompletedTask, CancellationToken.None);
+    await Assert.That(next.IsCompletedSuccessfully).IsTrue()
+      .Because("the next applier takes the free gate at once");
+  }
+
+  [Test]
+  public async Task ProcessChannelBatch_StandardPath_RaisesTheGateReleaseAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.StandardReleasePerspective";
+    var registry = new SingleRunnerRegistry(perspectiveName, new RecordingRunner(), [typeof(DeepChannelEvent)]);
+    var (worker, _, _) = _buildBranchWorker(new RecordingWorkCoordinator(), registry, new BranchSetup());
+    var releases = new ConcurrentQueue<PerspectiveWorker.AffinityGateRelease>();
+    worker.OnStreamAffinityGateReleased += releases.Enqueue;
+
+    await worker.ProcessChannelBatchAsync([_branchWork(streamId, perspectiveName)], CancellationToken.None);
+
+    await Assert.That(releases.ToArray()).IsEquivalentTo(
+      [new PerspectiveWorker.AffinityGateRelease(streamId, perspectiveName, Abandoned: false)])
+      .Because("the standard path announces its gate release the same way the drain path does");
   }
 
   [Test]
