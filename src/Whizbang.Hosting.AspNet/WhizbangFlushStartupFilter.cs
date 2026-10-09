@@ -11,7 +11,7 @@ namespace Whizbang.Hosting.AspNet;
 /// at the beginning of the request pipeline, ensuring the flush runs after
 /// all other middleware but before scope disposal.
 /// </summary>
-/// <tests>tests/Whizbang.Hosting.AspNet.Tests/WhizbangFlushStartupFilterTests.cs</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Component.Tests/WhizbangFlushStartupFilterTests.cs</tests>
 internal sealed class WhizbangFlushStartupFilter : IStartupFilter {
   public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) {
     return app => {

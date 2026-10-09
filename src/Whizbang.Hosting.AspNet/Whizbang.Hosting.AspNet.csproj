@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Whizbang.Hosting.AspNet.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Hosting.AspNet.Component.Tests" />
   </ItemGroup>
 
   <ItemGroup>

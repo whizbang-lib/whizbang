@@ -76,7 +76,7 @@ public sealed record FleetStatusEntry(
 /// separate opt-in).
 /// </summary>
 /// <docs>operations/startup/startup-status</docs>
-/// <tests>tests/Whizbang.Hosting.AspNet.Tests/StartupStatusEndpointsTests.cs</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Component.Tests/StartupStatusEndpointsTests.cs</tests>
 public static class StartupStatusReporter {
 
   /// <summary>Builds the two-section report from whatever is registered — every argument optional,
