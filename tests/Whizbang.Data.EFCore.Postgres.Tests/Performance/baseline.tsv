@@ -321,3 +321,18 @@ liveness.under_load.stamps	40	stamps		recorded
 liveness.under_load.wh_claim_due_schedules.lock_wait_samples	0	samples		recorded
 liveness.under_load.wh_end_lapsed_bridge.lock_wait_samples	0	samples	0	GATED: was 4,523 before 198; nothing to end must wait for nothing
 liveness.under_load.wh_vote_role.lock_wait_samples	2064	samples		recorded: was 4,515 before 197 and 198; the remaining waits are behind the holder's own fenced stamp
+
+# --- Outbox claim, the stream-ledger write ------------------------------------------------------
+# One claim_orphaned_outbox call over 30 streams with one pending row each: ten the claimer owns under
+# a live lease (refreshed), ten a deregistered instance owns (taken over), ten with no ledger row
+# (pinned). The scenario asserts the claimer owns all thirty afterwards, so every path was taken.
+#
+# 200 (#1238) locks every existing ledger row in one stream_id pass before refreshing or taking it
+# over, instead of the refreshes first and the pins after, which two claims could interleave into a
+# deadlock. The ledger blocks are gated because one probe and one write per claimed stream is the
+# design: before 200 the same call read 234.7 ledger blocks and 1,151 shared buffers in all. The
+# ceiling is half again the measured value, which a scan of the ledger or a second probe per stream
+# would pass.
+claim.ledger_write.shared_buffers_per_claim	1136	buffers/claim		recorded: was 1,151 before 200
+claim.ledger_write.wh_active_streams.blocks_per_claim	221	blocks/claim	330	GATED: was 234.7 before 200; the ledger write is one probe and one write per claimed stream
+claim.ledger_write.wh_outbox.blocks_per_claim	612.667	blocks/claim		recorded: unchanged by 200
