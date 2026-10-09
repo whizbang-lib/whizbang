@@ -88,6 +88,7 @@
     <Project Path="tests/Whizbang.Generators.Tests/Whizbang.Generators.Tests.csproj" />
     <Project Path="tests/Whizbang.Hosting.AspNet.Tests/Whizbang.Hosting.AspNet.Tests.csproj" />
     <Project Path="tests/Whizbang.Hosting.Azure.ServiceBus.Tests/Whizbang.Hosting.Azure.ServiceBus.Tests.csproj" />
+    <Project Path="tests/Whizbang.Hosting.Azure.ServiceBus.Component.Tests/Whizbang.Hosting.Azure.ServiceBus.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Hosting.RabbitMQ.Tests/Whizbang.Hosting.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Whizbang.LanguageServer.Tests/Whizbang.LanguageServer.Tests.csproj" />
     <Project Path="tests/Whizbang.Migrate.Integration.Tests/Whizbang.Migrate.Integration.Tests.csproj" />
