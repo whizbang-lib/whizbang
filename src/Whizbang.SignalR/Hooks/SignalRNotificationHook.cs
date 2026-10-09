@@ -39,7 +39,7 @@ namespace Whizbang.SignalR.Hooks;
 /// </code>
 /// </example>
 /// <docs>apis/signalr/notification-hooks</docs>
-/// <tests>Whizbang.SignalR.Tests/Hooks/SignalRNotificationHookTests.cs</tests>
+/// <tests>tests/Whizbang.SignalR.Tests/Hooks/SignalRNotificationHookTests.cs</tests>
 /// <typeparam name="THub">The SignalR hub type to use for notifications.</typeparam>
 /// <remarks>
 /// Creates a new SignalR notification hook.

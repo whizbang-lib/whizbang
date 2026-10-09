@@ -19,14 +19,14 @@ public static class StreamIdResolver {
   /// <exception cref="InvalidOperationException">
   /// Thrown when no [StreamId] attribute is found, or when the stream key value is null or empty
   /// </exception>
-  /// <tests>tests/Whizbang.Core.Tests/StreamIdResolutionTests.cs:ResolveStreamId_WithStringProperty_ReturnsValueAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/StreamIdResolutionTests.cs:ResolveStreamId_WithGuidProperty_ReturnsStringValueAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/StreamIdResolutionTests.cs:ResolveStreamId_WithNoStreamIdAttribute_ThrowsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/StreamIdResolutionTests.cs:ResolveStreamId_WithNullValue_ThrowsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/StreamIdResolutionTests.cs:ResolveStreamId_WithEmptyString_ThrowsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/StreamIdResolutionTests.cs:ResolveStreamId_WithWhitespaceString_ThrowsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/StreamIdResolutionTests.cs:ResolveStreamId_DifferentEventsForSameStream_ReturnsSameKeyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/StreamIdResolutionTests.cs:ResolveStreamId_WithConstructorParameter_ReturnsValueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyResolutionTests.cs:ResolveStreamId_WithStringProperty_ReturnsValueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyResolutionTests.cs:ResolveStreamId_WithGuidProperty_ReturnsStringValueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyResolutionTests.cs:ResolveStreamId_WithNoStreamIdAttribute_ThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyResolutionTests.cs:ResolveStreamId_WithNullValue_ThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyResolutionTests.cs:ResolveStreamId_WithEmptyString_ThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyResolutionTests.cs:ResolveStreamId_WithWhitespaceString_ThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyResolutionTests.cs:ResolveStreamId_DifferentEventsForSameStream_ReturnsSameKeyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyResolutionTests.cs:ResolveStreamId_WithConstructorParameter_ReturnsValueAsync</tests>
   public static string Resolve(IEvent @event) {
     // Delegate to source-generated zero-reflection implementation
     return StreamIdExtractors.Resolve(@event);

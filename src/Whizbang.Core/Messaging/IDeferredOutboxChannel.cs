@@ -36,7 +36,7 @@ public interface IDeferredOutboxChannel {
   /// </summary>
   /// <returns>A list of all queued messages. The channel is cleared after draining.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_ReturnsAllQueuedMessages_AndClearsChannelAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_WhenEmpty_ReturnsEmptyList</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_WhenEmpty_ReturnsEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_MultipleCalls_OnlyReturnsMessagesOnceAsync</tests>
   IReadOnlyList<OutboxMessage> DrainAll();
 

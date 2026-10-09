@@ -218,7 +218,9 @@ Describe 'Get-CiSuiteListProblem' {
   It 'names a counted suite that ci.yml does not define' {
     $repo = New-FakeRepo
     Edit-RepoFile $repo '.github/scripts/Test-CiResult.ps1' "'general-integration')" "'general-integration', 'ghost-tests')"
-    @(Get-CiSuiteListProblem -Root $repo) | Should -Be @('ghost-tests: .github/scripts/Test-CiResult.ps1 counts it, but ci.yml has no such job')
+    $problems = @(Get-CiSuiteListProblem -Root $repo)
+    $problems | Should -Contain 'ghost-tests: .github/scripts/Test-CiResult.ps1 counts it, but ci.yml has no such job'
+    $problems | Should -Contain 'ghost-tests: missing from the needs of ci.yml job ci-result' -Because 'a suite with no job is also missing from every list'
   }
 
   It 'names a suite job that the gate does not count' {
