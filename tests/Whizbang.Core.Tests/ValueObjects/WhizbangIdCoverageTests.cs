@@ -104,7 +104,6 @@ public class WhizbangIdCoverageTests {
   [Test]
   public async Task CompareToIWhizbangId_WithOtherIdType_ComparesByGuidAsync() {
     var earlier = WhizbangId.New();
-    await Task.Delay(2);
     IWhizbangId later = MessageId.New();
 
     await Assert.That(earlier.CompareTo(later)).IsLessThan(0);
