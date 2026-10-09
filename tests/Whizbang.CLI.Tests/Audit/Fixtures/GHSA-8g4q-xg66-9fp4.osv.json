@@ -1,0 +1,127 @@
+{
+  "id": "GHSA-8g4q-xg66-9fp4",
+  "summary": "Microsoft Security Advisory CVE-2024-43485 | .NET Denial of Service Vulnerability",
+  "details": "# Microsoft Security Advisory CVE-2024-43485 | .NET Denial of Service Vulnerability\n\n## <a name=\"executive-summary\"></a>Executive summary\n\nMicrosoft is releasing this security advisory to provide info...",
+  "aliases": [
+    "BIT-dotnet-2024-43485",
+    "BIT-dotnet-sdk-2024-43485",
+    "CVE-2024-43485"
+  ],
+  "modified": "2024-10-24T16:37:32.380910Z",
+  "published": "2024-10-08T20:25:19Z",
+  "database_specific": {
+    "cwe_ids": [
+      "CWE-407"
+    ],
+    "severity": "HIGH",
+    "github_reviewed": true,
+    "github_reviewed_at": "2024-10-08T20:25:19Z",
+    "nvd_published_at": "2024-10-08T18:15:10Z"
+  },
+  "references": [
+    {
+      "type": "WEB",
+      "url": "https://github.com/dotnet/runtime/security/advisories/GHSA-8g4q-xg66-9fp4"
+    },
+    {
+      "type": "ADVISORY",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2024-43485"
+    },
+    {
+      "type": "WEB",
+      "url": "https://github.com/dotnet/announcements/issues/329"
+    },
+    {
+      "type": "WEB",
+      "url": "https://github.com/dotnet/runtime/issues/108678"
+    },
+    {
+      "type": "PACKAGE",
+      "url": "https://github.com/dotnet/runtime"
+    },
+    {
+      "type": "WEB",
+      "url": "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2024-43485"
+    }
+  ],
+  "affected": [
+    {
+      "package": {
+        "name": "System.Text.Json",
+        "ecosystem": "NuGet",
+        "purl": "pkg:nuget/System.Text.Json"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "8.0.0"
+            },
+            {
+              "fixed": "8.0.5"
+            }
+          ]
+        }
+      ],
+      "versions": [
+        "8.0.0",
+        "8.0.1",
+        "8.0.2",
+        "8.0.3",
+        "8.0.4"
+      ],
+      "database_specific": {
+        "last_known_affected_version_range": "<= 8.0.4",
+        "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2024/10/GHSA-8g4q-xg66-9fp4/GHSA-8g4q-xg66-9fp4.json"
+      }
+    },
+    {
+      "package": {
+        "name": "System.Text.Json",
+        "ecosystem": "NuGet",
+        "purl": "pkg:nuget/System.Text.Json"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "6.0.0"
+            },
+            {
+              "fixed": "6.0.10"
+            }
+          ]
+        }
+      ],
+      "versions": [
+        "6.0.0",
+        "6.0.1",
+        "6.0.2",
+        "6.0.3",
+        "6.0.4",
+        "6.0.5",
+        "6.0.6",
+        "6.0.7",
+        "6.0.8",
+        "6.0.9"
+      ],
+      "database_specific": {
+        "last_known_affected_version_range": "<= 6.0.9",
+        "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2024/10/GHSA-8g4q-xg66-9fp4/GHSA-8g4q-xg66-9fp4.json"
+      }
+    }
+  ],
+  "schema_version": "1.9.0",
+  "severity": [
+    {
+      "type": "CVSS_V3",
+      "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+    },
+    {
+      "type": "CVSS_V4",
+      "score": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:H/SC:N/SI:N/SA:N"
+    }
+  ]
+}

@@ -57,15 +57,24 @@ public sealed class RoleAssignmentOptions {
   public TimeSpan CooldownAfterLapse { get; set; } = TimeSpan.FromSeconds(15);
 
   /// <summary>
-  /// While true (the default in this release), a holder also holds the duty's legacy session advisory
-  /// lock, so an instance still running the session-lock elector sees the duty as held, and a new
-  /// instance defers to an old holder: old and new never both act during a rolling deploy. It costs one
-  /// pinned connection per held role, and will default to false in a later release. Turn it off early
-  /// (<c>Whizbang__Database__RoleAssignment__HoldLegacySessionLock=false</c>) once no instance older than
-  /// role assignment remains. With it off, the vote still refuses while an old holder is visible, and a
-  /// holder steps aside within one renewal once it sees one, but for that renewal interval both may act.
+  /// While true, a holder also holds the duty's legacy session advisory lock, so an instance still
+  /// running the session-lock elector sees the duty as held, and a new instance defers to an old holder:
+  /// old and new never both act during a rolling deploy. It costs one pinned connection per held role.
   /// </summary>
-  public bool HoldLegacySessionLock { get; set; } = true;
+  /// <remarks>
+  /// <para>
+  /// <b>Defaults to false.</b> The bridge is only needed while an instance older than role assignment is
+  /// still running, and it costs a pinned connection per held role for as long as it is on.
+  /// </para>
+  /// <para>
+  /// <b>Set it to true for one deploy</b>
+  /// (<c>Whizbang__Database__RoleAssignment__HoldLegacySessionLock=true</c>) when rolling from a release
+  /// that held duties by session lock, that is, from before role assignment. Turn it back off afterwards.
+  /// With it off, the vote still refuses while an old holder is visible, and a holder steps aside within
+  /// one renewal once it sees one, but for that renewal interval both may act.
+  /// </para>
+  /// </remarks>
+  public bool HoldLegacySessionLock { get; set; }
 
   /// <summary>
   /// How long owed duty work backs off after a failed attempt, doubled per further failure and

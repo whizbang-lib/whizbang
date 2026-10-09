@@ -322,12 +322,12 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var order = new ConcurrentQueue<string>();
 
-    var holder = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, async () => {
+    var holder = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, async _ => {
       order.Enqueue("first entered");
       await release.Task;
       order.Enqueue("first left");
     }, CancellationToken.None);
-    var contender = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, () => {
+    var contender = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, _ => {
       order.Enqueue("second entered");
       return Task.CompletedTask;
     }, CancellationToken.None);
@@ -354,12 +354,12 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     worker.OnStreamAffinityGateContended += contended.Enqueue;
     var secondEntered = false;
 
-    var holder = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, () => release.Task, CancellationToken.None);
+    var holder = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, _ => release.Task, CancellationToken.None);
 
     await Assert.That(contended.IsEmpty).IsTrue()
       .Because("taking a free gate is not contention");
 
-    var contender = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, () => {
+    var contender = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, _ => {
       secondEntered = true;
       return Task.CompletedTask;
     }, CancellationToken.None);
@@ -376,6 +376,109 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(secondEntered).IsTrue();
     await Assert.That(contended.Count).IsEqualTo(1)
       .Because("only the one parked caller was contended");
+  }
+
+  [Test]
+  public async Task WithStreamAffinityGate_BodyHandsOverAnApplyStillRunning_HoldsTheGateUntilThatApplyEndsAsync() {
+    // The drain body stops waiting for an apply whose lease ran out, but the apply keeps running. The gate
+    // belongs to the apply, not to the consumer: it stays held after the body returns, until the apply ends.
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.AbandonedApplyPerspective";
+    var registry = new SingleRunnerRegistry(perspectiveName, new RecordingRunner(), [typeof(DeepChannelEvent)]);
+    var (worker, _, _) = _buildBranchWorker(new RecordingWorkCoordinator(), registry, new BranchSetup());
+    var apply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var secondEntered = false;
+
+    await worker.WithStreamAffinityGateAsync(streamId, perspectiveName, keepHeldUntil => {
+      keepHeldUntil(apply.Task);
+      return Task.CompletedTask;
+    }, CancellationToken.None);
+
+    var hold = worker.SnapshotAffinityHolds(TimeSpan.Zero).Single();
+    await Assert.That((hold.StreamId, hold.PerspectiveName)).IsEqualTo((streamId, perspectiveName))
+      .Because("the body returned, but the apply it handed over is still running and still holds the gate");
+    await Assert.That(hold.Path).IsEqualTo("drain-abandoned")
+      .Because("the watchdog names a hold its consumer has left, so a hung abandoned apply reads as one");
+
+    var contender = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, _ => {
+      secondEntered = true;
+      return Task.CompletedTask;
+    }, CancellationToken.None);
+    await Assert.That(contender.IsCompleted).IsFalse()
+      .Because("a second applier parks behind the running apply even though its consumer has moved on");
+    await Assert.That(secondEntered).IsFalse();
+
+    apply.TrySetResult();
+    await contender.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(secondEntered).IsTrue()
+      .Because("the gate is released the moment the handed-over apply ends");
+    await Assert.That(worker.SnapshotAffinityHolds(TimeSpan.Zero)).IsEmpty();
+  }
+
+  [Test]
+  public async Task WithStreamAffinityGate_HandedOverApplyFails_StillReleasesTheGateAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.AbandonedFailingApplyPerspective";
+    var registry = new SingleRunnerRegistry(perspectiveName, new RecordingRunner(), [typeof(DeepChannelEvent)]);
+    var (worker, _, _) = _buildBranchWorker(new RecordingWorkCoordinator(), registry, new BranchSetup());
+    var apply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    await worker.WithStreamAffinityGateAsync(streamId, perspectiveName, keepHeldUntil => {
+      keepHeldUntil(apply.Task);
+      return Task.CompletedTask;
+    }, CancellationToken.None);
+    var contender = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, _ => Task.CompletedTask, CancellationToken.None);
+
+    apply.TrySetException(new InvalidOperationException("the abandoned apply failed"));
+    await contender.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(contender.IsCompletedSuccessfully).IsTrue()
+      .Because("an abandoned apply that fails has ended all the same, so its gate goes free");
+  }
+
+  [Test]
+  public async Task WithStreamAffinityGate_HandedOverApplyAlreadyEnded_ReleasesTheGateOnReturnAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.FinishedHandOverPerspective";
+    var registry = new SingleRunnerRegistry(perspectiveName, new RecordingRunner(), [typeof(DeepChannelEvent)]);
+    var (worker, _, _) = _buildBranchWorker(new RecordingWorkCoordinator(), registry, new BranchSetup());
+
+    await worker.WithStreamAffinityGateAsync(streamId, perspectiveName, keepHeldUntil => {
+      keepHeldUntil(Task.CompletedTask);
+      return Task.CompletedTask;
+    }, CancellationToken.None);
+
+    await Assert.That(worker.SnapshotAffinityHolds(TimeSpan.Zero)).IsEmpty()
+      .Because("an apply that has already ended holds nothing past the body");
+  }
+
+  [Test]
+  public async Task OnCursorCacheStreamsEvicted_GateHeldByARunningApply_StaysAndKeepsSerializingAsync() {
+    // The cursor cache evicts a stream after its cursor has been idle for a while, which a long or hung
+    // apply can outlast. Dropping the held gate let the next applier take a fresh one and run concurrently.
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.EvictedWhileHeldPerspective";
+    var registry = new SingleRunnerRegistry(perspectiveName, new RecordingRunner(), [typeof(DeepChannelEvent)]);
+    var (worker, _, _) = _buildBranchWorker(new RecordingWorkCoordinator(), registry, new BranchSetup());
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var secondEntered = false;
+
+    var holder = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, _ => release.Task, CancellationToken.None);
+    worker.OnCursorCacheStreamsEvicted([streamId]);
+
+    await Assert.That(worker.HasStreamAffinityGate(streamId, perspectiveName)).IsTrue()
+      .Because("a gate an apply is holding is never evicted out from under it");
+    var contender = worker.WithStreamAffinityGateAsync(streamId, perspectiveName, _ => {
+      secondEntered = true;
+      return Task.CompletedTask;
+    }, CancellationToken.None);
+    await Assert.That(secondEntered).IsFalse()
+      .Because("the next applier still parks behind the running apply");
+
+    release.TrySetResult();
+    await Task.WhenAll(holder, contender).WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(secondEntered).IsTrue();
   }
 
   // ------------------------------------------------------------------

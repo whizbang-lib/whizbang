@@ -403,6 +403,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     sqlBuilder.AppendLine();
 
     var perspectiveEntries = new System.Collections.Generic.List<(string Name, string Sql)>();
+    // The objects each table's DDL builds, declared to the managed-object ledger (#1252), read from that DDL.
+    var managedObjects = new System.Collections.Generic.List<(string Table, string Kind, string Name, string DeclaredBy)>();
 
     foreach (var perspective in perspectives) {
       // Report size warning if estimated size is large
@@ -455,6 +457,9 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
       // Collect per-perspective entry
       perspectiveEntries.Add((perspective.ClassName, perspectiveSqlBuilder.ToString()));
+      foreach (var (kind, name) in ManagedObjectNames.Extract(perspectiveSqlBuilder.ToString())) {
+        managedObjects.Add((perspective.TableName, kind, name, perspective.ModelClassName));
+      }
 
       // Append to concatenated SQL (backward compat)
       sqlBuilder.Append(perspectiveSqlBuilder);
@@ -491,6 +496,16 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       schemaBuilder.Append("\", @\"");
       schemaBuilder.Append(sql.Replace("\"", "\"\""));
       schemaBuilder.AppendLine("\"),");
+    }
+    schemaBuilder.AppendLine("    };");
+    schemaBuilder.AppendLine();
+    schemaBuilder.AppendLine("    /// <summary>");
+    schemaBuilder.AppendLine("    /// The indexes and constraints the entries build, as (table, kind, name, declared by): what the");
+    schemaBuilder.AppendLine("    /// managed-object reconcile keeps, and the Whizbang-built objects missing from it are retired.");
+    schemaBuilder.AppendLine("    /// </summary>");
+    schemaBuilder.AppendLine("    public static readonly (string Table, string Kind, string Name, string DeclaredBy)[] ManagedObjects = new (string, string, string, string)[] {");
+    foreach (var (table, kind, name, declaredBy) in managedObjects) {
+      schemaBuilder.AppendLine($"        (\"{table}\", \"{kind}\", \"{name.Replace("\"", "\\\"")}\", \"{declaredBy}\"),");
     }
     schemaBuilder.AppendLine("    };");
     schemaBuilder.AppendLine("}");

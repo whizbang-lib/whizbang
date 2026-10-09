@@ -899,7 +899,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       PerspectiveMetrics? metrics = null,
       StoredFormFailureRegistry? storedFormFailures = null,
       ISyncEventTracker? syncEventTracker = null,
-      Func<IServiceProvider, IPerspectiveRunnerRegistry>? registryFactory = null) {
+      Func<IServiceProvider, IPerspectiveRunnerRegistry>? registryFactory = null,
+      IPerspectiveDrainChannel? drainChannel = null) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
@@ -959,7 +960,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: failureChannelOverride ?? harness.FailureCapture,
       leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
-      perspectiveDrainChannel: harness.DrainChannel,
+      perspectiveDrainChannel: drainChannel ?? harness.DrainChannel,
       leaseHandleOptions: leaseHandleOptions ?? Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: leaseRenewalOptions ?? Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: NullDeadLetterStore.Instance,
@@ -1153,6 +1154,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     /// <summary>Runs immediately before <see cref="RunWithEventsException"/> is thrown.</summary>
     public Action? BeforeThrow { get; init; }
     public bool BlockUntilCanceled { get; init; }
+    /// <summary>When set, the first apply waits for this task and ignores its token, like a hung handler.</summary>
+    public Task? FirstApplyHangsUntil { get; init; }
     /// <summary>The status every completion reports; a runner may report a failure without throwing.</summary>
     public PerspectiveProcessingStatus CompletionStatus { get; init; } = PerspectiveProcessingStatus.Completed;
     public ConcurrentQueue<List<Guid>> ReceivedBatches { get; } = new();
@@ -1169,10 +1172,13 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     public async Task<PerspectiveCursorCompletion> RunWithEventsAsync(
         Guid streamId, string perspectiveName, Guid? lastProcessedEventId,
         IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _runWithEventsCallCount);
+      var call = Interlocked.Increment(ref _runWithEventsCallCount);
       ReceivedBatches.Enqueue([.. events.Select(e => e.MessageId.Value)]);
       ObservedCursors.Enqueue(lastProcessedEventId);
       _started.TrySetResult();
+      if (call == 1 && FirstApplyHangsUntil is not null) {
+        await FirstApplyHangsUntil;
+      }
       if (BlockUntilCanceled) {
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var registration = cancellationToken.Register(() => blocked.TrySetResult());

@@ -96,6 +96,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+
+- **Role assignment: the mixed-version bridge is off by default.**
+  `Whizbang:Database:RoleAssignment:HoldLegacySessionLock` now defaults to `false`. A holder no longer
+  also takes the duty's legacy session advisory lock, which frees one pinned connection per held role.
+  **A rolling deploy from a release older than role assignment must set it to `true` for that one
+  deploy**, so an instance still running the session-lock elector cannot act alongside a new holder;
+  turn it back off afterwards. With it off, a vote still refuses while an old holder is visible and a
+  holder steps aside within one renewal of seeing one, but for that renewal interval both may act.
 - **Audit records are now written on the idle band by default, not the background band.** Audit is
   durable rather than real-time, it is most of what a bulk load generates, and it is read days
   later if at all -- so it no longer competes with the work a person is waiting on. The idle band

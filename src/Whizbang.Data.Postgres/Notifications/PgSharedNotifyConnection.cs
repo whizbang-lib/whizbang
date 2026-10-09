@@ -543,9 +543,10 @@ public sealed partial class PgSharedNotifyConnection(
   /// <returns>True to wait for the next notification.</returns>
   /// <remarks>
   /// Its own method so its contract can be asserted, the way the exclusion procedure prefers to a
-  /// skipped line. Through the loop, neither way out is reached on demand: a stop cancels the wait,
-  /// and a connection that drops fails its wait, so both leave by exception before this is asked
-  /// again. It is the guard for the moment between the two, which only a race can land in.
+  /// skipped line. Usually a stop cancels the wait and a connection that drops fails it, so both
+  /// leave by exception before this is asked again. It answers false when the wait ended normally
+  /// (a notification was delivered) and the stop arrived during that delivery: the loop then leaves
+  /// without an exception instead of waiting again.
   /// </remarks>
   internal static bool KeepListening(System.Data.ConnectionState state, CancellationToken stoppingToken) =>
     !stoppingToken.IsCancellationRequested && state == System.Data.ConnectionState.Open;

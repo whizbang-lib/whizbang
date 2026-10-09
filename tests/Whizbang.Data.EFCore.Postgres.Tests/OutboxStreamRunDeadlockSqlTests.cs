@@ -115,6 +115,42 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task ClaimOrphanedOutbox_RefreshedAndPinnedStreams_TakesTheirLedgerRowsInOneStreamOrderAsync() {
+    // #1238. The claim writes two kinds of ledger row: streams it already owns (refreshed) and streams it
+    // takes over (pinned). Each kind was locked in stream order, but the refreshes first and the pins
+    // after, so the claim's ledger order as a whole was not stream order. Two claims that each refresh a
+    // stream the other pins then wait on each other. A claim pins a peer's stream when it sees no live
+    // peer: neither instance here is registered, so the peer's live stream lease does not protect it.
+    // The middle stream is this instance's own; the first and the last are the peer's.
+    var instance = Guid.CreateVersion7();
+    var peer = Guid.CreateVersion7();
+    var streams = _ascending(3);
+    await using var setup = await _openAsync();
+    Guid[] ledgerOwners = [peer, instance, peer];
+    foreach (var (stream, owner) in streams.Zip(ledgerOwners)) {
+      await _ledgerAsync(setup, stream, owner);
+      _ = await _rowsAsync(setup, stream, 1, leasedTo: null, leasedCount: 0);
+    }
+
+    var free = await _whileBlockedOnTheFirstAsync(LEDGER, "stream_id", streams, async claim => {
+      await using var cmd = claim.CreateCommand();
+      cmd.CommandText = @"SELECT count(*) FROM claim_orphaned_outbox(
+        @inst, 0, 1, NOW() + INTERVAL '5 minutes', NOW(), 10000, NOW() - INTERVAL '1 minute', 100, 1, 25)";
+      cmd.Parameters.AddWithValue("inst", instance);
+      await cmd.ExecuteScalarAsync();
+    });
+
+    await Assert.That(free).IsEquivalentTo(streams.Skip(1))
+      .Because("waiting on the first ledger row in stream order, the claim must hold none of the later ones, refreshed or pinned");
+    await using var owners = setup.CreateCommand();
+    owners.CommandText = "SELECT count(*) FROM wh_active_streams WHERE stream_id = ANY(@streams) AND assigned_instance_id = @inst";
+    owners.Parameters.AddWithValue(nameof(streams), streams);
+    owners.Parameters.AddWithValue("inst", instance);
+    await Assert.That(Convert.ToInt64(await owners.ExecuteScalarAsync(), CultureInfo.InvariantCulture)).IsEqualTo(3)
+      .Because("released, the claim refreshes its own stream and takes over the unregistered peer's two, as before");
+  }
+
+  [Test]
   public async Task CompleteOutboxPublished_DeletesItsRowsInStreamOrderAsync() {
     var instance = Guid.CreateVersion7();
     await using var setup = await _openAsync();
@@ -218,7 +254,46 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
   // --- all of it at once ---------------------------------------------------------------------------
 
   [Test]
-  public async Task ConcurrentClaimsDrainsContinuationsCompletionsAndFailureReleases_NeverDeadlockAsync() {
+  public Task ConcurrentClaimsDrainsContinuationsCompletionsAndFailureReleases_NeverDeadlockAsync() =>
+    _concurrentRoundsAsync(registerInstances: true);
+
+  [Test]
+  public Task ConcurrentClaims_WithNoInstanceRegistered_NeverDeadlockAsync() =>
+    // #1238. The same rounds with the four instances left unregistered, which is the shape that
+    // deadlocked: with no row in wh_service_instances and no whizbang-<id> application name on these
+    // connections, every instance ranks alone AND sees no live peer, so each one's window admits every
+    // stream instead of its partition's share. The overlap is then total, and two acquisitions take rows
+    // of the same streams in whatever order their plans produce. A fleet meets this in production when
+    // every heartbeat goes stale at once behind a pooler that hides the application name.
+    _concurrentRoundsAsync(registerInstances: false);
+
+  [Test]
+  public async Task ConcurrentClaims_WithNoInstanceEverRegistered_NeverDeadlockAsync() {
+    // #1238. The sibling above starts unregistered, but its actors register after the first claim that
+    // reports a stale registration, as ClaimWorker does, so from the second round on every instance is
+    // registered and live and the shape is gone. Here no instance ever registers: no row in
+    // wh_service_instances for the whole run, and no whizbang-<id> application name on any connection.
+    // Every claim ranks alone, sees no live peer, and takes rows on streams another claimer owns, so
+    // its ledger writes cover streams it refreshes AND streams it pins in the same statement.
+    await _concurrentRoundsAsync(registerInstances: false, registerAfterAStaleClaim: false, afterTheRounds: async control => {
+      // Read while the actors' sessions are still open, so the application-name check sees them.
+      await using var cmd = control.CreateCommand();
+      cmd.CommandText = "SELECT count(*) FROM wh_service_instances";
+      await Assert.That(Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture)).IsEqualTo(0)
+        .Because("the premise: no instance was registered at any point in the run");
+      cmd.CommandText = @"SELECT count(*) FILTER (WHERE application_name LIKE 'whizbang-%'), count(*)
+        FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()";
+      await using var reader = await cmd.ExecuteReaderAsync();
+      await reader.ReadAsync();
+      await Assert.That(reader.GetInt64(0)).IsEqualTo(0)
+        .Because("the premise: no connection advertises an instance as live");
+      await Assert.That(reader.GetInt64(1)).IsGreaterThanOrEqualTo(16)
+        .Because("the four actors' sixteen sessions are open while this is read");
+    });
+  }
+
+  private async Task _concurrentRoundsAsync(
+      bool registerInstances, bool registerAfterAStaleClaim = true, Func<NpgsqlConnection, Task>? afterTheRounds = null) {
     // Four instances drain one outbox. Each round releases every instance's claim, drain fetch,
     // continuation and completion flush (with its failure releases) together on one signal, over
     // streams the instances share, and the round ends when all of them have returned. A deadlock is
@@ -226,14 +301,17 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
     const int iterations = 8;
     const int roundCap = 600;
     var instanceIds = Enumerable.Range(0, 4).Select(_ => Guid.CreateVersion7()).ToArray();
-    var actors = instanceIds.Select(id => new Actor(id)).ToArray();
+    var actors = instanceIds.Select(id => new Actor(id, registerAfterAStaleClaim)).ToArray();
     var deadlocks = new ConcurrentBag<string>();
     var failOnce = new ConcurrentDictionary<Guid, byte>();
     await using var control = await _openAsync();
     // Registered, as ClaimWorker registers before its first claim: the claim no longer writes the
     // caller's row (196), so four unregistered instances would each rank alone and see no live peer.
-    foreach (var id in instanceIds) {
-      await _registerAsync(control, id);
+    // The unregistered case is the point of the sibling test above, not an oversight here.
+    if (registerInstances) {
+      foreach (var id in instanceIds) {
+        await _registerAsync(control, id);
+      }
     }
     foreach (var actor in actors) {
       await actor.OpenAsync(ConnectionString);
@@ -257,9 +335,12 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
       }
 
       await Assert.That(deadlocks).IsEmpty()
-        .Because($"no pair of these statements may deadlock; seen: {string.Join(" || ", deadlocks.Take(3))}");
+        .Because($"no pair of these statements may deadlock; seen {deadlocks.Count} in {rounds} rounds, first: {string.Join(" || ", deadlocks.Take(3))}");
       await Assert.That(await _pendingAsync(control)).IsEqualTo(0)
         .Because($"every row drains within {roundCap} rounds");
+      if (afterTheRounds is not null) {
+        await afterTheRounds(control);
+      }
     } finally {
       foreach (var actor in actors) {
         await actor.DisposeAsync();
@@ -271,7 +352,7 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
   /// One instance's four sessions, and what passes between its steps from one round to the next: the
   /// streams its claim offered, the cursors its drain published through, and what its flush owes.
   /// </summary>
-  private sealed class Actor(Guid instanceId) : IAsyncDisposable {
+  private sealed class Actor(Guid instanceId, bool registerAfterAStaleClaim) : IAsyncDisposable {
     private readonly NpgsqlConnection[] _sessions = new NpgsqlConnection[4];
     private readonly HashSet<Guid> _published = [];
     private readonly Lock _lock = new();
@@ -343,7 +424,7 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
       }
       // What ClaimWorker does (196): the claim never writes this instance's row, so the instance registers
       // after a claim that found it stale, in a statement of its own.
-      if (registrationStale) {
+      if (registrationStale && registerAfterAStaleClaim) {
         await using var beat = _sessions[0].CreateCommand();
         beat.CommandText = "SELECT record_heartbeat(@inst, 'test', 'test-host', 1)";
         beat.Parameters.AddWithValue("inst", instanceId);

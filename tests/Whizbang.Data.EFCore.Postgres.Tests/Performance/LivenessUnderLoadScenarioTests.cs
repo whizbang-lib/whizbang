@@ -36,6 +36,10 @@ public class LivenessUnderLoadScenarioTests : EFCoreTestBase {
   private const string STAMPER_ROLE = "commit-stamper";
   /// <summary>Unstamped events the stamper drains while everything else runs.</summary>
   private const int BACKLOG_STREAMS = 20_000;
+  // #1217: streams carrying a due schedule and a due retry, owned by the holder so its claim shares them.
+  private const int DUE_STREAMS = 40;
+  // Enough per stream that the retry notification still finds due streams as claims drain them.
+  private const int DUE_RETRIES_PER_STREAM = 25;
   private const int BACKLOG_VERSIONS = 10;
   private const int STAMP_BATCH = 1000;
   /// <summary>Fenced stamps the stamper runs; the other workers run until it finishes.</summary>
@@ -88,8 +92,15 @@ public class LivenessUnderLoadScenarioTests : EFCoreTestBase {
     await done.CancelAsync();
     await sampler;
 
+    // Whether the two calls that sampled zero waits when this harness was first run actually had work
+    // this time. Without these a zero is ambiguous: it reads the same whether the call never waited or
+    // never fired, and the first run's zero was the second of those.
+    var (occurrences, dueRemaining) = await _dueWorkDoneAsync(dataSource, cancellationToken);
+
     var baseline = PerformanceBaseline.Load(PerformanceBaseline.DefaultPath);
     var report = new PerformanceBaseline.Report(baseline, "Liveness calls under concurrent load");
+    report.Measure("liveness.under_load.schedule_occurrences_fired", occurrences, "occurrences");
+    report.Measure("liveness.under_load.due_retries_remaining", dueRemaining, "rows");
     var detail = new StringBuilder();
     foreach (var call in LIVENESS_CALLS) {
       var seen = samples.Where(s => s.Query.Contains(call, StringComparison.Ordinal)).ToList();
@@ -205,7 +216,85 @@ public class LivenessUnderLoadScenarioTests : EFCoreTestBase {
       ANALYZE wh_event_store;
       ANALYZE wh_outbox;
       """);
+    await _seedDueWorkAsync(conn, _holder);
   }
+
+  /// <summary>
+  /// The two shapes that sampled zero waits when this harness was first run: a due schedule and a due
+  /// retry. Both are seeded on streams the holder's own claim takes, which is the point — their lock
+  /// paths into the claim run through the per-stream advisory lock that the event-store chain takes, so
+  /// the contention only exists when the schedule and the claim share a stream.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>wh_claim_due_schedules</c> selects <c>wh_schedules</c> JOIN <c>wh_active_streams</c> where the
+  /// stream is assigned to the calling instance, the status is Active and the next fire is due. All three
+  /// are needed: with no ledger row assigned to the holder the join is empty and the call fires nothing,
+  /// which is why it took <c>FOR UPDATE ... SKIP LOCKED</c> over an empty set before.
+  /// </para>
+  /// <para>
+  /// <c>notify_scheduled_retry_due</c> aggregates streams from outbox and inbox rows whose
+  /// <c>scheduled_for</c> has elapsed and which are unprocessed. The outbox backlog this harness already
+  /// seeds carries no <c>scheduled_for</c>, so that query returned no streams and notified nothing.
+  /// </para>
+  /// </remarks>
+  /// <summary>
+  /// What the two seeded shapes actually did: occurrences the schedules spawned, and due retry rows still
+  /// unprocessed at the end. A non-zero occurrence count is the evidence that
+  /// <c>wh_claim_due_schedules</c> fired rather than taking its lock over an empty set.
+  /// </summary>
+  private static async Task<(long Occurrences, long DueRemaining)> _dueWorkDoneAsync(
+      NpgsqlDataSource dataSource, CancellationToken cancellationToken) {
+    await using var conn = await dataSource.OpenConnectionAsync(cancellationToken);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT (SELECT COALESCE(SUM(occurrence_count), 0) FROM wh_schedules),
+             (SELECT COUNT(*) FROM wh_outbox
+               WHERE processed_at IS NULL AND scheduled_for IS NOT NULL AND scheduled_for <= NOW())
+      """;
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    await reader.ReadAsync(cancellationToken);
+    return (reader.GetInt64(0), reader.GetInt64(1));
+  }
+
+  private static async Task _seedDueWorkAsync(NpgsqlConnection conn, Guid holder) =>
+    await _execAsync(conn, $"""
+      -- Streams the holder owns, so its claim takes them AND the due schedules join to them.
+      WITH s AS (
+        SELECT gen_random_uuid() AS stream_id FROM generate_series(1, {DUE_STREAMS})
+      ), ledger AS (
+        INSERT INTO wh_active_streams
+          (stream_id, partition_number, assigned_instance_id, last_activity_at, lease_expiry)
+        SELECT s.stream_id, compute_partition(s.stream_id, 10000), '{holder}'::uuid,
+               NOW() - INTERVAL '1 second', NOW() + INTERVAL '5 minutes'
+        FROM s
+        RETURNING stream_id
+      ), due_schedules AS (
+        -- Active, already due, and RECURRING on a short interval. One-shot schedules fire once and are
+        -- done, so the call found an empty set again for the rest of the run and could not have waited
+        -- on anything; an interval keeps a fire due for the whole run, which is what puts it beside the
+        -- claim often enough to contend.
+        INSERT INTO wh_schedules
+          (schedule_id, stream_id, partition_number, recurrence_kind, interval_ms, next_fire_at, status,
+           event_type, event_data, authority_principal_id)
+        SELECT gen_random_uuid(), l.stream_id, compute_partition(l.stream_id, 10000), 1, 50,
+               NOW() - INTERVAL '5 seconds', 0, 'Perf.Schedules.Fired',
+               jsonb_build_object('payload', repeat('y', 200)), gen_random_uuid()
+        FROM ledger l
+        RETURNING stream_id
+      )
+      -- Due retries on the same streams: unprocessed, with an elapsed scheduled_for, so the retry
+      -- notification aggregates them instead of finding nothing.
+      INSERT INTO wh_outbox (message_id, destination, message_type, envelope_type, event_data, metadata,
+                             scope, stream_id, partition_number, is_event, status, attempts, created_at,
+                             scheduled_for)
+      SELECT gen_random_uuid(), 'topic-perf', 'Perf.Events.Retried, Perf', 'MessageEnvelope',
+             jsonb_build_object('payload', repeat('z', 200)), jsonb_build_object('hops', jsonb_build_array()),
+             jsonb_build_object('t', 'tenant-perf'), d.stream_id, compute_partition(d.stream_id, 10000),
+             true, 1, 1, NOW() - INTERVAL '1 minute', NOW() - INTERVAL '10 seconds'
+      FROM due_schedules d
+      CROSS JOIN generate_series(1, {DUE_RETRIES_PER_STREAM});
+      """);
 
   private static async Task<long> _grantStamperRoleAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) {
     await using var conn = await dataSource.OpenConnectionAsync(cancellationToken);

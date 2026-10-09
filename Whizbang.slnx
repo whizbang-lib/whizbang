@@ -75,6 +75,7 @@
     <Project Path="test-diagnostics/DiagnosticsTest.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Whizbang.CLI.Tests/Whizbang.CLI.Tests.csproj" />
     <Project Path="tests/Whizbang.Core.Integration.Tests/Whizbang.Core.Integration.Tests.csproj" />
     <Project Path="tests/Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />
     <Project Path="tests/Whizbang.Data.EFCore.Postgres.Tests/Whizbang.Data.EFCore.Postgres.Tests.csproj" />

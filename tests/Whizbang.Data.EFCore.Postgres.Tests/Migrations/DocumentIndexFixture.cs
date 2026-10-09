@@ -23,9 +23,10 @@ public static class DocumentIndexUndeclared {
   }
 }
 
-/// <summary>A model whose queries never match on an unindexed field.</summary>
+/// <summary>A model whose queries never match on an unindexed field, and that keeps one index it no longer declares.</summary>
 public static class DocumentIndexOptedOut {
   [PerspectiveQueries(MatchOnAnyField = false)]
+  [KeepSchemaObject("idx_document_index_opted_out_legacy", Reason = "the reporting job reads it")]
   public class Model {
     [StreamId]
     public Guid Id { get; set; }

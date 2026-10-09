@@ -1466,14 +1466,13 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
-  /// Handler for <see cref="PerspectiveCursorCache.OnStreamsEvicted"/> — drops every
+  /// Handler for <see cref="PerspectiveCursorCache.OnStreamsEvicted"/> — drops every free
   /// affinity-gate entry whose key.StreamId matches a stream id in the eviction list.
   /// Multiple perspectives share a stream id, so a single eviction can clear several
   /// dictionary entries. Each removal disposes the semaphore so finalizers don't
-  /// accumulate handles. Uses the key-only overload because the cursor cache only emits
-  /// the hook after activity on those streams has lapsed — a racing acquirer would have
-  /// re-stamped the cache's per-stream activity tick first, which would have disqualified
-  /// the stream from this very eviction pass.
+  /// accumulate handles. A gate that is held is kept: an apply can outlive its cursor's
+  /// idleness, and removing the gate under it would let a second applier in. The removal
+  /// names the exact (key, entry) pair checked, like the idle sweep's.
   /// </summary>
   /// <remarks>
   /// Internal rather than private so the empty-list answer can be asserted: the cache raises this
@@ -1486,14 +1485,14 @@ public partial class PerspectiveWorker(
       return;
     }
     var evictedSet = new HashSet<Guid>(evictedStreams);
-    // Snapshot keys so removal during iteration doesn't mutate the live collection. The gate
-    // dictionary is small enough (bounded by active (stream, perspective) pairs) that a key
-    // snapshot is cheap and avoids racing-removal weirdness.
-    foreach (var key in _streamAffinityGates.Keys) {
-      if (!evictedSet.Contains(key.StreamId)) {
+    foreach (var (key, entry) in _streamAffinityGates) {
+      // A gate an apply still holds stays: the cursor's idleness says nothing about an apply that
+      // outlived it (a long or abandoned one), and dropping the gate would let the next applier take a
+      // fresh one and run concurrently. The idle sweep collects it once it is free.
+      if (!evictedSet.Contains(key.StreamId) || entry.Semaphore.CurrentCount != 1) {
         continue;
       }
-      if (_streamAffinityGates.TryRemove(key, out var entry)) {
+      if (_streamAffinityGates.TryRemove(new KeyValuePair<(Guid StreamId, string PerspectiveName), StreamAffinityGateEntry>(key, entry))) {
         entry.Dispose();
       }
     }
@@ -1513,10 +1512,22 @@ public partial class PerspectiveWorker(
   /// first is mid-apply and double-apply on stale state (a production saga-strand race).
   /// See <c>plans/perspective-worker-stream-affinity.md</c>.
   /// </summary>
-  /// <remarks>Internal so a test can hold several gates at chosen times and read them back through
-  /// <see cref="SnapshotAffinityHolds"/>; the drain loop is its only production caller.</remarks>
+  /// <remarks>
+  /// <para>
+  /// The gate belongs to the apply, not to the consumer running <paramref name="body"/>. The drain path
+  /// runs its apply under <see cref="LeaseDispatchExecutor"/>, which stops waiting for an apply whose lease
+  /// runs out (or whose worker is stopping) so the consumer can move on, but cannot stop the apply itself:
+  /// it keeps running and has not yet marked its events processed. Releasing the gate when the body
+  /// returned let a second consumer for the same key find those events fresh and apply them again,
+  /// concurrently with the first. So the body is handed a callback, and an apply it hands back through it
+  /// that is still running keeps the gate held until it ends, whether it completes, fails or is canceled.
+  /// The hold then reads as path <c>drain-abandoned</c>, so the long-hold watchdog names a hung one.
+  /// </para>
+  /// <para>Internal so a test can hold several gates at chosen times and read them back through
+  /// <see cref="SnapshotAffinityHolds"/>; the drain loop is its only production caller.</para>
+  /// </remarks>
   internal async Task WithStreamAffinityGateAsync(
-      Guid streamId, string perspectiveName, Func<Task> body, CancellationToken ct) {
+      Guid streamId, string perspectiveName, Func<Action<Task>, Task> body, CancellationToken ct) {
     _ensureCursorCacheEvictionSubscribed();
     var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
     Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
@@ -1528,14 +1539,33 @@ public partial class PerspectiveWorker(
       await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
     }
     _markAffinityHeld(gateEntry, "drain");
+    var outstandingApply = Task.CompletedTask;
     try {
-      await body().ConfigureAwait(false);
+      await body(apply => outstandingApply = apply).ConfigureAwait(false);
     } finally {
-      Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
-      _markAffinityReleased(gateEntry);
-      _ = gateEntry.Semaphore.Release();
-      _sweepIdleStreamAffinityGatesIfDue();
+      if (outstandingApply.IsCompleted) {
+        _releaseStreamAffinityGate(gateEntry);
+      } else {
+        gateEntry.Path = "drain-abandoned";
+        _ = outstandingApply.ContinueWith(
+          static (_, state) => {
+            var (worker, entry) = ((PerspectiveWorker, StreamAffinityGateEntry))state!;
+            worker._releaseStreamAffinityGate(entry);
+          },
+          (this, gateEntry),
+          CancellationToken.None,
+          TaskContinuationOptions.ExecuteSynchronously,
+          TaskScheduler.Default);
+      }
     }
+  }
+
+  /// <summary>Frees a gate its apply has finished with, and gives the idle sweep its chance to run.</summary>
+  private void _releaseStreamAffinityGate(StreamAffinityGateEntry gateEntry) {
+    Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+    _markAffinityReleased(gateEntry);
+    _ = gateEntry.Semaphore.Release();
+    _sweepIdleStreamAffinityGatesIfDue();
   }
 
   /// <summary>One affinity gate held by an apply in progress: who holds it, where it is, and for how long.</summary>
@@ -2069,8 +2099,8 @@ public partial class PerspectiveWorker(
             var pName = perspectiveName;
             var pEvents = filteredEvents;
             var pContext = currentContext;
-            await WithStreamAffinityGateAsync(streamId, pName, () =>
-              _runDrainModePerspectiveAsync(streamId, pName, pEvents, pContext, ct), ct);
+            await WithStreamAffinityGateAsync(streamId, pName, keepGateHeldUntil =>
+              _runDrainModePerspectiveAsync(streamId, pName, pEvents, pContext, keepGateHeldUntil, ct), ct);
           } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
             // Worker shutdown — propagate out of the loop, Parallel.ForEachAsync handles it.
             throw;
@@ -2225,12 +2255,15 @@ public partial class PerspectiveWorker(
   /// and flushes the supporting trackers/signalers/metrics. Keeps the pre-report and post-report
   /// completed-only blocks separate to preserve the observable ordering of the original monolith.
   /// </summary>
+  /// <param name="keepGateHeldUntil">Hands the affinity gate an apply the lease executor stopped waiting
+  /// for while it is still running, so the gate stays held until that apply ends.</param>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Single-perspective dispatch handles cooldown filtering + cursor inversion rewind + forward apply + failure routing + completion flush enqueue in one site. Splitting risks reordering the cache-mark / completion-enqueue / lifecycle-signal sequence; the comment block ahead of each section already documents the rationale.")]
   private async Task _runDrainModePerspectiveAsync(
       Guid streamId,
       string perspectiveName,
       List<MessageEnvelope<IEvent>> filteredEvents,
       DrainBatchContext batchContext,
+      Action<Task> keepGateHeldUntil,
       CancellationToken ct) {
     await using var groupScope = _scopeFactory.CreateAsyncScope();
     var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
@@ -2361,8 +2394,13 @@ public partial class PerspectiveWorker(
 
     var drainStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
     _markAffinityPhase(streamId, perspectiveName, "apply");
+    // The apply as a task of its own: when the lease runs out (or the worker stops) the executor stops
+    // waiting for it, but it keeps running, so the finally below hands it to the affinity gate.
+    var apply = Task.CompletedTask;
     try {
-      await LeaseDispatchExecutor.RunWithLeaseAsync(lease, async leaseCt => {
+      await LeaseDispatchExecutor.RunWithLeaseAsync(lease, leaseCt => apply = applyUnderLeaseAsync(leaseCt));
+
+      async Task applyUnderLeaseAsync(CancellationToken leaseCt) {
         PerspectiveCursorCompletion result;
         if (inversionAnchor.HasValue) {
           // Cache is stale — reset and let RewindAndRunAsync rebuild from snapshot/event-zero.
@@ -2472,7 +2510,7 @@ public partial class PerspectiveWorker(
 #pragma warning restore CA1848
           }
         }
-      });
+      }
     } catch (OperationCanceledException leaseExpired) when (lease.Token.IsCancellationRequested && !ct.IsCancellationRequested) {
       // Lease deadline fired (not worker shutdown). Route to failure path same as any other
       // exception so the row's lease releases and claim_orphaned re-issues with bumped attempts.
@@ -2507,6 +2545,12 @@ public partial class PerspectiveWorker(
         Error = storedForm ?? ex.Message
       };
       await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
+    } finally {
+      // An apply the executor abandoned is still running and has not marked its events processed. The
+      // gate stays held until it ends, so no other consumer can apply the same events in the meantime.
+      if (!apply.IsCompleted) {
+        keepGateHeldUntil(apply);
+      }
     }
   }
 
