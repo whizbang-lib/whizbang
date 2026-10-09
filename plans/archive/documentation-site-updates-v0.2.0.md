@@ -310,7 +310,7 @@ Extract usage examples from:
    - SerialExecutorTests.cs
    - ParallelExecutorTests.cs
 
-4. **tests/Whizbang.Sequencing.Tests/**
+4. **tests/Whizbang.Sequencing.Component.Tests/**
    - InMemorySequenceProviderTests.cs
 
 5. **tests/Whizbang.Partitioning.Tests/**

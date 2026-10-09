@@ -3,9 +3,11 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <WhizbangTestTags>Unit</WhizbangTestTags>
-    <!-- Unit: Fast tests, no external infrastructure needed -->
-    <WhizbangTestType>Unit</WhizbangTestType>
+    <WhizbangTestTags>Component</WhizbangTestTags>
+    <!-- Component: the in-memory sequence provider's tests check thread safety with concurrent callers
+         (Task.Run, Parallel), so the class, and with it the whole project, is Component
+         (docs/TEST-PROJECTS.md). Formerly Whizbang.Sequencing.Tests. -->
+    <WhizbangTestType>Component</WhizbangTestType>
     <!-- Enable viewing generated files -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>

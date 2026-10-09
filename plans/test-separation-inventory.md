@@ -200,7 +200,6 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Partitioning.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
 | Whizbang.Policies.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
 | Whizbang.Sagas.Tests | 38 | 3 | 0 | 1 | 42 | 0 |
-| Whizbang.Sequencing.Tests | 0 | 1 | 0 | 0 | 1 | 0 |
 | Whizbang.SignalR.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
 | Whizbang.Testing.Tests | 12 | 8 | 1 | 1 | 22 | 0 |
 | Whizbang.Transports.AzureServiceBus.Tests | 56 | 10 | 0 | 0 | 66 | 0 |
@@ -209,7 +208,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 399 | 1 | 40 | 2209 | 12 |
+| **Total** | 1769 | 398 | 1 | 40 | 2208 | 12 |
 
 ## Worklist: non-unit types by project
 
@@ -778,14 +777,6 @@ All 8 types are unit-pure.
 | SagaWatchdogTickSubscriptionIntegrationTests | `tests/Whizbang.Sagas.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs` | 5 | Component | StartAsync |  |  |
 | SagaClaimPruneStepTests | `tests/Whizbang.Sagas.Tests/Services/SagaClaimPruneStepTests.cs` | 10 | Other | RealClock |  |  |
 | SagaWatchdogTickRoutingTests | `tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs` | 8 | Component | StartAsync |  |  |
-
-### Whizbang.Sequencing.Tests
-
-1 of 1 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| InMemorySequenceProviderTests | `tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs` | 12 | Component | TaskRun, Parallel, Stopwatch |  |  |
 
 ### Whizbang.SignalR.Tests
 
