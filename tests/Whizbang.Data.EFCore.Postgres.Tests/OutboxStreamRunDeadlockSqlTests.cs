@@ -126,7 +126,8 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
     var peer = Guid.CreateVersion7();
     var streams = _ascending(3);
     await using var setup = await _openAsync();
-    foreach (var (stream, owner) in streams.Zip(new[] { peer, instance, peer })) {
+    Guid[] ledgerOwners = [peer, instance, peer];
+    foreach (var (stream, owner) in streams.Zip(ledgerOwners)) {
       await _ledgerAsync(setup, stream, owner);
       _ = await _rowsAsync(setup, stream, 1, leasedTo: null, leasedCount: 0);
     }
