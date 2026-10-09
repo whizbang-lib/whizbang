@@ -22,6 +22,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | Analyzer Sweep | `analyzer-sweep.yml` | dispatch | Runs every analyzer across the solution |
 | Test Shard Report | `test-shard-report.yml` | schedule (monthly), dispatch | Measures every test suite and the EFCore shards, and posts the report on the tracking issue (`ai-docs/test-sharding.md`) |
 | Cache Cleanup | `cache-cleanup-scheduled.yml` | schedule, dispatch | Prunes stale Actions caches |
+| Mirror CI images | `mirror-ci-images.yml` | dispatch, schedule (weekly), `develop` pushes and PRs that change `.github/ci-images.txt` | Copies the Docker Hub images CI pulls to `ghcr.io/whizbang-lib/ci-mirror` (`ai-docs/ci-image-mirror.md`) |
 | Notify PR Created / Merged | `notify-pr-created.yml`, `notify-pr-merged.yml` | PRs | Push notifications |
 
 ## Reusable pieces
@@ -43,9 +44,11 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | `.github/actions/find-tested-run` | Which run tested a commit (queue run, or the PR run on a fast-forward) |
 | `.github/actions/require-pr-gate` | Refuse to publish a commit whose PR gate (coverage, Sonar) did not pass |
 | `.github/actions/verify-packages` | Exactly the packages in `.github/nuget-packages.txt`, at exactly one version |
+| `.github/actions/use-ci-image-mirror` | Pull Docker Hub images from the GHCR mirror when it is complete; record the baseline for the pull check |
 | `.github/actions/setup-dotnet-retry`, `notify-pushover` | Setup and notification helpers |
 
-Shared data: `.github/nuget-packages.txt` (the packages every full publish ships),
+Shared data: `.github/nuget-packages.txt` (the packages every full publish ships), `.github/ci-images.txt`
+(the Docker Hub images CI pulls, mirrored to GHCR),
 `.github/inert-paths.txt` (paths that cannot affect the build or tests, read through
 `.github/scripts/Test-InertDiff.ps1`). The rules of the one required check, `Gate · CI result`, are
 `.github/scripts/Test-CiResult.ps1`, with tests in `.github/scripts/tests/` run by `Test · Pipeline scripts`.
