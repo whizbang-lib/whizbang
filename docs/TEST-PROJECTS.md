@@ -113,14 +113,14 @@ the tags that were already broken, each with a reason.
 
 ## Projects
 
-### Unit (34)
+### Unit (33)
 
 `tests/`: `Whizbang.CLI.Tests`, `Whizbang.Core.Tests`, `Whizbang.Data.Schema.Tests`,
 `Whizbang.Data.Tests`, `Whizbang.Documentation.Tests`, `Whizbang.Execution.Tests`,
 `Whizbang.Generators.Tests`, `Whizbang.Hosting.AspNet.Tests`, `Whizbang.Hosting.Azure.ServiceBus.Tests`,
 `Whizbang.Hosting.RabbitMQ.Tests`, `Whizbang.LanguageServer.Tests`, `Whizbang.Migrate.Tests`,
 `Whizbang.Observability.Tests`, `Whizbang.Offloads.AzureBlob.Tests`, `Whizbang.Offloads.InMemory.Tests`,
-`Whizbang.Partitioning.Tests`, `Whizbang.Policies.Tests`, `Whizbang.Sagas.Tests`,
+`Whizbang.Policies.Tests`, `Whizbang.Sagas.Tests`,
 `Whizbang.Sequencing.Tests`, `Whizbang.SignalR.Tests`, `Whizbang.Testing.Tests`,
 `Whizbang.Transports.AzureServiceBus.Tests`, `Whizbang.Transports.FastEndpoints.Tests`,
 `Whizbang.Transports.HotChocolate.Tests`, `Whizbang.Transports.Mutations.Tests`,
@@ -132,11 +132,12 @@ despite the name, a unit project), `ECommerce.BFF.API.Tests`, `ECommerce.Invento
 `ECommerce.ShippingWorker.Tests`. `ECommerce.BFF.API.Tests` and `ECommerce.InventoryWorker.Tests` carry
 `Integration;Docker` tags while declaring Unit; the inventory classifies their classes.
 
-### Component (2)
+### Component (3)
 
 | Project | Purpose |
 |---------|---------|
 | `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core`; receives the component tests moved out of `Whizbang.Core.Tests` |
+| `Whizbang.Partitioning.Component.Tests` | Tests of the partition router, formerly the Unit project `Whizbang.Partitioning.Tests`: its one test class runs a concurrency check on several threads, so the class, and with it the whole project, is Component |
 | `Whizbang.Transports.RabbitMQ.Component.Tests` | Component tests of the RabbitMQ transport (real consumer threads, flush loops and drainers against in-process channel doubles), moved out of `Whizbang.Transports.RabbitMQ.Tests` |
 
 ### Integration (13)

@@ -313,7 +313,7 @@ Extract usage examples from:
 4. **tests/Whizbang.Sequencing.Tests/**
    - InMemorySequenceProviderTests.cs
 
-5. **tests/Whizbang.Partitioning.Tests/**
+5. **tests/Whizbang.Partitioning.Component.Tests/**
    - HashPartitionRouterTests.cs
 
 ### From Benchmarks
