@@ -339,6 +339,40 @@ the verification discipline that goes with it.
 
 ---
 
+## Pattern 8: A Database-Clock Window Spread Across Statements
+
+### Symptoms
+- A SQL test that seeds a timestamp (`last_work_at = NOW()`, `last_attempt_at = NOW() - 30ms`) and
+  then asserts a time-window decision (debounce suppressed, rapid run advanced) fails on loaded CI
+- The failure is the "window expired" outcome: the doorbell rang, the run reset to zero
+
+### Root Cause
+`NOW()` is the start time of the **current transaction**. A seed written by one autocommit
+statement and a decision made by the next are two transactions, so the gap the function reads is
+the seeded gap **plus however long the test took between them**. Against the doorbell debounce's
+windows (50 ms floor, 100 ms rapid gap, 30 s heartbeat liveness) that is a race the test loses
+whenever the runner stalls.
+
+### Fix - CORRECT
+Seed and decide in ONE transaction. Every `NOW()` inside it is the same instant, so the gap the
+function reads is exactly the one written, whatever the elapsed time:
+
+```csharp
+await using var tx = await conn.BeginTransactionAsync();
+await _registerInstanceAsync(conn, instance);          // heartbeat = NOW()
+await _armWatermarkAsync(conn, instance);              // last_work_at = NOW()
+await _stampAsync(conn, batchSize: 10);                // the debounce reads NOW(): zero elapsed
+await tx.CommitAsync();
+```
+
+Assert stored timestamps by equality with the transaction's own `SELECT NOW()`, never as
+"age less than N seconds". Seed heartbeats on the database clock (`NOW() + offset`), never
+`DateTimeOffset.UtcNow`. Rows a function must see as committed (the commit-sequence stamper's
+fence) are written before the transaction opens. Examples: `NotifyDebounceSqlTests._atOneInstantAsync`,
+`NotifyDebounceEscalationSqlTests._ringAfterGapAsync`, `StampPendingCommitSequencesSqlTests._stampAtOneInstantAsync`.
+
+---
+
 ## Files Modified in Flaky Test Fixes (January 2025)
 
 | File | Fix Applied |
