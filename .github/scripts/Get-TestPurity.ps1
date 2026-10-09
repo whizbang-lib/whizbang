@@ -174,10 +174,10 @@ function Get-UnitTestProject {
         })
     }
   }
-  $sorted = $projects.ToArray()
-  $keys = [string[]]@($sorted | ForEach-Object { $_.Directory })
-  [Array]::Sort($keys, $sorted, [System.StringComparer]::Ordinal)
-  return $sorted
+  # Sorted in place on the list: [Array]::Sort(keys, items) would bind to the generic overload and sort a
+  # converted copy of the items, leaving them in discovery order.
+  $projects.Sort([System.Comparison[object]] { param($a, $b) [string]::CompareOrdinal($a.Directory, $b.Directory) })
+  return $projects.ToArray()
 }
 
 # The text with comments, string and character literals and using directives blanked, keeping every index

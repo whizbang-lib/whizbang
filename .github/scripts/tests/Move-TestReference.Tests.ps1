@@ -30,8 +30,14 @@ BeforeAll {
     [System.IO.File]::ReadAllText((Join-Path -Path $Root -ChildPath $Relative))
   }
 
+  # A file's bytes as hex, so a comparison is one string: a byte array piped into Should arrives as
+  # one nested item and never equals the expected array, however equal the bytes are.
   function Get-FixtureBytes([string]$Root, [string]$Relative) {
-    , [System.IO.File]::ReadAllBytes((Join-Path -Path $Root -ChildPath $Relative))
+    [System.Convert]::ToHexString([System.IO.File]::ReadAllBytes((Join-Path -Path $Root -ChildPath $Relative)))
+  }
+
+  function ConvertTo-Hex([byte[]]$Bytes) {
+    [System.Convert]::ToHexString($Bytes)
   }
 
   # One line per file: relative path and SHA-256, so a before/after comparison catches any write.
@@ -196,7 +202,7 @@ Describe 'Update-PathReference' {
 }
 
 Describe 'Update-SourceReference' {
-  It 'counts <tests> tags and other references apart, in C# and SQL comments, keeping line endings' {
+  It 'counts tests tags and other references apart, in C# and SQL comments, keeping line endings' {
     $text = "/// <tests>tests/A.Tests/Foo.cs:BarAsync</tests>`r`n/// <tests>tests/A.Tests/FooBar.cs</tests>`n-- <tests>tests/A.Tests/Foo.cs</tests>`n// see tests/A.Tests/Foo.cs`n"
     $r = Update-SourceReference -Text $text -Rewriter (New-PathRewriter @(New-Move $OldFoo $NewFoo))
     $r.Text | Should -Be "/// <tests>tests/A.Component.Tests/Foo.cs:BarAsync</tests>`r`n/// <tests>tests/A.Tests/FooBar.cs</tests>`n-- <tests>tests/A.Component.Tests/Foo.cs</tests>`n// see tests/A.Component.Tests/Foo.cs`n"
@@ -211,7 +217,7 @@ Describe 'Update-SourceReference' {
     $r.Other | Should -Be 0
   }
 
-  It 'leaves an unclosed or unrelated <tests> mention alone' {
+  It 'leaves an unclosed or unrelated tests-tag mention alone' {
     $text = 'a `<tests>` tag in prose; <tests>No tests found</tests>'
     $r = Update-SourceReference -Text $text -Rewriter (New-PathRewriter @(New-Move $OldFoo $NewFoo))
     $r.Text | Should -Be $text
@@ -407,7 +413,7 @@ Describe 'Invoke-TestReferenceMove: a file move' {
     $script:Result = Invoke-Fixture $Fx @(New-Move $OldFoo $NewFoo)
   }
 
-  It 'rewrites <tests> tags in C# and SQL, and other source references, counting them apart' {
+  It 'rewrites tests tags in C# and SQL, and other source references, counting them apart' {
     $Result.TagsRewritten | Should -Be 2
     $Result.TagFiles | Should -Be 2
     $Result.SourceReferencesRewritten | Should -Be 1
@@ -419,9 +425,9 @@ Describe 'Invoke-TestReferenceMove: a file move' {
   It 'keeps a rewritten file''s byte order mark, line endings and trailing newline exactly' {
     $expected = [System.Text.UTF8Encoding]::new($true)
     $bytes = [byte[]]($expected.GetPreamble() + $expected.GetBytes("namespace X;`r`n/// <tests>tests/A.Component.Tests/Foo.cs:BarAsync</tests>`r`n/// <tests>tests/A.Tests/FooBar.cs</tests>`r`n/// <tests>tests/A.Tests.Extra/Foo.cs</tests>`r`npublic class Foo { }`r`n"))
-    Get-FixtureBytes $Fx.Library 'src/Core/Foo.cs' | Should -Be $bytes
-    Get-FixtureBytes $Fx.Library 'README.md' | Should -Be ([System.Text.Encoding]::UTF8.GetBytes("tests/A.Component.Tests/Foo.cs`r`n"))
-    Get-FixtureBytes $Fx.Library 'samples/App/CLAUDE.md' | Should -Be ([System.Text.Encoding]::UTF8.GetBytes('tests/A.Component.Tests/Foo.cs'))
+    Get-FixtureBytes $Fx.Library 'src/Core/Foo.cs' | Should -Be (ConvertTo-Hex $bytes)
+    Get-FixtureBytes $Fx.Library 'README.md' | Should -Be (ConvertTo-Hex ([System.Text.Encoding]::UTF8.GetBytes("tests/A.Component.Tests/Foo.cs`r`n")))
+    Get-FixtureBytes $Fx.Library 'samples/App/CLAUDE.md' | Should -Be (ConvertTo-Hex ([System.Text.Encoding]::UTF8.GetBytes('tests/A.Component.Tests/Foo.cs')))
   }
 
   It 'rewrites ai-docs, READMEs, plans, docs and CLAUDE.md files' {
@@ -440,8 +446,8 @@ Describe 'Invoke-TestReferenceMove: a file move' {
       Get-FixtureText $Fx.Library $relative | Should -BeLike '*tests/A.Tests/Foo.cs*' -Because "$relative is out of scope"
     }
     Get-FixtureText $Fx.Library 'src/Core/Untouched.cs' | Should -Be "/// <tests>tests/A.Tests/FooBar.cs</tests>`n/// <tests>No tests found</tests>`n"
-    Get-FixtureBytes $Fx.Library 'src/Core/Latin.txt' | Should -Be ([byte[]](@(0xE9, 0x20) + [System.Text.Encoding]::ASCII.GetBytes('tests/A.Tests/Foo.cs')))
-    Get-FixtureBytes $Fx.Library 'src/Core/logo.bin' | Should -Be ([byte[]](@(0, 1, 2) + [System.Text.Encoding]::ASCII.GetBytes('tests/A.Tests/Foo.cs')))
+    Get-FixtureBytes $Fx.Library 'src/Core/Latin.txt' | Should -Be (ConvertTo-Hex ([byte[]](@(0xE9, 0x20) + [System.Text.Encoding]::ASCII.GetBytes('tests/A.Tests/Foo.cs'))))
+    Get-FixtureBytes $Fx.Library 'src/Core/logo.bin' | Should -Be (ConvertTo-Hex ([byte[]](@(0, 1, 2) + [System.Text.Encoding]::ASCII.GetBytes('tests/A.Tests/Foo.cs'))))
     @(Get-ChangePath $Result 'library') | Should -Not -Contain 'src/Core/Untouched.cs'
     @($Result.Changes | Where-Object { -not $_.Written -and $_.Repository -eq 'library' }).Count | Should -Be 0
   }
@@ -540,12 +546,12 @@ Describe 'Invoke-TestReferenceMove: updating the docs site' {
   It 'rewrites hand-written docs-site files, keeping their encoding, and never a generated one or script code' {
     $fixture = New-Fixture
     $generatedPaths = @('src/assets/code-tests-map.json', 'src/static/docs.html', 'audit-reports/stale.txt', 'src/assets/data/test-status/A.Tests.json')
-    $generated = $generatedPaths | ForEach-Object { , (Get-FixtureBytes $fixture.Docs $_) }
+    $generated = @($generatedPaths | ForEach-Object { Get-FixtureBytes $fixture.Docs $_ })
     $result = Invoke-Fixture $fixture @(New-Move $OldFoo $NewFoo) -UpdateDocsSite
     $result.DocsSiteReferencesRewritten | Should -Be 2
     Get-FixtureText $fixture.Docs 'src/assets/docs/v1.0.0/page.md' | Should -BeLike "*  - tests/A.Component.Tests/Foo.cs`n  - tests/A.Tests/FooBar.cs*"
     Get-FixtureBytes $fixture.Docs 'ai-docs/CODE-TEST-LINKING.md' |
-      Should -Be ([byte[]]([System.Text.UTF8Encoding]::new($true).GetPreamble() + [System.Text.Encoding]::UTF8.GetBytes("`"testFile`": `"tests/A.Component.Tests/Foo.cs`"`n")))
+      Should -Be (ConvertTo-Hex ([byte[]]([System.Text.UTF8Encoding]::new($true).GetPreamble() + [System.Text.Encoding]::UTF8.GetBytes("`"testFile`": `"tests/A.Component.Tests/Foo.cs`"`n"))))
     for ($i = 0; $i -lt $generatedPaths.Count; $i++) {
       Get-FixtureBytes $fixture.Docs $generatedPaths[$i] | Should -Be $generated[$i] -Because "$($generatedPaths[$i]) is generated"
     }
