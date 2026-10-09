@@ -114,6 +114,7 @@
     <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Component.Tests/Whizbang.Transports.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.HotChocolate.Tests/Whizbang.Transports.HotChocolate.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.HotChocolate.Component.Tests/Whizbang.Transports.HotChocolate.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Mutations.Tests/Whizbang.Transports.Mutations.Tests.csproj" />
     <Project Path="tests/Whizbang.Offloads.InMemory.Tests/Whizbang.Offloads.InMemory.Tests.csproj" />
     <Project Path="tests/Whizbang.Offloads.AzureBlob.Tests/Whizbang.Offloads.AzureBlob.Tests.csproj" />
