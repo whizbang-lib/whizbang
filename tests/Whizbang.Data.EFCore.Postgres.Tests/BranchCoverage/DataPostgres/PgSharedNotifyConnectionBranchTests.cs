@@ -120,6 +120,69 @@ public class PgSharedNotifyConnectionBranchTests : EFCoreTestBase {
       .Because("a stop ends the loop even on a healthy connection");
   }
 
+  // The loop's own way out, without an exception: a wait that ends normally (a notification was
+  // delivered) followed by a stop. Every other stop cancels the wait and leaves by exception, so this
+  // exit used to be reached only when a test's stop happened to land between a delivery and the next
+  // wait, which made the loop's coverage come and go between runs. A subscriber callback runs inside
+  // the wait, so holding it open puts the stop exactly there: the stop is requested while the delivery
+  // is still in progress, the delivery then finishes, the wait returns normally, and the loop sees the
+  // stop before it waits again.
+  [Test]
+  [Timeout(60000)]
+  public async Task Stop_WhileANotificationIsBeingDelivered_FinishesTheDeliveryAndLeavesTheLoopAsync(CancellationToken cancellationToken) {
+    var channel = $"wh_test_loop_exit_{Guid.CreateVersion7():N}";
+    using var gate = _gate(new WhizbangNotificationOptions {
+      DirectConnectionString = ConnectionString,
+      SignalingMode = WorkSignalingMode.ListenNotify,
+      SelfTestTimeout = TimeSpan.FromSeconds(10),
+    });
+    using var subscriber = new HeldSubscription(channel, () => gate.IsAvailable);
+    using var handle = gate.Subscribe(subscriber);
+    // Availability is declared after the self-test probe and immediately before the loop. Waiting only
+    // for the LISTEN is not enough: it is issued before the probe, and a notification sent then is
+    // delivered inside the probe's wait, so the stop would end the connection before the loop ran.
+    var available = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    gate.OnAvailabilityChanged += isAvailable => {
+      if (isAvailable) {
+        available.TrySetResult();
+      }
+    };
+    await gate.StartAsync(cancellationToken);
+    Task? stopping = null;
+    try {
+      await gate.WaitForChannelListenedAsync(channel, cancellationToken);
+      await available.Task.WaitAsync(cancellationToken);
+      await using (var notifier = new NpgsqlConnection(ConnectionString)) {
+        await notifier.OpenAsync(cancellationToken);
+        await using var notify = new NpgsqlCommand("SELECT pg_notify(@channel, 'loop-exit')", notifier);
+        notify.Parameters.AddWithValue(nameof(channel), channel);
+        await notify.ExecuteNonQueryAsync(cancellationToken);
+      }
+
+      // The callback is running inside the loop's wait. The stop is requested now, before it returns.
+      await subscriber.Entered.Task.WaitAsync(cancellationToken);
+      stopping = gate.StopAsync(CancellationToken.None);
+      var stoppedWhileDelivering = stopping.IsCompleted;
+      subscriber.Release();
+      await stopping;
+
+      await Assert.That(subscriber.AvailableAtDelivery).IsTrue()
+        .Because("the notification must be delivered by the dispatch loop; one delivered during the self-test "
+          + "probe arrives before availability is declared, and the stop then never reaches the loop");
+      await Assert.That(stoppedWhileDelivering).IsFalse()
+        .Because("the loop is inside the delivery, so the stop cannot finish before the callback returns");
+      await Assert.That(subscriber.Deliveries).IsEqualTo(1)
+        .Because("the notification delivered while the stop was requested is delivered once, in full");
+      await Assert.That(subscriber.ReleasedInTime).IsTrue();
+      await Assert.That(gate.IsAvailable).IsFalse();
+      await Assert.That(gate.LastFailureReason).IsEqualTo("shutdown")
+        .Because("the loop left for the stop, not for a failure that would send it back to reconnect");
+    } finally {
+      subscriber.Release();
+      await (stopping ?? gate.StopAsync(CancellationToken.None));
+    }
+  }
+
   // A resync pass runs on every subscribe and every reconnect. A channel already listened, and still
   // wanted, must be left alone: re-issuing LISTEN or UNLISTEN for it is a round trip per channel per
   // pass, and on a connection that has just died each one would log a spurious failure.
@@ -227,6 +290,37 @@ public class PgSharedNotifyConnectionBranchTests : EFCoreTestBase {
     public void OnNotification(string payload) {
       // Delivery is not under test.
     }
+  }
+
+  /// <summary>
+  /// A subscriber whose callback reports that it is running and then holds the delivery until released.
+  /// </summary>
+  private sealed class HeldSubscription(string channel, Func<bool> isAvailable) : INotifySubscription, IDisposable {
+    private readonly ManualResetEventSlim _release = new(initialState: false);
+    private int _deliveries;
+    private int _releasedInTime = 1;
+    private int _availableAtDelivery;
+
+    public string ChannelName => channel;
+    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int Deliveries => Volatile.Read(ref _deliveries);
+    public bool ReleasedInTime => Volatile.Read(ref _releasedInTime) == 1;
+    /// <summary>Whether the connection had declared itself available when the notification arrived.</summary>
+    public bool AvailableAtDelivery => Volatile.Read(ref _availableAtDelivery) == 1;
+
+    public void OnNotification(string payload) {
+      Interlocked.Increment(ref _deliveries);
+      Volatile.Write(ref _availableAtDelivery, isAvailable() ? 1 : 0);
+      Entered.TrySetResult();
+      // Bounded so a broken test fails instead of hanging the loop; the test releases it at once.
+      if (!_release.Wait(TimeSpan.FromSeconds(30))) {
+        Volatile.Write(ref _releasedInTime, 0);
+      }
+    }
+
+    public void Release() => _release.Set();
+
+    public void Dispose() => _release.Dispose();
   }
 
   private sealed class CapturingLogger : ILogger<PgSharedNotifyConnection> {
