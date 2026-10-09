@@ -2342,7 +2342,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // The previous shape built a temporary ServiceProvider here which disposed
     // the host's ConfigurationManager as a side effect, silently killing every
     // change-token subscription downstream. Lock-in test:
-    // tests/Whizbang.Hosting.AspNet.Tests/Configuration/HostConfigurationDisposalTests.cs
+    // tests/Whizbang.Hosting.AspNet.Component.Tests/Configuration/HostConfigurationDisposalTests.cs
     sb.AppendLine("      // Remove any existing NpgsqlDataSource registration (e.g., from Aspire)");
     sb.AppendLine("      services.RemoveAll<Npgsql.NpgsqlDataSource>();");
     sb.AppendLine();

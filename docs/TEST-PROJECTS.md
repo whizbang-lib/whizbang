@@ -132,11 +132,12 @@ despite the name, a unit project), `ECommerce.BFF.API.Tests`, `ECommerce.Invento
 `ECommerce.ShippingWorker.Tests`. `ECommerce.BFF.API.Tests` and `ECommerce.InventoryWorker.Tests` carry
 `Integration;Docker` tags while declaring Unit; the inventory classifies their classes.
 
-### Component (2)
+### Component (3)
 
 | Project | Purpose |
 |---------|---------|
 | `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core`; receives the component tests moved out of `Whizbang.Core.Tests` |
+| `Whizbang.Hosting.AspNet.Component.Tests` | Component tests of the ASP.NET Core hosting (real hosts, test servers, endpoints and middleware pipelines), moved out of `Whizbang.Hosting.AspNet.Tests` |
 | `Whizbang.Transports.RabbitMQ.Component.Tests` | Component tests of the RabbitMQ transport (real consumer threads, flush loops and drainers against in-process channel doubles), moved out of `Whizbang.Transports.RabbitMQ.Tests` |
 | `Whizbang.Transports.AzureServiceBus.Component.Tests` | Component tests of the Azure Service Bus transport (real receive loops, batch pipelines, throttles and liveness watchdogs against in-process client doubles), moved out of `Whizbang.Transports.AzureServiceBus.Tests` |
 
