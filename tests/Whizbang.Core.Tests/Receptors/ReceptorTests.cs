@@ -36,8 +36,8 @@ public class ReceptorTests : DiagnosticTestBase {
         throw new InvalidOperationException("Order must have items");
       }
 
-      // Introduce async delay to ensure task is not immediately completed
-      await Task.Delay(1, cancellationToken);
+      // Yield so the returned task is not already completed, without waiting on the clock
+      await Task.Yield();
 
       // Calculate total
       var total = message.Items.Sum(item => item.Quantity * item.Price);
@@ -208,7 +208,7 @@ public class ReceptorTests : DiagnosticTestBase {
 
   public class OrderBusinessReceptor : IReceptor<CreateOrder, OrderCreated> {
     public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1, cancellationToken);
+      await Task.Yield();
 
       var total = message.Items.Sum(item => item.Quantity * item.Price);
 
@@ -223,7 +223,7 @@ public class ReceptorTests : DiagnosticTestBase {
 
   public class OrderAuditReceptor : IReceptor<CreateOrder, AuditEvent> {
     public async ValueTask<AuditEvent> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1, cancellationToken);
+      await Task.Yield();
 
       return new AuditEvent(
           Action: "OrderCreated",
@@ -238,7 +238,7 @@ public class ReceptorTests : DiagnosticTestBase {
 
   public class PaymentReceptor : IReceptor<ProcessPayment, (PaymentProcessed, AuditEvent)> {
     public async ValueTask<(PaymentProcessed, AuditEvent)> HandleAsync(ProcessPayment message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1, cancellationToken);
+      await Task.Yield();
 
       var payment = new PaymentProcessed(
           PaymentId: message.PaymentId,
@@ -261,7 +261,7 @@ public class ReceptorTests : DiagnosticTestBase {
 
   public class NotificationReceptor : IReceptor<OrderCreated, INotificationEvent[]> {
     public async ValueTask<INotificationEvent[]> HandleAsync(OrderCreated message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1, cancellationToken);
+      await Task.Yield();
 
       var notifications = new List<INotificationEvent> {
         // Always send email

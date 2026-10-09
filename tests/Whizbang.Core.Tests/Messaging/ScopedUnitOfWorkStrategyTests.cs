@@ -62,7 +62,6 @@ public class ScopedUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests {
 
     // Act
     var unitId1 = await strategy.QueueMessageAsync(message1);
-    await Task.Delay(10);
     var unitId2 = await strategy.QueueMessageAsync(message2);
 
     // Assert - Both messages should share the same unit
@@ -104,7 +103,7 @@ public class ScopedUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests {
 
     strategy.OnFlushRequested += async (unitId, ct) => {
       callbackStarted = true;
-      await Task.Delay(50, ct); // Simulate async work
+      await Task.Yield(); // Simulate async work
       callbackCompleted = true;
     };
 
