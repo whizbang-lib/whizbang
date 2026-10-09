@@ -242,13 +242,8 @@ public class PerspectiveWorkerCoverageTests {
     await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
 
-    // Wait for idle event (work consumed on first call, then 2 empty polls)
-    using var idleCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-    try {
-      await idleFired.Task.WaitAsync(idleCts.Token);
-    } catch (OperationCanceledException) {
-      // May not fire in time; we verify below
-    }
+    // Wait for the idle event itself (work consumed, then 2 empty polls); the timeout only bounds it.
+    await idleFired.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     await cts.CancelAsync();
     // Await the worker BODY, not StartAsync's task: BackgroundService.StartAsync hands back
@@ -334,121 +329,14 @@ public class PerspectiveWorkerCoverageTests {
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
   }
 
-  [Test]
-  public async Task Worker_MetadataOnOutboxFirstRow_ExtractsAcknowledgementCountsAsync() {
-    // Arrange - Metadata on outbox first row (no perspective work)
-    var (worker, coordinator, _, harness) = _createWorker();
-
-    coordinator.WorkBatchOverride = new WorkBatch {
-      PerspectiveWork = [],
-      OutboxWork = [
-        new OutboxWork {
-          MessageId = Guid.NewGuid(),
-          Envelope = new MessageEnvelope<JsonElement> {
-            MessageId = MessageId.New(),
-            Payload = JsonSerializer.SerializeToElement(new { test = true }),
-            Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.NewGuid(), ServiceName = "Test", HostName = "test", ProcessId = 1 } }],
-            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-          },
-          EnvelopeType = "TestType",
-          MessageType = "TestType",
-          Attempts = 0,
-          StreamId = Guid.NewGuid(),
-          Metadata = new Dictionary<string, JsonElement> {
-            ["perspective_completions_processed"] = JsonSerializer.SerializeToElement(3),
-            ["perspective_failures_processed"] = JsonSerializer.SerializeToElement(1)
-          }
-        }
-      ],
-      InboxWork = []
-    };
-
-    // Act
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await Task.Delay(300);
-    await cts.CancelAsync();
-
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    // Assert - Worker processed without crash (outbox metadata path exercised)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
-  }
-
-  [Test]
-  public async Task Worker_MetadataOnInboxFirstRow_ExtractsAcknowledgementCountsAsync() {
-    // Arrange - Metadata on inbox first row (no perspective or outbox work)
-    var (worker, coordinator, _, harness) = _createWorker();
-
-    coordinator.WorkBatchOverride = new WorkBatch {
-      PerspectiveWork = [],
-      OutboxWork = [],
-      InboxWork = [
-        new InboxWork {
-          MessageId = Guid.NewGuid(),
-          Envelope = new MessageEnvelope<JsonElement> {
-            MessageId = MessageId.New(),
-            Payload = JsonSerializer.SerializeToElement(new { test = true }),
-            Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.NewGuid(), ServiceName = "Test", HostName = "test", ProcessId = 1 } }],
-            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-          },
-          MessageType = "TestType",
-          Metadata = new Dictionary<string, JsonElement> {
-            ["perspective_completions_processed"] = JsonSerializer.SerializeToElement(7),
-            ["perspective_failures_processed"] = JsonSerializer.SerializeToElement(0)
-          }
-        }
-      ]
-    };
-
-    // Act
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await Task.Delay(300);
-    await cts.CancelAsync();
-
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    // Assert - Worker processed without crash (inbox metadata path exercised)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
-  }
-
-  [Test]
-  public async Task Worker_NoMetadataOnAnyFirstRow_DefaultsToZeroAsync() {
-    // Arrange - Return no metadata on any first row (covers all fallback paths)
-    var (worker, coordinator, _, harness) = _createWorker();
-
-    coordinator.WorkBatchOverride = new WorkBatch {
-      PerspectiveWork = [],
-      OutboxWork = [],
-      InboxWork = []
-    };
-
-    // Act
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await Task.Delay(300); // Let a cycle complete
-    await cts.CancelAsync();
-
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    // Assert - Worker processed without error (no metadata = 0 acknowledged)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
-  }
-
   #endregion
 
   #region Registry Not Found / Runner Not Found Tests
 
   [Test]
-  public async Task Worker_RegistryNotRegistered_SkipsPerspectiveAndContinuesAsync() {
-    // Arrange - No IPerspectiveRunnerRegistry in DI
+  public async Task Worker_RegistryNotRegistered_ParksWithoutTakingWorkAsync() {
+    // Arrange - No IPerspectiveRunnerRegistry in DI: the host is not a perspective host, and the worker
+    // parks at startup (no drain loop, no polls, no database work) instead of consuming its channels.
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var streamId = Guid.NewGuid();
@@ -501,21 +389,23 @@ public class PerspectiveWorkerCoverageTests {
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
 
-    // Act
+    // Act: the work is waiting before the worker starts. The signal is the worker body itself ending on
+    // its own, with no cancellation: that is the park.
     using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    await Task.Delay(300);
-    await cts.CancelAsync();
+    await worker.StartAsync(cts.Token);
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
 
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    // Assert - Worker processed batch without crash (logged warning about missing registry/runner) —
-    // empty-poll counter advancing proves the consumer loop ran.
-    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
+    // Assert - the body ended by itself, and the work it would have consumed is still in the channel.
+    await Assert.That(cts.IsCancellationRequested).IsFalse()
+      .Because("nothing stopped the worker; it ended because there is no perspective registry to serve");
+    await Assert.That(harness.ChannelWriter.Reader.TryRead(out var untouched)).IsTrue()
+      .Because("a parked worker takes no work from its channels");
+    await Assert.That(untouched!.StreamId).IsEqualTo(streamId);
+    await Assert.That(coordinator.ReportCompletionCallCount + coordinator.ReportFailureCallCount).IsEqualTo(0)
+      .Because("and reports nothing to the coordinator");
   }
 
   [Test]
@@ -575,21 +465,27 @@ public class PerspectiveWorkerCoverageTests {
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
 
-    // Act
+    // Act: the work item's gate release is the signal that the worker took it through the apply path
+    // and came out the other side; nothing about it can still be in flight.
+    var released = new TaskCompletionSource<PerspectiveWorker.AffinityGateRelease>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStreamAffinityGateReleased += r => released.TrySetResult(r);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
-    await Task.Delay(300);
+    var release = await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await cts.CancelAsync();
 
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    // Assert - Worker continued processing without crash —
-    // empty-poll counter advancing proves the consumer loop ran.
-    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
+    // Assert - the work reached the apply path, the registry had no runner for it, and it was skipped.
+    await Assert.That((release.StreamId, release.PerspectiveName)).IsEqualTo((streamId, "NonExistentPerspective"));
+    await Assert.That(coordinator.ReportCompletionCallCount).IsEqualTo(0)
+      .Because("a perspective with no runner is skipped, not reported complete");
+    await Assert.That(coordinator.ReportFailureCallCount).IsEqualTo(0)
+      .Because("and not reported failed either: the worker continues past it");
   }
 
   #endregion
@@ -2055,9 +1951,9 @@ public class PerspectiveWorkerCoverageTests {
   // perspective has.
   [Test]
   public async Task ResolveInversionAnchor_RawRowPresentButUnstamped_StillFallsBackToEventIdAsync() {
-    var older = Guid.CreateVersion7();
-    await Task.Delay(2);
-    var cursor = Guid.CreateVersion7();
+    // Explicit timestamps order the two ids; waiting for the clock to tick was a timing assumption.
+    var older = Guid.CreateVersion7(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+    var cursor = Guid.CreateVersion7(new DateTimeOffset(2026, 1, 1, 0, 0, 1, TimeSpan.Zero));
     var streamId = Guid.NewGuid();
     var eventWorkId = Guid.NewGuid();
 
@@ -2519,26 +2415,19 @@ public class PerspectiveWorkerCoverageTests {
     public int ProcessWorkBatchCallCount { get; private set; }
     public int ReportCompletionCallCount { get; private set; }
     public int ReportFailureCallCount { get; private set; }
-    public WorkBatch? WorkBatchOverride { get; set; }
 
     /// <summary>
-    /// Pumps work into the harness channel and ticks the cycle counter on a loop.
-    /// Drives the worker the way the coordinator poll used to, before commit C deleted
-    /// the legacy poll path. Tests fire this after StartAsync to exercise channel mode.
+    /// Hands the configured work to the harness channel once, the way one claim of the coordinator
+    /// poll used to before the legacy poll path was deleted. It used to repeat on a 20 ms timer, but
+    /// only the first pass ever carried work, and the worker's empty polls come from its own wait, so
+    /// the repetition paced nothing the tests depend on.
     /// </summary>
     public async Task RunPumpLoopAsync(PerspectiveWorkerTestHarness harness, CancellationToken ct) {
-      try {
-        while (!ct.IsCancellationRequested) {
-          ProcessWorkBatchCallCount++;
-          var work = new List<PerspectiveWork>(PerspectiveWorkToReturn);
-          PerspectiveWorkToReturn.Clear();
-          foreach (var w in work) {
-            await harness.EnqueueWorkAsync(w, ct);
-          }
-          await Task.Delay(20, ct);
-        }
-      } catch (OperationCanceledException) {
-        // expected on shutdown
+      ProcessWorkBatchCallCount++;
+      var work = new List<PerspectiveWork>(PerspectiveWorkToReturn);
+      PerspectiveWorkToReturn.Clear();
+      foreach (var w in work) {
+        await harness.EnqueueWorkAsync(w, ct);
       }
     }
 

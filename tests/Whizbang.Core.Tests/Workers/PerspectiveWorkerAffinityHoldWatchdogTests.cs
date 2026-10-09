@@ -62,9 +62,15 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     await Assert.That(old.Count).IsEqualTo(1);
     await Assert.That(old[0].Held >= TimeSpan.FromSeconds(61)).IsTrue();
 
+    // Wait for the release itself. The completion report runs inside the apply, before the gate is
+    // released, and stopping the worker right after it can stop the apply mid-way; neither is the release.
+    var released = new TaskCompletionSource<PerspectiveWorker.AffinityGateRelease>(TaskCreationOptions.RunContinuationsAsynchronously);
+    f.Worker.OnStreamAffinityGateReleased += r => released.TrySetResult(r);
     f.Registry.Release.TrySetResult();
-    await f.Coordinator.WaitForCompletionReportedAsync(TimeSpan.FromSeconds(5));
-    await f.StopAsync();
+    var release = await released.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(release).IsEqualTo(new PerspectiveWorker.AffinityGateRelease(f.StreamId, PERSPECTIVE, Abandoned: false))
+      .Because("the apply ended on its own, so its consumer released the gate");
     await Assert.That(f.Worker.SnapshotAffinityHolds(TimeSpan.Zero)).IsEmpty()
       .Because("a released gate is not a hold");
   }
