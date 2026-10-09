@@ -458,8 +458,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithEnableSessions_IncludesOrderedAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithoutEnableSessions_ExcludesOrderedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithEnableSessions_IncludesOrderedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithoutEnableSessions_ExcludesOrderedAsync</tests>
   public TransportCapabilities Capabilities =>
     TransportCapabilities.PublishSubscribe |
     TransportCapabilities.Reliable |
@@ -467,7 +467,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     (_options.EnableSessions ? TransportCapabilities.Ordered : TransportCapabilities.None);
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
   // Azure Service Bus Standard tier hard limit: 256 KB per message including envelope+headers.
   // Premium supports up to 100 MB — consumers running Premium can override at the options layer —
   // we ship the conservative Standard default so out-of-the-box deployments don't silently exceed.
@@ -975,7 +975,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// (batch and non-batch) create their processor here so neither keeps a standing army.
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
   private ServiceBusSessionProcessor _createGovernedSessionProcessor(
     string topicName,
     string subscriptionName,
@@ -1325,8 +1325,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// (#921). The throw is not handed back to the collector, whose in-memory re-queue would retry the
   /// batch without the broker counting a delivery, so the delivery limit would never bound it.
   /// </remarks>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerReportsBatchFailed_AbandonsNeverCompletesAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerFailsAtMaxDeliveryCount_DeadLettersNeverCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerReportsBatchFailed_AbandonsNeverCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerFailsAtMaxDeliveryCount_DeadLettersNeverCompletesAsync</tests>
   private TransportBatchCollector<PendingServiceBusMessage> _buildPendingMessageCollector(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportBatchOptions batchOptions,
@@ -2419,9 +2419,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// Shared by both subscribe-path and publish-path auto-provisioning.
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_EnsuresTopicExistsAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_TopicAlreadyExists_SkipsCreationAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_RaceCondition_HandlesGracefullyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_EnsuresTopicExistsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_TopicAlreadyExists_SkipsCreationAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_RaceCondition_HandlesGracefullyAsync</tests>
   private Task _ensureTopicExistsViaAdminAsync(string topicName, CancellationToken cancellationToken) {
     if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
       return Task.CompletedTask;

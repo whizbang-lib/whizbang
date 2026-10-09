@@ -203,13 +203,13 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Sequencing.Tests | 0 | 1 | 0 | 0 | 1 | 0 |
 | Whizbang.SignalR.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
 | Whizbang.Testing.Tests | 12 | 8 | 1 | 1 | 22 | 0 |
-| Whizbang.Transports.AzureServiceBus.Tests | 56 | 10 | 0 | 0 | 66 | 0 |
+| Whizbang.Transports.AzureServiceBus.Tests | 56 | 0 | 0 | 0 | 56 | 0 |
 | Whizbang.Transports.FastEndpoints.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
 | Whizbang.Transports.HotChocolate.Tests | 20 | 1 | 0 | 0 | 21 | 0 |
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
-| Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
+| Whizbang.Transports.RabbitMQ.Tests | 23 | 21 | 0 | 1 | 45 | 2 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 399 | 1 | 40 | 2209 | 12 |
+| **Total** | 1769 | 410 | 1 | 40 | 2220 | 14 |
 
 ## Worklist: non-unit types by project
 
@@ -810,20 +810,7 @@ All 6 types are unit-pure.
 
 ### Whizbang.Transports.AzureServiceBus.Tests
 
-10 of 96 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| AsbAcceptorAdaptiveWiringTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs` | 9 | Component | CrossThreadSignal |  |  |
-| AzureServiceBusErrorHandlingTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusErrorHandlingTests.cs` | 41 | Component | TaskDelay |  |  |
-| AzureServiceBusTransportBatchPipelineTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportBatchPipelineTests.cs` | 12 | Component | CrossThreadSignal |  |  |
-| AzureServiceBusTransportThrottleAndAdaptiveTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportThrottleAndAdaptiveTests.cs` | 11 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| AzureServiceBusTransportUnitTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs` | 31 | Component | TimeoutWait |  |  |
-| AsbFinalPassBranchTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/BranchCoverage/AsbFinalPassBranchTests.cs` | 6 | Component | CrossThreadSignal |  |  |
-| ReceiveLivenessWatchdogCoverageTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ReceiveLivenessWatchdogCoverageTests.cs` | 2 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| ReceiveLivenessWatchdogTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ReceiveLivenessWatchdogTests.cs` | 13 | Component | CrossThreadSignal |  |  |
-| ServiceBusReadinessCheckCoverageTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusReadinessCheckCoverageTests.cs` | 4 | Component | TaskRun, TimeoutWait |  |  |
-| ServiceBusReadinessCheckTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusReadinessCheckTests.cs` | 5 | Component | TaskDelay |  |  |
+All 85 types are unit-pure.
 
 ### Whizbang.Transports.FastEndpoints.Tests
 
@@ -843,11 +830,34 @@ All 13 types are unit-pure.
 
 ### Whizbang.Transports.RabbitMQ.Tests
 
-1 of 29 types are not unit-pure.
+24 of 56 types are not unit-pure.
 
 | Class | File | Tests | Category | Constructs | Via | Note |
 |---|---|---:|---|---|---|---|
+| RabbitMQFinalPassBranchTests | `tests/Whizbang.Transports.RabbitMQ.Tests/BranchCoverage/RabbitMQFinalPassBranchTests.cs` | 5 | Component | CrossThreadSignal | RabbitTestWire (Component); RecordingChannel (Component) |  |
+| RabbitMQPeripheralBranchTests | `tests/Whizbang.Transports.RabbitMQ.Tests/BranchCoverage/RabbitMQPeripheralBranchTests.cs` | 16 | Component | CrossThreadSignal |  |  |
+| RabbitMQTransportBatchFlushBranchTests | `tests/Whizbang.Transports.RabbitMQ.Tests/BranchCoverage/RabbitMQTransportBatchFlushBranchTests.cs` | 9 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
+| RabbitMQTransportLoggingBranchTests | `tests/Whizbang.Transports.RabbitMQ.Tests/BranchCoverage/RabbitMQTransportLoggingBranchTests.cs` | 20 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
+| RabbitMQTransportPoisonAndRoutingBranchTests | `tests/Whizbang.Transports.RabbitMQ.Tests/BranchCoverage/RabbitMQTransportPoisonAndRoutingBranchTests.cs` | 4 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
+| RabbitMQBrokerOpsThroughputLockTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQBrokerOpsThroughputLockTests.cs` | 1 | Component |  | RabbitTestWire (Component) |  |
+| RabbitMQChannelPoolCoverageTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQChannelPoolCoverageTests.cs` | 7 | Component | TimeoutWait |  |  |
+| RabbitMQChannelPoolTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQChannelPoolTests.cs` | 6 | Component | TaskDelay |  |  |
 | RabbitMQConnectionRetryTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs` | 25 | Other | NetworkClient |  |  |
+| RabbitMQControlClassTtlTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQControlClassTtlTests.cs` | 5 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
+| RabbitMQPoisonQuarantineTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQPoisonQuarantineTests.cs` | 10 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
+| RabbitMQSharedInboxRetirementE2ELockTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQSharedInboxRetirementE2ELockTests.cs` | 1 | Component |  | RabbitTestWire (Component) |  |
+| RabbitMQSubscriptionCoverageTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQSubscriptionCoverageTests.cs` | 2 | Component | CrossThreadSignal |  |  |
+| RabbitMQSubscriptionTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQSubscriptionTests.cs` | 16 | Component | CrossThreadSignal |  |  |
+| RabbitMQTransportBatchPathTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportBatchPathTests.cs` | 30 | Component | TimeoutWait, CrossThreadSignal | RabbitTestWire (Component); RecordingChannel (Component) |  |
+| RabbitTestWire | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportBatchPathTests.cs` | 0 | Component |  | RecordingChannel (Component) |  |
+| RecordingChannel | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportBatchPathTests.cs` | 0 | Component | TimeoutWait |  |  |
+| RabbitMQTransportFailurePathTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportFailurePathTests.cs` | 31 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
+| RabbitMQTransportGuardCoverageTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportGuardCoverageTests.cs` | 9 | Component | TimeoutWait, CrossThreadSignal | RabbitTestWire (Component); RecordingChannel (Component) |  |
+| RabbitMQTransportRecoveryTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportRecoveryTests.cs` | 8 | Component | TaskDelay |  |  |
+| RabbitMQTransportTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs` | 16 | Component | TaskDelay |  |  |
+| RabbitMQUnroutableDestinationTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQUnroutableDestinationTests.cs` | 5 | Component |  | RabbitTestWire (Component) |  |
+| RabbitMqDeadLetterDrainerCoverageTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMqDeadLetterDrainerCoverageTests.cs` | 3 | Component |  | RabbitTestWire (Component) |  |
+| ServiceCollectionExtensionsResolutionCoverageTests | `tests/Whizbang.Transports.RabbitMQ.Tests/ServiceCollectionExtensionsResolutionCoverageTests.cs` | 9 | Component |  | RabbitTestWire (Component) |  |
 
 ### Whizbang.Transports.Tests
 
