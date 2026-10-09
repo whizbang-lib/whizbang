@@ -69,10 +69,11 @@ public static class ManagedSchemaReconciler {
       }
 
       var live = await ManagedSchemaCatalog.ReadLiveAsync(connection, schema, cancellationToken);
+      var effective = await _withEquivalentsAsync(connection, schema, declared, live, cancellationToken);
       var ledger = await ManagedSchemaCatalog.ReadLedgerAsync(connection, ledgerTable, cancellationToken);
       var fleet = await ManagedSchemaFleet.ReportAndReadAsync(
-        connection, schema, instanceId, declared, ManagedSchemaFleet.LiveWindow, cancellationToken);
-      var plan = ManagedSchemaPlanner.Plan(declared, live, ledger, settings.ForPass(fleet), DateTimeOffset.UtcNow);
+        connection, schema, instanceId, effective, ManagedSchemaFleet.LiveWindow, cancellationToken);
+      var plan = ManagedSchemaPlanner.Plan(effective, live, ledger, settings.ForPass(fleet), DateTimeOffset.UtcNow);
 
       await ManagedSchemaCatalog.WriteLedgerAsync(connection, ledgerTable, plan.Records, cancellationToken);
       var (dropped, failed) = await _dropAsync(connection, schema, ledgerTable, plan.Drops, logger, cancellationToken);
@@ -112,6 +113,17 @@ public static class ManagedSchemaReconciler {
     return (dropped, failed);
   }
 
+  /// <summary>
+  /// The declarations with each declared index that stands under another name (an equivalent
+  /// <c>wh_ensure_index</c> found and did not duplicate) declared under the name the table has.
+  /// </summary>
+  private static async Task<ManagedSchemaObjectSet> _withEquivalentsAsync(
+      NpgsqlConnection connection, string schema, ManagedSchemaObjectSet declared, List<LiveSchemaObject> live,
+      CancellationToken cancellationToken) {
+    var equivalents = await ManagedSchemaCatalog.ReadEquivalentsAsync(connection, schema, cancellationToken);
+    return declared.WithEquivalents(equivalents, live.Select(o => (o.Table, o.Name)).ToHashSet());
+  }
+
   private static void _logPlan(ILogger? logger, string schema, ReconcilePlan plan) {
     if (logger is null) {
       return;
@@ -145,11 +157,12 @@ public static class ManagedSchemaReconciler {
     if (await _scalarAsync<string?>(connection, "SELECT to_regclass(@t)::text", cancellationToken, ("t", ledgerTable)) is null) {
       return [];
     }
-    var live = (await ManagedSchemaCatalog.ReadLiveAsync(connection, schema, cancellationToken))
-      .Select(o => (o.Table, o.Name)).ToHashSet();
+    var liveObjects = await ManagedSchemaCatalog.ReadLiveAsync(connection, schema, cancellationToken);
+    var effective = await _withEquivalentsAsync(connection, schema, declared, liveObjects, cancellationToken);
+    var live = liveObjects.Select(o => (o.Table, o.Name)).ToHashSet();
     var seen = (await ManagedSchemaCatalog.ReadLedgerAsync(connection, ledgerTable, cancellationToken))
       .Select(r => (r.Table, r.Name)).ToHashSet();
-    return [.. declared.Objects
+    return [.. effective.Objects
       .Where(o => !live.Contains((o.Table, o.Name)) && seen.Contains((o.Table, o.Name)))
       .Select(o => o.Table)
       .Distinct(StringComparer.Ordinal)

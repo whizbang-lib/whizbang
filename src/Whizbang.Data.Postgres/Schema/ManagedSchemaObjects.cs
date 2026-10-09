@@ -135,6 +135,31 @@ public sealed class ManagedSchemaObjectSet {
     return set;
   }
 
+  /// <summary>
+  /// A copy in which each declared index that is absent, but stands as an equivalent under another name that is
+  /// present, is declared under the present name instead: the index the table actually has.
+  /// </summary>
+  /// <param name="equivalents">The recorded pairs of declared and existing names, by table.</param>
+  /// <param name="present">The objects the database has, as (table, name).</param>
+  internal ManagedSchemaObjectSet WithEquivalents(
+      IEnumerable<(string Table, string Declared, string Existing)> equivalents, ISet<(string Table, string Name)> present) {
+    var standIns = equivalents
+      .Where(e => !present.Contains((e.Table, e.Declared)) && present.Contains((e.Table, e.Existing)))
+      .ToDictionary(e => (e.Table, e.Declared), e => e.Existing);
+    var copy = new ManagedSchemaObjectSet();
+    foreach (var o in Objects) {
+      if (standIns.TryGetValue((o.Table, o.Name), out var existing)) {
+        copy._add(o.Table, existing, o.Kind, $"{o.DeclaredBy} (as {o.Name}, the same definition)");
+      } else {
+        copy._add(o.Table, o.Name, o.Kind, o.DeclaredBy);
+      }
+    }
+    foreach (var pin in Pins) {
+      copy.Pin(pin.Table, pin.Name, pin.Reason, pin.DeclaredBy);
+    }
+    return copy;
+  }
+
   /// <summary>Pins an object so it is never dropped.</summary>
   public ManagedSchemaObjectSet Pin(string table, string name, string? reason, string declaredBy) {
     ArgumentException.ThrowIfNullOrWhiteSpace(table);

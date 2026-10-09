@@ -100,4 +100,27 @@ public class ManagedSchemaCatalogTests {
     await Assert.That(text).Contains("pinned by code: the model keeps it; sql");
     await Assert.That(text).Contains("pinned by ?");
   }
+
+  [Test]
+  public async Task ADeclaredIndexAbsentButStandingUnderAnotherName_IsDeclaredUnderThatNameAsync() {
+    var declared = new ManagedSchemaObjectSet()
+      .Index("wh_per_job", "idx_job_tenant", "JobModel")
+      .Index("wh_per_job", "idx_job_status", "JobModel")
+      .Index("wh_per_job", "idx_job_owner", "JobModel")
+      .Pin("wh_per_job", "idx_job_legacy", "kept", "JobModel [KeepSchemaObject]");
+    var present = new HashSet<(string, string)> {
+      ("wh_per_job", "idx_job_scope_t"), ("wh_per_job", "idx_job_status"), ("wh_per_job", "idx_job_status_old"),
+    };
+
+    var effective = declared.WithEquivalents([
+      ("wh_per_job", "idx_job_tenant", "idx_job_scope_t"),
+      ("wh_per_job", "idx_job_status", "idx_job_status_old"),
+      ("wh_per_job", "idx_job_owner", "idx_job_owner_gone"),
+    ], present);
+
+    await Assert.That(effective.Objects.Select(o => o.Name)).IsEquivalentTo(["idx_job_scope_t", "idx_job_status", "idx_job_owner"])
+      .Because("only an absent declaration with a present stand-in is replaced");
+    await Assert.That(effective.Objects.Single(o => o.Name == "idx_job_scope_t").DeclaredBy).IsEqualTo("JobModel (as idx_job_tenant, the same definition)");
+    await Assert.That(effective.Pins.Select(p => p.Name)).IsEquivalentTo(["idx_job_legacy"]);
+  }
 }
