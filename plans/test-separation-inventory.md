@@ -188,7 +188,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Data.Tests | 11 | 0 | 0 | 0 | 11 | 0 |
 | Whizbang.Documentation.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
 | Whizbang.Execution.Tests | 1 | 7 | 0 | 0 | 8 | 0 |
-| Whizbang.Generators.Tests | 250 | 0 | 0 | 4 | 254 | 0 |
+| Whizbang.Generators.Tests | 251 | 0 | 0 | 0 | 251 | 0 |
 | Whizbang.Hosting.AspNet.Tests | 19 | 10 | 0 | 0 | 29 | 0 |
 | Whizbang.Hosting.Azure.ServiceBus.Tests | 1 | 2 | 0 | 0 | 3 | 1 |
 | Whizbang.Hosting.RabbitMQ.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
@@ -209,7 +209,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 399 | 1 | 40 | 2209 | 12 |
+| **Total** | 1770 | 399 | 1 | 36 | 2206 | 12 |
 
 ## Worklist: non-unit types by project
 
@@ -664,14 +664,7 @@ All 17 types are unit-pure.
 
 ### Whizbang.Generators.Tests
 
-4 of 261 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| MessageRegistryDocsPathTests | `tests/Whizbang.Generators.Tests/MessageRegistryDocsPathTests.cs` | 2 | Other | FileSystem |  |  |
-| MessageRegistryGeneratorCoverageTests | `tests/Whizbang.Generators.Tests/MessageRegistryGeneratorCoverageTests.cs` | 10 | Other | FileSystem |  |  |
-| PathResolverTests | `tests/Whizbang.Generators.Tests/PathResolverTests.cs` | 6 | Other | FileSystem |  |  |
-| ReceptorDiscoveryGeneratorTests | `tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs` | 81 | Other | FileSystem |  |  |
+All 258 types are unit-pure.
 
 ### Whizbang.Hosting.AspNet.Tests
 
