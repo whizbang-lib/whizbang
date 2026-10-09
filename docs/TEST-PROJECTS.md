@@ -129,8 +129,7 @@ the tags that were already broken, each with a reason.
 `samples/ECommerce/`: `ECommerce.Contracts.Tests`, `ECommerce.IntegrationTests` (in-memory checks;
 despite the name, a unit project), `ECommerce.BFF.API.Tests`, `ECommerce.InventoryWorker.Tests`,
 `ECommerce.NotificationWorker.Tests`, `ECommerce.OrderService.Tests`, `ECommerce.PaymentWorker.Tests`,
-`ECommerce.ShippingWorker.Tests`. `ECommerce.BFF.API.Tests` and `ECommerce.InventoryWorker.Tests` carry
-`Integration;Docker` tags while declaring Unit; the inventory classifies their classes.
+`ECommerce.ShippingWorker.Tests`.
 
 ### Component (2)
 
