@@ -13,23 +13,23 @@ namespace Whizbang.Core.Execution;
 /// Executes handlers serially in strict FIFO order.
 /// All messages are processed one at a time, preserving exact ordering.
 /// </summary>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:Constructor_Default_CreatesUnboundedExecutorAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:Constructor_WithValidBoundedCapacity_CreatesExecutorAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:Constructor_WithInvalidCapacity_ThrowsArgumentOutOfRangeExceptionAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_WhenNotRunning_ThrowsInvalidOperationExceptionAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:StateTransitions_IdempotentOperations_SucceedAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:StartAsync_AfterStop_ThrowsInvalidOperationExceptionAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_CompletesSuccessfullyAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_WithAsyncHandler_AwaitsCorrectlyAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_ExceptionInHandler_RethrowsAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WaitsForAllInFlightWork_CompletesAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_SerialExecution_MaintainsStrictOrderAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_CancellationToken_SkipsCanceledWorkAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorDrainAfterStopTests.cs:DrainAsync_WorkerCanceledWhileTheDrainAwaitsIt_CompletesAndRecordsItAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ProcessWorkItemsAsync_ExceptionInHandler_CaughtAndRecordedAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_BoundedChannel_HandlesBackpressureAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:Constructor_Default_CreatesUnboundedExecutorAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:Constructor_WithValidBoundedCapacity_CreatesExecutorAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:Constructor_WithInvalidCapacity_ThrowsArgumentOutOfRangeExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_WhenNotRunning_ThrowsInvalidOperationExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:StateTransitions_IdempotentOperations_SucceedAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:StartAsync_AfterStop_ThrowsInvalidOperationExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_CompletesSuccessfullyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_WithAsyncHandler_AwaitsCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_ExceptionInHandler_RethrowsAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:DrainAsync_WaitsForAllInFlightWork_CompletesAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_SerialExecution_MaintainsStrictOrderAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_CancellationToken_SkipsCanceledWorkAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorDrainAfterStopTests.cs:DrainAsync_WorkerCanceledWhileTheDrainAwaitsIt_CompletesAndRecordsItAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ProcessWorkItemsAsync_ExceptionInHandler_CaughtAndRecordedAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_BoundedChannel_HandlesBackpressureAsync</tests>
 public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
   private enum State { NotStarted, Running, Stopped }
 

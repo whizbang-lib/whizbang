@@ -231,7 +231,7 @@ Let's walk through implementing `SerialExecutor` using TDD.
 ### Step 1: Write First Test (RED)
 
 ```csharp
-// File: tests/Whizbang.Execution.Tests/SerialExecutorTests.cs
+// File: tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs
 
 [Test]
 public async Task SerialExecutor_ShouldExecuteSingleMessage() {
