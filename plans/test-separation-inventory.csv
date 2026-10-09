@@ -2154,6 +2154,7 @@
 "Whizbang.SignalR.Tests","tests/Whizbang.SignalR.Tests/SignalRServiceCollectionExtensionsTests.cs","SignalRServiceCollectionExtensionsTests","19","Test","5","Unit","","","",""
 "Whizbang.SignalR.Tests","tests/Whizbang.SignalR.Tests/SignalRTokenRefreshNotifierTests.cs","SignalRTokenRefreshNotifierTests","14","Test","3","Unit","","","",""
 "Whizbang.Testing.Tests","tests/Whizbang.Testing.Tests/Async/AsyncTestHelpersTests.cs","AsyncTestHelpersTests","13","Test","33","Unit","","","",""
+"Whizbang.Testing.Tests","tests/Whizbang.Testing.Tests/Containers/CiImagesTests.cs","CiImagesTests","13","Test","7","Unit","","","",""
 "Whizbang.Testing.Tests","tests/Whizbang.Testing.Tests/Lifecycle/PerspectiveCompletionWaiterTests.cs","PerspectiveCompletionWaiterTests","14","Test","8","Unit","","","",""
 "Whizbang.Testing.Tests","tests/Whizbang.Testing.Tests/MultiService/CapturingWorkCoordinatorTests.cs","CapturingWorkCoordinatorTests","31","Test","14","Unit","","","",""
 "Whizbang.Testing.Tests","tests/Whizbang.Testing.Tests/Observability/InMemorySpanCollectorTests.cs","InMemorySpanCollectorTests","13","Test","14","Unit","","","",""
