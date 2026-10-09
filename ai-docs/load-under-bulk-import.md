@@ -459,6 +459,23 @@ waiting on a lock the test reads with `SKIP LOCKED` which of the later rows it a
 order, it holds none. Each lock subquery is driven by the keys the statement was given, so its cost
 is a sort of the batch, never of the table.
 
+## Finding 8: every claimer guessed its peers, and the guesses overlapped
+
+The rank and count each claim used came from the heartbeat rows it could see. When every heartbeat
+went stale at once (a database pause) or a pooler hid the application names, every instance ranked
+alone and claimed every partition: wasted acquisitions, and the trigger for #1238 and #1256.
+Migration 203 (#1254) elects a partition assigner through the role election. It judges liveness once
+for everyone (a direct instance by its alive-lock, a pooled one by its heartbeat, as each registered)
+and publishes the assignment, fenced by the role epoch where it is written and where `claim_work`
+reads it, and leased by the assigner's own liveness.
+
+**Rule:** a claim never reads more to use the assignment. Claimers cache it and refresh it with one
+keyed read after the publish NOTIFY or a stale notice; the claim's fence reads the one-row table
+instead of ranking the registrations, not as well as ranking them. A primary-key probe cost one buffer
+more than the ranking it replaced; reading the table's one page without its index made the two equal.
+`PartitionAssignmentClaimCostScenarioTests` gates it: the assigned claim costs no more than the
+self-ranked one, at 20 and at 400 registered instances.
+
 ## Two consumer-side findings, recorded because the framework cannot detect them
 
 - A consumer-owned trigger cast a document key's text to `timestamptz`, which fails on the canonical

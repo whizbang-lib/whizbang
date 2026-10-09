@@ -352,3 +352,17 @@ claim.work_ledger_write.shared_buffers_per_claim	1980	buffers/claim		recorded: w
 claim.work_ledger_write.wh_active_streams.blocks_per_claim	253	blocks/claim	380	GATED: was 290.0 before 202; the ledger is written once per stream, not once per acquisition
 claim.work_ledger_write.wh_inbox_state.blocks_per_claim	516.833	blocks/claim		recorded: unchanged by 202
 claim.work_ledger_write.wh_outbox.blocks_per_claim	626	blocks/claim		recorded: unchanged by 202
+
+# --- Partition assignment: what presenting the assignment costs a claim ---------------------------
+# 203 (#1254). The same claim_work, once ranking itself over the live registrations and once
+# presenting a current cached assignment, at twenty and at four hundred registered instances. The
+# scenario asserts the assigned claim costs no more than the self-ranked one: the fence reads the
+# one-row assignment table instead of ranking, so it adds no work per claim. When the fence was a
+# primary-key probe it cost one buffer more than the ranking it replaced (620 against 619 at twenty,
+# 609 against 608 at four hundred); reading the table's single page without its index made the two
+# equal. The refresh read is one keyed read, gated at two buffers in the scenario.
+partition_assignment.claim.assigned.instances_20.shared_buffers	619	buffers/claim		recorded: gated relative to self_ranked in the scenario
+partition_assignment.claim.assigned.instances_400.shared_buffers	599	buffers/claim		recorded: gated relative to self_ranked in the scenario
+partition_assignment.claim.self_ranked.instances_20.shared_buffers	619	buffers/claim		
+partition_assignment.claim.self_ranked.instances_400.shared_buffers	599	buffers/claim		
+partition_assignment.refresh_read.shared_buffers	2	buffers/read		recorded: gated at 2 in the scenario
