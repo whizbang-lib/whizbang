@@ -18,7 +18,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// </para>
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
-/// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQPoisonQuarantineTests.cs:PostConfigure_FillsTheDeliveryCapFromTheTransportOptionsAsync</tests>
+/// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQPoisonQuarantineTests.cs:PostConfigure_FillsTheDeliveryCapFromTheTransportOptionsAsync</tests>
 internal sealed class RabbitMQPoisonOptionsPostConfigure(IOptions<RabbitMQOptions> transportOptions)
   : IPostConfigureOptions<PoisonMessageOptions> {
 
