@@ -12,8 +12,8 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
 /// <summary>
-/// The shipped schema pass, end to end: it builds the document indexes a model declares, never
-/// removes one it no longer declares, and does not build a second index over a definition the
+/// The shipped schema pass, end to end: it builds the document indexes a model declares, retires one it no
+/// longer declares through the managed-object ledger, and does not build a second index over a definition the
 /// table already has.
 /// </summary>
 /// <remarks>
@@ -111,31 +111,34 @@ public class DocumentIndexInitializationTests {
   }
 
   /// <summary>
-  /// An index an earlier release built, which this release no longer declares, is still there
-  /// after the pass runs again.
+  /// An index an earlier release built, which this release no longer declares, is recorded the first time
+  /// the reconcile sees it and dropped on the start after that; one Whizbang did not build is never dropped.
   /// </summary>
   [Test]
   [Timeout(180000)]
-  public async Task AnIndexNoLongerDeclaredIsLeftInPlaceAsync(CancellationToken cancellationToken) {
+  public async Task AnIndexNoLongerDeclared_IsRecordedFirst_ThenDroppedOnTheNextStartAsync(CancellationToken cancellationToken) {
     await _initializeAsync(cancellationToken);
-    // What an earlier release left: both document indexes on every table.
+    // What an earlier release left: both document indexes on every table. And one a DBA added.
     await _execAsync($"""
       CREATE INDEX idx_document_index_opted_out_data_gin ON {OPTED_OUT} USING gin (data);
       CREATE INDEX idx_document_index_undeclared_data_gin ON {UNDECLARED} USING gin (data);
       CREATE INDEX idx_document_index_undeclared_metadata_gin ON {UNDECLARED} USING gin (metadata);
+      CREATE INDEX reporting_status ON {UNDECLARED} ((data ->> 'Status'));
       """);
-    await _forgetPerspectiveHashesAsync();
 
     await _initializeAsync(cancellationToken);
 
     await Assert.That(await _indexesAsync(OPTED_OUT, "gin (data)"))
       .IsEquivalentTo(["idx_document_index_opted_out_data_gin"])
-      .Because("dropping an index a production query may use is an operator's decision, never an upgrade's");
-    await Assert.That(await _indexesAsync(UNDECLARED, "gin (data)"))
-      .IsEquivalentTo(["idx_document_index_undeclared_data_gin"])
-      .Because("the 1.0 default stops building the index on new databases; it never drops an existing one");
-    await Assert.That(await _indexesAsync(UNDECLARED, "gin (metadata)"))
-      .IsEquivalentTo(["idx_document_index_undeclared_metadata_gin"]);
+      .Because("the start that first sees an undeclared index records it as pending retirement and drops nothing");
+
+    await _initializeAsync(cancellationToken);
+
+    await Assert.That(await _indexesAsync(OPTED_OUT, "gin (data)")).IsEmpty();
+    await Assert.That(await _indexesAsync(UNDECLARED, "gin (data)")).IsEmpty();
+    await Assert.That(await _indexesAsync(UNDECLARED, "gin (metadata)")).IsEmpty();
+    await Assert.That(await _indexesAsync(UNDECLARED, "reporting_status")).IsEquivalentTo(["reporting_status"])
+      .Because("an index Whizbang did not build is foreign, and a foreign object is never dropped");
   }
 
   /// <summary>

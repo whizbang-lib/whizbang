@@ -2539,6 +2539,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__PERSPECTIVE_TABLES_SCHEMA__", perspectiveTablesSchema);
       // Replace PERSPECTIVE_ENTRIES region with per-perspective (name, sql) tuples for hash tracking
       template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_ENTRIES", perspectiveEntriesCode);
+      // The objects that SQL builds, declared to the managed-object ledger so the reconcile can retire the rest.
+      template = TemplateUtilities.ReplaceRegion(template, "MANAGED_OBJECTS",
+        _generateManagedObjectsCode(matchingPerspectives, dbContext.Schema));
       // One rewrite per enumeration in a physical column, converting a column an earlier release created as text
       // (the member names) to the number it now holds, applied by the stored-format rewrite phase.
       template = TemplateUtilities.ReplaceRegion(template, "PHYSICAL_COLUMN_REWRITES",
@@ -3348,6 +3351,33 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     return sb.ToString();
   }
+
+  /// <summary>
+  /// Emits the declarations of every index and constraint each perspective table's generated SQL builds, read
+  /// from that SQL (<see cref="ManagedObjectNames"/>) so the manifest cannot drift from what the schema pass runs.
+  /// </summary>
+  private static string _generateManagedObjectsCode(List<PerspectiveModelInfo> perspectives, string schema) {
+    if (perspectives.Count == 0) {
+      return "// No perspectives found for this DbContext";
+    }
+
+    var quotedSchema = _quotePostgresIdentifier(schema);
+    var sb = new StringBuilder();
+    foreach (var perspective in perspectives.GroupBy(p => p.TableName).Select(g => g.First()).OrderBy(p => p.TableName)) {
+      var perspSql = new StringBuilder();
+      _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
+      _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
+      var declaredBy = _csharpString(perspective.ModelTypeName);
+      foreach (var (kind, name) in ManagedObjectNames.Extract(perspSql.ToString())) {
+        var method = kind == "constraint" ? "Constraint" : "Index";
+        sb.AppendLine($"    objects.{method}(\"{perspective.TableName}\", {_csharpString(name)}, {declaredBy});");
+      }
+    }
+    return sb.ToString();
+  }
+
+  private static string _csharpString(string value) =>
+    "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 
   private static void _generatePerspectiveTableSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
