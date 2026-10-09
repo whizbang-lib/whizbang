@@ -161,13 +161,13 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     var olderEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var newerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var olderHold = f.Worker.WithStreamAffinityGateAsync(older, PERSPECTIVE, async () => {
+    var olderHold = f.Worker.WithStreamAffinityGateAsync(older, PERSPECTIVE, async _ => {
       olderEntered.TrySetResult();
       await releaseOlder.Task;
     }, CancellationToken.None);
     await olderEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
     clock.Advance(TimeSpan.FromSeconds(10));
-    var newerHold = f.Worker.WithStreamAffinityGateAsync(newer, PERSPECTIVE, async () => {
+    var newerHold = f.Worker.WithStreamAffinityGateAsync(newer, PERSPECTIVE, async _ => {
       newerEntered.TrySetResult();
       await releaseNewer.Task;
     }, CancellationToken.None);

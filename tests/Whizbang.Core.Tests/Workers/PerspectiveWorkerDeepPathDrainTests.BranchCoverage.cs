@@ -95,6 +95,97 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
+  public async Task DrainMode_ApplyOutlivesItsLease_HoldsTheGateUntilTheApplyEnds_AndTheNextDrainSkipsItAsync() {
+    // The lease executor stops waiting for an apply whose lease ran out, and the consumer moves on, but
+    // the apply keeps running and has not yet marked its events processed. Its gate must stay held until
+    // it ends: released with the consumer, a second drain of the stream applied the same event again.
+    var fakeTime = new FakeTimeProvider(new DateTimeOffset(2026, 7, 5, 12, 0, 0, TimeSpan.Zero));
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var workId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    var eventStore = new DrainEventStore();
+    // Both drains fetch the row: it stays pending until the completion flush deletes it.
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, workId)]);
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, workId)]);
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("abandoned"))]);
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("abandoned"))]);
+    var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var runner = new DrainRunner { FirstApplyHangsUntil = hang.Task };
+    var drainChannel = new DrainedSignalingChannel(streamId);
+    var (worker, _, _) = _createWorker(
+      coordinator, eventStore, _registry(runner),
+      configure: opts => opts.DrainLoopMaxIterations = 1,
+      cooldownCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      timeProvider: fakeTime,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 4 }),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 5 }),
+      drainChannel: drainChannel);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    try {
+      await drainChannel.WriteAsync(streamId, cts.Token);
+      await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+      // Past the one-second lease window: the executor abandons the apply and the consumer finishes the stream.
+      fakeTime.Advance(TimeSpan.FromSeconds(10));
+      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+
+      var holds = worker.SnapshotAffinityHolds(TimeSpan.Zero);
+      await Assert.That(holds.Count).IsEqualTo(1)
+        .Because("the consumer has moved on, but the apply it abandoned is still running and still holds the gate");
+      await Assert.That((holds[0].StreamId, holds[0].PerspectiveName)).IsEqualTo((streamId, PERSPECTIVE));
+      await Assert.That(holds[0].Path).IsEqualTo("drain-abandoned")
+        .Because("the hold names the abandoned apply, so the watchdog reports a hung one for what it is");
+    } finally {
+      hang.TrySetResult();
+    }
+
+    await drainChannel.WriteAsync(streamId, cts.Token);
+    await drainChannel.SecondDrained.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(1)
+      .Because("the second drain ran only after the abandoned apply ended and marked the event processed");
+    await Assert.That(worker.SnapshotAffinityHolds(TimeSpan.Zero)).IsEmpty()
+      .Because("the gate went free when the abandoned apply ended");
+  }
+
+  /// <summary>
+  /// Drain channel that signals each time a consumer finishes the watched stream. <c>MarkDrained</c> runs in
+  /// the consumer's <c>finally</c>, after the affinity gate scope, so it proves the consumer left that scope.
+  /// </summary>
+  private sealed class DrainedSignalingChannel(Guid watchedStreamId) : IPerspectiveDrainChannel {
+    private readonly PerspectiveDrainChannel _inner = new();
+    private readonly TaskCompletionSource _firstDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _secondDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _drained;
+
+    public Task FirstDrained => _firstDrained.Task;
+    public Task SecondDrained => _secondDrained.Task;
+
+    public System.Threading.Channels.ChannelReader<Guid> Reader => _inner.Reader;
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _inner.WriteAsync(streamId, cancellationToken);
+    public bool TryWrite(Guid streamId) => _inner.TryWrite(streamId);
+    public bool IsInFlight(Guid streamId) => _inner.IsInFlight(streamId);
+    public void MarkDraining(Guid streamId) => _inner.MarkDraining(streamId);
+
+    public void MarkDrained(Guid streamId) {
+      _inner.MarkDrained(streamId);
+      if (streamId != watchedStreamId) {
+        return;
+      }
+      if (Interlocked.Increment(ref _drained) == 1) {
+        _firstDrained.TrySetResult();
+      } else {
+        _secondDrained.TrySetResult();
+      }
+    }
+  }
+
+  [Test]
   public async Task DrainMode_StoredFormRefusalWithoutAPath_SaysThePathWasNotReportedAsync() {
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
