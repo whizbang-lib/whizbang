@@ -23,10 +23,11 @@ namespace Whizbang.Core.Perspectives;
 /// inverted index over the document?".
 /// </para>
 /// <para>
-/// <strong>Nothing is ever dropped for you.</strong> Turning a lookup off stops the schema pass
-/// from creating its index. An index an earlier release already built stays where it is until an
-/// operator drops it, because removing an index a production query relies on is worse than keeping
-/// one nobody reads. The operator step is documented with the SQL to run.
+/// <strong>An index the model stops declaring is retired.</strong> Turning a lookup off stops the
+/// schema pass from creating its index, and the managed-object ledger drops one an earlier release
+/// built: recorded on the first start that sees it, dropped on a later one once no running instance
+/// still declares it. To keep it, pin it with <see cref="KeepSchemaObjectAttribute"/> or in the
+/// database; <c>Whizbang:Schema:Reconcile:Mode</c> switches dropping off.
 /// </para>
 /// <para>
 /// Build-time diagnostics keep the declaration honest. WHIZ307 warns when a query compiles to a

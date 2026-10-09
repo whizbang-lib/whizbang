@@ -346,12 +346,18 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// line; inner lines are offset relative to it.
   /// </summary>
   private static void _emitTurnkeyDbContextRegistration(
-      System.Text.StringBuilder sb, string dbContextFqn, bool hasVectorFields, bool hasPhysicalFields, string indent) {
+      System.Text.StringBuilder sb, DbContextInfo dbContext, bool hasVectorFields, bool hasPhysicalFields, string indent) {
+    var dbContextFqn = dbContext.FullyQualifiedName;
     sb.AppendLine($"{indent}services.AddDbContext<{dbContextFqn}>((sp, options) => {{");
     _emitNpgsqlConfiguration(
       sb, "options", "sp.GetRequiredService<Npgsql.NpgsqlDataSource>()",
       hasVectorFields, hasPhysicalFields, $"{indent}  ");
     sb.AppendLine($"{indent}}});");
+    // What the context's schema declares, keyed by the context, so the managed-object maintenance step reconciles it
+    // between starts without reflection. Keyed and replaced, so registering twice leaves one.
+    sb.AppendLine($"{indent}services.RemoveAllKeyed<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof({dbContextFqn}));");
+    sb.AppendLine($"{indent}services.AddKeyedSingleton<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof({dbContextFqn}), new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(");
+    sb.AppendLine($"{indent}  typeof({dbContextFqn}), {_csharpString(dbContext.Schema)}, global::{_generatedNamespace(dbContext.Namespace)}.{dbContext.ClassName}SchemaExtensions.GetManagedSchemaObjects));");
   }
 
   /// <summary>
@@ -537,8 +543,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelCopy: !modelType.IsRecord && physicalFields.Any(f => f.IsSplit && f.IsInitOnly)
           ? ModelCopy.For((INamedTypeSymbol)modelType, context.SemanticModel.Compilation.Assembly)
           : null,
-        DeclaredConverters: declaredConverters
-    );
+        DeclaredConverters: declaredConverters,
+        KeptObjects: KeepSchemaObjectDiscovery.From(modelType as INamedTypeSymbol));
   }
 
   /// <summary>
@@ -645,8 +651,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         TableStorage: candidate.TableStorage,
         PerspectiveClrTypeName: candidate.PerspectiveClrTypeName,
         ModelCopy: candidate.ModelCopy,
-        DeclaredConverters: candidate.DeclaredConverters
-    );
+        DeclaredConverters: candidate.DeclaredConverters,
+        KeptObjects: candidate.KeptObjects);
   }
 
 
@@ -2255,7 +2261,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    // (the (sp, options) AddDbContext overload). This keeps config access deferred");
       sb.AppendLine("    // and avoids the temp-provider/CM-disposal trap.");
       // Single source of truth for the DbContext options (see _emitTurnkeyDbContextRegistration).
-      _emitTurnkeyDbContextRegistration(sb, dbContext.FullyQualifiedName, hasVectorFields, hasPhysicalFields, "    ");
+      _emitTurnkeyDbContextRegistration(sb, dbContext, hasVectorFields, hasPhysicalFields, "    ");
       sb.AppendLine();
       sb.AppendLine("    // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
       sb.AppendLine("    // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
@@ -2409,7 +2415,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // UseWhizbangFunctions). Previously this duplicate re-registration silently omitted UseWhizbangFunctions,
     // so after the fixture's ReassertGeneratedModelRegistration re-ran it, the live DbContext lost the
     // JsonbSet translator and collective-apply ExecuteUpdate threw "could not be translated".
-    _emitTurnkeyDbContextRegistration(sb, dbContext.FullyQualifiedName, hasVectorFields, hasPhysicalFields, "      ");
+    _emitTurnkeyDbContextRegistration(sb, dbContext, hasVectorFields, hasPhysicalFields, "      ");
     sb.AppendLine();
     sb.AppendLine("      // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
     sb.AppendLine("      // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
@@ -2539,6 +2545,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__PERSPECTIVE_TABLES_SCHEMA__", perspectiveTablesSchema);
       // Replace PERSPECTIVE_ENTRIES region with per-perspective (name, sql) tuples for hash tracking
       template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_ENTRIES", perspectiveEntriesCode);
+      // The objects that SQL builds, declared to the managed-object ledger so the reconcile can retire the rest.
+      template = TemplateUtilities.ReplaceRegion(template, "MANAGED_OBJECTS",
+        _generateManagedObjectsCode(matchingPerspectives, dbContext.Schema));
       // One rewrite per enumeration in a physical column, converting a column an earlier release created as text
       // (the member names) to the number it now holds, applied by the stored-format rewrite phase.
       template = TemplateUtilities.ReplaceRegion(template, "PHYSICAL_COLUMN_REWRITES",
@@ -3349,6 +3358,42 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
+  /// <summary>
+  /// Emits the declarations of every index and constraint each perspective table's generated SQL builds, read
+  /// from that SQL (<see cref="ManagedObjectNames"/>) so the manifest cannot drift from what the schema pass runs.
+  /// </summary>
+  private static string _generateManagedObjectsCode(List<PerspectiveModelInfo> perspectives, string schema) {
+    if (perspectives.Count == 0) {
+      return "// No perspectives found for this DbContext";
+    }
+
+    var quotedSchema = _quotePostgresIdentifier(schema);
+    var sb = new StringBuilder();
+    foreach (var perspective in perspectives.GroupBy(p => p.TableName).Select(g => g.First()).OrderBy(p => p.TableName)) {
+      var perspSql = new StringBuilder();
+      _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
+      _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
+      var model = perspective.ModelTypeName.StartsWith("global::", StringComparison.Ordinal)
+        ? perspective.ModelTypeName["global::".Length..]
+        : perspective.ModelTypeName;
+      var declaredBy = _csharpString(model);
+      foreach (var (kind, name) in ManagedObjectNames.Extract(perspSql.ToString())) {
+        var method = kind == "constraint" ? "Constraint" : "Index";
+        sb.AppendLine($"    objects.{method}(\"{perspective.TableName}\", {_csharpString(name)}, {declaredBy});");
+      }
+      // [KeepSchemaObject]: the model's code pins, set again at every start and released when the attribute goes.
+      foreach (var kept in perspective.KeptObjects.AsSpan()) {
+        var reason = kept.Reason is null ? "null" : _csharpString(kept.Reason);
+        sb.AppendLine($"    objects.Pin(\"{perspective.TableName}\", {_csharpString(kept.Name)}, {reason}, "
+          + $"{_csharpString(model + " [KeepSchemaObject]")});");
+      }
+    }
+    return sb.ToString();
+  }
+
+  private static string _csharpString(string value) =>
+    "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+
   private static void _generatePerspectiveTableSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
     // See _appendFormLedgerRow: a table this release creates is recorded as converted at creation.
@@ -3924,7 +3969,8 @@ internal sealed record PerspectiveModelInfo(
     TableStorageInfo? TableStorage = null,
     string PerspectiveClrTypeName = "",
     ModelCopyInfo? ModelCopy = null,
-    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default);
+    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default,
+    ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default);
 
 /// <summary>
 /// Intermediate candidate for perspective model discovery before table name config is applied.
@@ -3970,7 +4016,8 @@ internal sealed record PerspectiveModelCandidate(
     TableStorageInfo? TableStorage = null,
     string PerspectiveClrTypeName = "",
     ModelCopyInfo? ModelCopy = null,
-    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default);
+    ImmutableArray<DeclaredConverterInfo> DeclaredConverters = default,
+    ImmutableArray<KeptSchemaObjectInfo> KeptObjects = default);
 
 /// <summary>
 /// An app's custom stored-form migration: a class implementing <c>IStoredFormMigration&lt;TModel&gt;</c>.

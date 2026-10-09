@@ -39,8 +39,8 @@ public sealed record DocumentMatching(DocumentMatchDeclaration AnyField, Documen
   /// <summary>
   /// Whether the index over the whole model document is built. Only when declared on: it is the
   /// largest index on the table and every change to the document rewrites its entries, so it is a
-  /// decision a model makes rather than a default it inherits. An index an earlier release built is
-  /// never dropped for an undeclared model; that stays an operator step.
+  /// decision a model makes rather than a default it inherits. An index an earlier release built for a
+  /// model that no longer declares it is retired by the managed-object reconcile, unless pinned.
   /// </summary>
   public bool BuildsDataIndex => AnyField == DocumentMatchDeclaration.On;
 

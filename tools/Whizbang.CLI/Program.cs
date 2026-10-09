@@ -56,8 +56,50 @@ async Task<int> _handleSchemaCommandAsync(string[] commandArgs) {
   return commandArgs[1].ToLower(CultureInfo.InvariantCulture) switch {
     "generate" => await _generateSchemaAsync(commandArgs),
     "validate" => await _validateSchemaAsync(commandArgs),
+    "status" or "plan" or "pin" or "unpin" => await _managedObjectsAsync(commandArgs),
     _ => throw new InvalidOperationException($"Unknown schema subcommand: {commandArgs[1]}")
   };
+}
+
+async Task<int> _managedObjectsAsync(string[] commandArgs) {
+  // Usage: whizbang schema status|plan --connection <cs> [--schema <schema>]
+  //        whizbang schema pin <table> <object> --connection <cs> [--schema <schema>] [--reason <text>]
+  //        whizbang schema unpin <table> <object> --connection <cs> [--schema <schema>]
+  var subcommand = commandArgs[1].ToLower(CultureInfo.InvariantCulture);
+  var connectionString = _option(commandArgs, "--connection", "-c");
+  var pinning = subcommand is "pin" or "unpin";
+  var positional = commandArgs.Skip(2).TakeWhile(a => !a.StartsWith('-')).ToArray();
+  if (string.IsNullOrWhiteSpace(connectionString) || (pinning && positional.Length < 2)) {
+    Console.WriteLine(pinning
+      ? "❌ Error: --connection and the table and object names are required"
+      : "❌ Error: Missing --connection");
+    Console.WriteLine();
+    _showSchemaHelp();
+    return 1;
+  }
+  var schema = _option(commandArgs, "--schema", "-s") ?? "public";
+
+  await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+  await connection.OpenAsync();
+  switch (subcommand) {
+    case "status":
+      Console.WriteLine($"Managed objects in schema {schema}");
+      Console.WriteLine();
+      Console.WriteLine(ManagedSchemaLedger.Format(await ManagedSchemaLedger.StatusAsync(connection, schema)));
+      return 0;
+    case "plan":
+      Console.WriteLine($"Objects the next start drops in schema {schema} (unless a running instance still declares one)");
+      Console.WriteLine();
+      Console.WriteLine(ManagedSchemaLedger.Format(await ManagedSchemaLedger.PendingRetirementAsync(connection, schema)));
+      return 0;
+    case "pin":
+      Console.WriteLine(await ManagedSchemaLedger.PinAsync(
+        connection, schema, positional[0], positional[1], _option(commandArgs, "--reason", "-r")));
+      return 0;
+    default:
+      Console.WriteLine(await ManagedSchemaLedger.UnpinAsync(connection, schema, positional[0], positional[1]));
+      return 0;
+  }
 }
 
 async Task<int> _handleStoredFormsCommandAsync(string[] commandArgs) {
@@ -731,12 +773,23 @@ void _showSchemaHelp() {
   Console.WriteLine("Subcommands:");
   Console.WriteLine("  generate <database>    Generate schema DDL for a database");
   Console.WriteLine("  validate <file>        Validate a schema SQL file");
+  Console.WriteLine("  status                 List the managed objects of a schema: owner, status and pins");
+  Console.WriteLine("  plan                   List the objects the next start drops");
+  Console.WriteLine("  pin <table> <object>   Pin an object in the database so Whizbang never drops it");
+  Console.WriteLine("  unpin <table> <object> Release the database pin (a pin C# sets is released in C#)");
+  Console.WriteLine();
+  Console.WriteLine("Options for status, plan, pin and unpin:");
+  Console.WriteLine("  --connection, -c <string>   PostgreSQL connection string of the environment");
+  Console.WriteLine("  --schema, -s <name>         The schema the application uses (default: public)");
+  Console.WriteLine("  --reason, -r <text>         Why the object is pinned (pin only)");
   Console.WriteLine();
   Console.WriteLine("Examples:");
   Console.WriteLine("  whizbang schema generate postgres");
   Console.WriteLine("  whizbang schema generate sqlite --output my-schema.sql");
   Console.WriteLine("  whizbang schema generate postgres --prefix custom_");
   Console.WriteLine("  whizbang schema validate whizbang-postgres-schema.sql");
+  Console.WriteLine("  whizbang schema plan -c \"Host=...;Database=...;Username=...\"");
+  Console.WriteLine("  whizbang schema pin wh_per_job idx_job_legacy_code -c \"Host=...\" -r \"the reporting job reads it\"");
 }
 
 void _showMigrateHelp() {

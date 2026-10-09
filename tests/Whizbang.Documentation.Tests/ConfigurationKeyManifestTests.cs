@@ -113,6 +113,9 @@ public class ConfigurationKeyManifestTests {
       return null;
     }, nameof(TagPolicyStartupValidator));
 
+    // The managed-object reconcile reads its settings by hand at schema initialization and in its maintenance step.
+    _tryResolve(() => Whizbang.Data.Postgres.Schema.ManagedSchemaSettings.Read(configuration), "ManagedSchemaSettings");
+
     return recorder.Keys;
   }
 
@@ -158,6 +161,10 @@ public class ConfigurationKeyManifestTests {
     // Each connection's timeout key (PostgresCommandTimeouts), read where the connection is built: the
     // generated pool, the notification connection, the pinned pool and schema initialization.
     "Whizbang:Postgres:*:CommandTimeoutSeconds",
+    // The reconcile's per-kind drop switches and configured pins, read as children of their sections, so a
+    // configuration with none records only the section.
+    "Whizbang:Schema:Reconcile:Drop:*",
+    "Whizbang:Schema:Reconcile:Pins:*",
   ];
 
   private const string MANIFEST_HEADER =

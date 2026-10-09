@@ -173,6 +173,14 @@ public static class PostgresDriverExtensions {
                 sp.GetService<ILogger<IndexStatisticsMaintenanceStep>>(),
                 sp.GetService<TimeProvider>()));
 
+        // TURNKEY: the maintenance step that runs the managed-object reconcile between starts, so a drop a start held
+        // back while the previous release still ran lands once it is gone, without another deploy (#1252).
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new ManagedSchemaReconcileStep(
+                dbContextType,
+                sp.GetService<ILogger<ManagedSchemaReconcileStep>>(),
+                sp.GetService<TimeProvider>()));
+
         // TURNKEY: the maintenance step that fills promoted columns for rows an instance still on the
         // previous release wrote with the value only in the document, during the rolling deploy that
         // promoted the field (#1009). Idle unless the schema pass armed a column.
