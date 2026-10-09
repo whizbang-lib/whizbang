@@ -70,6 +70,28 @@ internal static class ManagedSchemaCatalog {
     return rows;
   }
 
+  /// <summary>
+  /// The pairs <c>wh_ensure_index</c> recorded: a declared index it did not build because another index on the table
+  /// has the same definition, and that index's name. Empty when the schema has no record of any.
+  /// </summary>
+  public static async Task<List<(string Table, string Declared, string Existing)>> ReadEquivalentsAsync(
+      NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
+    var table = PgIdentifier.Quote(schema) + ".wh_index_equivalents";
+    var pairs = new List<(string, string, string)>();
+    await using (var exists = new NpgsqlCommand("SELECT to_regclass(@t) IS NOT NULL", connection)) {
+      exists.Parameters.AddWithValue("t", table);
+      if (await exists.ExecuteScalarAsync(cancellationToken) is not true) {
+        return pairs;
+      }
+    }
+    await using var command = new NpgsqlCommand($"SELECT table_name, declared_name, existing_name FROM {table}", connection);
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      pairs.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+    }
+    return pairs;
+  }
+
   private static string? _text(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
 
   /// <summary>

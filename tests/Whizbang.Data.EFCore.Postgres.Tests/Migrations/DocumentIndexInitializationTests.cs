@@ -182,6 +182,31 @@ public class DocumentIndexInitializationTests {
   }
 
   /// <summary>
+  /// An index the model declares that exists only as a twin under an earlier name is the declared index: the
+  /// reconcile keeps it on every start, and does not report the declared name missing.
+  /// </summary>
+  [Test]
+  [Timeout(180000)]
+  public async Task ADeclaredIndexThatExistsUnderAnEarlierName_IsKeptOnEveryStartAsync(CancellationToken cancellationToken) {
+    await _initializeAsync(cancellationToken);
+    // The state an earlier release left: the declared index under an earlier name in Whizbang's own naming (a
+    // long table's name truncated, where the declared one is hashed), and no index under the declared name.
+    await _execAsync($"""
+      DROP INDEX idx_document_index_undeclared_scope_tenant;
+      CREATE INDEX idx_document_index_undeclared_scope_t ON {UNDECLARED} ((scope->>'t'));
+      """);
+    await _forgetPerspectiveHashesAsync();
+
+    await _initializeAsync(cancellationToken);
+    await _initializeAsync(cancellationToken);
+    await _initializeAsync(cancellationToken);
+
+    await Assert.That(await _indexesAsync(UNDECLARED, "(scope ->> 't'::text)"))
+      .IsEquivalentTo(["idx_document_index_undeclared_scope_t"])
+      .Because("the earlier name stands for the declared index, so it is neither dropped nor joined by a twin");
+  }
+
+  /// <summary>
   /// Indexes an earlier path created under its own names are not joined by twins with the
   /// schema's names when the pass runs again.
   /// </summary>
