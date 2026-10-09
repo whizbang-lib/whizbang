@@ -17,7 +17,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// deferred to the transport-traffic-classes phase.
 /// </remarks>
 /// <docs>messaging/transports/rabbitmq</docs>
-/// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportFailurePathTests.cs:HandleMessageFailure_RedeliveredWithMaxTwoAttempts_NacksToDeadLetterAsync</tests>
+/// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportFailurePathTests.cs:HandleMessageFailure_RedeliveredWithMaxTwoAttempts_NacksToDeadLetterAsync</tests>
 /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CreateConnectionWithRetryAsync_WithRetryIndefinitelyFalse_TriesInitialAttemptsAndThrowsAsync</tests>
 /// <tests>tests/Whizbang.Transports.RabbitMQ.Integration.Tests/RabbitMQFifoIntegrationTests.cs:EnableSingleActiveConsumer_DefaultsToFalseAsync</tests>
 public class RabbitMQOptions {
@@ -61,9 +61,9 @@ public class RabbitMQOptions {
   /// Default: 10
   /// </summary>
   /// <docs>messaging/transports/rabbitmq#dead-lettering</docs>
-  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportFailurePathTests.cs:HandleMessageFailure_FirstAttempt_NacksWithRequeueAsync</tests>
-  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportFailurePathTests.cs:HandleMessageFailure_DeliveryCountHeaderAtMax_NacksToDeadLetterAsync</tests>
-  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportFailurePathTests.cs:HandleMessageFailure_RedeliveredWithMaxTwoAttempts_NacksToDeadLetterAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportFailurePathTests.cs:HandleMessageFailure_FirstAttempt_NacksWithRequeueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportFailurePathTests.cs:HandleMessageFailure_DeliveryCountHeaderAtMax_NacksToDeadLetterAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportFailurePathTests.cs:HandleMessageFailure_RedeliveredWithMaxTwoAttempts_NacksToDeadLetterAsync</tests>
   public int MaxDeliveryAttempts { get; set; } = 10;
 
   /// <summary>
@@ -120,7 +120,7 @@ public class RabbitMQOptions {
   /// Default: false (backward compatible)
   /// </summary>
   /// <docs>messaging/transports/rabbitmq#single-active-consumer</docs>
-  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportFailurePathTests.cs:SubscribeAsync_SingleActiveConsumer_SetsQueueArgumentAndOrderedCapabilityAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportFailurePathTests.cs:SubscribeAsync_SingleActiveConsumer_SetsQueueArgumentAndOrderedCapabilityAsync</tests>
   /// <tests>tests/Whizbang.Transports.RabbitMQ.Integration.Tests/RabbitMQFifoIntegrationTests.cs:EnableSingleActiveConsumer_DefaultsToFalseAsync</tests>
   /// <tests>tests/Whizbang.Transports.RabbitMQ.Integration.Tests/RabbitMQFifoIntegrationTests.cs:NonSAC_Capabilities_ExcludesOrderedAsync</tests>
   public bool EnableSingleActiveConsumer { get; set; }

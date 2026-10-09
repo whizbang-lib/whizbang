@@ -100,6 +100,7 @@
     <Project Path="tests/Whizbang.SignalR.Tests/Whizbang.SignalR.Tests.csproj" />
     <Project Path="tests/Whizbang.Testing.Tests/Whizbang.Testing.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.RabbitMQ.Tests/Whizbang.Transports.RabbitMQ.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.RabbitMQ.Component.Tests/Whizbang.Transports.RabbitMQ.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.HotChocolate.Tests/Whizbang.Transports.HotChocolate.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Mutations.Tests/Whizbang.Transports.Mutations.Tests.csproj" />

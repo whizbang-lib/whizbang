@@ -82,7 +82,7 @@ public interface ITransport {
   /// envelope headers and broker metadata.
   /// </remarks>
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_MaxMessageSizeBytes_InProcessTransport_ReturnsNullAsync</tests>
-  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs:MaxMessageSizeBytes_ReturnsNull_NoEnforcedLimitAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportTests.cs:MaxMessageSizeBytes_ReturnsNull_NoEnforcedLimitAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
   /// <docs>messaging/transports/transports#max-message-size</docs>
   long? MaxMessageSizeBytes => null;
@@ -99,8 +99,8 @@ public interface ITransport {
   /// <returns>Task that completes when the message is published</returns>
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithValidMessage_CompletesSuccessfullyAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithCancellation_ThrowsOperationCanceledAsync</tests>
-  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
-  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
   Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
