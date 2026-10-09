@@ -117,13 +117,14 @@ despite the name, a unit project), `ECommerce.BFF.API.Tests`, `ECommerce.Invento
 `ECommerce.ShippingWorker.Tests`. `ECommerce.BFF.API.Tests` and `ECommerce.InventoryWorker.Tests` carry
 `Integration;Docker` tags while declaring Unit; the inventory classifies their classes.
 
-### Component (1)
+### Component (2)
 
 | Project | Purpose |
 |---------|---------|
 | `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core`; receives the component tests moved out of `Whizbang.Core.Tests` |
+| `Whizbang.Testing.Component.Tests` | Component tests of the testing library (awaiters, harnesses and in-memory transports on real threads and hosted workers, and trace assertions that read and write baseline snapshot files), moved out of `Whizbang.Testing.Tests` |
 
-### Integration (13)
+### Integration (14)
 
 | Project | Tags | Suite |
 |---------|------|-------|
@@ -140,6 +141,7 @@ despite the name, a unit project), `ECommerce.BFF.API.Tests`, `ECommerce.Invento
 | `Whizbang.Migrate.Integration.Tests` | Integration | Integration (general) |
 | `Whizbang.Transports.FastEndpoints.Integration.Tests` | Integration | Integration (general) |
 | `Whizbang.Transports.HotChocolate.Integration.Tests` | Integration | Integration (general) |
+| `Whizbang.Testing.Integration.Tests` | Integration | Integration (general) |
 
 Every integration project must carry a tag some suite selects: `.github/scripts/tests/Get-TestSlice.Tests.ps1`
 fails otherwise.
