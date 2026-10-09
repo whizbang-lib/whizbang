@@ -50,8 +50,8 @@ public class SagaWatchdogTickDeliveryIntegrationTests {
     services.AddGeneratorTestDefaultSaga();
     services.AddGeneratorTestCustomBaseSaga();
     services.AddGeneratorTestChainedSaga();
-    global::Whizbang.Sagas.Tests.Generated.DispatcherRegistrations.AddReceptors(services);
-    global::Whizbang.Sagas.Tests.Generated.DispatcherRegistrations.AddWhizbangReceptorRegistry(services);
+    global::Whizbang.Sagas.Component.Tests.Generated.DispatcherRegistrations.AddReceptors(services);
+    global::Whizbang.Sagas.Component.Tests.Generated.DispatcherRegistrations.AddWhizbangReceptorRegistry(services);
     services.AddWhizbangSagas();
     // The hand-written saga, as AddSagaService exposes one to the router.
     services.AddScoped<ISagaWatchdogParticipant>(_ => handWritten);
