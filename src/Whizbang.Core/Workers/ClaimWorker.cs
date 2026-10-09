@@ -76,7 +76,6 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// <summary>Set by a claim whose outbox acquisition filled its bound; the loop then claims again without waiting.</summary>
   private bool _claimAgainNow;
   private long _lastDrainTicks;
-  private readonly IPartitionAssignmentSource? _partitionAssignments;
   private readonly ILogger<ClaimWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
   private readonly ISignalBus _signalBus;
@@ -154,11 +153,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     ClaimChurnFeedback? churnFeedback = null,
     TimeProvider? timeProvider = null,
     // Priority step 1: the batch hooks run over each claim's inbox streams before they reach the drain.
-    Whizbang.Core.Priority.PriorityHookChain? priorityHooks = null,
-    // #1254: the elected assigner's partition assignment, cached; null ranks every claim itself, as before.
-    IPartitionAssignmentSource? partitionAssignments = null) {
+    Whizbang.Core.Priority.PriorityHookChain? priorityHooks = null) {
     _priorityHooks = priorityHooks;
-    _partitionAssignments = partitionAssignments;
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
@@ -904,9 +900,12 @@ public sealed partial class ClaimWorker : BackgroundService {
 
     // #1254: the assignment's version, from memory while the cached copy is current. Null when there is none, it has
     // expired, or this instance is not in it: the claim then ranks itself, so a missing assignment never stops a claim.
-    var assignment = _partitionAssignments is null
+    // Resolved from the claim's scope, as the coordinator is; a host without the assigner registered ranks every claim
+    // itself, as before.
+    var partitionAssignments = scope.ServiceProvider.GetService<IPartitionAssignmentSource>();
+    var assignment = partitionAssignments is null
       ? null
-      : await _partitionAssignments.ForClaimAsync(_instanceProvider.InstanceId, ct);
+      : await partitionAssignments.ForClaimAsync(_instanceProvider.InstanceId, ct);
 
     var claimStarted = _time.GetTimestamp();
     var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
@@ -941,7 +940,7 @@ public sealed partial class ClaimWorker : BackgroundService {
 
     // #1254: the version this claim presented was superseded or expired; the next claim reads the published one.
     if (batch.PartitionAssignmentStale) {
-      _partitionAssignments?.MarkStale();
+      partitionAssignments?.MarkStale();
     }
 
     _recordClaimShape(batch, allowSteal);

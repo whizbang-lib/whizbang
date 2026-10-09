@@ -14,7 +14,7 @@ namespace Whizbang.Core.Workers;
 /// mode must not change how often an instance beats.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
-/// <tests>tests/Whizbang.Partitioning.Tests/HeartbeatConnectionModeTests.cs:BuildRequest_WithADirectConnection_RegistersDirectAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HeartbeatConnectionModeTests.cs:Beat_WithADirectConnection_RegistersDirectAsync</tests>
 public interface IInstanceConnectionModeSource {
   /// <summary>
   /// <see cref="InstanceConnectionMode.Direct"/> when this instance holds a dedicated direct connection whose alive-lock

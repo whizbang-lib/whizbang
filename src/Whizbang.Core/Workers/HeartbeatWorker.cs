@@ -49,9 +49,7 @@ public partial class HeartbeatWorker(
   IInstanceAliveLockSource aliveLockSource,
   ISignalBus signalBus,
   TimeProvider? timeProvider = null,
-  InstanceLivenessMetrics? metrics = null,
-  // #1254: how this instance reaches the database, recorded at registration. Null registers pooled.
-  IInstanceConnectionModeSource? connectionModeSource = null
+  InstanceLivenessMetrics? metrics = null
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
@@ -279,7 +277,11 @@ public partial class HeartbeatWorker(
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    var accepted = await coordinator.RecordHeartbeatAsync(BuildRequest(), ct);
+    // #1254: the registration records how this instance reaches the database, resolved from the beat's scope as the
+    // coordinator is. A host whose driver does not say registers pooled.
+    var connectionMode = scope.ServiceProvider.GetService<IInstanceConnectionModeSource>()?.ConnectionMode
+      ?? InstanceConnectionMode.Pooled;
+    var accepted = await coordinator.RecordHeartbeatAsync(BuildRequest() with { ConnectionMode = connectionMode }, ct);
     if (!accepted) {
       return false;
     }
@@ -315,10 +317,7 @@ public partial class HeartbeatWorker(
     ProcessId: _instanceProvider.ProcessId,
     LifecyclePhase: _lifecycleState.Phase.ToString(),
     LibraryVersion: _libraryVersion.LibraryVersion,
-    StaleThresholdSeconds: HeartbeatLivenessThreshold.StaleThresholdSeconds(_options),
-    // #1254: the registration records how this instance reaches the database, so the partition assigner judges it
-    // by its alive-lock (direct) or by this heartbeat alone (pooled).
-    ConnectionMode: connectionModeSource?.ConnectionMode ?? InstanceConnectionMode.Pooled);
+    StaleThresholdSeconds: HeartbeatLivenessThreshold.StaleThresholdSeconds(_options));
 
   /// <inheritdoc />
   public override async Task StopAsync(CancellationToken cancellationToken) {

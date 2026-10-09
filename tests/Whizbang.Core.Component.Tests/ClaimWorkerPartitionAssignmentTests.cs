@@ -67,8 +67,11 @@ public class ClaimWorkerPartitionAssignmentTests {
 
   private static ClaimWorker _worker(IWorkCoordinator coordinator, IPartitionAssignmentSource? source) {
     var services = new ServiceCollection();
-    services.TryAddWhizbangDefaults();
     services.AddSingleton(coordinator);
+    // The claim resolves the assignment from its scope, as it resolves the coordinator; a host without one ranks itself.
+    if (source is not null) {
+      services.AddSingleton(source);
+    }
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -87,8 +90,7 @@ public class ClaimWorkerPartitionAssignmentTests {
       inboxDrainChannel: new InboxDrainChannel(),
       signalingGate: NullNotifySignalingGate.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      signalBus: NullSignalBus.Instance,
-      partitionAssignments: source);
+      signalBus: NullSignalBus.Instance);
   }
 
   [Test]
