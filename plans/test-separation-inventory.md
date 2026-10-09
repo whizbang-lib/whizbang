@@ -205,11 +205,11 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Testing.Tests | 12 | 8 | 1 | 1 | 22 | 0 |
 | Whizbang.Transports.AzureServiceBus.Tests | 56 | 10 | 0 | 0 | 66 | 0 |
 | Whizbang.Transports.FastEndpoints.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
-| Whizbang.Transports.HotChocolate.Tests | 20 | 1 | 0 | 0 | 21 | 0 |
+| Whizbang.Transports.HotChocolate.Tests | 20 | 0 | 0 | 0 | 20 | 0 |
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 399 | 1 | 40 | 2209 | 12 |
+| **Total** | 1769 | 398 | 1 | 40 | 2208 | 12 |
 
 ## Worklist: non-unit types by project
 
@@ -831,11 +831,7 @@ All 21 types are unit-pure.
 
 ### Whizbang.Transports.HotChocolate.Tests
 
-1 of 47 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| ScopeMiddlewareExtensionsTests | `tests/Whizbang.Transports.HotChocolate.Tests/Unit/ScopeMiddlewareExtensionsTests.cs` | 14 | Component | TaskRun |  |  |
+All 46 types are unit-pure.
 
 ### Whizbang.Transports.Mutations.Tests
 

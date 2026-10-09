@@ -2401,7 +2401,6 @@
 "Whizbang.Transports.HotChocolate.Tests","tests/Whizbang.Transports.HotChocolate.Tests/Unit/RequirePermissionMiddlewareTests.cs","GuardedQuery","318","Helper","0","Unit","","","",""
 "Whizbang.Transports.HotChocolate.Tests","tests/Whizbang.Transports.HotChocolate.Tests/Unit/RequirePermissionMiddlewareTests.cs","GuardedMutation","336","Helper","0","Unit","","","",""
 "Whizbang.Transports.HotChocolate.Tests","tests/Whizbang.Transports.HotChocolate.Tests/Unit/RequirePermissionMiddlewareTests.cs","ClassGuardedQuery","352","Helper","0","Unit","","","",""
-"Whizbang.Transports.HotChocolate.Tests","tests/Whizbang.Transports.HotChocolate.Tests/Unit/ScopeMiddlewareExtensionsTests.cs","ScopeMiddlewareExtensionsTests","17","Test","14","Component","TaskRun","TaskRun L197","",""
 "Whizbang.Transports.HotChocolate.Tests","tests/Whizbang.Transports.HotChocolate.Tests/Unit/ServiceRegistrationTests.cs","ServiceRegistrationTests","16","Test","9","Unit","","","",""
 "Whizbang.Transports.HotChocolate.Tests","tests/Whizbang.Transports.HotChocolate.Tests/Unit/SortConventionTests.cs","SortConventionTests","16","Test","9","Unit","","","",""
 "Whizbang.Transports.HotChocolate.Tests","tests/Whizbang.Transports.HotChocolate.Tests/Unit/StartupStatusQueryTests.cs","StartupStatusQueryTests","18","Test","2","Unit","","","",""
