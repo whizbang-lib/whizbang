@@ -18,6 +18,8 @@ public class GlobTests {
   [Arguments("wh_per_*:idx_*_legacy", "wh_per_job:idx_job_code", false)]
   [Arguments("*", "anything:at_all", true)]
   [Arguments("wh_per_job:**_legacy", "wh_per_job:idx_job_legacy", true)]
+  [Arguments("wh_per_job:idx**", "wh_per_job:idx", true)]
+  [Arguments("wh_per_job:idx*_old", "wh_per_job:idx", false)]
   [Arguments("wh_per_jo?:*", "wh_per_job:x", true)]
   [Arguments("wh_per_jo?:*", "wh_per_jobs:x", false)]
   [Arguments("**:idx", "t:idx", true)]

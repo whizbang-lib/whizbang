@@ -46,20 +46,25 @@ public static class ManagedSchemaReconcile {
     }
     var instanceId = services?.GetService<IServiceInstanceProvider>()?.InstanceId;
 
-    if (connectionFactory is not null) {
-      await using var connection = connectionFactory();
-      await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    // A connection of its own when one can be opened; otherwise the context's, borrowed and closed again.
+    var owned = connectionFactory?.Invoke();
+    try {
+      NpgsqlConnection connection;
+      if (owned is not null) {
+        await owned.OpenAsync(cancellationToken).ConfigureAwait(false);
+        connection = owned;
+      } else {
+        await dbContext.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+      }
       return await ManagedSchemaReconciler.RunAsync(
         connection, manifest.Schema, declared, settings, instanceId, logger, cancellationToken).ConfigureAwait(false);
-    }
-
-    await dbContext.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-    try {
-      return await ManagedSchemaReconciler.RunAsync(
-        (NpgsqlConnection)dbContext.Database.GetDbConnection(), manifest.Schema, declared, settings, instanceId, logger,
-        cancellationToken).ConfigureAwait(false);
     } finally {
-      await dbContext.Database.CloseConnectionAsync().ConfigureAwait(false);
+      if (owned is not null) {
+        await owned.DisposeAsync().ConfigureAwait(false);
+      } else {
+        await dbContext.Database.CloseConnectionAsync().ConfigureAwait(false);
+      }
     }
   }
 }
