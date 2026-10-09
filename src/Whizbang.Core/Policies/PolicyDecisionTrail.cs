@@ -19,6 +19,28 @@ namespace Whizbang.Core.Policies;
 /// </summary>
 /// <docs>operations/infrastructure/policies</docs>
 public class PolicyDecisionTrail {
+  private readonly TimeProvider _timeProvider;
+
+  /// <summary>
+  /// Creates a trail that stamps each decision from the system clock.
+  /// </summary>
+  public PolicyDecisionTrail() : this(TimeProvider.System) {
+  }
+
+  /// <summary>
+  /// Creates a trail that stamps each decision from <paramref name="timeProvider"/>, so a host or a
+  /// test can supply the clock (for example a <c>FakeTimeProvider</c> that a test advances between
+  /// decisions).
+  /// </summary>
+  /// <param name="timeProvider">The clock read when a decision is recorded.</param>
+  /// <docs>operations/infrastructure/policies</docs>
+  /// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:RecordDecision_AddsDecisionWithAllPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllPolicyDecisions_MaintainsChronologicalOrderAsync</tests>
+  public PolicyDecisionTrail(TimeProvider timeProvider) {
+    ArgumentNullException.ThrowIfNull(timeProvider);
+    _timeProvider = timeProvider;
+  }
+
   /// <summary>
   /// List of all policy decisions made during processing.
   /// Init setter required for JSON deserialization.
@@ -49,7 +71,7 @@ public class PolicyDecisionTrail {
       Matched = matched,
       Configuration = configuration,
       Reason = reason,
-      Timestamp = DateTimeOffset.UtcNow
+      Timestamp = _timeProvider.GetUtcNow()
     });
   }
 
