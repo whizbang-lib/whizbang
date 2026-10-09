@@ -6,9 +6,9 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <WhizbangTestTags>Unit</WhizbangTestTags>
-    <!-- Unit: Fast tests, no external infrastructure needed -->
-    <WhizbangTestType>Unit</WhizbangTestType>
+    <WhizbangTestTags>Component</WhizbangTestTags>
+    <!-- Component: readiness-check paths driven from a second thread (Task.Run) in one process, no external infrastructure. The unit tests stay in Whizbang.Hosting.Azure.ServiceBus.Tests (docs/TEST-PROJECTS.md). -->
+    <WhizbangTestType>Component</WhizbangTestType>
     <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
     <NoWarn>$(NoWarn);CA1707</NoWarn>
   </PropertyGroup>
@@ -28,5 +28,11 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <ProjectReference Include="../../src/Whizbang.Hosting.Azure.ServiceBus/Whizbang.Hosting.Azure.ServiceBus.csproj" />
+  </ItemGroup>
+
+  <!-- The readiness-check doubles are shared with the unit project: one source, compiled into both
+       test assemblies. -->
+  <ItemGroup>
+    <Compile Include="../Whizbang.Hosting.Azure.ServiceBus.Tests/ReadinessCheckTestDoubles.cs" Link="Shared/ReadinessCheckTestDoubles.cs" />
   </ItemGroup>
 </Project>

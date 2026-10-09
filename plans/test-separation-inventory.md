@@ -190,7 +190,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Execution.Tests | 1 | 7 | 0 | 0 | 8 | 0 |
 | Whizbang.Generators.Tests | 250 | 0 | 0 | 4 | 254 | 0 |
 | Whizbang.Hosting.AspNet.Tests | 19 | 10 | 0 | 0 | 29 | 0 |
-| Whizbang.Hosting.Azure.ServiceBus.Tests | 1 | 2 | 0 | 0 | 3 | 1 |
+| Whizbang.Hosting.Azure.ServiceBus.Tests | 2 | 0 | 0 | 0 | 2 | 0 |
 | Whizbang.Hosting.RabbitMQ.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.LanguageServer.Tests | 18 | 0 | 0 | 0 | 18 | 0 |
 | Whizbang.Migrate.Tests | 39 | 0 | 0 | 23 | 62 | 0 |
@@ -199,7 +199,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Offloads.InMemory.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.Partitioning.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
 | Whizbang.Policies.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
-| Whizbang.Sagas.Tests | 39 | 0 | 0 | 0 | 39 | 0 |
+| Whizbang.Sagas.Tests | 38 | 3 | 0 | 1 | 42 | 0 |
 | Whizbang.Sequencing.Tests | 0 | 1 | 0 | 0 | 1 | 0 |
 | Whizbang.SignalR.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
 | Whizbang.Testing.Tests | 12 | 8 | 1 | 1 | 22 | 0 |
@@ -209,7 +209,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1770 | 396 | 1 | 39 | 2206 | 12 |
+| **Total** | 1770 | 397 | 1 | 40 | 2208 | 11 |
 
 ## Worklist: non-unit types by project
 
@@ -692,13 +692,7 @@ All 17 types are unit-pure.
 
 ### Whizbang.Hosting.Azure.ServiceBus.Tests
 
-3 of 7 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| ServiceBusReadinessCheckFailurePathTests | `tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckFailurePathTests.cs` | 10 | Component | TaskRun | GatedServiceBusClient (Component) |  |
-| GatedServiceBusClient | `tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckFailurePathTests.cs` | 0 | Component | TimeoutWait |  |  |
-| ServiceBusReadinessCheckTests | `tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckTests.cs` | 5 | Component | TaskDelay |  |  |
+All 4 types are unit-pure.
 
 ### Whizbang.Hosting.RabbitMQ.Tests
 
@@ -770,7 +764,14 @@ All 8 types are unit-pure.
 
 ### Whizbang.Sagas.Tests
 
-All 45 types are unit-pure.
+4 of 48 types are not unit-pure.
+
+| Class | File | Tests | Category | Constructs | Via | Note |
+|---|---|---:|---|---|---|---|
+| SagaWatchdogTickDeliveryIntegrationTests | `tests/Whizbang.Sagas.Tests/SagaWatchdogTickDeliveryIntegrationTests.cs` | 6 | Component | StartAsync |  |  |
+| SagaWatchdogTickSubscriptionIntegrationTests | `tests/Whizbang.Sagas.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs` | 5 | Component | StartAsync |  |  |
+| SagaClaimPruneStepTests | `tests/Whizbang.Sagas.Tests/Services/SagaClaimPruneStepTests.cs` | 10 | Other | RealClock |  |  |
+| SagaWatchdogTickRoutingTests | `tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs` | 8 | Component | StartAsync |  |  |
 
 ### Whizbang.Sequencing.Tests
 

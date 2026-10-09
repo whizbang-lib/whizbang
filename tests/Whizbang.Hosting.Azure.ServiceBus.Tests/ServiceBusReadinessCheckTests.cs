@@ -3,6 +3,7 @@
 
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
@@ -95,21 +96,23 @@ public class ServiceBusReadinessCheckTests {
   [Test]
   public async Task IsReadyAsync_CacheExpires_AfterDurationAsync() {
     // Arrange
+    var clock = new FakeTimeProvider();
     var transport = new TestTransport(isInitialized: true);
     var client = new TestServiceBusClient(isHealthy: true);
     var check = new ServiceBusReadinessCheck(
       transport,
       client,
       NullLogger<ServiceBusReadinessCheck>.Instance,
-      cacheDuration: TimeSpan.FromMilliseconds(100)
+      cacheDuration: TimeSpan.FromMilliseconds(100),
+      timeProvider: clock
     );
 
     // Act - First call
     await check.IsReadyAsync();
     var accessCountAfterFirst = client.IsClosedAccessCount;
 
-    // Wait for cache to expire
-    await Task.Delay(TimeSpan.FromMilliseconds(150));
+    // Expire the cache on the fake clock: past the duration by construction, without waiting.
+    clock.Advance(TimeSpan.FromMilliseconds(150));
 
     // Act - Second call (cache should be expired)
     await check.IsReadyAsync();
@@ -120,49 +123,5 @@ public class ServiceBusReadinessCheckTests {
       .Because("First call should check IsClosed");
     await Assert.That(accessCountAfterSecond).IsEqualTo(2)
       .Because("Cache should have expired and triggered a new check of IsClosed");
-  }
-}
-
-/// <summary>
-/// Test implementation of ITransport for testing readiness checks.
-/// </summary>
-internal sealed class TestTransport(bool isInitialized) : ITransport {
-
-  public bool IsInitialized { get; } = isInitialized;
-  public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
-
-  public Task InitializeAsync(CancellationToken cancellationToken = default) {
-    return Task.CompletedTask;
-  }
-
-  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
-    throw new NotImplementedException();
-  }
-
-  public Task<ISubscription> SubscribeBatchAsync(
-    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
-    TransportDestination destination,
-    TransportBatchOptions batchOptions,
-    CancellationToken cancellationToken = default) =>
-    throw new NotSupportedException();
-
-  public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default)
-    where TRequest : notnull where TResponse : notnull {
-    throw new NotImplementedException();
-  }
-}
-
-/// <summary>
-/// Test implementation of ServiceBusClient for testing readiness checks.
-/// </summary>
-internal sealed class TestServiceBusClient(bool isHealthy) : ServiceBusClient {
-  private readonly bool _isHealthy = isHealthy;
-  public int IsClosedAccessCount { get; private set; }
-
-  public override bool IsClosed {
-    get {
-      IsClosedAccessCount++;
-      return !_isHealthy;
-    }
   }
 }
