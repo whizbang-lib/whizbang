@@ -3,6 +3,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using Microsoft.Extensions.Time.Testing;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -184,8 +185,6 @@ public class MessageTracingTests {
       },
       Timestamp = DateTimeOffset.UtcNow
     };
-
-    await Task.Delay(10); // Ensure different timestamps
 
     var hop2 = new MessageHop {
       ServiceInstance = new ServiceInstanceInfo {
@@ -901,13 +900,16 @@ public class MessageTracingTests {
   [Test]
   public async Task MessageEnvelope_GetAllPolicyDecisions_MaintainsChronologicalOrderAsync() {
     // Arrange
-    var trail1 = new PolicyDecisionTrail();
+    // One fake clock for both trails, advanced between decisions: the timestamps are distinct and
+    // ordered by construction, not by waiting on the real clock.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+    var trail1 = new PolicyDecisionTrail(clock);
     trail1.RecordDecision("Policy1", "Rule1", true, null, "First decision");
-    await Task.Delay(10); // Ensure different timestamps
+    clock.Advance(TimeSpan.FromMilliseconds(10));
     trail1.RecordDecision("Policy2", "Rule2", true, null, "Second decision");
 
-    var trail2 = new PolicyDecisionTrail();
-    await Task.Delay(10);
+    var trail2 = new PolicyDecisionTrail(clock);
+    clock.Advance(TimeSpan.FromMilliseconds(10));
     trail2.RecordDecision("Policy3", "Rule3", true, null, "Third decision");
 
     var envelope = new MessageEnvelope<TestMessage> {

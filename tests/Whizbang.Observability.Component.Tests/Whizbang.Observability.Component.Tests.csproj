@@ -3,9 +3,9 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <WhizbangTestTags>Unit</WhizbangTestTags>
-    <!-- Unit: Fast tests, no external infrastructure needed -->
-    <WhizbangTestType>Unit</WhizbangTestType>
+    <WhizbangTestTags>Component</WhizbangTestTags>
+    <!-- Component: observability tests that drive shared state from several threads at once (Parallel), in one process with no external infrastructure. The unit tests stay in Whizbang.Observability.Tests (docs/TEST-PROJECTS.md). -->
+    <WhizbangTestType>Component</WhizbangTestType>
     <!-- Enable viewing generated files -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
