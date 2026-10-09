@@ -124,7 +124,7 @@ internal sealed class TestTransport : ITransport {
     }
 
     // Simulate async initialization work
-    await Task.Delay(10, cancellationToken);
+    await Task.Yield();
 
     _initializationCount++;
     _isInitialized = true;

@@ -183,7 +183,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | ECommerce.PaymentWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.ShippingWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.CLI.Tests | 4 | 0 | 0 | 4 | 8 | 1 |
-| Whizbang.Core.Tests | 1149 | 344 | 0 | 6 | 1499 | 7 |
+| Whizbang.Core.Tests | 1156 | 337 | 0 | 6 | 1499 | 6 |
 | Whizbang.Data.Schema.Tests | 30 | 0 | 0 | 0 | 30 | 0 |
 | Whizbang.Data.Tests | 11 | 0 | 0 | 0 | 11 | 0 |
 | Whizbang.Documentation.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
@@ -209,7 +209,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 399 | 1 | 40 | 2209 | 12 |
+| **Total** | 1776 | 392 | 1 | 40 | 2209 | 11 |
 
 ## Worklist: non-unit types by project
 
@@ -270,7 +270,7 @@ All 1 types are unit-pure.
 
 ### Whizbang.Core.Tests
 
-357 of 1626 types are not unit-pure.
+349 of 1626 types are not unit-pure.
 
 | Class | File | Tests | Category | Constructs | Via | Note |
 |---|---|---:|---|---|---|---|
@@ -283,7 +283,6 @@ All 1 types are unit-pure.
 | InertConcurrencyStartupReporterBranchCoverageTests | `tests/Whizbang.Core.Tests/Diagnostics/InertConcurrencyStartupReporterBranchCoverageTests.cs` | 2 | Component | StartAsync |  |  |
 | InertConcurrencyStartupReporterTests | `tests/Whizbang.Core.Tests/Diagnostics/InertConcurrencyStartupReporterTests.cs` | 6 | Component | StartAsync |  |  |
 | DispatcherLocalInvokeAndSyncTimingTests | `tests/Whizbang.Core.Tests/Dispatcher/DispatcherLocalInvokeAndSyncTimingTests.cs` | 7 | Component | TaskDelay, Stopwatch |  |  |
-| DispatcherSyncTests | `tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs` | 5 | Component | TaskDelay |  |  |
 | DispatcherTests | `tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs` | 44 | Component | TaskDelay, CrossThreadSignal |  |  |
 | InjectedExtensibilityPointsAreDocumentedTests | `tests/Whizbang.Core.Tests/Documentation/InjectedExtensibilityPointsAreDocumentedTests.cs` | 2 | Other | FileSystem |  |  |
 | ParallelExecutorCoverageTests | `tests/Whizbang.Core.Tests/Execution/ParallelExecutorCoverageTests.cs` | 2 | Component | StartAsync |  |  |
@@ -296,8 +295,6 @@ All 1 types are unit-pure.
 | DeferredOutboxChannelTests | `tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs` | 9 | Component | TaskRun |  |  |
 | EventStoreOrderingInvariantTests | `tests/Whizbang.Core.Tests/Messaging/EventStoreOrderingInvariantTests.cs` | 3 | Component | TaskRun |  |  |
 | FlushApiSourceInvariantTests | `tests/Whizbang.Core.Tests/Messaging/FlushApiSourceInvariantTests.cs` | 4 | Other | FileSystem |  |  |
-| IUnitOfWorkStrategyContractTests | `tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs` | 8 | Component | TaskDelay |  |  |
-| ImmediateUnitOfWorkStrategyTests | `tests/Whizbang.Core.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs` | 10 | Component | TaskDelay |  |  |
 | InMemoryRequestResponseStoreCancellationTests | `tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreCancellationTests.cs` | 2 | Component | TimeoutWait |  |  |
 | InMemoryRequestResponseStoreTests | `tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs` | 8 | Component | TaskDelay |  |  |
 | InboxChannelWriterTests | `tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterTests.cs` | 10 | Component | TimeoutWait |  |  |
@@ -312,9 +309,7 @@ All 1 types are unit-pure.
 | PerspectiveChannelWriterTests | `tests/Whizbang.Core.Tests/Messaging/PerspectiveChannelWriterTests.cs` | 7 | Component | TaskRun |  |  |
 | ProcessingModeTests | `tests/Whizbang.Core.Tests/Messaging/ProcessingModeTests.cs` | 19 | Component | TaskRun |  |  |
 | ReceptorFiringObserverTests | `tests/Whizbang.Core.Tests/Messaging/ReceptorFiringObserverTests.cs` | 4 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| ReceptorInvokerLoggingTests | `tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerLoggingTests.cs` | 4 | Component | TaskDelay |  |  |
 | ReceptorInvokerTagFireAndForgetTests | `tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTagFireAndForgetTests.cs` | 2 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| ScopedUnitOfWorkStrategyTests | `tests/Whizbang.Core.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs` | 12 | Component | TaskDelay |  |  |
 | StreamAffinityWorkCoordinatorStrategyTests | `tests/Whizbang.Core.Tests/Messaging/StreamAffinityWorkCoordinatorStrategyTests.cs` | 7 | Component | TimeoutWait |  |  |
 | WorkCoordinatorGateInteractiveReserveTests | `tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGateInteractiveReserveTests.cs` | 9 | Component | TimeoutWait |  |  |
 | WorkCoordinatorGateTests | `tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGateTests.cs` | 11 | Component | TaskDelay, TimeoutWait |  |  |
@@ -369,8 +364,6 @@ All 1 types are unit-pure.
 | InboxDispatchWorkerPriorityContextTests | `tests/Whizbang.Core.Tests/Priority/InboxDispatchWorkerPriorityContextTests.cs` | 1 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  |  |
 | PriorityHooksTests | `tests/Whizbang.Core.Tests/Priority/PriorityHooksTests.cs` | 14 | Component | TaskRun |  |  |
 | PriorityOnTheWireEndToEndTests | `tests/Whizbang.Core.Tests/Priority/PriorityOnTheWireEndToEndTests.cs` | 4 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  |  |
-| ReceptorTests | `tests/Whizbang.Core.Tests/Receptors/ReceptorTests.cs` | 8 | Component | TaskDelay |  |  |
-| VoidReceptorTests | `tests/Whizbang.Core.Tests/Receptors/VoidReceptorTests.cs` | 5 | Component | TaskDelay |  |  |
 | AssemblyRegistryTests | `tests/Whizbang.Core.Tests/Registry/AssemblyRegistryTests.cs` | 12 | Component | TaskRun |  |  |
 | CircuitBreakerCoverageTests | `tests/Whizbang.Core.Tests/Resilience/CircuitBreakerCoverageTests.cs` | 2 | Component | CrossThreadSignal |  |  |
 | CircuitBreakerTests | `tests/Whizbang.Core.Tests/Resilience/CircuitBreakerTests.cs` | 12 | Component | TaskDelay |  |  |
@@ -414,7 +407,6 @@ All 1 types are unit-pure.
 | TagPolicyValidatorTests | `tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorTests.cs` | 14 | Component | StartAsync |  |  |
 | TransportNamespaceRoutingRegistrationTests | `tests/Whizbang.Core.Tests/Tags/TransportNamespaceRoutingRegistrationTests.cs` | 5 | Component | StartAsync |  |  |
 | ScheduleWorkerTests | `tests/Whizbang.Core.Tests/Temporal/ScheduleWorkerTests.cs` | 17 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  |  |
-| TestTransport | `tests/Whizbang.Core.Tests/Transports/TransportLifecycleTests.cs` | 0 | Component | TaskDelay |  |  |
 | CorrelationIdTests | `tests/Whizbang.Core.Tests/ValueObjects/CorrelationIdTests.cs` | 13 | Component | TaskDelay |  |  |
 | IdentityValueObjectTests | `tests/Whizbang.Core.Tests/ValueObjects/IdentityValueObjectTests.cs` | 9 | Component | ThreadSleep, TaskDelay |  |  |
 | MessageIdAdditionalTests | `tests/Whizbang.Core.Tests/ValueObjects/MessageIdAdditionalTests.cs` | 15 | Component | TaskDelay |  |  |
