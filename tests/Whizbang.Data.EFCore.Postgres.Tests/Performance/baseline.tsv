@@ -336,3 +336,19 @@ liveness.under_load.wh_vote_role.lock_wait_samples	2064	samples		recorded: was 4
 claim.ledger_write.shared_buffers_per_claim	1136	buffers/claim		recorded: was 1,151 before 200
 claim.ledger_write.wh_active_streams.blocks_per_claim	221	blocks/claim	330	GATED: was 234.7 before 200; the ledger write is one probe and one write per claimed stream
 claim.ledger_write.wh_outbox.blocks_per_claim	612.667	blocks/claim		recorded: unchanged by 200
+
+# --- Inbox claim and claim_work, the stream-ledger write ------------------------------------------
+# The same thirty streams and three ledger paths, through claim_orphaned_inbox (one inbox row per
+# stream) and through a whole claim_work whose outbox and inbox acquisitions lease the same thirty
+# streams. 202 (#1256) gives the inbox acquisition 200's one pass and makes claim_work write the
+# ledger once for every stream its acquisitions leased, after the last of them, where each
+# acquisition used to write its own. Before 202: inbox 222.7 ledger blocks and 1,050 buffers;
+# claim_work 290.0 ledger blocks and 2,016 buffers, because a stream both acquisitions leased was
+# written twice. The ledger ceilings are half again the measured value, as above.
+claim.inbox_ledger_write.shared_buffers_per_claim	1047	buffers/claim		recorded: was 1,050 before 202
+claim.inbox_ledger_write.wh_active_streams.blocks_per_claim	221	blocks/claim	330	GATED: was 222.7 before 202; one probe and one write per claimed stream
+claim.inbox_ledger_write.wh_inbox_state.blocks_per_claim	461.667	blocks/claim		recorded: unchanged by 202
+claim.work_ledger_write.shared_buffers_per_claim	1980	buffers/claim		recorded: was 2,016 before 202
+claim.work_ledger_write.wh_active_streams.blocks_per_claim	253	blocks/claim	380	GATED: was 290.0 before 202; the ledger is written once per stream, not once per acquisition
+claim.work_ledger_write.wh_inbox_state.blocks_per_claim	516.833	blocks/claim		recorded: unchanged by 202
+claim.work_ledger_write.wh_outbox.blocks_per_claim	626	blocks/claim		recorded: unchanged by 202

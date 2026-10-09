@@ -443,6 +443,16 @@ order, and a statement that need not wait does not:
    keeps the four instances unregistered for the whole run; an actor that registers after its first
    stale claim, as `ClaimWorker` does, hides the shape from the second round on.
 
+   The rule is per TRANSACTION, not per statement. The inbox and perspective acquisitions had the same
+   two-run shape, with an unsorted refresh, and one `claim_work` ran three acquisitions that each wrote
+   their own streams' ledger rows: three passes, each sorted, are still three runs (#1256; 9 deadlocks
+   in 44 rounds on an inbox, 88 in 64 with outbox and inbox work on the same streams). Migration 202
+   gives every acquisition 200's shape and a `p_ledger_deferred` parameter; `claim_work` defers all
+   three, collects the streams they leased, and writes the ledger once through
+   `wh_lease_claimed_streams` after its last queue row. That also puts the ledger last in the claim,
+   as rule 1's table order asks. `ClaimLedgerLockOrderSqlTests` pins both orders and reproduces both
+   deadlocks; `ClaimLedgerWriteCostScenarioTests` measures the inbox and `claim_work` writes.
+
 `OutboxStreamRunDeadlockSqlTests` pins each waiting statement's order the same way: another session
 holds the first row in the order, the statement is started, and once `pg_stat_activity` reports it
 waiting on a lock the test reads with `SKIP LOCKED` which of the later rows it already holds. In
