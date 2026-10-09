@@ -183,7 +183,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | ECommerce.PaymentWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.ShippingWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.CLI.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
-| Whizbang.Core.Tests | 1165 | 329 | 0 | 6 | 1500 | 6 |
+| Whizbang.Core.Tests | 1169 | 328 | 0 | 3 | 1500 | 6 |
 | Whizbang.Data.Schema.Tests | 30 | 0 | 0 | 0 | 30 | 0 |
 | Whizbang.Data.Tests | 11 | 0 | 0 | 0 | 11 | 0 |
 | Whizbang.Documentation.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
@@ -207,7 +207,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 0 | 23 | 0 |
 | Whizbang.Transports.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
-| **Total** | 1790 | 329 | 0 | 6 | 2125 | 9 |
+| **Total** | 1794 | 328 | 0 | 3 | 2125 | 9 |
 
 ## Worklist: non-unit types by project
 
@@ -260,7 +260,7 @@ All 6 types are unit-pure.
 
 ### Whizbang.Core.Tests
 
-341 of 1627 types are not unit-pure.
+337 of 1627 types are not unit-pure.
 
 | Class | File | Tests | Category | Constructs | Via | Note |
 |---|---|---:|---|---|---|---|
@@ -338,7 +338,6 @@ All 6 types are unit-pure.
 | DispatcherSyncTrackingVerificationTests | `tests/Whizbang.Core.Tests/Perspectives/Sync/DispatcherSyncTrackingVerificationTests.cs` | 8 | Component | TaskDelay, TaskRun |  |  |
 | EventCompletionAwaiterTests | `tests/Whizbang.Core.Tests/Perspectives/Sync/EventCompletionAwaiterTests.cs` | 17 | Component | TaskDelay |  |  |
 | PerspectiveSyncAwaiterAppliedTests | `tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterAppliedTests.cs` | 15 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| PerspectiveSyncAwaiterStreamTests | `tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterStreamTests.cs` | 10 | Other | Stopwatch |  |  |
 | PerspectiveSyncAwaiterTests | `tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs` | 50 | Component | TimeoutWait |  |  |
 | PerspectiveSyncAwaiterTrackerTests | `tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTrackerTests.cs` | 12 | Component | TaskDelay, TaskRun, Stopwatch |  |  |
 | PerspectiveSyncSignalerTests | `tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs` | 10 | Component | TimeoutWait |  |  |
@@ -356,7 +355,6 @@ All 6 types are unit-pure.
 | PriorityOnTheWireEndToEndTests | `tests/Whizbang.Core.Tests/Priority/PriorityOnTheWireEndToEndTests.cs` | 4 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  |  |
 | AssemblyRegistryTests | `tests/Whizbang.Core.Tests/Registry/AssemblyRegistryTests.cs` | 12 | Component | TaskRun |  |  |
 | CircuitBreakerCoverageTests | `tests/Whizbang.Core.Tests/Resilience/CircuitBreakerCoverageTests.cs` | 2 | Component | CrossThreadSignal |  |  |
-| CircuitBreakerTests | `tests/Whizbang.Core.Tests/Resilience/CircuitBreakerTests.cs` | 12 | Component | TaskDelay |  |  |
 | StreamRateLimiterTests | `tests/Whizbang.Core.Tests/Resilience/StreamRateLimiterTests.cs` | 15 | Component | TaskDelay, TaskRun |  |  |
 | SubscriptionRetryHelperCoverageTests | `tests/Whizbang.Core.Tests/Resilience/SubscriptionRetryHelperCoverageTests.cs` | 2 | Component | TimeoutWait, CrossThreadSignal |  |  |
 | SubscriptionRetryHelperTests | `tests/Whizbang.Core.Tests/Resilience/SubscriptionRetryHelperTests.cs` | 17 | Component | TaskDelay, TimeoutWait, CrossThreadSignal |  |  |
@@ -369,7 +367,6 @@ All 6 types are unit-pure.
 | ScopeContextAccessorTests | `tests/Whizbang.Core.Tests/Security/ScopeContextAccessorTests.cs` | 7 | Component | TaskDelay, TaskRun |  |  |
 | SecurityContextHelperCoverageTests | `tests/Whizbang.Core.Tests/Security/SecurityContextHelperCoverageTests.cs` | 2 | Component | TaskDelay, CrossThreadSignal |  |  |
 | InMemorySignalTransportTests | `tests/Whizbang.Core.Tests/Signals/InMemorySignalTransportTests.cs` | 3 | Component | StartAsync |  |  |
-| PgWorkAvailablePollSourceAdaptiveIntervalTests | `tests/Whizbang.Core.Tests/Signals/PgWorkAvailablePollSourceAdaptiveIntervalTests.cs` | 4 | Other | RealClock |  |  |
 | PollSignalSourceIdleBackoffTests | `tests/Whizbang.Core.Tests/Signals/PollSignalSourceIdleBackoffTests.cs` | 6 | Component | StartAsync |  |  |
 | PollSignalSourceTests | `tests/Whizbang.Core.Tests/Signals/PollSignalSourceTests.cs` | 13 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  |  |
 | SignalBusHostedServiceBranchCoverageTests | `tests/Whizbang.Core.Tests/Signals/SignalBusHostedServiceBranchCoverageTests.cs` | 4 | Component | StartAsync, TimeoutWait |  |  |
@@ -597,7 +594,6 @@ All 6 types are unit-pure.
 | TransportConsumerWorkerUnstorableMessageTests | `tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs` | 7 | Component | StartAsync, TimeoutWait |  | phase 2 waits for #1259 |
 | TransportConsumerWorkerVerboseLoggingTests | `tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerVerboseLoggingTests.cs` | 2 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | TransportDeadLetterDrainWorkerTests | `tests/Whizbang.Core.Tests/Workers/TransportDeadLetterDrainWorkerTests.cs` | 13 | Component | StartAsync, CrossThreadSignal |  | phase 2 waits for #1259 |
-| TransportPublishStrategyThrottleRetryTests | `tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyThrottleRetryTests.cs` | 14 | Other | Stopwatch |  | phase 2 waits for #1259 |
 | UngatedWorkerAdoptionTests | `tests/Whizbang.Core.Tests/Workers/UngatedWorkerAdoptionTests.cs` | 5 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | WhizbangShutdownServiceCoverageTests | `tests/Whizbang.Core.Tests/Workers/WhizbangShutdownServiceCoverageTests.cs` | 1 | Component | StartAsync |  | phase 2 waits for #1259 |
 | WorkCompletionMeterTests | `tests/Whizbang.Core.Tests/Workers/WorkCompletionMeterTests.cs` | 5 | Component | TaskRun |  | phase 2 waits for #1259 |
