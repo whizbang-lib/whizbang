@@ -49,7 +49,9 @@ public partial class HeartbeatWorker(
   IInstanceAliveLockSource aliveLockSource,
   ISignalBus signalBus,
   TimeProvider? timeProvider = null,
-  InstanceLivenessMetrics? metrics = null
+  InstanceLivenessMetrics? metrics = null,
+  // #1254: how this instance reaches the database, recorded at registration. Null registers pooled.
+  IInstanceConnectionModeSource? connectionModeSource = null
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
@@ -313,7 +315,10 @@ public partial class HeartbeatWorker(
     ProcessId: _instanceProvider.ProcessId,
     LifecyclePhase: _lifecycleState.Phase.ToString(),
     LibraryVersion: _libraryVersion.LibraryVersion,
-    StaleThresholdSeconds: HeartbeatLivenessThreshold.StaleThresholdSeconds(_options));
+    StaleThresholdSeconds: HeartbeatLivenessThreshold.StaleThresholdSeconds(_options),
+    // #1254: the registration records how this instance reaches the database, so the partition assigner judges it
+    // by its alive-lock (direct) or by this heartbeat alone (pooled).
+    ConnectionMode: connectionModeSource?.ConnectionMode ?? InstanceConnectionMode.Pooled);
 
   /// <inheritdoc />
   public override async Task StopAsync(CancellationToken cancellationToken) {

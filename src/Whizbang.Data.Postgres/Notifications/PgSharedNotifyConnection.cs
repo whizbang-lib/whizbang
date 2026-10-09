@@ -46,7 +46,8 @@ public sealed partial class PgSharedNotifyConnection(
   TimeProvider? timeProvider = null,
   INotificationDataSource? notificationDataSource = null,
   NotifyMetrics? metrics = null
-) : BackgroundService, ISharedNotifyConnection, INotifySignalingGate, Whizbang.Core.Workers.IInstanceAliveLockSource {
+) : BackgroundService, ISharedNotifyConnection, INotifySignalingGate, Whizbang.Core.Workers.IInstanceAliveLockSource,
+    Whizbang.Core.Workers.IInstanceConnectionModeSource {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -80,6 +81,7 @@ public sealed partial class PgSharedNotifyConnection(
   private int _resyncPending;
   private bool _isAvailable;
   private bool _aliveLockHeld;
+  private bool _hasDedicatedConnection;
   private DateTimeOffset? _lastVerifiedAt;
   private DateTimeOffset? _lastFailureAt;
   private string? _lastFailureReason;
@@ -96,6 +98,18 @@ public sealed partial class PgSharedNotifyConnection(
       }
     }
   }
+
+  /// <summary>
+  /// Direct once this connection has resolved a direct connection string (or a dedicated data source) rather than the
+  /// pooled fallback: the instance then registers its connection mode as direct, and the partition assigner treats its
+  /// alive-lock as authoritative (#1254). Pooled while it has not started, when signaling is off, and behind the pooled
+  /// fallback.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerWorkerPostgresTests.cs:SharedConnection_OnADirectConnection_ReportsTheDirectModeAsync</tests>
+  public Whizbang.Core.Workers.InstanceConnectionMode ConnectionMode => Volatile.Read(ref _hasDedicatedConnection)
+    ? Whizbang.Core.Workers.InstanceConnectionMode.Direct
+    : Whizbang.Core.Workers.InstanceConnectionMode.Pooled;
 
   /// <summary>
   /// Computes the <c>application_name</c> the per-pod LISTEN connection sets on its
@@ -411,6 +425,10 @@ public sealed partial class PgSharedNotifyConnection(
     // the first self-test probe to fail before realizing the misconfiguration.
     if (resolution.Source == NotificationConnectionStringResolver.ResolutionSource.PooledKeyFallback) {
       LogPooledFallbackWarning(_logger, keyForDiagnostics);
+    } else {
+      // #1254: a connection of its own, not through the pooler, so this instance's alive-lock is visible to its
+      // peers. Registered as the instance's connection mode.
+      Volatile.Write(ref _hasDedicatedConnection, true);
     }
 
     var connectionString = resolution.ConnectionString;

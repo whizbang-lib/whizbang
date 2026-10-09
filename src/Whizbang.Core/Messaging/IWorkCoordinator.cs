@@ -2801,6 +2801,15 @@ public record WorkBatch {
   public bool InstanceRegistrationStale { get; init; }
 
   /// <summary>
+  /// True when the claim was handed a partition assignment version (<see cref="ClaimWorkRequest.PartitionAssignment"/>)
+  /// that is no longer the published one, or whose lease has run out (#1254). The claim ranked itself instead, and
+  /// the caller refreshes its cached copy. False when the store does not report it.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/ClaimWorkerPartitionAssignmentTests.cs:AClaimThatReportsTheAssignmentStale_MarksTheCacheStaleAsync</tests>
+  public bool PartitionAssignmentStale { get; init; }
+
+  /// <summary>
   /// This instance's untruncated outstanding-work counts, taken in the SAME round trip and snapshot
   /// as the claim, when the request asked for them (<see cref="ClaimWorkRequest.IncludeOutstanding"/>)
   /// and the store supports it. Null means "not measured here" — the caller must fall back to
