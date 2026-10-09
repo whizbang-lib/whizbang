@@ -382,7 +382,7 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
   private static async Task<T> _scalarAsync<T>(NpgsqlConnection conn, string sql) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = sql;
-    return (T)Convert.ChangeType((await cmd.ExecuteScalarAsync())!, typeof(T), CultureInfo.InvariantCulture);
+    return (T)Convert.ChangeType(await cmd.ExecuteScalarAsync(), typeof(T), CultureInfo.InvariantCulture)!;
   }
 
   private static async Task _heartbeatAsync(NpgsqlConnection conn, Guid instance, string? mode) {

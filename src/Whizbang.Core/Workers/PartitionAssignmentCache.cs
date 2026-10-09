@@ -117,7 +117,7 @@ public sealed partial class PartitionAssignmentCache : IPartitionAssignmentSourc
     }
 
     PartitionAssignment? changed = null;
-    var raise = false;
+    bool raise;
     lock (_gate) {
       if (read is null) {
         raise = _current is not null;

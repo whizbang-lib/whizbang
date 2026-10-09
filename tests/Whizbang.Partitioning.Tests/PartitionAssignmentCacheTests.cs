@@ -140,6 +140,18 @@ public class PartitionAssignmentCacheTests {
   }
 
   [Test]
+  public async Task Refresh_WhenNothingIsPublished_ReportsTheRefreshWithNothingAsync() {
+    var (cache, _, _) = _create();
+    var refreshes = new List<PartitionAssignment?>();
+    cache.OnRefreshed += refreshes.Add;
+
+    _ = await cache.ForClaimAsync(_self, CancellationToken.None);
+
+    await Assert.That(refreshes).IsEquivalentTo(new PartitionAssignment?[] { null })
+      .Because("the refresh signal fires whatever it read, so a caller waiting on its own refresh is never left waiting");
+  }
+
+  [Test]
   public async Task Refresh_ThatIsCanceled_IsNotSwallowedAsync() {
     var (cache, store, _) = _create();
     store.FailReadsWith = new OperationCanceledException();

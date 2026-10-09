@@ -183,7 +183,7 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
         PartitionAssignerOptions.ROLE, self, epoch, members, _options.AssignmentLease, cancellationToken).ConfigureAwait(false);
       if (assignment is null) {
         LogFenced(_logger, epoch);
-        OnEvaluated?.Invoke(evaluation);
+        _raiseEvaluated(evaluation);
         return false;
       }
       Volatile.Write(ref _published, assignment);
@@ -194,9 +194,11 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
       // The alive-lock is this assigner's liveness, so its tick renews the lease; the heartbeat renews it as well.
       _ = await _store.RenewAsync(self, epoch, cancellationToken).ConfigureAwait(false);
     }
-    OnEvaluated?.Invoke(evaluation);
+    _raiseEvaluated(evaluation);
     return true;
   }
+
+  private void _raiseEvaluated(PartitionAssignerEvaluation evaluation) => OnEvaluated?.Invoke(evaluation);
 
   private void _begin(long epoch) {
     _ = Interlocked.Exchange(ref _epoch, epoch);

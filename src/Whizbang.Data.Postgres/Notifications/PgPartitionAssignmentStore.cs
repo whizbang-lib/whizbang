@@ -47,23 +47,22 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
   /// <inheritdoc />
   public async Task<PartitionAssignmentRead?> ReadAsync(CancellationToken cancellationToken) {
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
-    await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
-      cmd.CommandText = "SELECT epoch, revision, assigner_instance_id, members, published_at, lease_expires_at, lease_remaining "
-        + "FROM wh_read_partition_assignment()";
-      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-      if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-        return null;
-      }
-      var assignment = new PartitionAssignment(
-        Epoch: reader.GetInt64(0),
-        Revision: reader.GetInt64(1),
-        AssignerInstanceId: reader.GetGuid(2),
-        Members: reader.GetFieldValue<Guid[]>(3),
-        PublishedAt: reader.GetFieldValue<DateTimeOffset>(4),
-        LeaseExpiresAt: reader.GetFieldValue<DateTimeOffset>(5));
-      return new PartitionAssignmentRead(assignment, reader.GetTimeSpan(6));
+    await using var connectionScope = connection.ConfigureAwait(false);
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT epoch, revision, assigner_instance_id, members, published_at, lease_expires_at, lease_remaining "
+      + "FROM wh_read_partition_assignment()";
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      return null;
     }
+    var assignment = new PartitionAssignment(
+      Epoch: reader.GetInt64(0),
+      Revision: reader.GetInt64(1),
+      AssignerInstanceId: reader.GetGuid(2),
+      Members: reader.GetFieldValue<Guid[]>(3),
+      PublishedAt: reader.GetFieldValue<DateTimeOffset>(4),
+      LeaseExpiresAt: reader.GetFieldValue<DateTimeOffset>(5));
+    return new PartitionAssignmentRead(assignment, reader.GetTimeSpan(6));
   }
 
   /// <inheritdoc />
@@ -112,13 +111,12 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
   /// <inheritdoc />
   public async Task<bool> RenewAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) {
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
-    await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
-      cmd.CommandText = "SELECT wh_renew_partition_assignment(@instance, @epoch)";
-      cmd.Parameters.AddWithValue("instance", instanceId);
-      cmd.Parameters.AddWithValue(nameof(epoch), epoch);
-      return ScalarResult.IsTrue(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
-    }
+    await using var connectionScope = connection.ConfigureAwait(false);
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT wh_renew_partition_assignment(@instance, @epoch)";
+    cmd.Parameters.AddWithValue("instance", instanceId);
+    cmd.Parameters.AddWithValue(nameof(epoch), epoch);
+    return ScalarResult.IsTrue(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
   }
 
   private async ValueTask<NpgsqlConnection> _openAsync(CancellationToken cancellationToken) {
