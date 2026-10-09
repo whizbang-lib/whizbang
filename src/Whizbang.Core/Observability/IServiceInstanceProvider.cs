@@ -19,7 +19,7 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
-/// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.Component.Tests/DispatcherTransportBridgeTests.cs</tests>
 public interface IServiceInstanceProvider {
   /// <summary>
   /// Gets the unique instance ID for this service instance.

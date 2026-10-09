@@ -9,7 +9,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Transports.Tests.Generated;
+using Whizbang.Transports.Component.Tests.Generated;
 
 namespace Whizbang.Transports.Tests;
 
