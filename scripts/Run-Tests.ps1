@@ -31,14 +31,19 @@
     Test execution mode (default: All)
 
     Verbose modes (full output):
-    - All: ALL tests (default)
+    - All: ALL tests (default): Unit, Component and Integration projects
     - Unit: unit tests only
+    - Component: component tests only (real workers and threads, no infrastructure)
     - Integration: integration tests only
 
     AI modes (sparse output, token-efficient):
     - Ai: ALL tests
     - AiUnit: unit tests only (fast)
+    - AiComponent: component tests only
     - AiIntegrations: integration tests only
+
+    A project's <WhizbangTestType> decides which modes select it; see $WhizbangTestTypes below and
+    docs/TEST-PROJECTS.md. Benchmark and Soak projects are never run by this script.
 
 .PARAMETER ProgressInterval
     Progress update interval in seconds for AI modes (default: 60)
@@ -118,6 +123,10 @@
 .EXAMPLE
     ./Run-Tests.ps1 -Mode Integration
     Runs integration tests only with full verbose output
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode AiComponent
+    Runs component tests only with AI-optimized output
 
 .EXAMPLE
     ./Run-Tests.ps1 -Mode Ai -ProgressInterval 30
@@ -249,8 +258,8 @@ param(
     [string]$TestFilter = "",
     [switch]$VerboseOutput,
 
-    [ValidateSet("All", "Ai", "AiUnit", "AiIntegrations", "Unit", "Integration")]
-    [string]$Mode = "All",  # Test execution mode: All (verbose), Ai (sparse), AiUnit, AiIntegrations, Unit, Integration
+    [ValidateSet("All", "Ai", "AiUnit", "AiComponent", "AiIntegrations", "Unit", "Component", "Integration")]
+    [string]$Mode = "All",  # Test execution mode: All (verbose), Ai (sparse), AiUnit, AiComponent, AiIntegrations, Unit, Component, Integration
 
     [int]$ProgressInterval = 60,  # Progress update interval in seconds (Ai modes only)
     [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
@@ -297,7 +306,7 @@ param(
 
     [string]$LogFile = "",  # Tee output to file (verbose to file, sparse to console)
 
-    [ValidateSet("All", "Ai", "AiUnit", "AiIntegrations", "Unit", "Integration")]
+    [ValidateSet("All", "Ai", "AiUnit", "AiComponent", "AiIntegrations", "Unit", "Component", "Integration")]
     [string]$LogMode = "",  # Log file verbosity (defaults to -Mode if not specified)
 
     [ValidateSet("Text", "Json")]
@@ -359,11 +368,30 @@ if ($PSBoundParameters.ContainsKey('AiMode') -or $PSBoundParameters.ContainsKey(
     }
 }
 
+# Every <WhizbangTestType> a project may declare, and how this script runs it. Selection reads this
+# table and nothing else, so a type missing here is never selected by any mode and its tests silently
+# stop running. .github/scripts/Test-WhizbangTestType.ps1 fails when a project declares a type this
+# table lacks, or a mode here that -Mode and -LogMode do not accept (#1264).
+#   Modes  the -Mode values that run this type alone (verbose, then AI).
+#   InAll  whether -Mode All and -Mode Ai run it.
+#   RunBy  for a type this script never runs: what does.
+$WhizbangTestTypes = [ordered]@{
+    Unit        = @{ Modes = @('Unit', 'AiUnit'); InAll = $true }
+    Component   = @{ Modes = @('Component', 'AiComponent'); InAll = $true }
+    Integration = @{ Modes = @('Integration', 'AiIntegrations'); InAll = $true }
+    Benchmark   = @{ Modes = @(); InAll = $false; RunBy = 'BenchmarkDotNet: dotnet run -c Release in the benchmark project' }
+    Soak        = @{ Modes = @(); InAll = $false; RunBy = 'scripts/Run-Soak.ps1' }
+}
+
 # Derive settings from Mode
-$useAiOutput = $Mode -in @("Ai", "AiUnit", "AiIntegrations")
-$useVerboseLogging = $Mode -in @("Unit", "Integration")  # Verbose log-format output for human-readable modes
-$includeIntegrationTests = $Mode -in @("All", "Ai", "Integration", "AiIntegrations")
-$onlyIntegrationTests = $Mode -in @("Integration", "AiIntegrations")
+$useAiOutput = $Mode -in @("Ai", "AiUnit", "AiComponent", "AiIntegrations")
+$useVerboseLogging = $Mode -in @("Unit", "Component", "Integration")  # Verbose log-format output for human-readable modes
+$selectedTestTypes = @(foreach ($type in $WhizbangTestTypes.Keys) {
+    $entry = $WhizbangTestTypes[$type]
+    if (($Mode -in @("All", "Ai") -and $entry.InAll) -or $Mode -in $entry.Modes) { $type }
+})
+$includeIntegrationTests = $selectedTestTypes -contains "Integration"
+$onlyIntegrationTests = $includeIntegrationTests -and $selectedTestTypes.Count -eq 1
 
 # Suppress progress bars in AI mode
 if ($useAiOutput) {
@@ -905,11 +933,7 @@ try {
 
         # Build detail lines for the config box
         $details = @()
-        if ($onlyIntegrationTests) {
-            $details += "Integration Tests: Only"
-        } elseif (-not $includeIntegrationTests) {
-            $details += "Integration Tests: Excluded"
-        }
+        $details += "Test Types: $($selectedTestTypes -join ', ')"
         if ($TestFilter) { $details += "Test Filter: $TestFilter" }
         if ($NoBuild) { $details += "Skipping build (using pre-built artifacts)" }
 
@@ -1042,12 +1066,13 @@ try {
             $testProjectPaths = @($testProjectPaths | Where-Object { $_ -match $ProjectFilter })
         }
 
-        # Apply integration test filtering based on mode
-        if ($onlyIntegrationTests) {
-            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -match "Integration\.Tests|IntegrationTests|Postgres\.Tests" })
-        } elseif (-not $includeIntegrationTests) {
-            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -notmatch "Integration\.Tests|IntegrationTests|Postgres\.Tests" })
-        }
+        # Select by the declared <WhizbangTestType>, exactly as discovery does below. This used to match
+        # project NAMES ("Integration.Tests", "Postgres.Tests"), which ran every Component, Soak and
+        # Benchmark project and every untyped .csproj under tests/ as a unit test.
+        $testProjectPaths = @($testProjectPaths | Where-Object {
+            $content = Get-Content $_ -Raw -ErrorAction SilentlyContinue
+            $content -match '<WhizbangTestType>\s*(\w+)\s*</WhizbangTestType>' -and $Matches[1] -in $selectedTestTypes
+        })
 
         # Apply exclude filter if specified
         if ($ExcludeProjectFilter) {
@@ -1074,10 +1099,10 @@ try {
             exit 1
         }
 
-        # Separate unit tests (parallel) from integration tests (sequential due to shared containers)
-        $integrationPattern = "Integration\.Tests|IntegrationTests|Postgres\.Tests|Dapper\.Postgres"
-        $unitTestProjects = @($testProjectPaths | Where-Object { $_ -notmatch $integrationPattern })
-        $integrationTestProjects = @($testProjectPaths | Where-Object { $_ -match $integrationPattern })
+        # Separate integration tests (sequential due to shared containers) from the rest (parallel)
+        $isIntegrationProject = { (Get-Content $args[0] -Raw -ErrorAction SilentlyContinue) -match '<WhizbangTestType>\s*Integration\s*</WhizbangTestType>' }
+        $unitTestProjects = @($testProjectPaths | Where-Object { -not (& $isIntegrationProject $_) })
+        $integrationTestProjects = @($testProjectPaths | Where-Object { & $isIntegrationProject $_ })
 
         if (-not $useAiOutput) {
             Write-Host "Discovered $($unitTestProjects.Count) unit test projects (parallel)" -ForegroundColor Gray
@@ -1507,11 +1532,11 @@ try {
     }
 
     # Test type discovery using WhizbangTestType MSBuild property
-    # Projects set <WhizbangTestType>Unit</WhizbangTestType> or <WhizbangTestType>Integration</WhizbangTestType>
+    # Projects set <WhizbangTestType> (Unit, Component, Integration, ...); $WhizbangTestTypes maps -Mode to the types it runs
     # This replaces regex pattern matching for more explicit control
     $excludePattern = "AppHost|TestUtilities"
 
-    # Cache for project test types (project path -> Unit|Integration)
+    # Cache for project test types (project path -> its WhizbangTestType)
     $script:projectTestTypeCache = @{}
 
     # Helper function to get WhizbangTestType from a .csproj file
@@ -1587,26 +1612,16 @@ try {
         return $null
     }
 
-    # Helper function to test if a DLL is an integration test (based on WhizbangTestType property)
-    function Test-IsIntegrationTest {
+    # Helper function to test if a DLL belongs to a test type this run selects ($selectedTestTypes,
+    # derived from -Mode through $WhizbangTestTypes)
+    function Test-IsSelectedTestType {
         param([System.IO.FileInfo]$DllFile)
 
         $csprojPath = Get-CsprojForDll $DllFile
         if (-not $csprojPath) { return $false }
 
         $testType = Get-ProjectTestType $csprojPath
-        return $testType -eq "Integration"
-    }
-
-    # Helper function to test if a DLL is a unit test (based on WhizbangTestType property)
-    function Test-IsUnitTest {
-        param([System.IO.FileInfo]$DllFile)
-
-        $csprojPath = Get-CsprojForDll $DllFile
-        if (-not $csprojPath) { return $false }
-
-        $testType = Get-ProjectTestType $csprojPath
-        return $testType -eq "Unit"
+        return $testType -in $selectedTestTypes
     }
 
     # Helper function to test if a DLL has a valid test type defined
@@ -1670,14 +1685,9 @@ try {
             # never be absent is a project THIS run selects, because discovery would skip it without a
             # word and its tests would silently stop running. That is an error, naming the projects.
             if ($NoBuild) {
-                $wantedTypes = switch ($Mode) {
-                    { $_ -in @('Unit', 'AiUnit') } { @('Unit') }
-                    { $_ -in @('Integration', 'AiIntegrations') } { @('Integration') }
-                    default { @('Unit', 'Integration') }
-                }
                 $selected = @($unbuilt | Where-Object {
                     $name = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
-                    (Get-ProjectTestType $_.FullName) -in $wantedTypes -and
+                    (Get-ProjectTestType $_.FullName) -in $selectedTestTypes -and
                     (-not $Tag -or (@(Get-ProjectTags $_.FullName) -contains $Tag)) -and
                     (-not $ProjectFilter -or $name -match $ProjectFilter) -and
                     (-not $ExcludeProjectFilter -or $name -notmatch $ExcludeProjectFilter)
@@ -1736,13 +1746,7 @@ try {
         }
 
         # Apply test type filtering based on mode
-        if ($onlyIntegrationTests) {
-            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { Test-IsIntegrationTest $_ })
-        } elseif (-not $includeIntegrationTests) {
-            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { Test-IsUnitTest $_ })
-        } else {
-            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { (Test-IsUnitTest $_) -or (Test-IsIntegrationTest $_) })
-        }
+        $tagFilteredDlls = @($tagFilteredDlls | Where-Object { Test-IsSelectedTestType $_ })
 
         if ($tagFilteredDlls.Count -gt 0) {
             $dllPaths = $tagFilteredDlls | ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) }
@@ -1781,76 +1785,29 @@ try {
             Write-Warning "No test DLLs found matching '$ProjectFilter'. Check the project name."
             exit 1
         }
-    } elseif ($onlyIntegrationTests) {
-        # Run ONLY integration tests (WhizbangTestType=Integration)
-        Ensure-BuildExists
-        # Filter by WhizbangTestType property in .csproj files
-        $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
-            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
-            Where-Object { Test-IsPrimaryTestDll $_ } |
-            Where-Object { Test-IsIntegrationTest $_ } |
-            ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
-
-        if ($integrationDlls.Count -gt 0) {
-            $testArgs += "--test-modules"
-            $testArgs += ($integrationDlls -join ";")
-
-            if (-not $useAiOutput) {
-                Write-Host "Discovered $($integrationDlls.Count) integration test projects (WhizbangTestType=Integration)" -ForegroundColor Gray
-            }
-        } else {
-            Write-Error ("No integration test projects selected. Discovery reads <WhizbangTestType> " +
-                "from the .csproj behind each BUILT DLL, so a project with no output in " +
-                "bin/$Configuration/net10.0 is invisible even when the property is correct. " +
-                "Check for build failures first, then the property.")
-            exit 1
-        }
-    } elseif (-not $includeIntegrationTests) {
-        # Run only unit tests (WhizbangTestType=Unit)
-        Ensure-BuildExists
-        # Filter by WhizbangTestType property - only include Unit tests
-        $unitTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
-            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
-            Where-Object { Test-IsPrimaryTestDll $_ } |
-            Where-Object { Test-IsUnitTest $_ } |
-            ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
-
-        if ($unitTestDlls.Count -gt 0) {
-            $testArgs += "--test-modules"
-            $testArgs += ($unitTestDlls -join ";")
-
-            if (-not $useAiOutput) {
-                Write-Host "Discovered $($unitTestDlls.Count) unit test projects (WhizbangTestType=Unit)" -ForegroundColor Gray
-            }
-        } else {
-            Write-Error ("No unit test projects selected. Discovery reads <WhizbangTestType> from the " +
-                ".csproj behind each BUILT DLL, so a project with no output in " +
-                "bin/$Configuration/net10.0 is invisible even when the property is correct. " +
-                "Check for build failures first, then the property.")
-            exit 1
-        }
     } else {
-        # Include ALL test projects (Unit + Integration, excludes Benchmark)
+        # Run every project whose WhizbangTestType this mode selects ($selectedTestTypes)
         Ensure-BuildExists
-        # Filter to projects with WhizbangTestType of Unit or Integration (not Benchmark)
-        $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
+        $selectedDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
-            Where-Object { (Test-IsUnitTest $_) -or (Test-IsIntegrationTest $_) } |
+            Where-Object { Test-IsSelectedTestType $_ } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
-        if ($allTestDlls.Count -gt 0) {
+        $typeList = $selectedTestTypes -join ', '
+        if ($selectedDlls.Count -gt 0) {
             $testArgs += "--test-modules"
-            $testArgs += ($allTestDlls -join ";")
+            $testArgs += ($selectedDlls -join ";")
 
             if (-not $useAiOutput) {
-                Write-Host "Discovered $($allTestDlls.Count) test projects (Unit + Integration)" -ForegroundColor Gray
+                Write-Host "Discovered $($selectedDlls.Count) test projects (WhizbangTestType: $typeList)" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No test projects found. Check that projects have <WhizbangTestType>Unit|Integration</WhizbangTestType>."
+            Write-Error ("No test projects selected (WhizbangTestType: $typeList). Discovery reads " +
+                "<WhizbangTestType> from the .csproj behind each BUILT DLL, so a project with no output in " +
+                "bin/$Configuration/net10.0 is invisible even when the property is correct. " +
+                "Check for build failures first, then the property.")
             exit 1
         }
     }

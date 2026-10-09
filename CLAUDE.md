@@ -102,6 +102,7 @@ dotnet clean && dotnet build
 dotnet test --max-parallel-test-modules 8
 pwsh scripts/Run-Tests.ps1                    # Default: Ai mode, ALL tests (8000+)
 pwsh scripts/Run-Tests.ps1 -Mode AiUnit       # Unit tests only (fast, ~5800 tests)
+pwsh scripts/Run-Tests.ps1 -Mode AiComponent    # Component tests only (real workers, no infrastructure)
 pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations  # Integration tests only
 pwsh scripts/Run-Tests.ps1 -Mode Unit         # Unit tests with verbose output
 pwsh scripts/Run-Tests.ps1 -ProjectFilter "EFCore.Postgres"
@@ -436,7 +437,7 @@ public interface IDispatcher {
 
 **Optional `<tests>` tags** for complex cases:
 ```csharp
-/// <tests>Whizbang.Core.Tests/DispatcherTests.cs:Dispatch_SendsMessageToCorrectReceptorAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/DispatcherTests.cs:Dispatch_SendsMessageToCorrectReceptorAsync</tests>
 public void Dispatch<TMessage>(TMessage message) where TMessage : IMessage {
   // ...
 }

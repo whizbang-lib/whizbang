@@ -21,7 +21,7 @@
                     Build, verify-rebuild and reupload-reports must all be green; build is not required
                     when the change detector found no code (a docs-only merge builds nothing).
       docs-only     a push or PR whose change detector found only inert paths.
-      tested here   anything else: build, all six suites and Quality must be green. A skip fails.
+      tested here   anything else: build, every suite and Quality must be green. A skip fails.
 
     On every path, any failed or canceled job fails the gate. A push to a release branch must also have
     built and packed, whatever path it took (#1208): that run is the one the stable publish promotes
@@ -65,7 +65,7 @@ $ErrorActionPreference = 'Stop'
 
 # The suites whose results the gate stands for. A job renamed here without the workflow (or the other way
 # round) reads as "missing", which fails every path that requires it: loud, not silent.
-$script:Suites = @('unit-tests', 'postgres-integration', 'inmemory-integration', 'rabbitmq-integration',
+$script:Suites = @('unit-tests', 'component-tests', 'postgres-integration', 'inmemory-integration', 'rabbitmq-integration',
     'servicebus-integration', 'azureblob-integration', 'general-integration')
 
 # The gate job's name in the run a release PR yields to. Same workflow, so the same name.
