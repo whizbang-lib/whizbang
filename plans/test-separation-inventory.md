@@ -182,7 +182,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | ECommerce.OrderService.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.PaymentWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.ShippingWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
-| Whizbang.CLI.Tests | 4 | 0 | 0 | 4 | 8 | 1 |
+| Whizbang.CLI.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
 | Whizbang.Core.Tests | 1149 | 344 | 0 | 6 | 1499 | 7 |
 | Whizbang.Data.Schema.Tests | 30 | 0 | 0 | 0 | 30 | 0 |
 | Whizbang.Data.Tests | 11 | 0 | 0 | 0 | 11 | 0 |
@@ -209,7 +209,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 399 | 1 | 40 | 2209 | 12 |
+| **Total** | 1770 | 399 | 1 | 36 | 2206 | 11 |
 
 ## Worklist: non-unit types by project
 
@@ -258,15 +258,7 @@ All 1 types are unit-pure.
 
 ### Whizbang.CLI.Tests
 
-5 of 10 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| AuditCommandTests | `tests/Whizbang.CLI.Tests/Audit/AuditCommandTests.cs` | 22 | Other | RealClock | AuditWorkspace (Other) |  |
-| AuditReportTests | `tests/Whizbang.CLI.Tests/Audit/AuditReportTests.cs` | 12 | Other | FileSystem |  |  |
-| AuditWorkspace | `tests/Whizbang.CLI.Tests/Audit/AuditWorkspace.cs` | 0 | Other | FileSystem |  |  |
-| OsvClientTests | `tests/Whizbang.CLI.Tests/Audit/OsvClientTests.cs` | 17 | Other | RealClock |  |  |
-| ProjectAssetsReaderTests | `tests/Whizbang.CLI.Tests/Audit/ProjectAssetsReaderTests.cs` | 17 | Other | FileSystem | AuditWorkspace (Other) |  |
+All 6 types are unit-pure.
 
 ### Whizbang.Core.Tests
 
