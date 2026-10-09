@@ -325,7 +325,7 @@ public class ClaimLedgerLockOrderSqlTests : EFCoreTestBase {
       await using var complete = _sessions[1].CreateCommand();
       complete.CommandText = "SELECT count(*) FROM process_inbox_completions(@c::jsonb, NOW())";
       complete.Parameters.AddWithValue("c", JsonSerializer.Serialize(
-        ids.Select(id => new Dictionary<string, object> { ["MessageId"] = id, ["Status"] = 2 }).ToList()));
+        ids.ConvertAll(id => new Dictionary<string, object> { ["MessageId"] = id, ["Status"] = 2 })));
       await complete.ExecuteScalarAsync();
     }
 
