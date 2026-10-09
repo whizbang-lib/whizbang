@@ -42,7 +42,7 @@ internal static class ManagedSchemaCatalog {
   /// <summary>Every object a reconcile may own on the schema's perspective tables.</summary>
   public static async Task<List<LiveSchemaObject>> ReadLiveAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
     await using var command = new NpgsqlCommand(LIVE_OBJECTS_SQL, connection);
-    command.Parameters.AddWithValue("schema", schema);
+    command.Parameters.AddWithValue(nameof(schema), schema);
     var objects = new List<LiveSchemaObject>();
     await using var reader = await command.ExecuteReaderAsync(cancellationToken);
     while (await reader.ReadAsync(cancellationToken)) {
@@ -144,30 +144,12 @@ internal static class ManagedSchemaCatalog {
     };
   }
 
-  /// <summary>The ledger's spelling of a kind.</summary>
-  public static string FormatKind(ManagedObjectKind kind) => kind switch {
-    ManagedObjectKind.Index => "index",
-    ManagedObjectKind.Constraint => "constraint",
-    ManagedObjectKind.Trigger => "trigger",
-    ManagedObjectKind.Function => "function",
-    ManagedObjectKind.Statistics => "statistics",
-    ManagedObjectKind.View => "view",
-    ManagedObjectKind.Column => "column",
-    ManagedObjectKind.Table => "table",
-    _ => "policy",
-  };
+  /// <summary>The ledger's spelling of a kind: its name in lower case.</summary>
+  public static string FormatKind(ManagedObjectKind kind) => kind.ToString().ToLowerInvariant();
 
-  /// <summary>Reads a kind back from the ledger or the catalog query.</summary>
-  public static ManagedObjectKind ParseKind(string kind) => kind switch {
-    "index" => ManagedObjectKind.Index,
-    "constraint" => ManagedObjectKind.Constraint,
-    "trigger" => ManagedObjectKind.Trigger,
-    "function" => ManagedObjectKind.Function,
-    "statistics" => ManagedObjectKind.Statistics,
-    "view" => ManagedObjectKind.View,
-    "column" => ManagedObjectKind.Column,
-    "table" => ManagedObjectKind.Table,
-    "policy" => ManagedObjectKind.Policy,
-    _ => ManagedObjectKind.Index,
-  };
+  /// <summary>A kind read from the ledger; an unknown spelling reads as an index.</summary>
+  public static ManagedObjectKind ParseKind(string kind) =>
+    Enum.TryParse<ManagedObjectKind>(kind, ignoreCase: true, out var parsed) && Enum.IsDefined(parsed)
+      ? parsed
+      : ManagedObjectKind.Index;
 }

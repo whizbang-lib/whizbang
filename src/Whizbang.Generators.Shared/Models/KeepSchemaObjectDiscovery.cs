@@ -24,7 +24,7 @@ public static class KeepSchemaObjectDiscovery {
   /// <summary>The objects <paramref name="model"/> pins, in declaration order; empty when it pins none.</summary>
   public static ImmutableArray<KeptSchemaObjectInfo> From(INamedTypeSymbol? model) {
     if (model is null) {
-      return ImmutableArray<KeptSchemaObjectInfo>.Empty;
+      return [];
     }
     return [.. model.GetAttributes()
       .Where(a => TypeNameUtilities.IsNamed(a.AttributeClass, ATTRIBUTE)

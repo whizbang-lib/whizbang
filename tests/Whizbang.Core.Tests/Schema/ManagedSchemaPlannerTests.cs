@@ -30,7 +30,7 @@ public class ManagedSchemaPlannerTests {
   private static LiveSchemaObject _index(string name, string? comment = null) =>
     new(TABLE, name, ManagedObjectKind.Index, $"CREATE INDEX {name} ON public.{TABLE} USING btree (x)", comment);
 
-  private static LedgerRow _row(string name, string owner = ManagedOwners.WHIZBANG, string status = ManagedStatuses.ACTIVE,
+  private static LedgerRow _row(string name, string? owner = ManagedOwners.WHIZBANG, string status = ManagedStatuses.ACTIVE,
       bool dbPinned = false, string? dbPinSource = null, ManagedObjectKind kind = ManagedObjectKind.Index,
       bool codePinned = false, string? codePinSource = null) =>
     new(TABLE, name, kind, owner, status, codePinned, codePinSource, CodePinReason: null,
@@ -78,6 +78,54 @@ public class ManagedSchemaPlannerTests {
       .Because("the move that armed it drops it when it settles; the reconcile never races that");
     await Assert.That(_status(plan, sync.Name)).IsEqualTo($"{ManagedOwners.WHIZBANG}/{ManagedStatuses.ACTIVE}");
     await Assert.That(plan.Records.Single(r => r.Name == sync.Name).DeclaredBy).IsEqualTo("physical-field move");
+  }
+
+  [Test]
+  public async Task OnATableWithoutThePerspectivePrefix_WhizbangsNamingIsTheTablesOwnNameAsync() {
+    var live = new[] { new LiveSchemaObject("orders", "idx_orders_status", ManagedObjectKind.Index, "x", null) };
+
+    var plan = ManagedSchemaPlanner.Plan(new ManagedSchemaObjectSet(), live, ledger: [], _settings(), _now);
+
+    await Assert.That(plan.Records.Single().Owner).IsEqualTo(ManagedOwners.WHIZBANG);
+  }
+
+  [Test]
+  public async Task ATriggerWhizbangDoesNotNameOrDeclare_IsForeignAsync() {
+    var trigger = new LiveSchemaObject(TABLE, "audit_job_changes", ManagedObjectKind.Trigger, "CREATE TRIGGER ...", null);
+
+    var plan = ManagedSchemaPlanner.Plan(_declared(), [_index("idx_job_status"), trigger], ledger: [], _settings(), _now);
+
+    await Assert.That(_status(plan, trigger.Name)).IsEqualTo($"{ManagedOwners.FOREIGN}/{ManagedStatuses.ACTIVE}");
+  }
+
+  [Test]
+  public async Task AGoneObjectTheLedgerNeverClassified_IsRetiredAsForeignAsync() {
+    var ledger = new[] { _row("idx_job_status"), _row("idx_job_vanished", owner: null) };
+
+    var plan = ManagedSchemaPlanner.Plan(_declared(), [_index("idx_job_status")], ledger, _settings(), _now);
+
+    await Assert.That(_status(plan, "idx_job_vanished")).IsEqualTo($"{ManagedOwners.FOREIGN}/{ManagedStatuses.RETIRED}");
+  }
+
+  [Test]
+  public async Task ACodePinWithoutAReason_IsExplainedByWhoDeclaredItAsync() {
+    var live = new[] { _index("idx_job_status"), _index("idx_job_legacy") };
+
+    var plan = ManagedSchemaPlanner.Plan(
+      _declared(set => set.Pin(TABLE, "idx_job_legacy", reason: null, "JobModel [KeepSchemaObject]")), live, ledger: [], _settings(), _now);
+
+    await Assert.That(plan.Records.Single(r => r.Name == "idx_job_legacy").CodePinReason).IsEqualTo("JobModel [KeepSchemaObject]");
+  }
+
+  [Test]
+  public async Task APinCommentWithoutAReason_PinsWithNoReasonAsync() {
+    var live = new[] { _index("idx_job_status"), _index("idx_job_legacy", comment: "whizbang:pin") };
+
+    var plan = ManagedSchemaPlanner.Plan(_declared(), live, ledger: [], _settings(), _now);
+
+    var record = plan.Records.Single(r => r.Name == "idx_job_legacy");
+    await Assert.That(record.AddsDbPin).IsTrue();
+    await Assert.That(record.NewDbPinReason).IsNull();
   }
 
   [Test]

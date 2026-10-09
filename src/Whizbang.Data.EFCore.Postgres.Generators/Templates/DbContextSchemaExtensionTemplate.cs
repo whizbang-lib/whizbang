@@ -2196,8 +2196,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     var settings = Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.Settings(serviceProvider);
     try {
       await Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.RunAsync(
-        dbContext, "__SCHEMA__", GetManagedSchemaObjects(), settings, segmentConnectionFactory, serviceProvider,
-        logger, cancellationToken);
+        dbContext, new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(typeof(__DBCONTEXT_FQN__), "__SCHEMA__", GetManagedSchemaObjects),
+        settings, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       logger?.LogWarning(ex,
         "The managed-object reconcile for {Schema} failed; nothing was dropped that it did not report, and the "

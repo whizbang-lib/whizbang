@@ -85,4 +85,41 @@ public class DapperManagedObjectsTests {
     await using var db = new NpgsqlConnection(_connectionString);
     await Assert.That(await db.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_managed_objects")).IsEqualTo(0L);
   }
+
+  [Test]
+  public async Task AReconcileThatFails_IsLoggedAndDoesNotFailTheStartAsync() {
+    await _initializeAsync();
+    await using (var db = new NpgsqlConnection(_connectionString)) {
+      // Any write to the ledger now fails, as a permissions change or a broken ledger would.
+      await db.ExecuteAsync("ALTER TABLE wh_managed_objects ADD CONSTRAINT ck_refuse_everything CHECK (false) NOT VALID");
+    }
+    var logger = new ListLogger();
+
+    await new PostgresSchemaInitializer(_connectionString, [new KeyValuePair<string, string>("ProbePerspective", ENTRY)]) {
+      ManagedObjects = ManagedSchemaObjectSet.FromDeclarations([(TABLE, "index", $"ix_{TABLE}_status", "ProbeModel")]),
+      Logger = logger,
+    }.InitializeSchemaAsync();
+
+    await Assert.That(logger.Messages).Contains("The managed-object reconcile failed; it runs again at the next start");
+  }
+
+  [Test]
+  public async Task AReconcileThatFails_WithNoLogger_StillDoesNotFailTheStartAsync() {
+    await _initializeAsync();
+    await using (var db = new NpgsqlConnection(_connectionString)) {
+      await db.ExecuteAsync("ALTER TABLE wh_managed_objects ADD CONSTRAINT ck_refuse_everything CHECK (false) NOT VALID");
+    }
+
+    await _initializeAsync();
+
+    await Assert.That(await _indexesAsync()).Contains($"ix_{TABLE}_status");
+  }
+
+  private sealed class ListLogger : Microsoft.Extensions.Logging.ILogger {
+    public List<string> Messages { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+  }
 }

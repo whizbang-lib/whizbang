@@ -40,7 +40,7 @@ public static class ManagedObjectNames {
   }
 
   private static void _add(List<(string, string)> found, HashSet<(string, string)> seen, string kind, string name) {
-    var bare = name.Length > 1 && name[0] == '"' ? name.Substring(1, name.Length - 2) : name;
+    var bare = name.Length > 1 && name[0] == '"' ? name[1..^1] : name;
     if (seen.Add((kind, bare))) {
       found.Add((kind, bare));
     }

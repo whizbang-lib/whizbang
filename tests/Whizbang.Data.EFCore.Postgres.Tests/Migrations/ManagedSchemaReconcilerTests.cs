@@ -1,10 +1,12 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Testing.Containers;
 
@@ -22,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 public class ManagedSchemaReconcilerTests {
   private const string SCHEMA = "public";
   private const string TABLE = "wh_per_job";
-  private const long LOCK_ID = 917_252;
+  private static readonly long _lockId = SchemaInitializationLockKey.Compute(SCHEMA);
 
   private string _databaseName = null!;
   private string _connectionString = null!;
@@ -61,10 +63,20 @@ public class ManagedSchemaReconcilerTests {
   private static ManagedSchemaSettings _settings(ReconcileMode mode = ReconcileMode.Apply) => new(mode, [], [], DropAfterFleetConverged: false);
 
   private async Task<ManagedSchemaReport> _reconcileAsync(
-      ManagedSchemaObjectSet? declared = null, ManagedSchemaSettings? settings = null, Guid? instanceId = null) {
+      ManagedSchemaObjectSet? declared = null, ManagedSchemaSettings? settings = null, Guid? instanceId = null,
+      ILogger? logger = null) {
     await using var db = await _openAsync();
     return await ManagedSchemaReconciler.RunAsync(
-      db, SCHEMA, declared ?? _declared(), settings ?? _settings(), LOCK_ID, instanceId, logger: null, CancellationToken.None);
+      db, SCHEMA, declared ?? _declared(), settings ?? _settings(), instanceId, logger, CancellationToken.None);
+  }
+
+  /// <summary>Every message logged, formatted.</summary>
+  private sealed class ListLogger : ILogger {
+    public List<string> Messages { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
   }
 
   private static ManagedSchemaSettings _gated => new(ReconcileMode.Apply, [], [], DropAfterFleetConverged: true);
@@ -184,6 +196,70 @@ public class ManagedSchemaReconcilerTests {
   }
 
   [Test]
+  public async Task EveryDropKeepAndMissingObject_IsLoggedAsync() {
+    var logger = new ListLogger();
+    var declared = _declared().Index(TABLE, "idx_job_owner", "JobModel.Owner [Indexed]");
+    await _reconcileAsync(declared);
+    await using (var db = await _openAsync()) {
+      await _execAsync(db, "SELECT public.wh_pin_object('wh_per_job', 'idx_job_data_gin', 'keep it')");
+    }
+
+    await _reconcileAsync(declared, logger: logger);
+
+    await Assert.That(logger.Messages).Contains(m => m.Contains("dropped Constraint ck_wh_per_job_code_len", StringComparison.Ordinal));
+    await Assert.That(logger.Messages).Contains(m => m.Contains("kept Index idx_job_data_gin (pinned by sql: keep it)", StringComparison.Ordinal));
+    await Assert.That(logger.Messages).Contains(m => m.Contains("Index idx_job_owner is missing", StringComparison.Ordinal));
+  }
+
+  [Test]
+  public async Task ADropTheDatabaseRefuses_IsReportedAndStaysPendingAsync() {
+    var logger = new ListLogger();
+    await using (var db = await _openAsync()) {
+      // A unique constraint another table's foreign key depends on cannot be dropped without CASCADE.
+      await _execAsync(db, $"""
+        ALTER TABLE {TABLE} ADD CONSTRAINT ck_{TABLE}_code_uq UNIQUE (code);
+        CREATE TABLE job_reference (code text REFERENCES {TABLE} (code));
+        """);
+    }
+    await _reconcileAsync();
+
+    var report = await _reconcileAsync(logger: logger);
+
+    await Assert.That(report.Failed.Select(f => f.Drop.Name)).IsEquivalentTo([$"ck_{TABLE}_code_uq"]);
+    await Assert.That(logger.Messages).Contains(m => m.Contains($"could not drop Constraint ck_{TABLE}_code_uq", StringComparison.Ordinal));
+    await Assert.That(await _ledgerAsync()).Contains($"ck_{TABLE}_code_uq:whizbang:pending-retirement");
+  }
+
+  [Test]
+  public async Task WithTheReconcileOff_NothingIsReadOrWrittenAsync() {
+    var report = await _reconcileAsync(settings: _settings(ReconcileMode.Off));
+
+    await Assert.That(report.Skipped).IsTrue();
+    await Assert.That(await _ledgerAsync()).IsEmpty();
+  }
+
+  [Test]
+  public async Task WithoutTheLedgerTable_TheReconcileIsSkippedAsync() {
+    await using (var db = await _openAsync()) {
+      await _execAsync(db, "DROP TABLE wh_managed_objects");
+    }
+
+    await Assert.That((await _reconcileAsync()).Skipped).IsTrue();
+  }
+
+  [Test]
+  public async Task WithNoPerspectiveTables_NothingIsRecordedAsync() {
+    await using (var db = await _openAsync()) {
+      await _execAsync(db, $"DROP TABLE {TABLE}");
+    }
+
+    var report = await _reconcileAsync();
+
+    await Assert.That(report.Recorded).IsEqualTo(0);
+    await Assert.That(report.Missing.Select(m => m.Name)).IsEquivalentTo(["idx_job_status"]);
+  }
+
+  [Test]
   public async Task APinSetWithSql_KeepsTheObjectAsync() {
     await _reconcileAsync();
     await using (var db = await _openAsync()) {
@@ -222,7 +298,7 @@ public class ManagedSchemaReconcilerTests {
   [Test]
   public async Task WhileAnotherSessionHoldsTheSchemaLock_ItDoesNothingAsync() {
     await using var holder = await _openAsync();
-    await _execAsync(holder, $"SELECT pg_advisory_lock({LOCK_ID})");
+    await _execAsync(holder, $"SELECT pg_advisory_lock({_lockId})");
 
     var report = await _reconcileAsync();
 

@@ -63,7 +63,7 @@ internal static class ManagedSchemaFleet {
       $"SELECT d.objects FROM {instances} i LEFT JOIN {declarations} d ON d.instance_id = i.instance_id "
       + "WHERE i.last_heartbeat_at > now() - @window AND i.instance_id IS DISTINCT FROM @self", connection);
     read.Parameters.AddWithValue("window", liveWindow);
-    read.Parameters.Add(new NpgsqlParameter("self", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)self ?? DBNull.Value });
+    read.Parameters.Add(new NpgsqlParameter(nameof(self), NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)self ?? DBNull.Value });
 
     var fleet = new HashSet<string>(StringComparer.Ordinal);
     await using var reader = await read.ExecuteReaderAsync(cancellationToken);

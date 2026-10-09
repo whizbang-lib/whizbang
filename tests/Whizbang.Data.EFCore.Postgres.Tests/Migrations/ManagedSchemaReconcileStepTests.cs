@@ -131,4 +131,71 @@ public class ManagedSchemaReconcileStepTests {
 
     await Assert.That(await _existsAsync(RETIRED)).IsTrue();
   }
+
+  [Test]
+  public async Task TheStep_IsNamedForTheLog_AndNeedsItsContextTypeAsync() {
+    await Assert.That(new ManagedSchemaReconcileStep(typeof(DocumentIndexesDbContext)).Name).IsEqualTo("managed-schema-objects");
+    await Assert.That(() => new ManagedSchemaReconcileStep(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task WithoutAConnectionFactory_TheContextsOwnConnectionIsBorrowed_AndContributorsAndTheInstanceAreUsedAsync() {
+    await using var context = _context();
+    var instance = Guid.CreateVersion7();
+    // This instance, live in the registry, so its declarations are kept for the rest of the fleet to read.
+    await _execAsync($"INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id) VALUES ('{instance}', 'tests', 'localhost', 1)");
+    var services = new ServiceCollection()
+      .AddSingleton<IManagedSchemaObjectContributor>(new PinningContributor())
+      .AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(new FixedInstance(instance))
+      .BuildServiceProvider();
+    var manifest = new ManagedSchemaManifest(
+      typeof(DocumentIndexesDbContext), "public", DocumentIndexesDbContextSchemaExtensions.GetManagedSchemaObjects);
+
+    var report = await ManagedSchemaReconcile.RunAsync(
+      context, manifest, ManagedSchemaReconcile.Settings(services), connectionFactory: null, services, logger: null,
+      CancellationToken.None);
+
+    await Assert.That(report.Kept.Select(k => k.Name)).Contains(RETIRED)
+      .Because("the contributor's pin keeps it");
+    await Assert.That(await _scalarAsync($"SELECT count(*) FROM wh_managed_object_declarations WHERE instance_id = '{instance}'"))
+      .IsEqualTo("1");
+  }
+
+  [Test]
+  public async Task WithNoServices_TheReconcileStillRunsAsync() {
+    await using var context = _context();
+    var manifest = new ManagedSchemaManifest(
+      typeof(DocumentIndexesDbContext), "public", DocumentIndexesDbContextSchemaExtensions.GetManagedSchemaObjects);
+
+    var report = await ManagedSchemaReconcile.RunAsync(
+      context, manifest, ManagedSchemaReconcile.Settings(null), connectionFactory: null, services: null, logger: null,
+      CancellationToken.None);
+
+    await Assert.That(report.Dropped.Select(d => d.Name)).IsEquivalentTo([RETIRED]);
+  }
+
+  private async Task<string> _scalarAsync(string sql) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync();
+    await using var command = new NpgsqlCommand(sql, db);
+    return (await command.ExecuteScalarAsync())?.ToString() ?? "<null>";
+  }
+
+  private sealed class PinningContributor : IManagedSchemaObjectContributor {
+    public void Contribute(ManagedSchemaObjectSet objects) =>
+      objects.Pin(TABLE, RETIRED, "a contributor keeps it", "test contributor");
+  }
+
+  private sealed class FixedInstance(Guid id) : Whizbang.Core.Observability.IServiceInstanceProvider {
+    public Guid InstanceId => id;
+    public string ServiceName => "managed-objects-tests";
+    public string HostName => "localhost";
+    public int ProcessId => 1;
+    public Whizbang.Core.Observability.ServiceInstanceInfo ToInfo() => new() {
+      InstanceId = id,
+      ServiceName = ServiceName,
+      HostName = HostName,
+      ProcessId = ProcessId,
+    };
+  }
 }

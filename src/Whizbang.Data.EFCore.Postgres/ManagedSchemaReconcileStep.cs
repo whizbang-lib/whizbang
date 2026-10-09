@@ -70,7 +70,7 @@ public sealed partial class ManagedSchemaReconcileStep(
 
     var context = (DbContext)services.GetRequiredService(_dbContextType);
     await ManagedSchemaReconcile.RunAsync(
-      context, manifest.Schema, manifest.Declare(), settings,
+      context, manifest, settings,
       SchemaBoundaryConnections.Resolve(context, initConnectionString: null, services), services, _logger,
       cancellationToken).ConfigureAwait(false);
   }

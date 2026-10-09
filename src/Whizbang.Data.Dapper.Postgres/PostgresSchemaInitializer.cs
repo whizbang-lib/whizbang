@@ -98,8 +98,8 @@ public sealed class PostgresSchemaInitializer {
   /// <summary>The reconcile's settings; the defaults when not set.</summary>
   public ManagedSchemaSettings ManagedObjectSettings { get; init; } = ManagedSchemaSettings.Read(null);
 
-  /// <summary>Where the reconcile reports what it dropped and kept.</summary>
-  public ILogger? ManagedObjectLogger { get; init; }
+  /// <summary>Where the managed-object reconcile reports what it dropped and kept.</summary>
+  public ILogger? Logger { get; init; }
 
   /// <summary>
   /// Initializes the Whizbang schema by generating SQL from C# schema definitions.
@@ -155,10 +155,9 @@ public sealed class PostgresSchemaInitializer {
         await using var current = new NpgsqlCommand("SELECT current_schema()", connection);
         var schema = (string)(await current.ExecuteScalarAsync(cancellationToken))!;
         await ManagedSchemaReconciler.RunAsync(
-          connection, schema, declared, ManagedObjectSettings, SchemaInitializationLockKey.Compute(schema),
-          instanceId: null, ManagedObjectLogger, cancellationToken);
-      } catch (Exception ex) when (ex is NpgsqlException or InvalidOperationException) {
-        if (ManagedObjectLogger is { } logger) {
+          connection, schema, declared, ManagedObjectSettings, instanceId: null, Logger, cancellationToken);
+      } catch (NpgsqlException ex) {
+        if (Logger is { } logger) {
           _logReconcileFailed(logger, ex);
         }
       }

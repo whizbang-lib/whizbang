@@ -42,13 +42,13 @@ public static class ManagedSchemaReconciler {
   /// <param name="schema">The schema whose perspective tables are reconciled (bare name, e.g. <c>public</c>).</param>
   /// <param name="declared">Everything declared by Whizbang's contributors.</param>
   /// <param name="settings">The mode, kinds to keep, configured pins and the fleet gate.</param>
-  /// <param name="lockId">The schema advisory lock id.</param>
   /// <param name="instanceId">This instance, whose declarations are recorded for the fleet gate; null when unknown.</param>
   /// <param name="logger">Where to report what was done.</param>
   /// <param name="cancellationToken">Cancels the reconcile.</param>
+  /// <remarks>Takes the schema initialization lock (<see cref="SchemaInitializationLockKey"/>) with a try.</remarks>
   public static async Task<ManagedSchemaReport> RunAsync(
       NpgsqlConnection connection, string schema, ManagedSchemaObjectSet declared,
-      ManagedSchemaSettings settings, long lockId, Guid? instanceId, ILogger? logger, CancellationToken cancellationToken) {
+      ManagedSchemaSettings settings, Guid? instanceId, ILogger? logger, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentException.ThrowIfNullOrWhiteSpace(schema);
     ArgumentNullException.ThrowIfNull(declared);
@@ -57,6 +57,7 @@ public static class ManagedSchemaReconciler {
       return ManagedSchemaReport.SkippedReport;
     }
 
+    var lockId = SchemaInitializationLockKey.Compute(schema);
     if (!await _scalarAsync<bool>(connection, "SELECT pg_try_advisory_lock(@id)", cancellationToken, ("id", lockId))) {
       return ManagedSchemaReport.SkippedReport;
     }
@@ -74,41 +75,52 @@ public static class ManagedSchemaReconciler {
       var plan = ManagedSchemaPlanner.Plan(declared, live, ledger, settings.ForPass(fleet), DateTimeOffset.UtcNow);
 
       await ManagedSchemaCatalog.WriteLedgerAsync(connection, ledgerTable, plan.Records, cancellationToken);
-
-      var dropped = new List<PlannedDrop>();
-      var failed = new List<(PlannedDrop, string)>();
-      foreach (var drop in plan.Drops) {
-        try {
-          await _executeAsync(connection, ManagedSchemaCatalog.DropStatement(schema, drop), cancellationToken);
-          await _executeAsync(connection,
-            $"UPDATE {ledgerTable} SET status = '{ManagedStatuses.RETIRED}', retired_at = NOW() WHERE table_name = @t AND object_name = @n",
-            cancellationToken, ("t", drop.Table), ("n", drop.Name));
-          dropped.Add(drop);
-          if (logger?.IsEnabled(LogLevel.Information) == true) {
-            ManagedSchemaLog.Dropped(logger, schema, drop.Table, drop.Kind, drop.Name, drop.Reason);
-          }
-        } catch (PostgresException ex) {
-          failed.Add((drop, ex.MessageText));
-          if (logger?.IsEnabled(LogLevel.Warning) == true) {
-            ManagedSchemaLog.DropFailed(logger, schema, drop.Table, drop.Kind, drop.Name, ex.MessageText);
-          }
-        }
-      }
-
-      if (logger?.IsEnabled(LogLevel.Information) == true) {
-        foreach (var keep in plan.Kept) {
-          ManagedSchemaLog.Kept(logger, schema, keep.Table, keep.Kind, keep.Name, keep.Reason);
-        }
-      }
-      if (logger?.IsEnabled(LogLevel.Warning) == true) {
-        foreach (var missing in plan.Missing) {
-          ManagedSchemaLog.Missing(logger, schema, missing.Table, missing.Kind, missing.Name, missing.DeclaredBy);
-        }
-      }
-
+      var (dropped, failed) = await _dropAsync(connection, schema, ledgerTable, plan.Drops, logger, cancellationToken);
+      _logPlan(logger, schema, plan);
       return new ManagedSchemaReport(false, plan.Records.Count, dropped, plan.Kept, plan.Missing, failed);
     } finally {
       await _executeAsync(connection, "SELECT pg_advisory_unlock(@id)", CancellationToken.None, ("id", lockId));
+    }
+  }
+
+  /// <summary>
+  /// Drops each planned object on its own (a concurrent index drop cannot share a transaction) and records it as
+  /// retired once the drop succeeded; a drop the database refuses is reported and stays pending for the next run.
+  /// </summary>
+  private static async Task<(List<PlannedDrop> Dropped, List<(PlannedDrop, string)> Failed)> _dropAsync(
+      NpgsqlConnection connection, string schema, string ledgerTable, IReadOnlyList<PlannedDrop> drops, ILogger? logger,
+      CancellationToken cancellationToken) {
+    var dropped = new List<PlannedDrop>();
+    var failed = new List<(PlannedDrop, string)>();
+    foreach (var drop in drops) {
+      try {
+        await _executeAsync(connection, ManagedSchemaCatalog.DropStatement(schema, drop), cancellationToken);
+        await _executeAsync(connection,
+          $"UPDATE {ledgerTable} SET status = '{ManagedStatuses.RETIRED}', retired_at = NOW() WHERE table_name = @t AND object_name = @n",
+          cancellationToken, ("t", drop.Table), ("n", drop.Name));
+        dropped.Add(drop);
+        if (logger is not null) {
+          ManagedSchemaLog.Dropped(logger, schema, drop.Table, drop.Kind, drop.Name, drop.Reason);
+        }
+      } catch (PostgresException ex) {
+        failed.Add((drop, ex.MessageText));
+        if (logger is not null) {
+          ManagedSchemaLog.DropFailed(logger, schema, drop.Table, drop.Kind, drop.Name, ex.MessageText);
+        }
+      }
+    }
+    return (dropped, failed);
+  }
+
+  private static void _logPlan(ILogger? logger, string schema, ReconcilePlan plan) {
+    if (logger is null) {
+      return;
+    }
+    foreach (var keep in plan.Kept) {
+      ManagedSchemaLog.Kept(logger, schema, keep.Table, keep.Kind, keep.Name, keep.Reason);
+    }
+    foreach (var missing in plan.Missing) {
+      ManagedSchemaLog.Missing(logger, schema, missing.Table, missing.Kind, missing.Name, missing.DeclaredBy);
     }
   }
 

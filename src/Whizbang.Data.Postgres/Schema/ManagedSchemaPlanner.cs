@@ -38,10 +38,14 @@ public static class ManagedSchemaPlanner {
       return new ReconcilePlan([], [], [], []);
     }
 
-    var declaredByKey = declared.Objects.ToDictionary(o => (o.Table, o.Name));
-    var pinsByKey = declared.Pins.ToDictionary(p => (p.Table, p.Name));
-    var ledgerByKey = ledger.ToDictionary(r => (r.Table, r.Name));
-    var tablesWithLedger = ledger.Select(r => r.Table).ToHashSet(StringComparer.Ordinal);
+    var context = new PlanContext(
+      declared.Objects.ToDictionary(o => (o.Table, o.Name)),
+      declared.Pins.ToDictionary(p => (p.Table, p.Name)),
+      ledger.ToDictionary(r => (r.Table, r.Name)),
+      ledger.Select(r => r.Table).ToHashSet(StringComparer.Ordinal),
+      settings,
+      now);
+    var declaredByKey = context.DeclaredByKey;
     var liveKeys = live.Select(o => (o.Table, o.Name)).ToHashSet();
 
     var records = new List<LedgerWrite>();
@@ -49,37 +53,11 @@ public static class ManagedSchemaPlanner {
     var kept = new List<KeptObject>();
 
     foreach (var obj in live) {
-      var key = (obj.Table, obj.Name);
-      declaredByKey.TryGetValue(key, out var declaredObject);
-      ledgerByKey.TryGetValue(key, out var row);
-      var codePin = _codePin(obj, pinsByKey, settings.Pins);
-      var commentPin = _commentPin(obj);
-      var addsDbPin = commentPin.Pinned && row is not { DbPinned: true };
-      var dbPin = row is { DbPinned: true }
-        ? (Pinned: true, Source: row.DbPinSource, Reason: row.DbPinReason)
-        : commentPin;
-      // A physical-field move's sync triggers and functions belong to the move, which drops them when it settles.
-      // Recorded so they can be seen, and never a candidate here, so the reconcile cannot race the move.
-      var moveSync = obj.Kind is ManagedObjectKind.Trigger or ManagedObjectKind.Function
-        && obj.Name.StartsWith(MOVE_SYNC_PREFIX, StringComparison.Ordinal);
-      if (moveSync) {
-        declaredObject = new DeclaredSchemaObject(obj.Table, obj.Name, obj.Kind, MOVE_SYNC_DECLARED_BY);
-      }
-      var owner = declaredObject is not null || _isClassifiedWhizbang(row) || (row?.Owner is null && _isWhizbangShaped(obj))
-        ? ManagedOwners.WHIZBANG
-        : ManagedOwners.FOREIGN;
-      var retiring = declaredObject is null && owner == ManagedOwners.WHIZBANG;
-      var status = retiring ? ManagedStatuses.PENDING_RETIREMENT : ManagedStatuses.ACTIVE;
-      var undeclaredSince = retiring ? row?.UndeclaredSince ?? now : (DateTimeOffset?)null;
-
-      records.Add(new LedgerWrite(obj.Table, obj.Name, obj.Kind, obj.Definition, owner, status, declaredObject?.DeclaredBy,
-        codePin.Pinned, codePin.Source, codePin.Reason, addsDbPin, addsDbPin ? commentPin.Reason : null, undeclaredSince));
-
-      if (!retiring) {
+      var (record, keepReason) = _planObject(obj, context);
+      records.Add(record);
+      if (record.Status != ManagedStatuses.PENDING_RETIREMENT) {
         continue;
       }
-
-      var keepReason = _keepReason(obj, row, codePin, dbPin, tablesWithLedger, settings);
       if (keepReason is null) {
         drops.Add(new PlannedDrop(obj.Table, obj.Name, obj.Kind, "no longer declared"));
       } else {
@@ -105,12 +83,55 @@ public static class ManagedSchemaPlanner {
   private const string MOVE_SYNC_PREFIX = "wh_mv_";
   private const string MOVE_SYNC_DECLARED_BY = "physical-field move";
 
+  private sealed record PlanContext(
+    Dictionary<(string, string), DeclaredSchemaObject> DeclaredByKey,
+    Dictionary<(string, string), DeclaredPin> PinsByKey,
+    Dictionary<(string, string), LedgerRow> LedgerByKey,
+    HashSet<string> TablesWithLedger,
+    ReconcileSettings Settings,
+    DateTimeOffset Now);
+
+  /// <summary>
+  /// The ledger row one live object gets, and, for one retiring, why it is kept (null when it is dropped).
+  /// </summary>
+  private static (LedgerWrite Record, string? KeepReason) _planObject(LiveSchemaObject obj, PlanContext context) {
+    var key = (obj.Table, obj.Name);
+    context.DeclaredByKey.TryGetValue(key, out var declaredObject);
+    context.LedgerByKey.TryGetValue(key, out var row);
+    var codePin = _codePin(obj, context.PinsByKey, context.Settings.Pins);
+    var commentPin = _commentPin(obj);
+    var addsDbPin = commentPin.Pinned && row is not { DbPinned: true };
+    var dbPin = row is { DbPinned: true }
+      ? (Pinned: true, Source: row.DbPinSource, Reason: row.DbPinReason)
+      : commentPin;
+    // A physical-field move's sync triggers and functions belong to the move, which drops them when it settles.
+    // Recorded so they can be seen, and never a candidate here, so the reconcile cannot race the move.
+    if (_isMoveSync(obj)) {
+      declaredObject = new DeclaredSchemaObject(obj.Table, obj.Name, obj.Kind, MOVE_SYNC_DECLARED_BY);
+    }
+    var owner = declaredObject is not null || _isClassifiedWhizbang(row) || (row?.Owner is null && _isWhizbangShaped(obj))
+      ? ManagedOwners.WHIZBANG
+      : ManagedOwners.FOREIGN;
+    var retiring = declaredObject is null && owner == ManagedOwners.WHIZBANG;
+    var status = retiring ? ManagedStatuses.PENDING_RETIREMENT : ManagedStatuses.ACTIVE;
+    var undeclaredSince = retiring ? row?.UndeclaredSince ?? context.Now : (DateTimeOffset?)null;
+
+    var record = new LedgerWrite(obj.Table, obj.Name, obj.Kind, obj.Definition, owner, status, declaredObject?.DeclaredBy,
+      codePin.Pinned, codePin.Source, codePin.Reason, addsDbPin, addsDbPin ? commentPin.Reason : null, undeclaredSince);
+    return (record, retiring ? _keepReason(obj, row, codePin, dbPin, context.TablesWithLedger, context.Settings) : null);
+  }
+
+  private static bool _isMoveSync(LiveSchemaObject obj) =>
+    obj.Kind is ManagedObjectKind.Trigger or ManagedObjectKind.Function
+    && obj.Name.StartsWith(MOVE_SYNC_PREFIX, StringComparison.Ordinal);
+
   private static bool _isClassifiedWhizbang(LedgerRow? row) => row?.Owner == ManagedOwners.WHIZBANG;
 
   /// <summary>
   /// Whether an object carries Whizbang's naming for its table: the names the EF Core driver (<c>idx_&lt;short&gt;_</c>)
-  /// and the Dapper driver (<c>ix_&lt;table&gt;_</c>) give indexes, the length and size constraints (<c>ck_&lt;table&gt;_</c>),
-  /// and the physical-field sync triggers (<c>wh_mv_</c>). Anything else was made by someone else.
+  /// and the Dapper driver (<c>ix_&lt;table&gt;_</c>) give indexes, and the length and size constraints (<c>ck_&lt;table&gt;_</c>).
+  /// Anything else was made by someone else. (A physical-field move's sync objects are declared by the move, so they
+  /// never reach this.)
   /// </summary>
   private static bool _isWhizbangShaped(LiveSchemaObject obj) {
     var shortName = obj.Table.StartsWith(PERSPECTIVE_TABLE_PREFIX, StringComparison.Ordinal)
@@ -120,7 +141,6 @@ public static class ManagedSchemaPlanner {
       ManagedObjectKind.Index => obj.Name.StartsWith($"idx_{shortName}_", StringComparison.Ordinal)
         || obj.Name.StartsWith($"ix_{obj.Table}_", StringComparison.Ordinal),
       ManagedObjectKind.Constraint => obj.Name.StartsWith($"ck_{obj.Table}_", StringComparison.Ordinal),
-      ManagedObjectKind.Trigger or ManagedObjectKind.Function => obj.Name.StartsWith(MOVE_SYNC_PREFIX, StringComparison.Ordinal),
       _ => false,
     };
   }

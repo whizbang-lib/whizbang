@@ -532,7 +532,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         PromotedIndexes: _promotedIndexes(modelType as INamedTypeSymbol),
         CompositeIndexes: _reachableComposites(modelType as INamedTypeSymbol),
         DocumentMatching: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol),
-        KeptObjects: KeepSchemaObjectDiscovery.From(modelType as INamedTypeSymbol),
         CoalesceBody: _buildDataCoalesceStatements(modelType),
         StoredForms: storedForms,
         StoredFormProblems: storedFormProblems,
@@ -544,8 +543,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelCopy: !modelType.IsRecord && physicalFields.Any(f => f.IsSplit && f.IsInitOnly)
           ? ModelCopy.For((INamedTypeSymbol)modelType, context.SemanticModel.Compilation.Assembly)
           : null,
-        DeclaredConverters: declaredConverters
-    );
+        DeclaredConverters: declaredConverters,
+        KeptObjects: KeepSchemaObjectDiscovery.From(modelType as INamedTypeSymbol));
   }
 
   /// <summary>
@@ -644,7 +643,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         PromotedIndexes: candidate.PromotedIndexes,
         CompositeIndexes: candidate.CompositeIndexes,
         DocumentMatching: candidate.DocumentMatching,
-        KeptObjects: candidate.KeptObjects,
         CoalesceBody: candidate.CoalesceBody,
         StoredForms: candidate.StoredForms,
         StoredFormProblems: candidate.StoredFormProblems,
@@ -653,8 +651,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         TableStorage: candidate.TableStorage,
         PerspectiveClrTypeName: candidate.PerspectiveClrTypeName,
         ModelCopy: candidate.ModelCopy,
-        DeclaredConverters: candidate.DeclaredConverters
-    );
+        DeclaredConverters: candidate.DeclaredConverters,
+        KeptObjects: candidate.KeptObjects);
   }
 
 
@@ -3376,7 +3374,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
       _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
       var model = perspective.ModelTypeName.StartsWith("global::", StringComparison.Ordinal)
-        ? perspective.ModelTypeName.Substring("global::".Length)
+        ? perspective.ModelTypeName["global::".Length..]
         : perspective.ModelTypeName;
       var declaredBy = _csharpString(model);
       foreach (var (kind, name) in ManagedObjectNames.Extract(perspSql.ToString())) {
@@ -3384,7 +3382,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine($"    objects.{method}(\"{perspective.TableName}\", {_csharpString(name)}, {declaredBy});");
       }
       // [KeepSchemaObject]: the model's code pins, set again at every start and released when the attribute goes.
-      foreach (var kept in perspective.KeptObjects.IsDefault ? ImmutableArray<KeptSchemaObjectInfo>.Empty : perspective.KeptObjects) {
+      foreach (var kept in perspective.KeptObjects.AsSpan()) {
         var reason = kept.Reason is null ? "null" : _csharpString(kept.Reason);
         sb.AppendLine($"    objects.Pin(\"{perspective.TableName}\", {_csharpString(kept.Name)}, {reason}, "
           + $"{_csharpString(model + " [KeepSchemaObject]")});");
