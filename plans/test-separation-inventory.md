@@ -187,7 +187,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Data.Schema.Tests | 30 | 0 | 0 | 0 | 30 | 0 |
 | Whizbang.Data.Tests | 11 | 0 | 0 | 0 | 11 | 0 |
 | Whizbang.Documentation.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
-| Whizbang.Execution.Tests | 1 | 7 | 0 | 0 | 8 | 0 |
+| Whizbang.Execution.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.Generators.Tests | 250 | 0 | 0 | 4 | 254 | 0 |
 | Whizbang.Hosting.AspNet.Tests | 19 | 10 | 0 | 0 | 29 | 0 |
 | Whizbang.Hosting.Azure.ServiceBus.Tests | 1 | 2 | 0 | 0 | 3 | 1 |
@@ -208,8 +208,8 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.HotChocolate.Tests | 20 | 1 | 0 | 0 | 21 | 0 |
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
-| Whizbang.Transports.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
-| **Total** | 1769 | 391 | 1 | 40 | 2201 | 12 |
+| Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
+| **Total** | 1769 | 392 | 1 | 40 | 2202 | 12 |
 
 ## Worklist: non-unit types by project
 
@@ -650,17 +650,7 @@ All 17 types are unit-pure.
 
 ### Whizbang.Execution.Tests
 
-7 of 8 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| ExecutionStrategyContractTests | `tests/Whizbang.Execution.Tests/ExecutionStrategyContractTests.cs` | 10 | Component | StartAsync, TaskDelay |  |  |
-| ParallelExecutorTests | `tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs` | 13 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal |  |  |
-| PooledSourcePoolTests | `tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs` | 13 | Component | TaskRun |  |  |
-| PooledValueTaskSourceTests | `tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs` | 24 | Component | TaskRun, TimeoutWait, CrossThreadSignal |  |  |
-| SerialExecutorDrainAfterStopTests | `tests/Whizbang.Execution.Tests/SerialExecutorDrainAfterStopTests.cs` | 1 | Component | StartAsync, CrossThreadSignal |  |  |
-| SerialExecutorFaultingWorkItemTests | `tests/Whizbang.Execution.Tests/SerialExecutorFaultingWorkItemTests.cs` | 2 | Component | StartAsync, CrossThreadSignal |  |  |
-| SerialExecutorTests | `tests/Whizbang.Execution.Tests/SerialExecutorTests.cs` | 20 | Component | StartAsync, TaskDelay |  |  |
+All 1 types are unit-pure.
 
 ### Whizbang.Generators.Tests
 
@@ -851,4 +841,15 @@ All 13 types are unit-pure.
 
 ### Whizbang.Transports.Tests
 
-All 16 types are unit-pure.
+8 of 24 types are not unit-pure.
+
+| Class | File | Tests | Category | Constructs | Via | Note |
+|---|---|---:|---|---|---|---|
+| DispatcherTransportBridgePriorityTests | `tests/Whizbang.Transports.Tests/DispatcherTransportBridgePriorityTests.cs` | 3 | Component | TimeoutWait, CrossThreadSignal |  |  |
+| DispatcherTransportBridgeTests | `tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs` | 8 | Component | TimeoutWait, CrossThreadSignal |  |  |
+| ITransportTests | `tests/Whizbang.Transports.Tests/ITransportTests.cs` | 8 | Component | TimeoutWait, CrossThreadSignal |  |  |
+| InProcessTransportTests | `tests/Whizbang.Transports.Tests/InProcessTransportTests.cs` | 21 | Component | TaskDelay, TimeoutWait, CrossThreadSignal |  |  |
+| SubscribeBatchTests | `tests/Whizbang.Transports.Tests/SubscribeBatchTests.cs` | 10 | Component | TaskDelay, TimeoutWait |  |  |
+| TransportManagerPriorityTests | `tests/Whizbang.Transports.Tests/TransportManagerPriorityTests.cs` | 3 | Component | TimeoutWait, CrossThreadSignal |  |  |
+| TransportManagerPublishingTests | `tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs` | 7 | Component | TimeoutWait, CrossThreadSignal |  |  |
+| TransportManagerSubscriptionTests | `tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs` | 12 | Component | TimeoutWait |  |  |

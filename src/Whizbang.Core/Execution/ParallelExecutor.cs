@@ -11,19 +11,19 @@ namespace Whizbang.Core.Execution;
 /// Executes handlers concurrently with no ordering guarantees.
 /// Supports configurable concurrency limits via SemaphoreSlim.
 /// </summary>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:Constructor_WithValidMaxConcurrency_CreatesExecutorWithCorrectNameAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:Constructor_WithInvalidMaxConcurrency_ThrowsArgumentOutOfRangeExceptionAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_WhenNotRunning_ThrowsInvalidOperationExceptionAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:StateTransitions_IdempotentOperations_SucceedAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:StartAsync_AfterStop_ThrowsInvalidOperationExceptionAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_FastPath_SynchronousHandler_ExecutesImmediatelyAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_SlowPath_AsyncHandler_AwaitsCorrectlyAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_ExceptionInHandler_ReleasesSemaphoreAndRethrowsAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_RespectsConcurrencyLimit_OnlyMaxConcurrentExecutionsAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:DrainAsync_WaitsForAllInFlightWork_CompletesAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_ParallelExecution_RunsConcurrentlyAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_CancellationToken_CancelsSemaphoreWaitAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:Constructor_WithValidMaxConcurrency_CreatesExecutorWithCorrectNameAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:Constructor_WithInvalidMaxConcurrency_ThrowsArgumentOutOfRangeExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:ExecuteAsync_WhenNotRunning_ThrowsInvalidOperationExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:StateTransitions_IdempotentOperations_SucceedAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:StartAsync_AfterStop_ThrowsInvalidOperationExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:ExecuteAsync_FastPath_SynchronousHandler_ExecutesImmediatelyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:ExecuteAsync_SlowPath_AsyncHandler_AwaitsCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:ExecuteAsync_ExceptionInHandler_ReleasesSemaphoreAndRethrowsAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:ExecuteAsync_RespectsConcurrencyLimit_OnlyMaxConcurrentExecutionsAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:DrainAsync_WaitsForAllInFlightWork_CompletesAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:ExecuteAsync_ParallelExecution_RunsConcurrentlyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/ParallelExecutorTests.cs:ExecuteAsync_CancellationToken_CancelsSemaphoreWaitAsync</tests>
 public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
   private enum State { NotStarted, Running, Stopped }
 

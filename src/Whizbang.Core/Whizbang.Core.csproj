@@ -81,6 +81,7 @@ internal static class WhizbangVersionInfo
     <InternalsVisibleTo Include="Whizbang.Transports.RabbitMQ.Tests" />
     <InternalsVisibleTo Include="Whizbang.Policies.Tests" />
     <InternalsVisibleTo Include="Whizbang.Execution.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Execution.Component.Tests" />
     <InternalsVisibleTo Include="Whizbang.Documentation.Tests" />
     <InternalsVisibleTo Include="Whizbang.Data.Postgres.Tests" />
     <InternalsVisibleTo Include="Whizbang.Benchmarks" />
