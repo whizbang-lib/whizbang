@@ -105,7 +105,9 @@ function Get-AssignedValue([string]$Path, [string]$Name) {
       ($node.Left.VariablePath.UserPath -replace '^script:', '') -eq $Name
     }, $true)
   if (-not $assignment) { return $null }
-  return ConvertFrom-ConstantAst -Ast $assignment.Right
+  # Returned through a variable so an array reaches the caller as its items, ready for @(...).
+  $value = ConvertFrom-ConstantAst -Ast $assignment.Right
+  return $value
 }
 
 # The values a script's parameter accepts through [ValidateSet(...)].
