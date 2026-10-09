@@ -2836,9 +2836,6 @@ public class CommentReceptor : IReceptor<CommentCommand, CommentEvent> {
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
 
-    // Debug: Write generated code to see what we're actually getting
-    await System.IO.File.WriteAllTextAsync("/tmp/test-dispatcher.g.cs", dispatcher);
-
     // Verify the dispatcher contains the else branch with cascade security context establishment
     await Assert.That(dispatcher!.Contains("} else {", StringComparison.Ordinal)).IsTrue();
     await Assert.That(dispatcher.Contains("EstablishMessageContextForCascade", StringComparison.Ordinal)).IsTrue();

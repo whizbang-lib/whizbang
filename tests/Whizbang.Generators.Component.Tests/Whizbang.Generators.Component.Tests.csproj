@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Component</WhizbangTestTags>
+    <!-- Component: generator tests that read and write the real file system (temporary docs folders and code-docs maps), in one process with no external infrastructure. The unit tests stay in Whizbang.Generators.Tests (docs/TEST-PROJECTS.md). -->
+    <WhizbangTestType>Component</WhizbangTestType>
+    <!-- Enable viewing generated files -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
+    <!-- Don't capture test output so Console.WriteLine appears in terminal -->
+    <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Exclude generated files from compilation -->
+    <Compile Remove=".whizbang/cache/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Reference to the generator projects we're testing -->
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj">
+      <Aliases>global,core_generators</Aliases>
+    </ProjectReference>
+    <ProjectReference Include="../../src/Whizbang.Generators.CodeFixes/Whizbang.Generators.CodeFixes.csproj" />
+    <!-- Shared library for testing shared utility types (use extern alias to avoid conflicts with ILRepack merged types) -->
+    <ProjectReference Include="../../src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
+      <Aliases>shared</Aliases>
+    </ProjectReference>
+    <ProjectReference Include="../../src/Whizbang.Data.EFCore.Postgres.Generators/Whizbang.Data.EFCore.Postgres.Generators.csproj">
+      <Aliases>global,postgres_generators</Aliases>
+    </ProjectReference>
+    <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate.Generators/Whizbang.Transports.HotChocolate.Generators.csproj">
+      <Aliases>global,hotchocolate_generators</Aliases>
+    </ProjectReference>
+    <ProjectReference Include="../../src/Whizbang.Transports.FastEndpoints.Generators/Whizbang.Transports.FastEndpoints.Generators.csproj">
+      <Aliases>global,fastendpoints_generators</Aliases>
+    </ProjectReference>
+    <!-- Core for interfaces like ICommand, IEvent, etc. -->
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <!-- HotChocolate runtime for GraphQLLensAttribute -->
+    <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate/Whizbang.Transports.HotChocolate.csproj" />
+    <!-- FastEndpoints runtime for RestLensAttribute -->
+    <ProjectReference Include="../../src/Whizbang.Transports.FastEndpoints/Whizbang.Transports.FastEndpoints.csproj" />
+    <!-- Mutations for CommandEndpointAttribute -->
+    <ProjectReference Include="../../src/Whizbang.Transports.Mutations/Whizbang.Transports.Mutations.csproj" />
+    <!-- EFCore.Custom for WhizbangDbContextAttribute -->
+    <ProjectReference Include="../../src/Whizbang.Data.EFCore.Custom/Whizbang.Data.EFCore.Custom.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Testing framework -->
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="TUnit" />
+    <!-- Roslyn for source generator testing -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
+    <!-- EF Core for DbContext testing -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+  </ItemGroup>
+
+  <!-- The generator test helper is shared with the unit project: one source, compiled into both test
+       assemblies. -->
+  <ItemGroup>
+    <Compile Include="../Whizbang.Generators.Tests/GeneratorTestHelper.cs" Link="Shared/GeneratorTestHelper.cs" />
+  </ItemGroup>
+</Project>
