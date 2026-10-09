@@ -99,6 +99,7 @@
     <Project Path="tests/Whizbang.Observability.Tests/Whizbang.Observability.Tests.csproj" />
     <Project Path="tests/Whizbang.Observability.Component.Tests/Whizbang.Observability.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Partitioning.Tests/Whizbang.Partitioning.Tests.csproj" />
+    <Project Path="tests/Whizbang.Partitioning.Component.Tests/Whizbang.Partitioning.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Policies.Tests/Whizbang.Policies.Tests.csproj" />
     <Project Path="tests/Whizbang.Sagas.Tests/Whizbang.Sagas.Tests.csproj" />
     <Project Path="tests/Whizbang.Sagas.Component.Tests/Whizbang.Sagas.Component.Tests.csproj" />

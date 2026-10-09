@@ -2143,8 +2143,6 @@
 "Whizbang.Offloads.AzureBlob.Tests","tests/Whizbang.Offloads.AzureBlob.Tests/AzureBlobOffloadDIRegistrationTests.cs","AzureBlobOffloadDIRegistrationTests","24","Test","7","Unit","","","",""
 "Whizbang.Offloads.AzureBlob.Tests","tests/Whizbang.Offloads.AzureBlob.Tests/AzureBlobOffloadFromConfigurationTests.cs","AzureBlobOffloadFromConfigurationTests","26","Test","9","Unit","","","",""
 "Whizbang.Offloads.InMemory.Tests","tests/Whizbang.Offloads.InMemory.Tests/InMemoryMessageBodyStoreTests.cs","InMemoryMessageBodyStoreTests","20","Test","9","Unit","","","",""
-"Whizbang.Partitioning.Tests","tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs","HashPartitionRouterTests","18","Test","14","Component","TaskRun Stopwatch","TaskRun L341; Stopwatch L290","",""
-"Whizbang.Partitioning.Tests","tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs","PartitionRouterContractTests","17","Test","8","Unit","","","",""
 "Whizbang.Policies.Tests","tests/Whizbang.Policies.Tests/PolicyConfigurationExtensionsTests.cs","PolicyConfigurationExtensionsTests","17","Test","20","Unit","","","",""
 "Whizbang.Policies.Tests","tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs","PolicyConfigurationTransportTests","18","Test","38","Unit","","","",""
 "Whizbang.Policies.Tests","tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs","PolicyContextPoolTests","24","Test","5","Unit","","","",""
