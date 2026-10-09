@@ -84,6 +84,7 @@
     <Project Path="tests/Whizbang.Data.Schema.Tests/Whizbang.Data.Schema.Tests.csproj" />
     <Project Path="tests/Whizbang.Data.Tests/Whizbang.Data.Tests.csproj" />
     <Project Path="tests/Whizbang.Documentation.Tests/Whizbang.Documentation.Tests.csproj" />
+    <Project Path="tests/Whizbang.Documentation.Component.Tests/Whizbang.Documentation.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Execution.Tests/Whizbang.Execution.Tests.csproj" />
     <Project Path="tests/Whizbang.Execution.Component.Tests/Whizbang.Execution.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Generators.Tests/Whizbang.Generators.Tests.csproj" />

@@ -83,6 +83,7 @@ internal static class WhizbangVersionInfo
     <InternalsVisibleTo Include="Whizbang.Execution.Tests" />
     <InternalsVisibleTo Include="Whizbang.Execution.Component.Tests" />
     <InternalsVisibleTo Include="Whizbang.Documentation.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Documentation.Component.Tests" />
     <InternalsVisibleTo Include="Whizbang.Data.Postgres.Tests" />
     <InternalsVisibleTo Include="Whizbang.Benchmarks" />
     <!-- Allow generated code to access internals -->
