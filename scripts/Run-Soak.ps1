@@ -7,7 +7,7 @@
   Whizbang.Soak.Tests measures emergent behaviour under sustained load -- latency, growth,
   responsiveness. Those are wall-clock properties, so they are kept out of the pull-request gate
   where a busy runner would make them flap. Run-Tests.ps1 excludes the project by construction: it
-  filters on WhizbangTestType, and the soak project declares "Soak" rather than Unit/Integration.
+  selects projects by WhizbangTestType, and its $WhizbangTestTypes table gives Soak no -Mode.
 
   This script is the deliberate way in. See tests/Whizbang.Soak.Tests/README.md for what belongs
   in the suite and how to read a failure (a soak failure is the start of an investigation, not a

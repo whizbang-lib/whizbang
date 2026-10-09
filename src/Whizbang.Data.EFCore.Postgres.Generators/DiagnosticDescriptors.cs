@@ -148,7 +148,7 @@ internal static class DiagnosticDescriptors {
   /// WHIZ820: Error - Table name exceeds database provider limit.
   /// </summary>
   /// <docs>diagnostics/WHIZ820</docs>
-  /// <tests>EFCorePerspectiveConfigurationGeneratorTests.cs:Generator_WithLongTableName_EmitsWHIZ820ErrorAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:Generator_WithLongTableName_EmitsWHIZ820ErrorAsync</tests>
   public static readonly DiagnosticDescriptor TableNameExceedsLimit = new(
       id: "WHIZ820",
       title: "Table name exceeds database limit",
@@ -163,7 +163,7 @@ internal static class DiagnosticDescriptors {
   /// WHIZ821: Error - Column name exceeds database provider limit.
   /// </summary>
   /// <docs>diagnostics/WHIZ821</docs>
-  /// <tests>EFCorePerspectiveConfigurationGeneratorTests.cs:Generator_WithLongColumnName_EmitsWHIZ821ErrorAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:Generator_WithLongColumnName_EmitsWHIZ821ErrorAsync</tests>
   public static readonly DiagnosticDescriptor ColumnNameExceedsLimit = new(
       id: "WHIZ821",
       title: "Column name exceeds database limit",
@@ -178,7 +178,7 @@ internal static class DiagnosticDescriptors {
   /// WHIZ822: Error - Index name exceeds database provider limit.
   /// </summary>
   /// <docs>diagnostics/WHIZ822</docs>
-  /// <tests>EFCorePerspectiveConfigurationGeneratorTests.cs:Generator_WithLongIndexName_EmitsWHIZ822ErrorAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:Generator_WithLongIndexName_EmitsWHIZ822ErrorAsync</tests>
   public static readonly DiagnosticDescriptor IndexNameExceedsLimit = new(
       id: "WHIZ822",
       title: "Index name exceeds database limit",

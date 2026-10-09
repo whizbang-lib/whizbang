@@ -271,10 +271,23 @@ _dict.TryAdd(key, value);
 
 ## Test Project Classification
 
-Test projects are classified by the `<WhizbangTestType>` property in their `.csproj`:
+Test projects are classified by the `<WhizbangTestType>` property in their `.csproj`
+(docs/TEST-PROJECTS.md has the full rules and the readers that must know each type):
 
-- **Unit** - Fast tests with no external infrastructure
+- **Unit** - one deterministic flow: an injected fake clock, no background threads or hosted
+  workers, no real I/O. Nothing in it can race, so it cannot be timing-dependent. None of the waiting
+  patterns in this file belongs in a unit test: there is nothing to wait for.
+- **Component** - real workers and threads in one process, no external infrastructure. The test
+  fixes every interleaving through signals, and every asynchronous assertion waits on the signal for
+  the exact transition it asserts. Never a delay, a poll, a timeout used as a wait, or something that
+  merely correlates with the transition (`StopAsync` returning, a completion report). In a component
+  test, `WaitForConditionAsync` (a poll) and `WaitAsync(timeout)` used as the wait are not allowed;
+  await the transition's own signal, and keep any timeout only as a hang guard that fails the test.
 - **Integration** - Tests requiring external resources (databases, message queues, containers)
+- **Benchmark** and **Soak** - never run by `Run-Tests.ps1` (BenchmarkDotNet; `scripts/Run-Soak.ps1`)
+
+Unit projects still hold component tests today; #1264 moves them, and its purity guard
+(`.github/scripts/Get-TestPurity.ps1`) lists them per project until then.
 
 Run tests by type:
 
@@ -282,10 +295,13 @@ Run tests by type:
 # Run only unit tests (fast)
 pwsh scripts/Run-Tests.ps1 -Mode AiUnit
 
+# Run only component tests
+pwsh scripts/Run-Tests.ps1 -Mode AiComponent
+
 # Run only integration tests
 pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations
 
-# Run all tests
+# Run all tests (Unit, Component and Integration)
 pwsh scripts/Run-Tests.ps1 -Mode Ai
 ```
 

@@ -1,0 +1,118 @@
+name: Component Tests (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: 'Build artifact to download (enables -NoBuild with coverage)'
+        type: string
+        required: false
+
+# Component-type projects (#1264): real workers and threads in one process, no external
+# infrastructure. Every interleaving is fixed by the test through signals, and every asynchronous
+# assertion waits on the signal for the exact transition it asserts. Run-Tests.ps1 -Mode Component
+# selects every project declaring <WhizbangTestType>Component</WhizbangTestType>, and the build job
+# uploads exactly those projects as this suite's slice (.github/scripts/Get-TestSlice.ps1).
+
+# The repository default is read-only; stated here so no job can silently gain more.
+permissions:
+  contents: read
+
+jobs:
+  component-tests:
+    name: Run suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download Build Artifacts
+        if: inputs.artifact-name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.artifact-name }}
+
+      - name: Cache NuGet packages
+        if: inputs.artifact-name == ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.*.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore Dependencies
+        if: inputs.artifact-name == ''
+        run: dotnet restore --locked-mode
+
+      - name: Build Solution
+        if: inputs.artifact-name == ''
+        run: dotnet build --no-restore --configuration Release -maxcpucount:1
+
+      - name: Run Component Tests (pre-built)
+        if: inputs.artifact-name != ''
+        run: pwsh scripts/Run-Tests.ps1 -Mode Component -Configuration Release -NoBuild -ModuleCoverage -ReportTrx
+
+      - name: Run Component Tests (built here)
+        if: inputs.artifact-name == ''
+        run: pwsh scripts/Run-Tests.ps1 -Mode Component -ModuleCoverage -Configuration Release -ReportTrx
+
+      - name: Upload TRX Results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trx-component
+          path: |
+            tests/**/TestResults/*.trx
+            samples/**/TestResults/*.trx
+          if-no-files-found: warn
+          retention-days: 1
+
+      # An empty report (`<packages />`) is what the collector writes when it skipped every assembly,
+      # and the tests still pass, so the upload alone cannot tell it from real coverage. Warn per
+      # empty report (a project may legitimately load no library assembly) and fail when the whole
+      # leg measured nothing.
+      - name: Verify coverage was collected
+        if: success()
+        run: |
+          set -euo pipefail
+          mapfile -t REPORTS < <(find tests samples -path "*/TestResults/*.cobertura.xml" -not -path "*/TestResults/*/*" 2>/dev/null)
+          MEASURED=0
+          for r in "${REPORTS[@]}"; do
+            if grep -q "<package " "$r"; then MEASURED=$((MEASURED+1)); else echo "::warning::empty coverage report: $r"; fi
+          done
+          echo "${MEASURED} of ${#REPORTS[@]} coverage reports measured library code"
+          if [ "$MEASURED" -eq 0 ]; then
+            echo "::error::No coverage report measured any library assembly. The collector skipped them all (see the source-roots mapping note in reusable-build.yml)."
+            exit 1
+          fi
+
+      # Coverage: each test module collects its own with Microsoft.Testing.Platform's dynamic
+      # collector (Run-Tests.ps1 -ModuleCoverage), which records branches as well as lines.
+      # The statically instrumented assemblies this job used to overlay recorded lines only, so
+      # every report claimed full branch coverage with no conditions behind it. Each module
+      # writes <guid>.cobertura.xml under its own bin/Release/net10.0/TestResults, so parallel
+      # modules and shards never collide when the quality job flattens the artifacts.
+      # The direct child of TestResults is the report; the copy TRX attaches below it is not
+      # matched, so nothing is counted twice.
+      - name: Upload Coverage
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-component
+          path: |
+            tests/**/TestResults/*.cobertura.xml
+            samples/**/TestResults/*.cobertura.xml
+            tests/**/TestResults/*.coverage
+            samples/**/TestResults/*.coverage
+          # A leg that ran tests but wrote no report would otherwise upload nothing and leave the
+          # quality job to time out waiting for it; fail here, where the cause is.
+          if-no-files-found: error
+          retention-days: 1

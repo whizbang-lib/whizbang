@@ -38,6 +38,9 @@
 .PARAMETER SkipSonar
     Skip SonarCloud analysis in Prepare action.
 
+.PARAMETER SkipComponent
+    Skip component tests in Prepare action.
+
 .PARAMETER SkipIntegration
     Skip integration tests in Prepare action.
 
@@ -98,6 +101,7 @@ param(
     [switch]$SkipFormat,       # Skip format check
     [switch]$SkipBuild,        # Skip build step
     [switch]$SkipUnitTests,    # Skip unit tests + coverage
+    [switch]$SkipComponent,    # Skip component tests
     [switch]$SkipIntegration,  # Skip integration tests
     [switch]$SkipSonar,        # Skip SonarQube analysis
     [switch]$SkipCoverage,     # Skip coverage threshold check
@@ -241,7 +245,7 @@ function Invoke-Prepare {
     $script:failureTypes = @()
 
     # Total steps always includes all steps (skipped ones still show in output)
-    $script:totalSteps = 10  # Scan Folder, Sonar Container, Format, Sonar Ready, Build, Unit Tests, Integration, Coverage Report, Sonar Analysis, Coverage Threshold
+    $script:totalSteps = 11  # Scan Folder, Sonar Container, Format, Sonar Ready, Build, Unit Tests, Component, Integration, Coverage Report, Sonar Analysis, Coverage Threshold
 
     # Load per-step estimates from history (full stats: avg, stddev, p85)
     $stepHistoryFile = Join-Path $originalRepoRoot "logs" "pr-steps.jsonl"
@@ -698,7 +702,28 @@ function Invoke-Prepare {
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
-    # Step 6: Integration tests (with coverage collection)
+    # Step 6: Component tests (with coverage collection). Every type Run-Tests.ps1 -Mode All runs has a
+    # step here; .github/scripts/Test-WhizbangTestType.ps1 fails when one is missing (#1264).
+    if ($SkipComponent) {
+        $script:stepNumber++
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Component Tests... ⏭️ Skipped $(Format-StepTiming 'Component Tests')" -ForegroundColor DarkGray
+        $script:steps += @{ name = "Component Tests"; status = "skipped"; duration_s = 0 }
+    } else {
+        $componentTestLogFile = Join-Path $originalRepoRoot "logs" "pr-component-tests.log"
+        $continue = Run-Step -Name "Component Tests" -FailureType "TestFailure" -ShowOutput -Action {
+            $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
+            $testArgs = "-Mode AiComponent -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile `"$componentTestLogFile`" -LogMode All"
+            $testResult = Invoke-ProcessWithProgressAndOutput -FilePath "pwsh" -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$testScript`" $testArgs" -WorkingDir $repoRoot
+            $exitCode = $testResult.ExitCode
+            if ($exitCode -ne 0) {
+                Write-AiLine "    Full output: $componentTestLogFile" -ForegroundColor DarkYellow
+            }
+            @{ ExitCode = $exitCode; Details = $null }
+        }
+        if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
+    }
+
+    # Step 7: Integration tests (with coverage collection)
     if ($SkipIntegration) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Integration Tests... ⏭️ Skipped $(Format-StepTiming 'Integration Tests')" -ForegroundColor DarkGray
@@ -718,10 +743,10 @@ function Invoke-Prepare {
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
-    # Step 7: Coverage report (combined from unit + integration test coverage)
+    # Step 8: Coverage report (combined from unit, component and integration test coverage)
     # Matches CI pipeline: merge all cobertura XMLs, generate HTML + TextSummary + SonarQube format
     # MUST run before SonarQube Analysis so sonarscanner end can pick up the coverage data
-    if (-not $SkipCoverage -and (-not $SkipUnitTests -or -not $SkipIntegration)) {
+    if (-not $SkipCoverage -and (-not $SkipUnitTests -or -not $SkipComponent -or -not $SkipIntegration)) {
         $continue = Run-Step -Name "Coverage Report" -FailureType "BuildFailure" -Action {
             # Coverage files are in the original repo (tests run there, not in the scan folder)
             $coberturaFiles = @(Get-ChildItem -Path (Join-Path $originalRepoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
@@ -765,7 +790,7 @@ function Invoke-Prepare {
         }
     }
 
-    # Step 8: Sonar end (finish analysis started before build)
+    # Step 9: Sonar end (finish analysis started before build)
     # Runs AFTER Coverage Report so sonarscanner end picks up coverage/sonarqube/SonarQube.xml
     if ($SkipSonar) {
         $script:stepNumber++
@@ -862,7 +887,7 @@ function Invoke-Prepare {
         $script:steps += @{ name = "SonarQube Analysis"; status = "skipped"; duration_s = 0 }
     }
 
-    # Step 9: Coverage threshold
+    # Step 10: Coverage threshold
     if ($SkipCoverage) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ⏭️ Skipped $(Format-StepTiming 'Coverage Threshold')" -ForegroundColor DarkGray
@@ -978,6 +1003,7 @@ function Invoke-Create {
 $script:CheckDisplayNames = @{
     "build"                  = "Build & Format"
     "test-unit"              = "Unit Tests"
+    "test-component"         = "Component Tests"
     "test-inmemory"          = "InMemory Integration"
     "test-postgres"          = "PostgreSQL Integration"
     "test-rabbitmq"          = "RabbitMQ Integration"

@@ -23,7 +23,7 @@ public interface IPartitionRouter {
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_WithSinglePartition_ShouldAlwaysReturnZeroAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_ShouldReturnValidPartitionIndexAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_SameStreamId_ShouldReturnSamePartitionAsync</tests>
-  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_DifferentStreamIds_ShouldDistributeEvenly</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_DifferentStreamIds_ShouldDistributeEvenlyAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_WithTwoPartitions_ShouldUseBothPartitionsAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_EmptyStreamId_ShouldNotThrowAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_NullStreamId_ShouldNotThrowAsync</tests>

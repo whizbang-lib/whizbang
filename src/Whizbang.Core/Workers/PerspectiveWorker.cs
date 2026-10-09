@@ -5593,7 +5593,7 @@ public class PerspectiveWorkerOptions {
   /// rows are this instance's only while their lease lasts.
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_Predecessor_WaitDisabled_AppliesAtOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.Predecessor.cs:CollectiveSink_Predecessor_WaitDisabled_AppliesAtOnceAsync</tests>
   public int CollectivePredecessorWaitSeconds { get; set; } = 30;
 
   /// <summary>

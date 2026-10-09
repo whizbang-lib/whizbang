@@ -1,0 +1,45 @@
+# Known-broken <tests> tags that .github/scripts/Test-TestsTagLink.ps1 tolerates.
+#
+# Format: source | tag | reason
+#   source  the repository-relative file that holds the tag
+#   tag     the tag's text, trimmed, exactly as written
+#   reason  why it is broken and why it was not fixed mechanically
+#
+# Each entry here is a link nobody could repair with confidence: the test it named is gone, or more
+# than one test could have replaced it. Fix the tag and delete its entry; the guard fails on an entry
+# whose tag resolves or no longer exists, so this list only shrinks. Never add a new break here to get
+# a change through: point the tag at the test that covers the member instead.
+
+# Test methods declared nowhere; a likely successor exists but is unconfirmed.
+src/Whizbang.Core/Dispatcher.cs | tests/Whizbang.Sagas.Tests/SagaWatchdogTickDeliveryCountTests.cs:ImmediateTick_ReceivedByAnotherHostOfTheSameSaga_IsNotHandledAgainAsync | declared in no test file; the file now holds ImmediateTick_ReceivedByItsOwnService_IsHandledOnceAsync and ImmediateTick_StoredEnvelope_RecordsNoLocalHandlingOfTheReceiverAsync, and which (if either) replaces it needs the author
+src/Whizbang.Core/Generated/WhizbangDiagnostics.cs | tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldCaptureTimestampAsync | declared in no test file; the timestamp test appears to have been removed
+src/Whizbang.Core/Partitioning/HashPartitionRouter.cs | tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_UnicodeKeys_HandlesCorrectlyAsync | declared in no test file; HashAlgorithm_UnicodeKeys_HandledCorrectlyAsync in the same file is a likely successor, unconfirmed
+src/Whizbang.Core/Partitioning/IPartitionRouter.cs | tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_UnicodeKeys_HandlesCorrectlyAsync | declared in no test file; HashAlgorithm_UnicodeKeys_HandledCorrectlyAsync in the same file is a likely successor, unconfirmed
+src/Whizbang.Data.EFCore.Postgres.Generators/Templates/Snippets/EFCoreSnippets.cs | tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs:IntervalStrategy_EndToEnd_OutboxWorkReachesChannelAsync | declared in no test file; IntervalStrategy_FlushWithOutboxWork_SignalsWorkAvailableAsync in the same file is a likely successor, unconfirmed
+src/Whizbang.Data.EFCore.Postgres.Generators/Templates/Snippets/EFCoreSnippets.cs | tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs:BatchStrategy_EndToEnd_OutboxWorkReachesChannelAsync | declared in no test file; BatchStrategy_FlushWithOutboxWork_SignalsWorkAvailableAsync in the same file is a likely successor, unconfirmed
+src/Whizbang.Data.EFCore.Postgres/EFCorePostgresPerspectiveStore.cs | tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyCoverageTests.cs:UpsertWithPhysicalFieldsAsync_OnTheVersionItRead_WritesTheColumns_AndARowThatMovedIsRefusedAsync | declared in no test file; AtomicUpsert_WithPhysicalFields_OnTheVersionItRead_UpdatesTheColumns_AndAStaleVersionIsRefusedAsync in AtomicUpsertPhysicalFieldsIntegrationTests.cs is a likely successor, unconfirmed
+src/Whizbang.Data.Schema/Schemas/ServiceInstancesSchema.cs | tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync | not declared in that file (other schema test files declare it); Columns_HasAllConstantsAsync in the same file is a likely rename, unconfirmed
+src/Whizbang.Generators.Shared/Utilities/TemplateUtilities.cs | tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:ReplaceHeaderRegion_ReplacesTimestampAsync | declared in no test file; ReplaceHeaderRegion_ReplacesTimestampWithDeterministicStampAsync in the same file tests changed behavior and is a likely successor, unconfirmed
+
+# A #region name, not a member: the region holds several tests and the tag should name one or the file.
+src/Whizbang.Core/Routing/RoutingOptions.cs | tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:OwnNamespaceOf | names the OwnNamespaceOf<T> #region of the test file, which holds 6 tests; choosing one, or the whole file, needs the author
+src/Whizbang.Core/Routing/RoutingOptions.cs | tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToNamespaceOf | names the SubscribeToNamespaceOf<T> #region of the test file, which holds 7 tests; choosing one, or the whole file, needs the author
+src/Whizbang.Core/Security/ScopePropJsonConverter.cs | tests/Whizbang.Core.Tests/Security/ScopeDeltaTests.cs:ScopePropJsonConverter | names the "ScopePropJsonConverter Tests" #region of the test file, which holds 5 tests; choosing one, or the whole file, needs the author
+
+# Test files that exist nowhere, with or without the tests/ prefix.
+src/Whizbang.Core/Lenses/IScopedLensAccess.cs | Whizbang.Core.Tests/Lenses/ScopedLensAccessTests.cs | no such file anywhere under tests/, even with the tests/ prefix added; no dedicated test file found
+src/Whizbang.Core/Perspectives/ComposesQueryFromRequestAttribute.cs | tests/Whizbang.Generators.Tests/QueryExposureAnalyzerTests.cs | no such file; candidates are QueryExposureDetectionTests.cs, Analyzers/QueryExposureIndexAnalyzerTests.cs and Analyzers/QueryExposureDocumentMatchTests.cs
+src/Whizbang.Core/Perspectives/IPerspectiveReplayReader.cs | Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveReplayReaderTests.cs | no such file, even with the tests/ prefix added; tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/EFCorePerspectiveReplayReaderTests.cs is a likely successor, unconfirmed
+src/Whizbang.Core/Perspectives/Sync/ScopedEventTrackerAccessor.cs | Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerAccessorTests.cs | no such file, even with the tests/ prefix added; the accessor is exercised only from dispatcher tests, none dedicated
+src/Whizbang.Core/Tags/MessageTagRegistration.cs | Whizbang.Core.Tests/Tags/MessageTagRegistrationTests.cs | no such file, even with the tests/ prefix added; several Tags tests use the type, none is dedicated to it
+src/Whizbang.Core/Tags/MessageTagRegistry.cs | Whizbang.Core.Tests/Tags/MessageTagRegistryTests.cs | no such file, even with the tests/ prefix added; tests/Whizbang.Core.Tests/Tags/MessageTagRegistryGetAllTagsTests.cs covers part of the type, unconfirmed as the replacement
+src/Whizbang.Core/Tracing/Tracer.cs | Whizbang.Core.Tests/Tracing/TracerOptionsIntegrationTests.cs | no such file anywhere under tests/, even with the tests/ prefix added
+src/Whizbang.Data.Postgres/CoordinatorCommandTimeout.cs | tests/Whizbang.Data.Postgres.Tests/CoordinatorCommandTimeoutTests.cs | no such file; candidates are tests/Whizbang.Data.Dapper.Postgres.Tests/CoordinatorCommandTimeoutBudgetTests.cs and tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorCommandTimeoutSqlTests.cs
+src/Whizbang.Data.Postgres/LibraryVersionKey.cs | tests/Whizbang.Data.EFCore.Postgres.Tests/LibraryVersionKeyTests.cs | no such file; the type is referenced only from RoleAssignmentResilienceE2ETests.cs, which is not dedicated to it
+src/Whizbang.Data.Postgres/StoredFormIndexRebuild.cs | tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StoredFormIndexRebuildTests.cs | no such file; the type is referenced from Migrations/StoredFormMigrationTests.cs and Migrations/StoredFormMigrationSqlTests.cs
+src/Whizbang.Generators.Shared/Models/CompositeIndexInfo.cs | tests/Whizbang.Generators.Tests/CompositeIndexGenerationTests.cs | no such file; candidates are CompositeIndexDiscoveryTests.cs, CompositeIndexMethodTests.cs and CompositeIndexNamingTests.cs
+
+# The target exists after a project rename, but retargeting would keep a wrong link.
+src/Whizbang.Transports.AzureServiceBus/ServiceCollectionExtensions.cs | tests/Whizbang.Data.Postgres.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbangPostgres_InitializeSchemaFalse_DoesNotInitializeAsync | the test now lives in tests/Whizbang.Data.Dapper.Postgres.Tests/, but it tests Postgres registration while this tag sits on the Azure Service Bus extensions; the tag likely should go, which needs the author
+src/Whizbang.Transports.AzureServiceBus/ServiceCollectionExtensions.cs | tests/Whizbang.Data.Postgres.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbangPostgres_InitializeSchemaTrue_NoPerspective_InitializesInfraOnlyAsync | the test now lives in tests/Whizbang.Data.Dapper.Postgres.Tests/, but it tests Postgres registration while this tag sits on the Azure Service Bus extensions; the tag likely should go, which needs the author
+src/Whizbang.Transports.AzureServiceBus/ServiceCollectionExtensions.cs | tests/Whizbang.Data.Postgres.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbangPostgres_InitializeSchemaTrue_WithPerspective_InitializesBothAsync | the test now lives in tests/Whizbang.Data.Dapper.Postgres.Tests/, but it tests Postgres registration while this tag sits on the Azure Service Bus extensions; the tag likely should go, which needs the author

@@ -1,199 +1,158 @@
 # Test Projects Overview
 
-This document categorizes all test-related projects in the Whizbang solution.
+Every test project declares its **type** in `<WhizbangTestType>` and its suite **tags** in
+`<WhizbangTestTags>`. The type decides which runs select the project; the tags decide which
+integration suite runs it. Both are load-bearing: a project whose type or tag no tool knows builds
+fine and then never runs, with every check green. #1196 found 214 integration tests that had never run
+in CI that way, and `Whizbang.LanguageServer.Tests` ran nowhere until #1264 because it declared no type.
 
-## Running Tests
+## Test types
 
-### Local Development
+| Type | What a test in it may do | Naming | `Run-Tests.ps1` mode | CI suite |
+|------|--------------------------|--------|----------------------|----------|
+| **Unit** | One deterministic flow: an injected fake clock, no background threads or hosted workers, no real I/O. Nothing in it can race, so it cannot be timing-dependent. | `<Source>.Tests` | `Unit`, `AiUnit` | Test · Unit |
+| **Component** | Real workers and threads in one process, no external infrastructure. The test fixes every interleaving through signals, and every asynchronous assertion waits on the signal for the exact transition it asserts: never a delay, a poll, a timeout used as a wait, or something that merely correlates (`StopAsync` returning, a completion report). | `<Source>.Component.Tests` | `Component`, `AiComponent` | Test · Component |
+| **Integration** | Containers and real infrastructure. Each project carries the tag of the suite that runs it. | `<Source>.Integration.Tests` | `Integration`, `AiIntegrations` (with `-Tag`) | one per tag |
+| **Benchmark** | BenchmarkDotNet measurements. | `Whizbang.Benchmarks*` | never | none (on demand) |
+| **Soak** | Load, stress and soak measurements; wall-clock properties. | `Whizbang.Soak.Tests` | never | none (`scripts/Run-Soak.ps1`) |
 
-Use `Run-Tests.ps1` for all test execution:
+`-Mode All` and `-Mode Ai` run Unit, Component and Integration projects.
+
+Tags follow the type: `Unit` for unit projects, `Component` for component projects, and for
+integration projects the suite tag (`Postgres`, `RabbitMQ`, `AzureServiceBus`, `AzureBlob`,
+`InMemory`, or the plain `Integration` for in-process hosts) plus `Docker` when it starts containers.
+
+### Unit projects still hold non-unit tests
+
+The Unit projects predate the Component type and still hold tests that start real workers, use the
+real clock, or do real I/O. #1264 moves them, one source project per pull request:
+
+- the worklist is `plans/test-separation-inventory.md` (with `plans/test-separation-inventory.csv`):
+  every test class in every Unit project, classified with the construct that makes it non-unit;
+- the purity guard (`.github/scripts/Get-TestPurity.ps1`, run by "Test · Pipeline scripts") lists
+  those classes per project. It reports only, and is switched to failing once the moves are done.
+
+## Running tests
 
 ```bash
-# Run unit tests (excludes integration/Postgres tests)
-pwsh scripts/Run-Tests.ps1
-
-# Run with coverage collection
-pwsh scripts/Run-Tests.ps1 -Coverage
-
-# Run specific project
-pwsh scripts/Run-Tests.ps1 -ProjectFilter "Core"
-
-# Run unit tests only (fast, ~5800 tests)
-pwsh scripts/Run-Tests.ps1 -Mode AiUnit
-
-# Run only integration tests
-pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations
-
-# AI-optimized output, ALL tests (default)
-pwsh scripts/Run-Tests.ps1 -Mode Ai
-
-# Stop on first failure
-pwsh scripts/Run-Tests.ps1 -FailFast
+pwsh scripts/Run-Tests.ps1 -Mode AiUnit          # unit tests only (fast)
+pwsh scripts/Run-Tests.ps1 -Mode AiComponent     # component tests only
+pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations  # integration tests only (Docker)
+pwsh scripts/Run-Tests.ps1 -Mode Ai              # Unit, Component and Integration
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "Core" # projects whose name matches
+pwsh scripts/Run-Tests.ps1 -FailFast             # stop on the first failure
 ```
 
-### CI Workflows
+### CI suites
 
-All CI workflows use `Run-Tests.ps1` for consistency with local development. Run these locally to verify before pushing:
+Every suite runs `Run-Tests.ps1` exactly as below (with `-NoBuild` on the build job's output), so a
+local run reproduces it.
 
-```bash
-# Unit tests (reusable-test-unit.yml) - 25 unit test projects
-pwsh scripts/Run-Tests.ps1 -Mode Unit -Coverage -Configuration Release
+| Workflow | Selection | Build slice |
+|----------|-----------|-------------|
+| `reusable-test-unit.yml` | `-Mode Unit` | full build |
+| `reusable-test-component.yml` | `-Mode Component` | every Component project |
+| `reusable-test-postgres.yml` | `-Mode Integration -Tag Postgres` (sharded) | Postgres projects |
+| `reusable-test-inmemory.yml` | `-Mode Integration -Tag InMemory` | InMemory projects |
+| `reusable-test-rabbitmq.yml` | `-Mode Integration -Tag RabbitMQ` | RabbitMQ projects |
+| `reusable-test-servicebus.yml` | `-Mode Integration -Tag AzureServiceBus` (sharded) | Service Bus projects and the ECommerce samples |
+| `reusable-test-azureblob.yml` | `-Mode Integration -Tag AzureBlob` | Azure Blob projects |
+| `reusable-test-integration.yml` | `-Mode Integration -Tag Integration` | in-process integration projects |
 
-# PostgreSQL tests (reusable-test-postgres.yml) - requires Docker
-pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag Postgres
+`ai-docs/test-sharding.md` covers slices and shards.
 
-# InMemory integration (reusable-test-inmemory.yml) - requires Docker
-pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag InMemory
+## Adding a test type
 
-# RabbitMQ integration (reusable-test-rabbitmq.yml) - requires Docker
-pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag RabbitMQ
+A new type must be taught to **every** reader of `<WhizbangTestType>` in the same pull request, or its
+projects are silently skipped:
 
-# ServiceBus integration (reusable-test-servicebus.yml) - requires Docker
-pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureServiceBus
-```
+1. `scripts/Run-Tests.ps1`: an entry in `$WhizbangTestTypes` (its modes, whether `-Mode All` runs it,
+   or what runs it instead), and each new mode in the `-Mode` and `-LogMode` `ValidateSet`.
+2. `Directory.Build.targets`: `<WhizbangKnownTestTypes>`. A project declaring any other type, or a
+   test project declaring none, fails its build (WHZ0002, WHZ0003).
+3. `scripts/Test-SolutionTestProjects.ps1`: `$KnownTestTypes`.
+4. `.github/scripts/Get-TestSlice.ps1`: a suite slice of that type, or an entry in `$UnslicedTypes`
+   with the reason (plus the slice upload in `reusable-build.yml`).
+5. CI: a `reusable-test-*.yml` suite running one of its modes, a job for it in `ci.yml`, and that job
+   in `.github/scripts/Test-CiResult.ps1`'s `$script:Suites`, in the needs of `ci-result`,
+   `test-results`, `publish-test-status` and `notify-cancelled`, and in the needs and success
+   conditions of `prerelease-publish` and `release-publish`.
+6. `scripts/Run-PR.ps1`: a step running it, when `-Mode All` runs it.
+7. This document, `ai-docs/testing-tunit.md`, `ai-docs/testing-async-patterns.md` and
+   `ai-docs/test-sharding.md`.
 
-| Workflow | Tests | Timeout |
-|----------|-------|---------|
-| `reusable-test-unit.yml` | 19 unit test projects (dynamic discovery) | 30 min |
-| `reusable-test-postgres.yml` | 2 Postgres projects | 45 min |
-| `reusable-test-inmemory.yml` | 1 InMemory integration | 20 min |
-| `reusable-test-rabbitmq.yml` | 1 RabbitMQ integration | 45 min |
-| `reusable-test-servicebus.yml` | 1 ServiceBus integration | 45 min |
-| `reusable-test-integration.yml` | 4 in-process integration projects (tag `Integration`) | 20 min |
+`.github/scripts/Test-WhizbangTestType.ps1` (run by "Test · Pipeline scripts") checks items 1 to 6:
+it fails naming each type and each reader that does not know it, and each suite list that misses a
+suite. The docs site also reads test projects: its test status is published per project, so check its
+scripts handle the new project too.
 
----
+## Moving a test between projects
 
-## Project Categories
+Code and docs point at tests by path: about 6,000 `<tests>` tags in `src/`, plus ai-docs, READMEs,
+plans and the docs site. Move tests only with `scripts/Move-TestReference.ps1`, which rewrites every
+reference in the library and reports (or rewrites) the docs-site references; run it with `-WhatIf`
+first. The link guard (`.github/scripts/Test-TestsTagLink.ps1`, run by "Test · Pipeline scripts")
+fails on any `<tests>` tag naming a file that does not exist or a method the file does not declare,
+so a missed relink cannot merge. Its baseline (`.github/scripts/tests-tag-link-baseline.txt`) lists
+the tags that were already broken, each with a reason.
 
-| Category | Purpose | Coverage | CI Workflow |
-|----------|---------|----------|-------------|
-| **Unit Tests** | Fast, isolated tests with mocks | Yes | `reusable-test-unit.yml` |
-| **Integration Tests** | Full system tests with Testcontainers | Yes | Various per transport |
-| **Benchmarks** | Performance measurement with BenchmarkDotNet | No | Manual |
+## Projects
 
----
+### Unit (34)
 
-## Unit Tests (tests/ directory)
+`tests/`: `Whizbang.CLI.Tests`, `Whizbang.Core.Tests`, `Whizbang.Data.Schema.Tests`,
+`Whizbang.Data.Tests`, `Whizbang.Documentation.Tests`, `Whizbang.Execution.Tests`,
+`Whizbang.Generators.Tests`, `Whizbang.Hosting.AspNet.Tests`, `Whizbang.Hosting.Azure.ServiceBus.Tests`,
+`Whizbang.Hosting.RabbitMQ.Tests`, `Whizbang.LanguageServer.Tests`, `Whizbang.Migrate.Tests`,
+`Whizbang.Observability.Tests`, `Whizbang.Offloads.AzureBlob.Tests`, `Whizbang.Offloads.InMemory.Tests`,
+`Whizbang.Partitioning.Tests`, `Whizbang.Policies.Tests`, `Whizbang.Sagas.Tests`,
+`Whizbang.Sequencing.Tests`, `Whizbang.SignalR.Tests`, `Whizbang.Testing.Tests`,
+`Whizbang.Transports.AzureServiceBus.Tests`, `Whizbang.Transports.FastEndpoints.Tests`,
+`Whizbang.Transports.HotChocolate.Tests`, `Whizbang.Transports.Mutations.Tests`,
+`Whizbang.Transports.RabbitMQ.Tests`, `Whizbang.Transports.Tests`.
 
-Located in `tests/` directory. Fast tests that use mocks (Rocks) and don't require external dependencies.
+`samples/ECommerce/`: `ECommerce.Contracts.Tests`, `ECommerce.IntegrationTests` (in-memory checks;
+despite the name, a unit project), `ECommerce.BFF.API.Tests`, `ECommerce.InventoryWorker.Tests`,
+`ECommerce.NotificationWorker.Tests`, `ECommerce.OrderService.Tests`, `ECommerce.PaymentWorker.Tests`,
+`ECommerce.ShippingWorker.Tests`. `ECommerce.BFF.API.Tests` and `ECommerce.InventoryWorker.Tests` carry
+`Integration;Docker` tags while declaring Unit; the inventory classifies their classes.
 
-### Library Unit Tests (20 projects)
-
-| Project | Tests |
-|---------|-------|
-| `Whizbang.CLI.Tests` | `whizbang` CLI tool: the `audit` command (OSV faked over a stub HTTP handler) |
-| `Whizbang.Core.Tests` | Core dispatcher, messaging, observability |
-| `Whizbang.Data.Schema.Tests` | Schema validation |
-| `Whizbang.Data.Tests` | Data layer abstractions |
-| `Whizbang.Documentation.Tests` | Documentation validation |
-| `Whizbang.Execution.Tests` | Execution pipeline, work distribution |
-| `Whizbang.Generators.Tests` | Source generator output validation |
-| `Whizbang.Hosting.Azure.ServiceBus.Tests` | Azure Service Bus hosting |
-| `Whizbang.Hosting.RabbitMQ.Tests` | RabbitMQ hosting |
-| `Whizbang.Migrate.Tests` | Migration tooling |
-| `Whizbang.Observability.Tests` | Tracing, metrics, logging |
-| `Whizbang.Partitioning.Tests` | Partition strategies |
-| `Whizbang.Policies.Tests` | Retry, circuit breaker policies |
-| `Whizbang.Sequencing.Tests` | Message sequencing |
-| `Whizbang.SignalR.Tests` | SignalR integration |
-| `Whizbang.Transports.FastEndpoints.Tests` | FastEndpoints integration |
-| `Whizbang.Transports.HotChocolate.Tests` | GraphQL/HotChocolate integration |
-| `Whizbang.Transports.Mutations.Tests` | Mutation handling |
-| `Whizbang.Transports.RabbitMQ.Tests` | RabbitMQ transport (mocked) |
-| `Whizbang.Transports.Tests` | Transport abstractions |
-
-### PostgreSQL Integration Tests (2 projects)
-
-Use Testcontainers for real PostgreSQL. Run in `reusable-test-postgres.yml`.
-
-| Project | Tests |
-|---------|-------|
-| `Whizbang.Data.Postgres.Tests` | Dapper-based PostgreSQL operations |
-| `Whizbang.Data.EFCore.Postgres.Tests` | EF Core PostgreSQL operations |
-
----
-
-## Sample Tests (samples/ECommerce/)
-
-Located in `samples/ECommerce/`. Test the ECommerce sample application.
-
-### General Integration Tests (4 projects)
-
-In-process hosts and pipelines, no containers. Run in `reusable-test-integration.yml` ("Test · Integration (general)"), which
-selects integration projects tagged `Integration`. Until that suite existed no workflow selected the tag, and these
-never ran in CI (#1196).
+### Component (1)
 
 | Project | Purpose |
 |---------|---------|
-| `Whizbang.Core.Integration.Tests` | Core pipelines end to end |
-| `Whizbang.Migrate.Integration.Tests` | Migration tool flows |
-| `Whizbang.Transports.FastEndpoints.Integration.Tests` | FastEndpoints host |
-| `Whizbang.Transports.HotChocolate.Integration.Tests` | HotChocolate query execution |
+| `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core`; receives the component tests moved out of `Whizbang.Core.Tests` |
 
-Every integration project must carry a tag some suite selects: `.github/scripts/tests/Get-TestSlice.Tests.ps1` fails
-otherwise.
+### Integration (13)
 
-### Sample Unit Tests (8 projects)
+| Project | Tags | Suite |
+|---------|------|-------|
+| `Whizbang.Data.EFCore.Postgres.Tests` | Postgres;Docker;Data | PostgreSQL (five shards) |
+| `Whizbang.Data.Dapper.Postgres.Tests` | Postgres;Docker;Data | PostgreSQL |
+| `Whizbang.Transports.RabbitMQ.Integration.Tests` | RabbitMQ;Docker;Messaging | RabbitMQ |
+| `ECommerce.RabbitMQ.Integration.Tests` | RabbitMQ;Docker;Messaging;ECommerce | RabbitMQ |
+| `ECommerce.Lifecycle.Integration.Tests` | RabbitMQ;Docker;Lifecycle | RabbitMQ |
+| `Whizbang.Transports.AzureServiceBus.Integration.Tests` | AzureServiceBus;Docker;Messaging | Service Bus |
+| `ECommerce.AzureServiceBus.Integration.Tests` | AzureServiceBus;Docker;Messaging;ECommerce | Service Bus |
+| `ECommerce.InMemory.Integration.Tests` | Docker;ECommerce;InMemory | InMemory |
+| `Whizbang.Offloads.AzureBlob.Integration.Tests` | AzureBlob;Docker;Offloads | Azure Blob |
+| `Whizbang.Core.Integration.Tests` | Integration | Integration (general) |
+| `Whizbang.Migrate.Integration.Tests` | Integration | Integration (general) |
+| `Whizbang.Transports.FastEndpoints.Integration.Tests` | Integration | Integration (general) |
+| `Whizbang.Transports.HotChocolate.Integration.Tests` | Integration | Integration (general) |
 
-Fast tests for individual sample components.
+Every integration project must carry a tag some suite selects: `.github/scripts/tests/Get-TestSlice.Tests.ps1`
+fails otherwise.
 
-| Project | Tests |
-|---------|-------|
-| `ECommerce.BFF.API.Tests` | BFF API endpoints |
-| `ECommerce.Contracts.Tests` | Contract/message validation |
-| `ECommerce.IntegrationTests` | Order command and line-item shape (in-memory checks; despite the name, a unit project) |
-| `ECommerce.InventoryWorker.Tests` | Inventory worker logic |
-| `ECommerce.NotificationWorker.Tests` | Notification worker logic |
-| `ECommerce.OrderService.Tests` | Order service logic |
-| `ECommerce.PaymentWorker.Tests` | Payment worker logic |
-| `ECommerce.ShippingWorker.Tests` | Shipping worker logic |
+### Benchmark (2) and Soak (1)
 
-### Sample Integration Tests (3 projects)
+`benchmarks/Whizbang.Benchmarks` and `benchmarks/Whizbang.Benchmarks.Postgres` (BenchmarkDotNet:
+`dotnet run -c Release` in the project), and `tests/Whizbang.Soak.Tests` (`pwsh scripts/Run-Soak.ps1`).
+None is part of the pull request gate. `scripts/Test-SolutionTestProjects.ps1` lists the two kept
+outside `Whizbang.slnx`, with the reason.
 
-Full system tests using Testcontainers (PostgreSQL, RabbitMQ, or Azure Service Bus emulator).
+## Coverage configuration
 
-| Project | Transport | CI Workflow |
-|---------|-----------|-------------|
-| `ECommerce.InMemory.Integration.Tests` | In-memory (no transport) | `reusable-test-inmemory.yml` |
-| `ECommerce.RabbitMQ.Integration.Tests` | RabbitMQ | `reusable-test-rabbitmq.yml` |
-| `ECommerce.AzureServiceBus.Integration.Tests` | Azure Service Bus | `reusable-test-servicebus.yml` |
-
----
-
-## Benchmarks (1 project)
-
-Located in `benchmarks/`. Performance testing with BenchmarkDotNet.
-
-| Project | Purpose |
-|---------|---------|
-| `Whizbang.Benchmarks` | Dispatcher, serialization, routing performance |
-
-**Run benchmarks:**
-```bash
-cd benchmarks/Whizbang.Benchmarks
-dotnet run -c Release
-```
-
----
-
-## Coverage Configuration
-
-All test projects (32 total) have explicit `Microsoft.Testing.Extensions.CodeCoverage` for consistent coverage collection.
-
-**Coverage settings:** `codecoverage.runsettings`
-- `ExcludeAssembliesWithoutSources=None` - Ensures coverage works in CI with artifacts
-- Includes: `Whizbang.*`, `ECommerce.*` assemblies
-- Excludes: Test assemblies, Testcontainers, TUnit, Rocks, Bogus
-
----
-
-## Summary
-
-| Category | Count |
-|----------|-------|
-| Unit Tests (tests/) | 19 |
-| PostgreSQL Integration (tests/) | 2 |
-| Sample Unit Tests | 7 |
-| Sample Integration Tests | 4 |
-| **Total Test Projects** | **32** |
-| Benchmark Projects | 1 |
+Every test project references `Microsoft.Testing.Extensions.CodeCoverage`; each CI suite collects line
+and branch coverage per test module (`Run-Tests.ps1 -ModuleCoverage`) and the quality job merges every
+suite's `coverage-*` artifact. Settings: `codecoverage.config` and `codecoverage.runsettings`.
