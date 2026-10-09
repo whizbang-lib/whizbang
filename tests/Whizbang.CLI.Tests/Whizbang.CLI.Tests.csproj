@@ -22,9 +22,4 @@
     <PackageReference Include="TUnit" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- project.assets.json files from a real `dotnet restore`, trimmed of file lists and with
-         machine paths replaced. Tests copy them into a temporary project's obj/ folder. -->
-    <None Include="Audit/Fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
 </Project>

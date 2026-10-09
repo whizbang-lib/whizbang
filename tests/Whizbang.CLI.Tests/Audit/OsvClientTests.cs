@@ -23,7 +23,7 @@ public class OsvClientTests {
   private static readonly ResolvedPackage _data = new(DATA, "1.0.0");
 
   private static OsvClient _client(StubOsvHandler handler, TimeProvider? time = null) =>
-    new(handler, USER_AGENT, _timeout, time ?? TimeProvider.System);
+    new(handler, USER_AGENT, _timeout, time ?? new FakeTimeProvider());
 
   private static Func<StubOsvHandler.SentRequest, CancellationToken, Task<HttpResponseMessage>> _answers(
       Func<StubOsvHandler.SentRequest, string> json) =>

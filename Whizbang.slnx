@@ -76,6 +76,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Whizbang.CLI.Tests/Whizbang.CLI.Tests.csproj" />
+    <Project Path="tests/Whizbang.CLI.Component.Tests/Whizbang.CLI.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Core.Component.Tests/Whizbang.Core.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Core.Integration.Tests/Whizbang.Core.Integration.Tests.csproj" />
     <Project Path="tests/Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />

@@ -182,11 +182,11 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | ECommerce.OrderService.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.PaymentWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.ShippingWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
-| Whizbang.CLI.Tests | 4 | 0 | 0 | 4 | 8 | 1 |
+| Whizbang.CLI.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
 | Whizbang.Core.Tests | 1149 | 344 | 0 | 6 | 1499 | 7 |
 | Whizbang.Data.Schema.Tests | 30 | 0 | 0 | 0 | 30 | 0 |
 | Whizbang.Data.Tests | 11 | 0 | 0 | 0 | 11 | 0 |
-| Whizbang.Documentation.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
+| Whizbang.Documentation.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
 | Whizbang.Execution.Tests | 1 | 7 | 0 | 0 | 8 | 0 |
 | Whizbang.Generators.Tests | 250 | 0 | 0 | 4 | 254 | 0 |
 | Whizbang.Hosting.AspNet.Tests | 19 | 10 | 0 | 0 | 29 | 0 |
@@ -200,15 +200,16 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Partitioning.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
 | Whizbang.Policies.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
 | Whizbang.Sagas.Tests | 38 | 3 | 0 | 1 | 42 | 0 |
+| Whizbang.Sequencing.Tests | 0 | 1 | 0 | 0 | 1 | 0 |
 | Whizbang.SignalR.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
 | Whizbang.Testing.Tests | 12 | 8 | 1 | 1 | 22 | 0 |
 | Whizbang.Transports.AzureServiceBus.Tests | 56 | 10 | 0 | 0 | 66 | 0 |
 | Whizbang.Transports.FastEndpoints.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
-| Whizbang.Transports.HotChocolate.Tests | 20 | 0 | 0 | 0 | 20 | 0 |
+| Whizbang.Transports.HotChocolate.Tests | 20 | 1 | 0 | 0 | 21 | 0 |
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 398 | 1 | 40 | 2208 | 12 |
+| **Total** | 1770 | 399 | 1 | 36 | 2206 | 11 |
 
 ## Worklist: non-unit types by project
 
@@ -257,15 +258,7 @@ All 1 types are unit-pure.
 
 ### Whizbang.CLI.Tests
 
-5 of 10 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| AuditCommandTests | `tests/Whizbang.CLI.Tests/Audit/AuditCommandTests.cs` | 22 | Other | RealClock | AuditWorkspace (Other) |  |
-| AuditReportTests | `tests/Whizbang.CLI.Tests/Audit/AuditReportTests.cs` | 12 | Other | FileSystem |  |  |
-| AuditWorkspace | `tests/Whizbang.CLI.Tests/Audit/AuditWorkspace.cs` | 0 | Other | FileSystem |  |  |
-| OsvClientTests | `tests/Whizbang.CLI.Tests/Audit/OsvClientTests.cs` | 17 | Other | RealClock |  |  |
-| ProjectAssetsReaderTests | `tests/Whizbang.CLI.Tests/Audit/ProjectAssetsReaderTests.cs` | 17 | Other | FileSystem | AuditWorkspace (Other) |  |
+All 6 types are unit-pure.
 
 ### Whizbang.Core.Tests
 
@@ -641,7 +634,11 @@ All 17 types are unit-pure.
 
 ### Whizbang.Documentation.Tests
 
-All 1 types are unit-pure.
+1 of 3 types are not unit-pure.
+
+| Class | File | Tests | Category | Constructs | Via | Note |
+|---|---|---:|---|---|---|---|
+| ConfigurationKeyManifestTests | `tests/Whizbang.Documentation.Tests/ConfigurationKeyManifestTests.cs` | 1 | Component | StartAsync, FileSystem |  |  |
 
 ### Whizbang.Execution.Tests
 
@@ -774,6 +771,14 @@ All 8 types are unit-pure.
 | SagaClaimPruneStepTests | `tests/Whizbang.Sagas.Tests/Services/SagaClaimPruneStepTests.cs` | 10 | Other | RealClock |  |  |
 | SagaWatchdogTickRoutingTests | `tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs` | 8 | Component | StartAsync |  |  |
 
+### Whizbang.Sequencing.Tests
+
+1 of 1 types are not unit-pure.
+
+| Class | File | Tests | Category | Constructs | Via | Note |
+|---|---|---:|---|---|---|---|
+| InMemorySequenceProviderTests | `tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs` | 12 | Component | TaskRun, Parallel, Stopwatch |  |  |
+
 ### Whizbang.SignalR.Tests
 
 All 6 types are unit-pure.
@@ -818,7 +823,11 @@ All 21 types are unit-pure.
 
 ### Whizbang.Transports.HotChocolate.Tests
 
-All 46 types are unit-pure.
+1 of 47 types are not unit-pure.
+
+| Class | File | Tests | Category | Constructs | Via | Note |
+|---|---|---:|---|---|---|---|
+| ScopeMiddlewareExtensionsTests | `tests/Whizbang.Transports.HotChocolate.Tests/Unit/ScopeMiddlewareExtensionsTests.cs` | 14 | Component | TaskRun |  |  |
 
 ### Whizbang.Transports.Mutations.Tests
 
