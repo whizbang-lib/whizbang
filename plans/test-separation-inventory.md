@@ -193,7 +193,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Hosting.Azure.ServiceBus.Tests | 1 | 2 | 0 | 0 | 3 | 1 |
 | Whizbang.Hosting.RabbitMQ.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.LanguageServer.Tests | 18 | 0 | 0 | 0 | 18 | 0 |
-| Whizbang.Migrate.Tests | 39 | 0 | 0 | 0 | 39 | 0 |
+| Whizbang.Migrate.Tests | 39 | 0 | 0 | 23 | 62 | 0 |
 | Whizbang.Observability.Tests | 21 | 3 | 0 | 0 | 24 | 0 |
 | Whizbang.Offloads.AzureBlob.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
 | Whizbang.Offloads.InMemory.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
@@ -202,14 +202,14 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Sagas.Tests | 38 | 3 | 0 | 1 | 42 | 0 |
 | Whizbang.Sequencing.Tests | 0 | 1 | 0 | 0 | 1 | 0 |
 | Whizbang.SignalR.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
-| Whizbang.Testing.Tests | 12 | 8 | 1 | 1 | 22 | 0 |
+| Whizbang.Testing.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
 | Whizbang.Transports.AzureServiceBus.Tests | 56 | 10 | 0 | 0 | 66 | 0 |
 | Whizbang.Transports.FastEndpoints.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
 | Whizbang.Transports.HotChocolate.Tests | 20 | 1 | 0 | 0 | 21 | 0 |
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 21 | 0 | 1 | 45 | 2 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 420 | 1 | 17 | 2207 | 14 |
+| **Total** | 1769 | 412 | 0 | 39 | 2220 | 14 |
 
 ## Worklist: non-unit types by project
 
@@ -710,7 +710,33 @@ All 18 types are unit-pure.
 
 ### Whizbang.Migrate.Tests
 
-All 39 types are unit-pure.
+23 of 62 types are not unit-pure.
+
+| Class | File | Tests | Category | Constructs | Via | Note |
+|---|---|---:|---|---|---|---|
+| MartenAnalyzerTests | `tests/Whizbang.Migrate.Tests/Analysis/MartenAnalyzerTests.cs` | 12 | Other | FileSystem |  |  |
+| WolverineAnalyzerTests | `tests/Whizbang.Migrate.Tests/Analysis/WolverineAnalyzerTests.cs` | 43 | Other | FileSystem |  |  |
+| AnalyzeCommandTests | `tests/Whizbang.Migrate.Tests/Commands/AnalyzeCommandTests.cs` | 6 | Other | FileSystem |  |  |
+| ApplyCommandTests | `tests/Whizbang.Migrate.Tests/Commands/ApplyCommandTests.cs` | 12 | Other | FileSystem |  |  |
+| ProgramCoverageTests | `tests/Whizbang.Migrate.Tests/Commands/ProgramCoverageTests.cs` | 3 | Other | FileSystem |  |  |
+| RevertCommandCoverageTests | `tests/Whizbang.Migrate.Tests/Commands/RevertCommandCoverageTests.cs` | 4 | Other | FileSystem, Process |  |  |
+| RevertCommandTests | `tests/Whizbang.Migrate.Tests/Commands/RevertCommandTests.cs` | 7 | Other | FileSystem |  |  |
+| StatusCommandCoverageTests | `tests/Whizbang.Migrate.Tests/Commands/StatusCommandCoverageTests.cs` | 4 | Other | FileSystem |  |  |
+| StatusCommandTests | `tests/Whizbang.Migrate.Tests/Commands/StatusCommandTests.cs` | 5 | Other | FileSystem |  |  |
+| GitWorktreeServiceCoverageTests | `tests/Whizbang.Migrate.Tests/Git/GitWorktreeServiceCoverageTests.cs` | 2 | Other | FileSystem, Process |  |  |
+| JsonMigrationJournalCoverageTests | `tests/Whizbang.Migrate.Tests/Journal/JsonMigrationJournalCoverageTests.cs` | 1 | Other | FileSystem |  |  |
+| JsonMigrationJournalTests | `tests/Whizbang.Migrate.Tests/Journal/JsonMigrationJournalTests.cs` | 17 | Other | FileSystem |  |  |
+| PackageManagerTests | `tests/Whizbang.Migrate.Tests/PackageManagement/PackageManagerTests.cs` | 18 | Other | FileSystem |  |  |
+| ProgramCliTests | `tests/Whizbang.Migrate.Tests/ProgramCliTests.cs` | 36 | Other | FileSystem |  |  |
+| MigrationProjectManagerCoverageTests | `tests/Whizbang.Migrate.Tests/Projects/MigrationProjectManagerCoverageTests.cs` | 5 | Other | FileSystem |  |  |
+| MigrationProjectManagerTests | `tests/Whizbang.Migrate.Tests/Projects/MigrationProjectManagerTests.cs` | 10 | Other | FileSystem |  |  |
+| DecisionFileTests | `tests/Whizbang.Migrate.Tests/Wizard/DecisionFileTests.cs` | 23 | Other | FileSystem |  |  |
+| GitOperationsCoverageTests | `tests/Whizbang.Migrate.Tests/Wizard/GitOperationsCoverageTests.cs` | 2 | Other | FileSystem, Process |  |  |
+| GitOperationsTests | `tests/Whizbang.Migrate.Tests/Wizard/GitOperationsTests.cs` | 13 | Other | FileSystem |  |  |
+| MigrationStateDetectorCoverageTests | `tests/Whizbang.Migrate.Tests/Wizard/MigrationStateDetectorCoverageTests.cs` | 4 | Other | FileSystem |  |  |
+| MigrationStateDetectorTests | `tests/Whizbang.Migrate.Tests/Wizard/MigrationStateDetectorTests.cs` | 5 | Other | FileSystem |  |  |
+| WizardRunnerCoverageTests | `tests/Whizbang.Migrate.Tests/Wizard/WizardRunnerCoverageTests.cs` | 6 | Other | FileSystem |  |  |
+| WizardRunnerTests | `tests/Whizbang.Migrate.Tests/Wizard/WizardRunnerTests.cs` | 13 | Other | FileSystem |  |  |
 
 ### Whizbang.Observability.Tests
 
@@ -767,20 +793,7 @@ All 6 types are unit-pure.
 
 ### Whizbang.Testing.Tests
 
-10 of 34 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| CountingPerspectiveReceptorTests | `tests/Whizbang.Testing.Tests/Lifecycle/CountingPerspectiveReceptorTests.cs` | 6 | Component | CrossThreadSignal |  |  |
-| LifecycleStageAwaiterTests | `tests/Whizbang.Testing.Tests/Lifecycle/LifecycleStageAwaiterTests.cs` | 23 | Component | TimeoutWait |  |  |
-| MultiHostPerspectiveAwaiterTests | `tests/Whizbang.Testing.Tests/Lifecycle/MultiHostPerspectiveAwaiterTests.cs` | 13 | Component | TimeoutWait |  |  |
-| InMemoryWireTransportTests | `tests/Whizbang.Testing.Tests/MultiService/InMemoryWireTransportTests.cs` | 4 | Component | CrossThreadSignal |  |  |
-| MultiServiceHarnessTests | `tests/Whizbang.Testing.Tests/MultiService/MultiServiceHarnessTests.cs` | 4 | Component | StartAsync |  |  |
-| TraceAssertionExtensionsTests | `tests/Whizbang.Testing.Tests/Observability/TraceAssertionExtensionsTests.cs` | 22 | Other | FileSystem |  |  |
-| QueryPlanCaptureTests | `tests/Whizbang.Testing.Tests/QueryPlanCaptureTests.cs` | 3 | Integration | Container, NetworkClient |  |  |
-| MessageAwaiterTests | `tests/Whizbang.Testing.Tests/Transport/MessageAwaiterTests.cs` | 19 | Component | TimeoutWait |  |  |
-| SubscriptionWarmupTests | `tests/Whizbang.Testing.Tests/Transport/SubscriptionWarmupTests.cs` | 13 | Component | TimeoutWait |  |  |
-| PerspectiveWorkerTestHarnessTests | `tests/Whizbang.Testing.Tests/Workers/PerspectiveWorkerTestHarnessTests.cs` | 10 | Component | TimeoutWait |  |  |
+All 23 types are unit-pure.
 
 ### Whizbang.Transports.AzureServiceBus.Tests
 
