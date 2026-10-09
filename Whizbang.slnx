@@ -93,6 +93,7 @@
     <Project Path="tests/Whizbang.LanguageServer.Tests/Whizbang.LanguageServer.Tests.csproj" />
     <Project Path="tests/Whizbang.Migrate.Integration.Tests/Whizbang.Migrate.Integration.Tests.csproj" />
     <Project Path="tests/Whizbang.Migrate.Tests/Whizbang.Migrate.Tests.csproj" />
+    <Project Path="tests/Whizbang.Migrate.Component.Tests/Whizbang.Migrate.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Observability.Tests/Whizbang.Observability.Tests.csproj" />
     <Project Path="tests/Whizbang.Partitioning.Tests/Whizbang.Partitioning.Tests.csproj" />
     <Project Path="tests/Whizbang.Policies.Tests/Whizbang.Policies.Tests.csproj" />
