@@ -183,7 +183,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | ECommerce.PaymentWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.ShippingWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.CLI.Tests | 4 | 0 | 0 | 4 | 8 | 1 |
-| Whizbang.Core.Tests | 1149 | 344 | 0 | 6 | 1499 | 7 |
+| Whizbang.Core.Tests | 1157 | 336 | 0 | 6 | 1499 | 7 |
 | Whizbang.Data.Schema.Tests | 30 | 0 | 0 | 0 | 30 | 0 |
 | Whizbang.Data.Tests | 11 | 0 | 0 | 0 | 11 | 0 |
 | Whizbang.Documentation.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
@@ -209,7 +209,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 399 | 1 | 40 | 2209 | 12 |
+| **Total** | 1777 | 391 | 1 | 40 | 2209 | 12 |
 
 ## Worklist: non-unit types by project
 
@@ -270,7 +270,7 @@ All 1 types are unit-pure.
 
 ### Whizbang.Core.Tests
 
-357 of 1626 types are not unit-pure.
+349 of 1626 types are not unit-pure.
 
 | Class | File | Tests | Category | Constructs | Via | Note |
 |---|---|---:|---|---|---|---|
@@ -415,16 +415,9 @@ All 1 types are unit-pure.
 | TransportNamespaceRoutingRegistrationTests | `tests/Whizbang.Core.Tests/Tags/TransportNamespaceRoutingRegistrationTests.cs` | 5 | Component | StartAsync |  |  |
 | ScheduleWorkerTests | `tests/Whizbang.Core.Tests/Temporal/ScheduleWorkerTests.cs` | 17 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  |  |
 | TestTransport | `tests/Whizbang.Core.Tests/Transports/TransportLifecycleTests.cs` | 0 | Component | TaskDelay |  |  |
-| CorrelationIdTests | `tests/Whizbang.Core.Tests/ValueObjects/CorrelationIdTests.cs` | 13 | Component | TaskDelay |  |  |
-| IdentityValueObjectTests | `tests/Whizbang.Core.Tests/ValueObjects/IdentityValueObjectTests.cs` | 9 | Component | ThreadSleep, TaskDelay |  |  |
-| MessageIdAdditionalTests | `tests/Whizbang.Core.Tests/ValueObjects/MessageIdAdditionalTests.cs` | 15 | Component | TaskDelay |  |  |
 | TrackedGuidLockChangeLevelTests | `tests/Whizbang.Core.Tests/ValueObjects/TrackedGuidLockChangeLevelTests.cs` | 4 | Component | TaskRun |  |  |
 | TrackedGuidMonotonicityTests | `tests/Whizbang.Core.Tests/ValueObjects/TrackedGuidMonotonicityTests.cs` | 4 | Component | TaskRun |  |  |
-| TrackedGuidTests | `tests/Whizbang.Core.Tests/ValueObjects/TrackedGuidTests.cs` | 49 | Component | TaskDelay |  |  |
 | Uuid7GeneratorTests | `tests/Whizbang.Core.Tests/ValueObjects/Uuid7GeneratorTests.cs` | 22 | Component | TaskRun |  |  |
-| WhizbangIdCoverageTests | `tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdCoverageTests.cs` | 7 | Component | TaskDelay |  |  |
-| WhizbangIdTests | `tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdTests.cs` | 17 | Component | TaskDelay |  |  |
-| WhizbangIdTypesTests | `tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdTypesTests.cs` | 13 | Component | TaskDelay |  |  |
 | BackgroundStageDispatchCoverageTests | `tests/Whizbang.Core.Tests/Workers/BackgroundStageDispatchCoverageTests.cs` | 3 | Component | TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | BackgroundStageDispatchTests | `tests/Whizbang.Core.Tests/Workers/BackgroundStageDispatchTests.cs` | 6 | Component | TaskDelay, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | BackupTickCoordinatorBranchCoverageTests | `tests/Whizbang.Core.Tests/Workers/BackupTickCoordinatorBranchCoverageTests.cs` | 3 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
@@ -452,7 +445,6 @@ All 1 types are unit-pure.
 | CoalesceShipWorkerCoverageTests | `tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerCoverageTests.cs` | 5 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | CoalesceShipWorkerTests | `tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs` | 27 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | CoordinatorConnectionScopeTests | `tests/Whizbang.Core.Tests/Workers/CoordinatorConnectionScopeTests.cs` | 7 | Other | NetworkClient |  | phase 2 waits for #1259 |
-| CursorInversionDetectorTests | `tests/Whizbang.Core.Tests/Workers/CursorInversionDetectorTests.cs` | 24 | Component | TaskDelay |  | phase 2 waits for #1259 |
 | DeadLetterCanaryCampaignTests | `tests/Whizbang.Core.Tests/Workers/DeadLetterCanaryCampaignTests.cs` | 24 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | DeadLetterRecoveryWorkerBranchCoverageTests | `tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerBranchCoverageTests.cs` | 15 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | DeadLetterRecoveryWorkerCoverageTests | `tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerCoverageTests.cs` | 1 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
