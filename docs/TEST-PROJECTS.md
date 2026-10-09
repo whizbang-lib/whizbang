@@ -120,41 +120,38 @@ the tags that were already broken, each with a reason.
 `Whizbang.Generators.Tests`, `Whizbang.Hosting.AspNet.Tests`, `Whizbang.Hosting.Azure.ServiceBus.Tests`,
 `Whizbang.Hosting.RabbitMQ.Tests`, `Whizbang.LanguageServer.Tests`, `Whizbang.Migrate.Tests`,
 `Whizbang.Observability.Tests`, `Whizbang.Offloads.AzureBlob.Tests`, `Whizbang.Offloads.InMemory.Tests`,
-`Whizbang.Policies.Tests`, `Whizbang.Sagas.Tests`,
-`Whizbang.Sequencing.Tests`, `Whizbang.SignalR.Tests`, `Whizbang.Testing.Tests`,
-`Whizbang.Partitioning.Tests`, `Whizbang.Policies.Tests`, `Whizbang.Sagas.Tests`,
-`Whizbang.SignalR.Tests`, `Whizbang.Testing.Tests`,
+`Whizbang.Policies.Tests`, `Whizbang.Sagas.Tests`, `Whizbang.SignalR.Tests`, `Whizbang.Testing.Tests`,
 `Whizbang.Transports.AzureServiceBus.Tests`, `Whizbang.Transports.FastEndpoints.Tests`,
 `Whizbang.Transports.HotChocolate.Tests`, `Whizbang.Transports.Mutations.Tests`,
 `Whizbang.Transports.RabbitMQ.Tests`, `Whizbang.Transports.Tests`.
 
-`samples/ECommerce/`: `ECommerce.Contracts.Tests`, `ECommerce.IntegrationTests` (in-memory checks;
-despite the name, a unit project), `ECommerce.BFF.API.Tests`, `ECommerce.InventoryWorker.Tests`,
-`ECommerce.NotificationWorker.Tests`, `ECommerce.OrderService.Tests`, `ECommerce.PaymentWorker.Tests`,
-`ECommerce.ShippingWorker.Tests`.
+`samples/ECommerce/`: `ECommerce.BFF.API.Tests`, `ECommerce.Contracts.Tests`,
+`ECommerce.IntegrationTests` (in-memory checks;
+despite the name, a unit project),
+`ECommerce.InventoryWorker.Tests`, `ECommerce.NotificationWorker.Tests`, `ECommerce.OrderService.Tests`,
+`ECommerce.PaymentWorker.Tests`, `ECommerce.ShippingWorker.Tests`.
 
-### Component (3)
-### Component (2)
+### Component (17)
 
 | Project | Purpose |
 |---------|---------|
-| `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core`; receives the component tests moved out of `Whizbang.Core.Tests` |
-| `Whizbang.Hosting.AspNet.Component.Tests` | Component tests of the ASP.NET Core hosting (real hosts, test servers, endpoints and middleware pipelines), moved out of `Whizbang.Hosting.AspNet.Tests` |
-| `Whizbang.Transports.Component.Tests` | Component tests of the transport abstractions (in-process transport, transport manager and dispatcher bridge on real subscriptions and threads), moved out of `Whizbang.Transports.Tests` |
-| `Whizbang.Execution.Component.Tests` | Component tests of the executors (serial and parallel executors and pooled task sources on real worker loops and threads), moved out of `Whizbang.Execution.Tests` |
-| `Whizbang.Observability.Component.Tests` | Component tests of observability that drive shared state from several threads at once, moved out of `Whizbang.Observability.Tests` |
-| `Whizbang.Sagas.Component.Tests` | Component tests of sagas that run watchdog delivery and routing through real hosted workers, moved out of `Whizbang.Sagas.Tests` |
-| `Whizbang.Hosting.Azure.ServiceBus.Component.Tests` | Component tests of the Azure Service Bus hosting readiness check that drive it from a second thread, moved out of `Whizbang.Hosting.Azure.ServiceBus.Tests` |
-| `Whizbang.Partitioning.Component.Tests` | Tests of the partition router, formerly the Unit project `Whizbang.Partitioning.Tests`: its one test class runs a concurrency check on several threads, so the class, and with it the whole project, is Component |
-| `Whizbang.Sequencing.Component.Tests` | Tests of the in-memory sequence provider, formerly the Unit project `Whizbang.Sequencing.Tests`: its one test class checks thread safety with concurrent callers, so the class, and with it the whole project, is Component |
-| `Whizbang.Transports.HotChocolate.Component.Tests` | Component tests of the HotChocolate transport that run a second async flow, moved out of `Whizbang.Transports.HotChocolate.Tests` |
-| `Whizbang.Documentation.Component.Tests` | Component tests of the documentation contracts that start hosted services and read files (the configuration-key manifest), moved out of `Whizbang.Documentation.Tests` |
 | `Whizbang.CLI.Component.Tests` | Component tests of the CLI audit that read and write the real file system (a temporary audit workspace and its fixtures), moved out of `Whizbang.CLI.Tests` |
+| `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core`; receives the component tests moved out of `Whizbang.Core.Tests` |
+| `Whizbang.Documentation.Component.Tests` | Component tests of the documentation contracts that start hosted services and read files (the configuration-key manifest), moved out of `Whizbang.Documentation.Tests` |
+| `Whizbang.Execution.Component.Tests` | Component tests of the executors (serial and parallel executors and pooled task sources on real worker loops and threads), moved out of `Whizbang.Execution.Tests` |
 | `Whizbang.Generators.Component.Tests` | Component tests of the source generators that read and write the real file system (temporary docs folders and code-docs maps), moved out of `Whizbang.Generators.Tests` |
-| `Whizbang.Transports.RabbitMQ.Component.Tests` | Component tests of the RabbitMQ transport (real consumer threads, flush loops and drainers against in-process channel doubles), moved out of `Whizbang.Transports.RabbitMQ.Tests` |
-| `Whizbang.Transports.AzureServiceBus.Component.Tests` | Component tests of the Azure Service Bus transport (real receive loops, batch pipelines, throttles and liveness watchdogs against in-process client doubles), moved out of `Whizbang.Transports.AzureServiceBus.Tests` |
+| `Whizbang.Hosting.AspNet.Component.Tests` | Component tests of the ASP.NET Core hosting (real hosts, test servers, endpoints and middleware pipelines), moved out of `Whizbang.Hosting.AspNet.Tests` |
+| `Whizbang.Hosting.Azure.ServiceBus.Component.Tests` | Component tests of the Azure Service Bus hosting readiness check that drive it from a second thread, moved out of `Whizbang.Hosting.Azure.ServiceBus.Tests` |
 | `Whizbang.Migrate.Component.Tests` | Tests of the migration tool that read and write the real file system (temporary folders and files), moved out of `Whizbang.Migrate.Tests`; tests that start `git` moved to `Whizbang.Migrate.Integration.Tests` |
+| `Whizbang.Observability.Component.Tests` | Component tests of observability that drive shared state from several threads at once, moved out of `Whizbang.Observability.Tests` |
+| `Whizbang.Partitioning.Component.Tests` | Tests of the partition router, formerly the Unit project `Whizbang.Partitioning.Tests`: its one test class runs a concurrency check on several threads, so the class, and with it the whole project, is Component |
+| `Whizbang.Sagas.Component.Tests` | Component tests of sagas that run watchdog delivery and routing through real hosted workers, moved out of `Whizbang.Sagas.Tests` |
+| `Whizbang.Sequencing.Component.Tests` | Tests of the in-memory sequence provider, formerly the Unit project `Whizbang.Sequencing.Tests`: its one test class checks thread safety with concurrent callers, so the class, and with it the whole project, is Component |
 | `Whizbang.Testing.Component.Tests` | Component tests of the testing library (awaiters, harnesses and in-memory transports on real threads and hosted workers, and trace assertions that read and write baseline snapshot files), moved out of `Whizbang.Testing.Tests` |
+| `Whizbang.Transports.AzureServiceBus.Component.Tests` | Component tests of the Azure Service Bus transport (real receive loops, batch pipelines, throttles and liveness watchdogs against in-process client doubles), moved out of `Whizbang.Transports.AzureServiceBus.Tests` |
+| `Whizbang.Transports.Component.Tests` | Component tests of the transport abstractions (in-process transport, transport manager and dispatcher bridge on real subscriptions and threads), moved out of `Whizbang.Transports.Tests` |
+| `Whizbang.Transports.HotChocolate.Component.Tests` | Component tests of the HotChocolate transport that run a second async flow, moved out of `Whizbang.Transports.HotChocolate.Tests` |
+| `Whizbang.Transports.RabbitMQ.Component.Tests` | Component tests of the RabbitMQ transport (real consumer threads, flush loops and drainers against in-process channel doubles), moved out of `Whizbang.Transports.RabbitMQ.Tests` |
 
 ### Integration (14)
 

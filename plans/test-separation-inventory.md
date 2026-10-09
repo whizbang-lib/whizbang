@@ -182,34 +182,32 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | ECommerce.OrderService.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.PaymentWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.ShippingWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
-| Whizbang.CLI.Tests | 4 | 0 | 0 | 4 | 8 | 1 |
-| Whizbang.Core.Tests | 1156 | 337 | 0 | 6 | 1499 | 6 |
+| Whizbang.CLI.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
+| Whizbang.Core.Tests | 1165 | 329 | 0 | 6 | 1500 | 6 |
 | Whizbang.Data.Schema.Tests | 30 | 0 | 0 | 0 | 30 | 0 |
 | Whizbang.Data.Tests | 11 | 0 | 0 | 0 | 11 | 0 |
-| Whizbang.Documentation.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
-| Whizbang.Execution.Tests | 1 | 7 | 0 | 0 | 8 | 0 |
-| Whizbang.Generators.Tests | 250 | 0 | 0 | 4 | 254 | 0 |
-| Whizbang.Hosting.AspNet.Tests | 19 | 10 | 0 | 0 | 29 | 0 |
-| Whizbang.Hosting.Azure.ServiceBus.Tests | 1 | 2 | 0 | 0 | 3 | 1 |
+| Whizbang.Documentation.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
+| Whizbang.Execution.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
+| Whizbang.Generators.Tests | 251 | 0 | 0 | 0 | 251 | 0 |
+| Whizbang.Hosting.AspNet.Tests | 19 | 0 | 0 | 0 | 19 | 0 |
+| Whizbang.Hosting.Azure.ServiceBus.Tests | 2 | 0 | 0 | 0 | 2 | 0 |
 | Whizbang.Hosting.RabbitMQ.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.LanguageServer.Tests | 18 | 0 | 0 | 0 | 18 | 0 |
-| Whizbang.Migrate.Tests | 39 | 0 | 0 | 23 | 62 | 0 |
-| Whizbang.Observability.Tests | 21 | 3 | 0 | 0 | 24 | 0 |
+| Whizbang.Migrate.Tests | 39 | 0 | 0 | 0 | 39 | 0 |
+| Whizbang.Observability.Tests | 23 | 0 | 0 | 0 | 23 | 0 |
 | Whizbang.Offloads.AzureBlob.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
 | Whizbang.Offloads.InMemory.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
-| Whizbang.Partitioning.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
 | Whizbang.Policies.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
-| Whizbang.Sagas.Tests | 38 | 3 | 0 | 1 | 42 | 0 |
-| Whizbang.Sequencing.Tests | 0 | 1 | 0 | 0 | 1 | 0 |
+| Whizbang.Sagas.Tests | 39 | 0 | 0 | 0 | 39 | 0 |
 | Whizbang.SignalR.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
-| Whizbang.Testing.Tests | 12 | 8 | 1 | 1 | 22 | 0 |
-| Whizbang.Transports.AzureServiceBus.Tests | 56 | 10 | 0 | 0 | 66 | 0 |
+| Whizbang.Testing.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
+| Whizbang.Transports.AzureServiceBus.Tests | 56 | 0 | 0 | 0 | 56 | 0 |
 | Whizbang.Transports.FastEndpoints.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
-| Whizbang.Transports.HotChocolate.Tests | 20 | 1 | 0 | 0 | 21 | 0 |
+| Whizbang.Transports.HotChocolate.Tests | 20 | 0 | 0 | 0 | 20 | 0 |
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
-| Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
-| Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1776 | 392 | 1 | 40 | 2209 | 11 |
+| Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 0 | 23 | 0 |
+| Whizbang.Transports.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
+| **Total** | 1790 | 329 | 0 | 6 | 2125 | 9 |
 
 ## Worklist: non-unit types by project
 
@@ -258,19 +256,11 @@ All 1 types are unit-pure.
 
 ### Whizbang.CLI.Tests
 
-5 of 10 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| AuditCommandTests | `tests/Whizbang.CLI.Tests/Audit/AuditCommandTests.cs` | 22 | Other | RealClock | AuditWorkspace (Other) |  |
-| AuditReportTests | `tests/Whizbang.CLI.Tests/Audit/AuditReportTests.cs` | 12 | Other | FileSystem |  |  |
-| AuditWorkspace | `tests/Whizbang.CLI.Tests/Audit/AuditWorkspace.cs` | 0 | Other | FileSystem |  |  |
-| OsvClientTests | `tests/Whizbang.CLI.Tests/Audit/OsvClientTests.cs` | 17 | Other | RealClock |  |  |
-| ProjectAssetsReaderTests | `tests/Whizbang.CLI.Tests/Audit/ProjectAssetsReaderTests.cs` | 17 | Other | FileSystem | AuditWorkspace (Other) |  |
+All 6 types are unit-pure.
 
 ### Whizbang.Core.Tests
 
-349 of 1626 types are not unit-pure.
+341 of 1627 types are not unit-pure.
 
 | Class | File | Tests | Category | Constructs | Via | Note |
 |---|---|---:|---|---|---|---|
@@ -407,16 +397,9 @@ All 1 types are unit-pure.
 | TagPolicyValidatorTests | `tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorTests.cs` | 14 | Component | StartAsync |  |  |
 | TransportNamespaceRoutingRegistrationTests | `tests/Whizbang.Core.Tests/Tags/TransportNamespaceRoutingRegistrationTests.cs` | 5 | Component | StartAsync |  |  |
 | ScheduleWorkerTests | `tests/Whizbang.Core.Tests/Temporal/ScheduleWorkerTests.cs` | 17 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  |  |
-| CorrelationIdTests | `tests/Whizbang.Core.Tests/ValueObjects/CorrelationIdTests.cs` | 13 | Component | TaskDelay |  |  |
-| IdentityValueObjectTests | `tests/Whizbang.Core.Tests/ValueObjects/IdentityValueObjectTests.cs` | 9 | Component | ThreadSleep, TaskDelay |  |  |
-| MessageIdAdditionalTests | `tests/Whizbang.Core.Tests/ValueObjects/MessageIdAdditionalTests.cs` | 15 | Component | TaskDelay |  |  |
 | TrackedGuidLockChangeLevelTests | `tests/Whizbang.Core.Tests/ValueObjects/TrackedGuidLockChangeLevelTests.cs` | 4 | Component | TaskRun |  |  |
 | TrackedGuidMonotonicityTests | `tests/Whizbang.Core.Tests/ValueObjects/TrackedGuidMonotonicityTests.cs` | 4 | Component | TaskRun |  |  |
-| TrackedGuidTests | `tests/Whizbang.Core.Tests/ValueObjects/TrackedGuidTests.cs` | 49 | Component | TaskDelay |  |  |
 | Uuid7GeneratorTests | `tests/Whizbang.Core.Tests/ValueObjects/Uuid7GeneratorTests.cs` | 22 | Component | TaskRun |  |  |
-| WhizbangIdCoverageTests | `tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdCoverageTests.cs` | 7 | Component | TaskDelay |  |  |
-| WhizbangIdTests | `tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdTests.cs` | 17 | Component | TaskDelay |  |  |
-| WhizbangIdTypesTests | `tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdTypesTests.cs` | 13 | Component | TaskDelay |  |  |
 | BackgroundStageDispatchCoverageTests | `tests/Whizbang.Core.Tests/Workers/BackgroundStageDispatchCoverageTests.cs` | 3 | Component | TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | BackgroundStageDispatchTests | `tests/Whizbang.Core.Tests/Workers/BackgroundStageDispatchTests.cs` | 6 | Component | TaskDelay, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | BackupTickCoordinatorBranchCoverageTests | `tests/Whizbang.Core.Tests/Workers/BackupTickCoordinatorBranchCoverageTests.cs` | 3 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
@@ -444,7 +427,6 @@ All 1 types are unit-pure.
 | CoalesceShipWorkerCoverageTests | `tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerCoverageTests.cs` | 5 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | CoalesceShipWorkerTests | `tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs` | 27 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | CoordinatorConnectionScopeTests | `tests/Whizbang.Core.Tests/Workers/CoordinatorConnectionScopeTests.cs` | 7 | Other | NetworkClient |  | phase 2 waits for #1259 |
-| CursorInversionDetectorTests | `tests/Whizbang.Core.Tests/Workers/CursorInversionDetectorTests.cs` | 24 | Component | TaskDelay |  | phase 2 waits for #1259 |
 | DeadLetterCanaryCampaignTests | `tests/Whizbang.Core.Tests/Workers/DeadLetterCanaryCampaignTests.cs` | 24 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | DeadLetterRecoveryWorkerBranchCoverageTests | `tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerBranchCoverageTests.cs` | 15 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
 | DeadLetterRecoveryWorkerCoverageTests | `tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerCoverageTests.cs` | 1 | Component | StartAsync, TimeoutWait, CrossThreadSignal |  | phase 2 waits for #1259 |
@@ -518,16 +500,16 @@ All 1 types are unit-pure.
 | PerspectiveWorkerCollectiveSinkTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.BranchCoverage.cs` | 2 | Component | StartAsync, TimeoutWait | partial PerspectiveWorkerCollectiveSinkTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerCollectiveSinkTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.Predecessor.cs` | 7 | Component | StartAsync, TimeoutWait, CrossThreadSignal | partial PerspectiveWorkerCollectiveSinkTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerCollectiveSinkTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs` | 34 | Component | StartAsync, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerCollectiveSinkTests (Component) | phase 2 waits for #1259 |
-| PerspectiveWorkerCoverageTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCoverageTests.cs` | 42 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component); PerspectiveWorkerTestHarness (Component) | phase 2 waits for #1259 |
+| PerspectiveWorkerCoverageTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCoverageTests.cs` | 39 | Component | StartAsync, TimeoutWait, CrossThreadSignal | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component); PerspectiveWorkerTestHarness (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeadLetterFilterTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeadLetterFilterTests.cs` | 8 | Component |  | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDedupTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDedupTests.cs` | 9 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component) | phase 2 waits for #1259 |
-| PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.BranchCoverage.cs` | 22 | Component | StartAsync, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
+| PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.BranchCoverage.cs` | 24 | Component | StartAsync, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.ConsumerWake.cs` | 4 | Component |  | partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.LifecycleFailurePaths.cs` | 3 | Component | StartAsync, TimeoutWait, CrossThreadSignal | EventIdSignalingLogger (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.StoredForm.cs` | 1 | Component | StartAsync, TimeoutWait | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.TransientFailure.cs` | 2 | Component | StartAsync | EventIdSignalingLogger (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs` | 13 | Component | StartAsync, TimeoutWait, CrossThreadSignal | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
-| PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.BranchCoverage.cs` | 7 | Component | StartAsync, TimeoutWait, CrossThreadSignal | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
+| PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.BranchCoverage.cs` | 8 | Component | StartAsync, TimeoutWait, CrossThreadSignal | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.RefetchExitPaths.cs` | 2 | Component | StartAsync, TimeoutWait, CrossThreadSignal | EventIdSignalingLogger (Component); partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.StoredForm.cs` | 3 | Component | StartAsync, TimeoutWait | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.TransientFailure.cs` | 4 | Component | StartAsync, TimeoutWait | EventIdSignalingLogger (Component); partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
@@ -634,63 +616,23 @@ All 17 types are unit-pure.
 
 ### Whizbang.Documentation.Tests
 
-1 of 3 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| ConfigurationKeyManifestTests | `tests/Whizbang.Documentation.Tests/ConfigurationKeyManifestTests.cs` | 1 | Component | StartAsync, FileSystem |  |  |
+All 1 types are unit-pure.
 
 ### Whizbang.Execution.Tests
 
-7 of 8 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| ExecutionStrategyContractTests | `tests/Whizbang.Execution.Tests/ExecutionStrategyContractTests.cs` | 10 | Component | StartAsync, TaskDelay |  |  |
-| ParallelExecutorTests | `tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs` | 13 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal |  |  |
-| PooledSourcePoolTests | `tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs` | 13 | Component | TaskRun |  |  |
-| PooledValueTaskSourceTests | `tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs` | 24 | Component | TaskRun, TimeoutWait, CrossThreadSignal |  |  |
-| SerialExecutorDrainAfterStopTests | `tests/Whizbang.Execution.Tests/SerialExecutorDrainAfterStopTests.cs` | 1 | Component | StartAsync, CrossThreadSignal |  |  |
-| SerialExecutorFaultingWorkItemTests | `tests/Whizbang.Execution.Tests/SerialExecutorFaultingWorkItemTests.cs` | 2 | Component | StartAsync, CrossThreadSignal |  |  |
-| SerialExecutorTests | `tests/Whizbang.Execution.Tests/SerialExecutorTests.cs` | 20 | Component | StartAsync, TaskDelay |  |  |
+All 1 types are unit-pure.
 
 ### Whizbang.Generators.Tests
 
-4 of 261 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| MessageRegistryDocsPathTests | `tests/Whizbang.Generators.Tests/MessageRegistryDocsPathTests.cs` | 2 | Other | FileSystem |  |  |
-| MessageRegistryGeneratorCoverageTests | `tests/Whizbang.Generators.Tests/MessageRegistryGeneratorCoverageTests.cs` | 10 | Other | FileSystem |  |  |
-| PathResolverTests | `tests/Whizbang.Generators.Tests/PathResolverTests.cs` | 6 | Other | FileSystem |  |  |
-| ReceptorDiscoveryGeneratorTests | `tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs` | 81 | Other | FileSystem |  |  |
+All 258 types are unit-pure.
 
 ### Whizbang.Hosting.AspNet.Tests
 
-10 of 29 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| ApplyStackEndpointsTests | `tests/Whizbang.Hosting.AspNet.Tests/ApplyStackEndpointsTests.cs` | 6 | Component | StartAsync, HostBuilder, TestServer |  |  |
-| HostConfigurationDisposalTests | `tests/Whizbang.Hosting.AspNet.Tests/Configuration/HostConfigurationDisposalTests.cs` | 2 | Component | HostBuilder |  |  |
-| DeadLetterOperatorEndpointsCoverageTests | `tests/Whizbang.Hosting.AspNet.Tests/DeadLetterOperatorEndpointsCoverageTests.cs` | 4 | Component | StartAsync, HostBuilder, TestServer |  |  |
-| DeadLetterOperatorEndpointsTests | `tests/Whizbang.Hosting.AspNet.Tests/DeadLetterOperatorEndpointsTests.cs` | 12 | Component | StartAsync, HostBuilder, TestServer |  |  |
-| StartupStatusEndpointsTests | `tests/Whizbang.Hosting.AspNet.Tests/StartupStatusEndpointsTests.cs` | 8 | Component | StartAsync, HostBuilder, TestServer |  |  |
-| StreamRedeliveryEndpointsTests | `tests/Whizbang.Hosting.AspNet.Tests/StreamRedeliveryEndpointsTests.cs` | 6 | Component | StartAsync, HostBuilder, TestServer |  |  |
-| WhizbangCorrelationPipelineTests | `tests/Whizbang.Hosting.AspNet.Tests/WhizbangCorrelationPipelineTests.cs` | 3 | Component | StartAsync, HostBuilder, TestServer |  |  |
-| WhizbangFlushMiddlewareTests | `tests/Whizbang.Hosting.AspNet.Tests/WhizbangFlushMiddlewareTests.cs` | 5 | Component | StartAsync, HostBuilder, TestServer |  |  |
-| WhizbangFlushStartupFilterTests | `tests/Whizbang.Hosting.AspNet.Tests/WhizbangFlushStartupFilterTests.cs` | 2 | Component | StartAsync, HostBuilder, TestServer |  |  |
-| WhizbangSecurityHeadersStartupFilterTests | `tests/Whizbang.Hosting.AspNet.Tests/WhizbangSecurityHeadersStartupFilterTests.cs` | 4 | Component | StartAsync, HostBuilder, TestServer |  |  |
+All 19 types are unit-pure.
 
 ### Whizbang.Hosting.Azure.ServiceBus.Tests
 
-3 of 7 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| ServiceBusReadinessCheckFailurePathTests | `tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckFailurePathTests.cs` | 10 | Component | TaskRun | GatedServiceBusClient (Component) |  |
-| GatedServiceBusClient | `tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckFailurePathTests.cs` | 0 | Component | TimeoutWait |  |  |
-| ServiceBusReadinessCheckTests | `tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckTests.cs` | 5 | Component | TaskDelay |  |  |
+All 4 types are unit-pure.
 
 ### Whizbang.Hosting.RabbitMQ.Tests
 
@@ -702,43 +644,11 @@ All 18 types are unit-pure.
 
 ### Whizbang.Migrate.Tests
 
-23 of 62 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| MartenAnalyzerTests | `tests/Whizbang.Migrate.Tests/Analysis/MartenAnalyzerTests.cs` | 12 | Other | FileSystem |  |  |
-| WolverineAnalyzerTests | `tests/Whizbang.Migrate.Tests/Analysis/WolverineAnalyzerTests.cs` | 43 | Other | FileSystem |  |  |
-| AnalyzeCommandTests | `tests/Whizbang.Migrate.Tests/Commands/AnalyzeCommandTests.cs` | 6 | Other | FileSystem |  |  |
-| ApplyCommandTests | `tests/Whizbang.Migrate.Tests/Commands/ApplyCommandTests.cs` | 12 | Other | FileSystem |  |  |
-| ProgramCoverageTests | `tests/Whizbang.Migrate.Tests/Commands/ProgramCoverageTests.cs` | 3 | Other | FileSystem |  |  |
-| RevertCommandCoverageTests | `tests/Whizbang.Migrate.Tests/Commands/RevertCommandCoverageTests.cs` | 4 | Other | FileSystem, Process |  |  |
-| RevertCommandTests | `tests/Whizbang.Migrate.Tests/Commands/RevertCommandTests.cs` | 7 | Other | FileSystem |  |  |
-| StatusCommandCoverageTests | `tests/Whizbang.Migrate.Tests/Commands/StatusCommandCoverageTests.cs` | 4 | Other | FileSystem |  |  |
-| StatusCommandTests | `tests/Whizbang.Migrate.Tests/Commands/StatusCommandTests.cs` | 5 | Other | FileSystem |  |  |
-| GitWorktreeServiceCoverageTests | `tests/Whizbang.Migrate.Tests/Git/GitWorktreeServiceCoverageTests.cs` | 2 | Other | FileSystem, Process |  |  |
-| JsonMigrationJournalCoverageTests | `tests/Whizbang.Migrate.Tests/Journal/JsonMigrationJournalCoverageTests.cs` | 1 | Other | FileSystem |  |  |
-| JsonMigrationJournalTests | `tests/Whizbang.Migrate.Tests/Journal/JsonMigrationJournalTests.cs` | 17 | Other | FileSystem |  |  |
-| PackageManagerTests | `tests/Whizbang.Migrate.Tests/PackageManagement/PackageManagerTests.cs` | 18 | Other | FileSystem |  |  |
-| ProgramCliTests | `tests/Whizbang.Migrate.Tests/ProgramCliTests.cs` | 36 | Other | FileSystem |  |  |
-| MigrationProjectManagerCoverageTests | `tests/Whizbang.Migrate.Tests/Projects/MigrationProjectManagerCoverageTests.cs` | 5 | Other | FileSystem |  |  |
-| MigrationProjectManagerTests | `tests/Whizbang.Migrate.Tests/Projects/MigrationProjectManagerTests.cs` | 10 | Other | FileSystem |  |  |
-| DecisionFileTests | `tests/Whizbang.Migrate.Tests/Wizard/DecisionFileTests.cs` | 23 | Other | FileSystem |  |  |
-| GitOperationsCoverageTests | `tests/Whizbang.Migrate.Tests/Wizard/GitOperationsCoverageTests.cs` | 2 | Other | FileSystem, Process |  |  |
-| GitOperationsTests | `tests/Whizbang.Migrate.Tests/Wizard/GitOperationsTests.cs` | 13 | Other | FileSystem |  |  |
-| MigrationStateDetectorCoverageTests | `tests/Whizbang.Migrate.Tests/Wizard/MigrationStateDetectorCoverageTests.cs` | 4 | Other | FileSystem |  |  |
-| MigrationStateDetectorTests | `tests/Whizbang.Migrate.Tests/Wizard/MigrationStateDetectorTests.cs` | 5 | Other | FileSystem |  |  |
-| WizardRunnerCoverageTests | `tests/Whizbang.Migrate.Tests/Wizard/WizardRunnerCoverageTests.cs` | 6 | Other | FileSystem |  |  |
-| WizardRunnerTests | `tests/Whizbang.Migrate.Tests/Wizard/WizardRunnerTests.cs` | 13 | Other | FileSystem |  |  |
+All 39 types are unit-pure.
 
 ### Whizbang.Observability.Tests
 
-3 of 24 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| EnvelopeRegistryTests | `tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs` | 11 | Component | Parallel |  |  |
-| MessageTracingTests | `tests/Whizbang.Observability.Tests/MessageTracingTests.cs` | 63 | Component | TaskDelay |  |  |
-| PolicyDecisionTrailTests | `tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs` | 8 | Component | TaskDelay |  |  |
+All 23 types are unit-pure.
 
 ### Whizbang.Offloads.AzureBlob.Tests
 
@@ -748,36 +658,13 @@ All 5 types are unit-pure.
 
 All 1 types are unit-pure.
 
-### Whizbang.Partitioning.Tests
-
-1 of 2 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| HashPartitionRouterTests | `tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs` | 14 | Component | TaskRun, Stopwatch |  |  |
-
 ### Whizbang.Policies.Tests
 
 All 8 types are unit-pure.
 
 ### Whizbang.Sagas.Tests
 
-4 of 48 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| SagaWatchdogTickDeliveryIntegrationTests | `tests/Whizbang.Sagas.Tests/SagaWatchdogTickDeliveryIntegrationTests.cs` | 6 | Component | StartAsync |  |  |
-| SagaWatchdogTickSubscriptionIntegrationTests | `tests/Whizbang.Sagas.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs` | 5 | Component | StartAsync |  |  |
-| SagaClaimPruneStepTests | `tests/Whizbang.Sagas.Tests/Services/SagaClaimPruneStepTests.cs` | 10 | Other | RealClock |  |  |
-| SagaWatchdogTickRoutingTests | `tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs` | 8 | Component | StartAsync |  |  |
-
-### Whizbang.Sequencing.Tests
-
-1 of 1 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| InMemorySequenceProviderTests | `tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs` | 12 | Component | TaskRun, Parallel, Stopwatch |  |  |
+All 45 types are unit-pure.
 
 ### Whizbang.SignalR.Tests
 
@@ -785,37 +672,11 @@ All 6 types are unit-pure.
 
 ### Whizbang.Testing.Tests
 
-10 of 34 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| CountingPerspectiveReceptorTests | `tests/Whizbang.Testing.Tests/Lifecycle/CountingPerspectiveReceptorTests.cs` | 6 | Component | CrossThreadSignal |  |  |
-| LifecycleStageAwaiterTests | `tests/Whizbang.Testing.Tests/Lifecycle/LifecycleStageAwaiterTests.cs` | 23 | Component | TimeoutWait |  |  |
-| MultiHostPerspectiveAwaiterTests | `tests/Whizbang.Testing.Tests/Lifecycle/MultiHostPerspectiveAwaiterTests.cs` | 13 | Component | TimeoutWait |  |  |
-| InMemoryWireTransportTests | `tests/Whizbang.Testing.Tests/MultiService/InMemoryWireTransportTests.cs` | 4 | Component | CrossThreadSignal |  |  |
-| MultiServiceHarnessTests | `tests/Whizbang.Testing.Tests/MultiService/MultiServiceHarnessTests.cs` | 4 | Component | StartAsync |  |  |
-| TraceAssertionExtensionsTests | `tests/Whizbang.Testing.Tests/Observability/TraceAssertionExtensionsTests.cs` | 22 | Other | FileSystem |  |  |
-| QueryPlanCaptureTests | `tests/Whizbang.Testing.Tests/QueryPlanCaptureTests.cs` | 3 | Integration | Container, NetworkClient |  |  |
-| MessageAwaiterTests | `tests/Whizbang.Testing.Tests/Transport/MessageAwaiterTests.cs` | 19 | Component | TimeoutWait |  |  |
-| SubscriptionWarmupTests | `tests/Whizbang.Testing.Tests/Transport/SubscriptionWarmupTests.cs` | 13 | Component | TimeoutWait |  |  |
-| PerspectiveWorkerTestHarnessTests | `tests/Whizbang.Testing.Tests/Workers/PerspectiveWorkerTestHarnessTests.cs` | 10 | Component | TimeoutWait |  |  |
+All 23 types are unit-pure.
 
 ### Whizbang.Transports.AzureServiceBus.Tests
 
-10 of 96 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| AsbAcceptorAdaptiveWiringTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs` | 9 | Component | CrossThreadSignal |  |  |
-| AzureServiceBusErrorHandlingTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusErrorHandlingTests.cs` | 41 | Component | TaskDelay |  |  |
-| AzureServiceBusTransportBatchPipelineTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportBatchPipelineTests.cs` | 12 | Component | CrossThreadSignal |  |  |
-| AzureServiceBusTransportThrottleAndAdaptiveTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportThrottleAndAdaptiveTests.cs` | 11 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| AzureServiceBusTransportUnitTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs` | 31 | Component | TimeoutWait |  |  |
-| AsbFinalPassBranchTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/BranchCoverage/AsbFinalPassBranchTests.cs` | 6 | Component | CrossThreadSignal |  |  |
-| ReceiveLivenessWatchdogCoverageTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ReceiveLivenessWatchdogCoverageTests.cs` | 2 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| ReceiveLivenessWatchdogTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ReceiveLivenessWatchdogTests.cs` | 13 | Component | CrossThreadSignal |  |  |
-| ServiceBusReadinessCheckCoverageTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusReadinessCheckCoverageTests.cs` | 4 | Component | TaskRun, TimeoutWait |  |  |
-| ServiceBusReadinessCheckTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusReadinessCheckTests.cs` | 5 | Component | TaskDelay |  |  |
+All 85 types are unit-pure.
 
 ### Whizbang.Transports.FastEndpoints.Tests
 
@@ -823,11 +684,7 @@ All 21 types are unit-pure.
 
 ### Whizbang.Transports.HotChocolate.Tests
 
-1 of 47 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| ScopeMiddlewareExtensionsTests | `tests/Whizbang.Transports.HotChocolate.Tests/Unit/ScopeMiddlewareExtensionsTests.cs` | 14 | Component | TaskRun |  |  |
+All 46 types are unit-pure.
 
 ### Whizbang.Transports.Mutations.Tests
 
@@ -835,23 +692,8 @@ All 13 types are unit-pure.
 
 ### Whizbang.Transports.RabbitMQ.Tests
 
-1 of 29 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| RabbitMQConnectionRetryTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs` | 25 | Other | NetworkClient |  |  |
+All 28 types are unit-pure.
 
 ### Whizbang.Transports.Tests
 
-8 of 24 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| DispatcherTransportBridgePriorityTests | `tests/Whizbang.Transports.Tests/DispatcherTransportBridgePriorityTests.cs` | 3 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| DispatcherTransportBridgeTests | `tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs` | 8 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| ITransportTests | `tests/Whizbang.Transports.Tests/ITransportTests.cs` | 8 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| InProcessTransportTests | `tests/Whizbang.Transports.Tests/InProcessTransportTests.cs` | 21 | Component | TaskDelay, TimeoutWait, CrossThreadSignal |  |  |
-| SubscribeBatchTests | `tests/Whizbang.Transports.Tests/SubscribeBatchTests.cs` | 10 | Component | TaskDelay, TimeoutWait |  |  |
-| TransportManagerPriorityTests | `tests/Whizbang.Transports.Tests/TransportManagerPriorityTests.cs` | 3 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| TransportManagerPublishingTests | `tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs` | 7 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| TransportManagerSubscriptionTests | `tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs` | 12 | Component | TimeoutWait |  |  |
+All 16 types are unit-pure.
