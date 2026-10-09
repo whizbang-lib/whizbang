@@ -202,14 +202,14 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Sagas.Tests | 38 | 3 | 0 | 1 | 42 | 0 |
 | Whizbang.Sequencing.Tests | 0 | 1 | 0 | 0 | 1 | 0 |
 | Whizbang.SignalR.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
-| Whizbang.Testing.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
+| Whizbang.Testing.Tests | 12 | 8 | 1 | 1 | 22 | 0 |
 | Whizbang.Transports.AzureServiceBus.Tests | 56 | 10 | 0 | 0 | 66 | 0 |
 | Whizbang.Transports.FastEndpoints.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
 | Whizbang.Transports.HotChocolate.Tests | 20 | 1 | 0 | 0 | 21 | 0 |
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
-| Whizbang.Transports.RabbitMQ.Tests | 23 | 21 | 0 | 1 | 45 | 2 |
+| Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 0 | 23 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 412 | 0 | 39 | 2220 | 14 |
+| **Total** | 1769 | 399 | 1 | 39 | 2208 | 12 |
 
 ## Worklist: non-unit types by project
 
@@ -526,16 +526,16 @@ All 1 types are unit-pure.
 | PerspectiveWorkerCollectiveSinkTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.BranchCoverage.cs` | 2 | Component | StartAsync, TimeoutWait | partial PerspectiveWorkerCollectiveSinkTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerCollectiveSinkTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.Predecessor.cs` | 7 | Component | StartAsync, TimeoutWait, CrossThreadSignal | partial PerspectiveWorkerCollectiveSinkTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerCollectiveSinkTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs` | 34 | Component | StartAsync, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerCollectiveSinkTests (Component) | phase 2 waits for #1259 |
-| PerspectiveWorkerCoverageTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCoverageTests.cs` | 39 | Component | StartAsync, TimeoutWait, CrossThreadSignal | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component); PerspectiveWorkerTestHarness (Component) | phase 2 waits for #1259 |
+| PerspectiveWorkerCoverageTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCoverageTests.cs` | 42 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component); PerspectiveWorkerTestHarness (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeadLetterFilterTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeadLetterFilterTests.cs` | 8 | Component |  | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDedupTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDedupTests.cs` | 9 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component) | phase 2 waits for #1259 |
-| PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.BranchCoverage.cs` | 24 | Component | StartAsync, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
+| PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.BranchCoverage.cs` | 22 | Component | StartAsync, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.ConsumerWake.cs` | 4 | Component |  | partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.LifecycleFailurePaths.cs` | 3 | Component | StartAsync, TimeoutWait, CrossThreadSignal | EventIdSignalingLogger (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.StoredForm.cs` | 1 | Component | StartAsync, TimeoutWait | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.TransientFailure.cs` | 2 | Component | StartAsync | EventIdSignalingLogger (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs` | 13 | Component | StartAsync, TimeoutWait, CrossThreadSignal | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
-| PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.BranchCoverage.cs` | 8 | Component | StartAsync, TimeoutWait, CrossThreadSignal | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
+| PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.BranchCoverage.cs` | 7 | Component | StartAsync, TimeoutWait, CrossThreadSignal | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.RefetchExitPaths.cs` | 2 | Component | StartAsync, TimeoutWait, CrossThreadSignal | EventIdSignalingLogger (Component); partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.StoredForm.cs` | 3 | Component | StartAsync, TimeoutWait | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.TransientFailure.cs` | 4 | Component | StartAsync, TimeoutWait | EventIdSignalingLogger (Component); partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
@@ -793,7 +793,20 @@ All 6 types are unit-pure.
 
 ### Whizbang.Testing.Tests
 
-All 23 types are unit-pure.
+10 of 34 types are not unit-pure.
+
+| Class | File | Tests | Category | Constructs | Via | Note |
+|---|---|---:|---|---|---|---|
+| CountingPerspectiveReceptorTests | `tests/Whizbang.Testing.Tests/Lifecycle/CountingPerspectiveReceptorTests.cs` | 6 | Component | CrossThreadSignal |  |  |
+| LifecycleStageAwaiterTests | `tests/Whizbang.Testing.Tests/Lifecycle/LifecycleStageAwaiterTests.cs` | 23 | Component | TimeoutWait |  |  |
+| MultiHostPerspectiveAwaiterTests | `tests/Whizbang.Testing.Tests/Lifecycle/MultiHostPerspectiveAwaiterTests.cs` | 13 | Component | TimeoutWait |  |  |
+| InMemoryWireTransportTests | `tests/Whizbang.Testing.Tests/MultiService/InMemoryWireTransportTests.cs` | 4 | Component | CrossThreadSignal |  |  |
+| MultiServiceHarnessTests | `tests/Whizbang.Testing.Tests/MultiService/MultiServiceHarnessTests.cs` | 4 | Component | StartAsync |  |  |
+| TraceAssertionExtensionsTests | `tests/Whizbang.Testing.Tests/Observability/TraceAssertionExtensionsTests.cs` | 22 | Other | FileSystem |  |  |
+| QueryPlanCaptureTests | `tests/Whizbang.Testing.Tests/QueryPlanCaptureTests.cs` | 3 | Integration | Container, NetworkClient |  |  |
+| MessageAwaiterTests | `tests/Whizbang.Testing.Tests/Transport/MessageAwaiterTests.cs` | 19 | Component | TimeoutWait |  |  |
+| SubscriptionWarmupTests | `tests/Whizbang.Testing.Tests/Transport/SubscriptionWarmupTests.cs` | 13 | Component | TimeoutWait |  |  |
+| PerspectiveWorkerTestHarnessTests | `tests/Whizbang.Testing.Tests/Workers/PerspectiveWorkerTestHarnessTests.cs` | 10 | Component | TimeoutWait |  |  |
 
 ### Whizbang.Transports.AzureServiceBus.Tests
 
@@ -830,34 +843,7 @@ All 13 types are unit-pure.
 
 ### Whizbang.Transports.RabbitMQ.Tests
 
-24 of 56 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| RabbitMQFinalPassBranchTests | `tests/Whizbang.Transports.RabbitMQ.Tests/BranchCoverage/RabbitMQFinalPassBranchTests.cs` | 5 | Component | CrossThreadSignal | RabbitTestWire (Component); RecordingChannel (Component) |  |
-| RabbitMQPeripheralBranchTests | `tests/Whizbang.Transports.RabbitMQ.Tests/BranchCoverage/RabbitMQPeripheralBranchTests.cs` | 16 | Component | CrossThreadSignal |  |  |
-| RabbitMQTransportBatchFlushBranchTests | `tests/Whizbang.Transports.RabbitMQ.Tests/BranchCoverage/RabbitMQTransportBatchFlushBranchTests.cs` | 9 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
-| RabbitMQTransportLoggingBranchTests | `tests/Whizbang.Transports.RabbitMQ.Tests/BranchCoverage/RabbitMQTransportLoggingBranchTests.cs` | 20 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
-| RabbitMQTransportPoisonAndRoutingBranchTests | `tests/Whizbang.Transports.RabbitMQ.Tests/BranchCoverage/RabbitMQTransportPoisonAndRoutingBranchTests.cs` | 4 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
-| RabbitMQBrokerOpsThroughputLockTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQBrokerOpsThroughputLockTests.cs` | 1 | Component |  | RabbitTestWire (Component) |  |
-| RabbitMQChannelPoolCoverageTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQChannelPoolCoverageTests.cs` | 7 | Component | TimeoutWait |  |  |
-| RabbitMQChannelPoolTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQChannelPoolTests.cs` | 6 | Component | TaskDelay |  |  |
-| RabbitMQConnectionRetryTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs` | 25 | Other | NetworkClient |  |  |
-| RabbitMQControlClassTtlTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQControlClassTtlTests.cs` | 5 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
-| RabbitMQPoisonQuarantineTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQPoisonQuarantineTests.cs` | 10 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
-| RabbitMQSharedInboxRetirementE2ELockTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQSharedInboxRetirementE2ELockTests.cs` | 1 | Component |  | RabbitTestWire (Component) |  |
-| RabbitMQSubscriptionCoverageTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQSubscriptionCoverageTests.cs` | 2 | Component | CrossThreadSignal |  |  |
-| RabbitMQSubscriptionTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQSubscriptionTests.cs` | 16 | Component | CrossThreadSignal |  |  |
-| RabbitMQTransportBatchPathTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportBatchPathTests.cs` | 30 | Component | TimeoutWait, CrossThreadSignal | RabbitTestWire (Component); RecordingChannel (Component) |  |
-| RabbitTestWire | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportBatchPathTests.cs` | 0 | Component |  | RecordingChannel (Component) |  |
-| RecordingChannel | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportBatchPathTests.cs` | 0 | Component | TimeoutWait |  |  |
-| RabbitMQTransportFailurePathTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportFailurePathTests.cs` | 31 | Component |  | RabbitTestWire (Component); RecordingChannel (Component) |  |
-| RabbitMQTransportGuardCoverageTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportGuardCoverageTests.cs` | 9 | Component | TimeoutWait, CrossThreadSignal | RabbitTestWire (Component); RecordingChannel (Component) |  |
-| RabbitMQTransportRecoveryTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportRecoveryTests.cs` | 8 | Component | TaskDelay |  |  |
-| RabbitMQTransportTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs` | 16 | Component | TaskDelay |  |  |
-| RabbitMQUnroutableDestinationTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQUnroutableDestinationTests.cs` | 5 | Component |  | RabbitTestWire (Component) |  |
-| RabbitMqDeadLetterDrainerCoverageTests | `tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMqDeadLetterDrainerCoverageTests.cs` | 3 | Component |  | RabbitTestWire (Component) |  |
-| ServiceCollectionExtensionsResolutionCoverageTests | `tests/Whizbang.Transports.RabbitMQ.Tests/ServiceCollectionExtensionsResolutionCoverageTests.cs` | 9 | Component |  | RabbitTestWire (Component) |  |
+All 28 types are unit-pure.
 
 ### Whizbang.Transports.Tests
 

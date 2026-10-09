@@ -2371,7 +2371,6 @@
 "Whizbang.Transports.RabbitMQ.Tests","tests/Whizbang.Transports.RabbitMQ.Tests/CapturingLogger.cs","NullScope","41","Helper","0","Unit","","","",""
 "Whizbang.Transports.RabbitMQ.Tests","tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQBacklogPeekTests.cs","RabbitMQBacklogPeekTests","22","Test","5","Unit","","","",""
 "Whizbang.Transports.RabbitMQ.Tests","tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQBatchSubscribeTests.cs","RabbitMQBatchSubscribeTests","22","Test","5","Unit","","","",""
-"Whizbang.Transports.RabbitMQ.Tests","tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs","RabbitMQConnectionRetryTests","21","Test","25","Other","NetworkClient","NetworkClient L214,L232,L371,L392,L418","",""
 "Whizbang.Transports.RabbitMQ.Tests","tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQControlClassProvisioningTests.cs","RabbitMQControlClassProvisioningTests","21","Test","3","Unit","","","",""
 "Whizbang.Transports.RabbitMQ.Tests","tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQHealthCheckTests.cs","RabbitMQHealthCheckTests","23","Test","3","Unit","","","",""
 "Whizbang.Transports.RabbitMQ.Tests","tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerCoverageTests.cs","RabbitMQInfrastructureProvisionerCoverageTests","26","Test","4","Unit","","","",""
