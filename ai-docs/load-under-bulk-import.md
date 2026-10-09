@@ -432,6 +432,17 @@ order, and a statement that need not wait does not:
    lock whose `WHERE` tests only the id also locks a row that has since changed hands, and holds it
    to the end of the transaction without writing it.
 
+5. A statement whose rows of one table are written along several paths takes them in ONE pass. Each
+   path in order is not enough: two ascending runs are not one order. The outbox acquisition refreshed
+   the ledger rows of streams it owned and then pinned the rest, each run sorted, and two claims that
+   each refreshed a stream the other pinned deadlocked (#1238). It shows only when claims see no live
+   peer and pin each other's streams, which a fleet whose heartbeats all go stale at once does.
+   Migration 200 locks every existing ledger row of the claimed streams in one `stream_id` pass,
+   whoever owns it, then refreshes and takes over rows it already holds, and inserts new streams after
+   the pass, in the same order, `ON CONFLICT DO NOTHING`. `ConcurrentClaims_WithNoInstanceEverRegistered_NeverDeadlockAsync`
+   keeps the four instances unregistered for the whole run; an actor that registers after its first
+   stale claim, as `ClaimWorker` does, hides the shape from the second round on.
+
 `OutboxStreamRunDeadlockSqlTests` pins each waiting statement's order the same way: another session
 holds the first row in the order, the statement is started, and once `pg_stat_activity` reports it
 waiting on a lock the test reads with `SKIP LOCKED` which of the later rows it already holds. In
