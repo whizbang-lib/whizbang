@@ -3,6 +3,7 @@
 
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
@@ -95,21 +96,23 @@ public class ServiceBusReadinessCheckTests {
   [Test]
   public async Task IsReadyAsync_CacheExpires_AfterDurationAsync() {
     // Arrange
+    var clock = new FakeTimeProvider();
     var transport = new TestTransport(isInitialized: true);
     var client = new TestServiceBusClient(isHealthy: true);
     var check = new ServiceBusReadinessCheck(
       transport,
       client,
       NullLogger<ServiceBusReadinessCheck>.Instance,
-      cacheDuration: TimeSpan.FromMilliseconds(100)
+      cacheDuration: TimeSpan.FromMilliseconds(100),
+      timeProvider: clock
     );
 
     // Act - First call
     await check.IsReadyAsync();
     var accessCountAfterFirst = client.IsClosedAccessCount;
 
-    // Wait for cache to expire
-    await Task.Delay(TimeSpan.FromMilliseconds(150));
+    // Expire the cache on the fake clock: past the duration by construction, without waiting.
+    clock.Advance(TimeSpan.FromMilliseconds(150));
 
     // Act - Second call (cache should be expired)
     await check.IsReadyAsync();
