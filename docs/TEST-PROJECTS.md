@@ -18,6 +18,21 @@ in CI that way, and `Whizbang.LanguageServer.Tests` ran nowhere until #1264 beca
 
 `-Mode All` and `-Mode Ai` run Unit, Component and Integration projects.
 
+### Classifying a test
+
+Take the first rule that matches (#1267). The types follow Michael Feathers' unit-test rules and
+Google's small/medium/large test sizes; the `testing` skill (`.claude/skills/testing/SKILL.md`) has
+the reasoning.
+
+1. Containers, a database, a broker, the network or real cloud infrastructure: **Integration**.
+2. Starts a child process: **Integration** (it crosses a process boundary).
+3. Starts a hosted worker, `Task.Run` or a `Thread`: **Component**.
+4. Reads or writes the real file system: **Component**.
+5. Sleeps or reads the real clock, otherwise one flow: **stays Unit**, refactored onto an injected
+   `TimeProvider` driven by `FakeTimeProvider`. Moving it would keep the race; only a class that
+   cannot take a fake clock moves to Component, with the reason in its pull request.
+6. Otherwise: **Unit**.
+
 Tags follow the type: `Unit` for unit projects, `Component` for component projects, and for
 integration projects the suite tag (`Postgres`, `RabbitMQ`, `AzureServiceBus`, `AzureBlob`,
 `InMemory`, or the plain `Integration` for in-process hosts) plus `Docker` when it starts containers.
@@ -117,12 +132,13 @@ despite the name, a unit project), `ECommerce.BFF.API.Tests`, `ECommerce.Invento
 `ECommerce.ShippingWorker.Tests`. `ECommerce.BFF.API.Tests` and `ECommerce.InventoryWorker.Tests` carry
 `Integration;Docker` tags while declaring Unit; the inventory classifies their classes.
 
-### Component (2)
+### Component (3)
 
 | Project | Purpose |
 |---------|---------|
 | `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core`; receives the component tests moved out of `Whizbang.Core.Tests` |
 | `Whizbang.Hosting.AspNet.Component.Tests` | Component tests of the ASP.NET Core hosting (real hosts, test servers, endpoints and middleware pipelines), moved out of `Whizbang.Hosting.AspNet.Tests` |
+| `Whizbang.Transports.RabbitMQ.Component.Tests` | Component tests of the RabbitMQ transport (real consumer threads, flush loops and drainers against in-process channel doubles), moved out of `Whizbang.Transports.RabbitMQ.Tests` |
 
 ### Integration (13)
 

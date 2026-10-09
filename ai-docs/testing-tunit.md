@@ -21,8 +21,8 @@ TUnit is a modern, source-generation-based testing framework that works fundamen
 ## Which Project a Test Belongs In
 
 Every test project declares `<WhizbangTestType>` (and `<WhizbangTestTags>`) in its `.csproj`, and the
-type decides which runs select it. Put a test in a project of the right type; docs/TEST-PROJECTS.md
-has the full rules.
+type decides which runs select it. Put a test in a project of the right type: the `testing` skill
+(`.claude/skills/testing/SKILL.md`) classifies it, and docs/TEST-PROJECTS.md has the full rules.
 
 | Type | What the test may do | Project naming | Run it |
 |------|----------------------|----------------|--------|
@@ -31,8 +31,9 @@ has the full rules.
 | `Integration` | Containers and real infrastructure, selected per suite by tag (`Postgres`, `RabbitMQ`, `AzureServiceBus`, `AzureBlob`, `InMemory`, `Integration`) | `<Source>.Integration.Tests` | `-Mode AiIntegrations -Tag <tag>` |
 | `Benchmark`, `Soak` | Measurements; never part of the gate | | BenchmarkDotNet, `scripts/Run-Soak.ps1` |
 
-A test that starts a worker with `StartAsync`, runs `Task.Run` or a `Thread`, reads
-`TimeProvider.System`, sleeps, or touches the file system is not a unit test. Moving an existing test
+A test that starts a worker with `StartAsync`, runs `Task.Run` or a `Thread`, touches the file system or
+starts a process is not a unit test. One that only sleeps or reads `TimeProvider.System` is a unit test
+with a race in it: give it a fake clock rather than moving it. Moving an existing test
 between projects goes through `scripts/Move-TestReference.ps1`, which relinks every `<tests>` tag and
 doc reference that names it (#1264).
 

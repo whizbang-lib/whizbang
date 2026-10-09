@@ -189,6 +189,9 @@ Navigation hub with scenario-based guidance. **Read this first** when unsure whi
 testing to a project. Mutation testing verifies tests actually catch bugs (kills mutants),
 complementing line coverage. Run via `/whizbang mutate` or scripts/mutation/run-mutation-tests.ps1.
 
+**Invoke the `testing` skill** (`.claude/skills/testing/SKILL.md`) before writing, moving or fixing a
+test: it decides whether the test is Unit, Component or Integration, and how to make it deterministic.
+
 ### 📖 **[testing-tunit.md](ai-docs/testing-tunit.md)** - CRITICAL
 **Read when**:
 - Writing or debugging tests
