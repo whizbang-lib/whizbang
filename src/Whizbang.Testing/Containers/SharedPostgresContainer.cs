@@ -38,7 +38,7 @@ namespace Whizbang.Testing.Containers;
     "stable password, so a random per-run value would break the reuse path.")]
 public static class SharedPostgresContainer {
   private const string CONTAINER_NAME = "whizbang-test-postgres";
-  private const string IMAGE_NAME = "pgvector/pgvector:pg17";
+  private const string IMAGE_NAME = CiImages.PGVECTOR;
   private const string USERNAME = "whizbang_user";
   private const string PASSWORD = "whizbang_pass";
   private const string DATABASE = "whizbang_test";
@@ -246,7 +246,7 @@ public static class SharedPostgresContainer {
                   $"-e POSTGRES_DB={DATABASE} " +
                   $"--publish 0:{CONTAINER_PORT} " +
                   "--restart no " +
-                  $"{IMAGE_NAME} " +
+                  $"{CiImages.Resolve(IMAGE_NAME)} " +
                   "-c max_connections=500 " +
                   // Loaded at start because that is the only time it can be. It costs a small
                   // fixed allocation and tracks nothing until a database creates the extension,
