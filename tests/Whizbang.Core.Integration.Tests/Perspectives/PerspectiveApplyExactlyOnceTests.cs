@@ -1160,13 +1160,13 @@ public class PerspectiveApplyExactlyOnceTests {
       generationProvider: new DefaultGenerationProvider(),
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options)).Value),
+      timeProvider: timeProvider,
       // Production ALWAYS wires the cooldown cache (WorkerPipelineExtensions). Omitting it here left
       // the drain refetch loop (slice 30, DrainLoopMaxIterations>1) with no dedup: GetStreamEventsAsync
       // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
       // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
       // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
-      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
-      timeProvider: timeProvider);
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
     return (worker, harness);
   }
 
