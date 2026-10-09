@@ -194,12 +194,12 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Hosting.RabbitMQ.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.LanguageServer.Tests | 18 | 0 | 0 | 0 | 18 | 0 |
 | Whizbang.Migrate.Tests | 39 | 0 | 0 | 23 | 62 | 0 |
-| Whizbang.Observability.Tests | 23 | 0 | 0 | 0 | 23 | 0 |
+| Whizbang.Observability.Tests | 21 | 3 | 0 | 0 | 24 | 0 |
 | Whizbang.Offloads.AzureBlob.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
 | Whizbang.Offloads.InMemory.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.Partitioning.Tests | 1 | 1 | 0 | 0 | 2 | 0 |
 | Whizbang.Policies.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
-| Whizbang.Sagas.Tests | 38 | 3 | 0 | 1 | 42 | 0 |
+| Whizbang.Sagas.Tests | 39 | 0 | 0 | 0 | 39 | 0 |
 | Whizbang.Sequencing.Tests | 0 | 1 | 0 | 0 | 1 | 0 |
 | Whizbang.SignalR.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
 | Whizbang.Testing.Tests | 12 | 8 | 1 | 1 | 22 | 0 |
@@ -209,7 +209,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 1 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1771 | 396 | 1 | 40 | 2208 | 12 |
+| **Total** | 1770 | 396 | 1 | 39 | 2206 | 12 |
 
 ## Worklist: non-unit types by project
 
@@ -740,7 +740,13 @@ All 18 types are unit-pure.
 
 ### Whizbang.Observability.Tests
 
-All 23 types are unit-pure.
+3 of 24 types are not unit-pure.
+
+| Class | File | Tests | Category | Constructs | Via | Note |
+|---|---|---:|---|---|---|---|
+| EnvelopeRegistryTests | `tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs` | 11 | Component | Parallel |  |  |
+| MessageTracingTests | `tests/Whizbang.Observability.Tests/MessageTracingTests.cs` | 63 | Component | TaskDelay |  |  |
+| PolicyDecisionTrailTests | `tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs` | 8 | Component | TaskDelay |  |  |
 
 ### Whizbang.Offloads.AzureBlob.Tests
 
@@ -764,14 +770,7 @@ All 8 types are unit-pure.
 
 ### Whizbang.Sagas.Tests
 
-4 of 48 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| SagaWatchdogTickDeliveryIntegrationTests | `tests/Whizbang.Sagas.Tests/SagaWatchdogTickDeliveryIntegrationTests.cs` | 6 | Component | StartAsync |  |  |
-| SagaWatchdogTickSubscriptionIntegrationTests | `tests/Whizbang.Sagas.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs` | 5 | Component | StartAsync |  |  |
-| SagaClaimPruneStepTests | `tests/Whizbang.Sagas.Tests/Services/SagaClaimPruneStepTests.cs` | 10 | Other | RealClock |  |  |
-| SagaWatchdogTickRoutingTests | `tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs` | 8 | Component | StartAsync |  |  |
+All 45 types are unit-pure.
 
 ### Whizbang.Sequencing.Tests
 

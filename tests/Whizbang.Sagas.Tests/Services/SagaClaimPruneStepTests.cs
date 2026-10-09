@@ -75,8 +75,10 @@ public class SagaClaimPruneStepTests {
   }
 
   /// <summary>
-  /// With no <see cref="SagaOptions"/> registered the step still prunes, on the default retention
-  /// measured from the system clock, rather than skipping the cycle or pruning everything.
+  /// With no <see cref="SagaOptions"/> and no clock registered the step still prunes every spent prefix,
+  /// on one cutoff taken from the system clock, rather than skipping the cycle. The cutoff's value is
+  /// pinned by <see cref="Run_NoOptionsRegistered_MeasuresTheDefaultRetentionFromTheHostClockAsync"/>,
+  /// which supplies the clock; this test reads no clock itself.
   /// </summary>
   [Test]
   public async Task Run_NoOptionsRegistered_PrunesOnTheDefaultRetentionFromTheSystemClockAsync() {
@@ -84,15 +86,32 @@ public class SagaClaimPruneStepTests {
     var services = new ServiceCollection();
     services.AddSingleton<IClaimedEmissionStore>(store);
     await using var provider = services.BuildServiceProvider();
-    var retention = new SagaOptions().ClaimRetention;
 
-    var earliest = TimeProvider.System.GetUtcNow() - retention;
     await new SagaClaimPruneStep(NullLogger<SagaClaimPruneStep>.Instance).RunAsync(provider, CancellationToken.None);
-    var latest = TimeProvider.System.GetUtcNow() - retention;
 
     await Assert.That(store.Pruned.Select(p => p.Prefix)).IsEquivalentTo(SagaClaimPruneStep.SpentClaimPrefixes);
-    await Assert.That(store.Pruned.All(p => p.Before >= earliest && p.Before <= latest)).IsTrue()
-      .Because("the cutoff is the default retention before now, read from the system clock when no options exist");
+    await Assert.That(store.Pruned.Select(p => p.Before).Distinct().Count()).IsEqualTo(1)
+      .Because("one cycle prunes every spent prefix on the same cutoff");
+  }
+
+  /// <summary>
+  /// With no <see cref="SagaOptions"/> registered the cutoff is the default retention before the host's
+  /// clock, the <see cref="TimeProvider"/> in the container, as every other worker reads it.
+  /// </summary>
+  [Test]
+  public async Task Run_NoOptionsRegistered_MeasuresTheDefaultRetentionFromTheHostClockAsync() {
+    var store = new RecordingStore();
+    var services = new ServiceCollection();
+    services.AddSingleton<IClaimedEmissionStore>(store);
+    services.AddSingleton<TimeProvider>(new FixedClock(_now));
+    await using var provider = services.BuildServiceProvider();
+
+    await new SagaClaimPruneStep(NullLogger<SagaClaimPruneStep>.Instance).RunAsync(provider, CancellationToken.None);
+
+    var expected = _now - new SagaOptions().ClaimRetention;
+    await Assert.That(store.Pruned.Select(p => p.Prefix)).IsEquivalentTo(SagaClaimPruneStep.SpentClaimPrefixes);
+    await Assert.That(store.Pruned.All(p => p.Before == expected)).IsTrue()
+      .Because("the cutoff is the default retention before the registered clock's now");
   }
 
   /// <summary>With no claim store there is nothing to prune, and the step does not fail the cycle.</summary>

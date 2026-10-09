@@ -22,8 +22,8 @@ namespace Whizbang.Sagas.Services;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/sagas/completion-orchestration#hand-written-sagas</docs>
-/// <tests>tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs:Router_DeliversATickToTheSagaThatArmedItAsync</tests>
-/// <tests>tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs:Router_WithNoMatchingSaga_DoesNothingAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Component.Tests/Services/SagaWatchdogTickRoutingTests.cs:Router_DeliversATickToTheSagaThatArmedItAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Component.Tests/Services/SagaWatchdogTickRoutingTests.cs:Router_WithNoMatchingSaga_DoesNothingAsync</tests>
 public sealed class SagaWatchdogTickRouter(IServiceScopeFactory scopeFactory) : IReceptor<SagaCompletionWatchdogTickEvent> {
 
   /// <inheritdoc/>

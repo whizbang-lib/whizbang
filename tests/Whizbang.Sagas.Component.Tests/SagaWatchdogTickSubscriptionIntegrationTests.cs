@@ -213,8 +213,8 @@ public class SagaWatchdogTickSubscriptionIntegrationTests {
           services.AddGeneratorTestDefaultSaga();
           services.AddGeneratorTestCustomBaseSaga();
           services.AddGeneratorTestChainedSaga();
-          global::Whizbang.Sagas.Tests.Generated.DispatcherRegistrations.AddReceptors(services);
-          global::Whizbang.Sagas.Tests.Generated.DispatcherRegistrations.AddWhizbangReceptorRegistry(services);
+          global::Whizbang.Sagas.Component.Tests.Generated.DispatcherRegistrations.AddReceptors(services);
+          global::Whizbang.Sagas.Component.Tests.Generated.DispatcherRegistrations.AddWhizbangReceptorRegistry(services);
           services.AddSingleton(ledger);
           if (withSagas) {
             services.AddWhizbangSagas();
