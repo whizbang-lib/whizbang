@@ -12,8 +12,8 @@ namespace Whizbang.Core.Signals;
 /// doorbell silently (issue #505). Doorbell-not-data, like every signal: no payload crosses the wire.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeTests.cs:HostedStart_ProbeVerifiesWireRoute_ViaInMemoryAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeTests.cs:HostedStart_DeadTransport_ProbeMarksWireRouteFailedAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusProbeTests.cs:HostedStart_ProbeVerifiesWireRoute_ViaInMemoryAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusProbeTests.cs:HostedStart_DeadTransport_ProbeMarksWireRouteFailedAsync</tests>
 [WireName("bus-probe")]
 public readonly record struct SignalBusProbeSignal : ISignal {
   /// <inheritdoc />

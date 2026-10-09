@@ -22,7 +22,7 @@ namespace Whizbang.Core.Signals;
 /// what lets an idle service cost an idle amount.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
-/// <tests>tests/Whizbang.Core.Tests/Signals/PollSignalSourceIdleBackoffTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/PollSignalSourceIdleBackoffTests.cs</tests>
 public sealed record PollIdleBackoff(int AfterEmptyTicks, TimeSpan Ceiling) {
   /// <summary>Empty ticks tolerated before the interval stretches; at least one.</summary>
   public int AfterEmptyTicks { get; } = AfterEmptyTicks >= 1

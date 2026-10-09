@@ -55,7 +55,7 @@ public sealed class StandbyWatcherOptions {
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#the-standby-handshake</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StandbyWatcherTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StandbyWatcherTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StandbyHandshakeE2ETests.cs</tests>
 public sealed partial class StandbyWatcher : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;

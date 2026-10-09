@@ -23,7 +23,7 @@ namespace Whizbang.Core.Observability;
 /// host was exactly what made the motivating incident invisible.
 /// </remarks>
 /// <docs>operations/observability/metrics#traffic-classes</docs>
-/// <tests>tests/Whizbang.Core.Tests/Observability/BacklogAgeDutyTests.cs:PeekOnce_PerClassAndPerNamespace_AreCarriedThroughToTheGaugesAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/BacklogAgeDutyTests.cs:PeekOnce_PerClassAndPerNamespace_AreCarriedThroughToTheGaugesAsync</tests>
 public sealed class BacklogAgeMetrics {
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
   /// <summary>The OpenTelemetry meter name for this metrics group.</summary>

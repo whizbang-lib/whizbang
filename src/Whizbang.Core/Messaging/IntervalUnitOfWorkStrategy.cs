@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// Best for: Background workers, batch processing, high-throughput scenarios.
 /// Interval starts AFTER previous flush completes (natural backpressure).
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
 public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
   private readonly TimeSpan _interval;

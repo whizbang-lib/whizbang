@@ -187,7 +187,7 @@ public class WorkerPipelineExtensionsCoverageTests {
       MessageId = messageId.Value,
       Envelope = envelope,
       Metadata = new EnvelopeMetadata { MessageId = messageId, Hops = [] },
-      EnvelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.PipelineFlushCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core",
+      EnvelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.PipelineFlushCoverageTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core",
       MessageType = "Whizbang.Core.Tests.Workers.PipelineFlushCoverageTestEvent"
     };
   }

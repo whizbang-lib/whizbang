@@ -720,7 +720,7 @@ public class PerspectiveWorkerDedupTests {
 
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => _runner;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
-      [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["Whizbang.Core.Tests.Workers.PerspectiveWorkerDedupTests+FakeEvent, Whizbang.Core.Tests"])];
+      [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["Whizbang.Core.Tests.Workers.PerspectiveWorkerDedupTests+FakeEvent, Whizbang.Core.Component.Tests"])];
     public IReadOnlyList<Type> GetEventTypes() => [];
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }

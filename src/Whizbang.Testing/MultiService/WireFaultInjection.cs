@@ -21,7 +21,7 @@ namespace Whizbang.Testing.MultiService;
 /// <see cref="MultiServiceHarness.SuppressDeliveries"/>; dispose the registration to lift the fault.
 /// </summary>
 /// <docs>testing/multi-service-harness</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiService/StreamIntegrityRedeliveryE2ETests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/MultiService/StreamIntegrityRedeliveryE2ETests.cs</tests>
 public sealed class WireFaultInjector {
   private readonly Lock _lock = new();
   private readonly Dictionary<string, List<Registration>> _faults = [];

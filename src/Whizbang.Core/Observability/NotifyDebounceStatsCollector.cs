@@ -23,7 +23,7 @@ namespace Whizbang.Core.Observability;
 /// host.
 /// </remarks>
 /// <docs>operations/observability/metrics#notify-debounce</docs>
-/// <tests>tests/Whizbang.Core.Tests/Observability/NotifyDebounceStatsCollectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/NotifyDebounceStatsCollectorTests.cs</tests>
 public sealed partial class NotifyDebounceStatsCollector(
   IServiceScopeFactory scopeFactory,
   NotifyDebounceMetrics metrics,

@@ -35,7 +35,7 @@ namespace Whizbang.Core.Tests.Workers;
 [NotInParallel("WhizbangBackgroundServiceTests")]
 public class ServiceBusConsumerWorkerBranchCoverageTests {
   private const string JSON_ENVELOPE_TYPE =
-    "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
   private static readonly TimeSpan _signalTimeout = TimeSpan.FromSeconds(10);
 
   // ========================================
@@ -485,7 +485,7 @@ public class ServiceBusConsumerWorkerBranchCoverageTests {
       lock (_gate) {
         _boundTypes.Add(typeof(TMessage));
       }
-      return new SerializedEnvelope(envelopeToReturn, JSON_ENVELOPE_TYPE, "Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Tests");
+      return new SerializedEnvelope(envelopeToReturn, JSON_ENVELOPE_TYPE, "Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Component.Tests");
     }
 
     public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) =>

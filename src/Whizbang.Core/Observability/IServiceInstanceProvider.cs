@@ -13,9 +13,9 @@ namespace Whizbang.Core.Observability;
 /// </summary>
 /// <docs>fundamentals/persistence/observability</docs>
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatcherTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>

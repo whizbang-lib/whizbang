@@ -44,7 +44,7 @@ internal delegate void RandomFill(Span<byte> destination);
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/identity/whizbang-ids#uuid7-generator</docs>
-/// <tests>tests/Whizbang.Core.Tests/ValueObjects/Uuid7GeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/ValueObjects/Uuid7GeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/ValueObjects/Uuid7GeneratorPropertyTests.cs</tests>
 internal sealed class Uuid7Generator {
   private const int COUNTER_BITS = 26;

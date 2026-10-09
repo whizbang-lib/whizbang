@@ -18,7 +18,7 @@ namespace Whizbang.Core.Startup;
 /// signals so <see cref="StartupReadyService"/> can compose them into <c>Ready</c>.
 /// </summary>
 /// <docs>operations/startup/startup-pipeline</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupReadyCompositeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupReadyCompositeTests.cs</tests>
 public interface IStartupReadinessContributor {
   /// <summary>A stable name for logs and health detail — what the composite is waiting on.</summary>
   string ContributorName { get; }
@@ -33,7 +33,7 @@ public interface IStartupReadinessContributor {
 /// "fully up", one level above <see cref="IStartupPipelineState.IsReady"/> (which is pipeline-only).
 /// </summary>
 /// <docs>operations/startup/startup-pipeline</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupReadyCompositeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupReadyCompositeTests.cs</tests>
 public interface IStartupReadySignal {
   /// <summary>Whether the composite has been signalled.</summary>
   bool IsReady { get; }
@@ -80,7 +80,7 @@ public sealed class StartupReadySignal : IStartupReadySignal {
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-pipeline</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupReadyCompositeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupReadyCompositeTests.cs</tests>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Integration.Tests/ServiceBusConsumerWorkerIntegrationTests.cs</tests>
 public sealed partial class StartupReadyService : IHostedLifecycleService {
   private readonly IStartupPipelineState _pipelineState;

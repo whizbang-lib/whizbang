@@ -145,7 +145,7 @@ public record PerspectiveRewindStarted(
 /// <param name="StartedAt">When the rewind operation started.</param>
 /// <param name="CompletedAt">When the rewind operation completed.</param>
 /// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs:FixedRewind_EventsAppendedDuringWindow_AreAppliedTooAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs:FixedRewind_EventsAppendedDuringWindow_AreAppliedTooAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindCompleted_Properties_AreCorrectAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindCompleted_DurationCanBeCalculatedAsync</tests>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]

@@ -799,7 +799,7 @@ public class OrderedStreamProcessorTests {
     return new InboxWork {
       MessageId = messageId,
       Envelope = envelope,
-      MessageType = "Whizbang.Core.Tests.Messaging.TestMessage, Whizbang.Core.Tests",
+      MessageType = "Whizbang.Core.Tests.Messaging.TestMessage, Whizbang.Core.Component.Tests",
       StreamId = null,  // No stream ID
       PartitionNumber = 0,
       Status = MessageProcessingStatus.Stored,
@@ -830,7 +830,7 @@ public class OrderedStreamProcessorTests {
     return new InboxWork {
       MessageId = messageId,
       Envelope = envelope,
-      MessageType = "Whizbang.Core.Tests.Messaging.TestMessage, Whizbang.Core.Tests",
+      MessageType = "Whizbang.Core.Tests.Messaging.TestMessage, Whizbang.Core.Component.Tests",
       StreamId = streamId,
       PartitionNumber = 0,
       Status = MessageProcessingStatus.Stored,

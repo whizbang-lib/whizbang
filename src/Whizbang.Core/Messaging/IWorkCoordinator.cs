@@ -538,7 +538,7 @@ public interface IWorkCoordinator {
   /// default), in which case a waiter falls back to the in-process applied signal.
   /// </returns>
   /// <docs>fundamentals/perspectives/perspective-sync#applied-ledger</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterAppliedTests.cs:DefaultCoordinatorMember_CannotReadTheLedgerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/PerspectiveSyncAwaiterAppliedTests.cs:DefaultCoordinatorMember_CannotReadTheLedgerAsync</tests>
   ValueTask<Perspectives.Sync.AppliedEventStatus?> GetAppliedEventStatusAsync(
     Perspectives.Sync.AppliedEventInquiry inquiry,
     CancellationToken cancellationToken = default)
@@ -671,7 +671,7 @@ public interface IWorkCoordinator {
   /// </remarks>
   /// <docs>operations/workers/perspective-worker</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
   Task ReportPerspectiveCompletionAsync(
     PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default);
@@ -691,7 +691,7 @@ public interface IWorkCoordinator {
   /// </remarks>
   /// <docs>operations/workers/perspective-worker</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportFailureAsync_CallsCoordinatorImmediately_Async</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_OnFailure_UsesStrategyToReportFailure_Async</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_OnFailure_UsesStrategyToReportFailure_Async</tests>
   Task ReportPerspectiveFailureAsync(
     PerspectiveCursorFailure failure,
     CancellationToken cancellationToken = default);
@@ -1077,7 +1077,7 @@ public interface IWorkCoordinator {
   /// <param name="claimWindow">How recently a sibling's claim suppresses this one.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
   Task<bool> TryClaimIntegrityAuditCycleAsync(
     TimeSpan claimWindow,
     CancellationToken cancellationToken = default) => Task.FromResult(true);
@@ -2248,7 +2248,7 @@ public interface IWorkCoordinator {
   /// behavior before the queue existed.
   /// </returns>
   /// <docs>fundamentals/messaging/collective-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_OrderedQueue_AppliesInCommitOrder_WhenIdsRunBackwardAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_OrderedQueue_AppliesInCommitOrder_WhenIdsRunBackwardAsync</tests>
   Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueAsync(
     Guid streamId,
     CancellationToken cancellationToken = default)
@@ -2499,7 +2499,7 @@ public sealed record MaintenanceResult(string TaskName, long RowsAffected, doubl
 /// <docs>fundamentals/perspectives/rewind</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_PositionalCtor_RoundTripsAllValuesAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CoordinatorRecordSurfaceTests.cs:RewindCursorInfo_NullsAreAllowedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
 public record RewindCursorInfo(Guid StreamId, string PerspectiveName, Guid? LastEventId, Guid? RewindTriggerEventId);
 
 /// <summary>
@@ -2786,7 +2786,7 @@ public record WorkBatch {
   /// report it.
   /// </summary>
   /// <docs>fundamentals/work-coordinator/claim-loop</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerAcquisitionBoundsTests.cs:FullOutboxAcquisition_ClaimsAgainWithoutSpacingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerAcquisitionBoundsTests.cs:FullOutboxAcquisition_ClaimsAgainWithoutSpacingAsync</tests>
   public bool OutboxAcquisitionFull { get; init; }
 
   /// <summary>
@@ -2797,7 +2797,7 @@ public record WorkBatch {
   /// does not report it.
   /// </summary>
   /// <docs>fundamentals/work-coordinator/claim-loop</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerRegistrationTests.cs:AClaimThatReportsAStaleRegistration_IsFollowedByARegistrationOnThePinnedConnectionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerRegistrationTests.cs:AClaimThatReportsAStaleRegistration_IsFollowedByARegistrationOnThePinnedConnectionAsync</tests>
   public bool InstanceRegistrationStale { get; init; }
 
   /// <summary>
@@ -2973,7 +2973,7 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
 /// MaxDelaySeconds).
 /// </summary>
 /// <docs>fundamentals/messages/message-tags#coalescing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_GroupQuiet_FoldsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_GroupQuiet_FoldsAsync</tests>
 public sealed record CoalesceGroupStats {
   /// <summary>The coalesce group (tag string).</summary>
   public required string Group { get; init; }
@@ -3188,7 +3188,7 @@ public record OutboxWork : IHasMessageIdAndStatus, Whizbang.Core.Priority.IPrior
   /// Priority step 1 on the wire: the row's number, the same one stamped inside <see cref="Envelope"/> before publish
   /// (<see cref="Whizbang.Core.Priority.WorkPriority.FirstDeclared"/> of the row and the stored envelope).
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerGapTests.cs:OutboxDrainWorker_PublishesTheRowsPriorityOnTheWireAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerGapTests.cs:OutboxDrainWorker_PublishesTheRowsPriorityOnTheWireAsync</tests>
   public int Priority { get; init; }
 
   /// <summary>

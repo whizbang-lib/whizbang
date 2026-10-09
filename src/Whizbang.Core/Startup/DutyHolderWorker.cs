@@ -44,7 +44,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/DutyHolderWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs</tests>
 public sealed partial class DutyHolderWorker : BackgroundService {
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
   /// <summary>The channel a role release is announced on; the payload is the role.</summary>

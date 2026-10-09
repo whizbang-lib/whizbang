@@ -136,7 +136,7 @@ despite the name, a unit project),
 | Project | Purpose |
 |---------|---------|
 | `Whizbang.CLI.Component.Tests` | Component tests of the CLI audit that read and write the real file system (a temporary audit workspace and its fixtures), moved out of `Whizbang.CLI.Tests` |
-| `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core`; receives the component tests moved out of `Whizbang.Core.Tests` |
+| `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core` (workers, dispatcher, lifecycle and perspective pipelines on real threads and hosted workers, and the tests that read files or measure the real clock), moved out of `Whizbang.Core.Tests` |
 | `Whizbang.Documentation.Component.Tests` | Component tests of the documentation contracts that start hosted services and read files (the configuration-key manifest), moved out of `Whizbang.Documentation.Tests` |
 | `Whizbang.Execution.Component.Tests` | Component tests of the executors (serial and parallel executors and pooled task sources on real worker loops and threads), moved out of `Whizbang.Execution.Tests` |
 | `Whizbang.Generators.Component.Tests` | Component tests of the source generators that read and write the real file system (temporary docs folders and code-docs maps), moved out of `Whizbang.Generators.Tests` |

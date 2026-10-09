@@ -47,10 +47,10 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerPostLifecycleTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerPostLifecycleTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorSituationTests.cs</tests>
 public enum LifecycleStage {
   /// <summary>

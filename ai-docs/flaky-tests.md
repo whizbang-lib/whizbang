@@ -380,6 +380,6 @@ fence) are written before the transaction opens. Examples: `NotifyDebounceSqlTes
 | `tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs` | `[NotInParallel]` + relaxed assertions |
 | `samples/ECommerce/tests/ECommerce.Integration.Tests/Workflows/SeedProductsWorkflowTests.cs` | Increased waiter timeouts to 200s |
 | `samples/ECommerce/tests/ECommerce.Integration.Tests/Infrastructure/ServiceBusIntegrationFixtureSanityTests.cs` | Added `InventoryRestockedEvent` waiter |
-| `tests/Whizbang.Core.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs` | Increased delay from 300ms to 600ms |
+| `tests/Whizbang.Core.Component.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs` | Increased delay from 300ms to 600ms |
 | `tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs` | `[NotInParallel]` for PostgreSQL connection pool |
 | `tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs` | `[NotInParallel]` for timing-sensitive race condition tests |

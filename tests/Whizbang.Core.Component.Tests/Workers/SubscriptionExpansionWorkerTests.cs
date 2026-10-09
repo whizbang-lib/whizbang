@@ -16,6 +16,8 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
+using ExpandedEvent = Whizbang.Core.Tests.Workers.SubscriptionExpansionTestEvents.ExpandedEvent;
+
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
@@ -27,11 +29,6 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/SubscriptionExpansionWorker.cs</code-under-test>
 public class SubscriptionExpansionWorkerTests {
-
-  public sealed record ExpandedEvent : IEvent {
-    [StreamId]
-    public Guid Sid { get; init; }
-  }
 
   private static readonly string _expandedType = TypeNameFormatter.FormatClrTypeName(typeof(ExpandedEvent));
   private static readonly string _expandedWireType = TypeNameFormatter.Format(typeof(ExpandedEvent));

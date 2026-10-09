@@ -1397,7 +1397,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Bounded by MAX_REWIND_CATCH_UP_ITERATIONS as a safety against pathological
     // append rates; in practice 1-2 iterations cover the bulk-import case.
     // <docs>fundamentals/perspectives/rewind-invariants</docs>
-    // <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs</tests>
+    // <tests>tests/Whizbang.Core.Component.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs</tests>
     // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ReconcileRewindScenarioTests.cs</tests>
     // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReconcileRewindDeclarationSqlTests.cs</tests>
     const int MAX_REWIND_CATCH_UP_ITERATIONS = 100;

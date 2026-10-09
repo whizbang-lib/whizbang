@@ -12,8 +12,8 @@ namespace Whizbang.Core.Messaging;
 /// <docs>operations/dead-letter-queue/canary-recovery</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DlqCanaryCampaignSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StackHistorySqlTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:PendingEntry_RetryableReason_GetsRecoveredAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:Startup_RunsGenerationReplayOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:PendingEntry_RetryableReason_GetsRecoveredAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:Startup_RunsGenerationReplayOnceAsync</tests>
 /// <tests>tests/Whizbang.Hosting.AspNet.Component.Tests/DeadLetterOperatorEndpointsTests.cs:PostRetry_SchedulesIdForImmediateAttemptAsync</tests>
 public interface IDeadLetterRecoveryService {
   /// <summary>

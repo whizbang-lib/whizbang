@@ -428,7 +428,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     // Envelope with valid AggregateId so StreamIdGuard doesn't fire (non-empty GUID)
     var envelope = _createJsonEnvelopeWithStreamId(messageId, expectedStreamId);
     // Use envelope type with the event type name that matches MatchingEventTypeProvider
-    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.Workers.TransportConsumerWorkerUncoveredPathsTests+UncoveredTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.Workers.TransportConsumerWorkerUncoveredPathsTests+UncoveredTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -486,7 +486,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     // Envelope with AggregateId = Guid.Empty (triggers StreamIdGuard)
     var envelope = _createJsonEnvelopeWithStreamId(messageId, Guid.Empty);
-    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.Workers.TransportConsumerWorkerUncoveredPathsTests+UncoveredTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.Workers.TransportConsumerWorkerUncoveredPathsTests+UncoveredTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     // Act - per-message error isolation catches the InvalidStreamIdException (logged, not propagated)
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);

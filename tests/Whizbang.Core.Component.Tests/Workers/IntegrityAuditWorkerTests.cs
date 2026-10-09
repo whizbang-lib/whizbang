@@ -19,6 +19,8 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
+using AuditProbeEvent = Whizbang.Core.Tests.Workers.IntegrityAuditTestEvents.AuditProbeEvent;
+
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
@@ -28,11 +30,6 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/IntegrityAuditWorker.cs</code-under-test>
 public class IntegrityAuditWorkerTests {
-
-  public sealed record AuditProbeEvent : IEvent {
-    [StreamId]
-    public Guid Sid { get; init; }
-  }
 
   [Test]
   public async Task LocalGaps_ReportAndDispatchCappedRebuildsAsync() {

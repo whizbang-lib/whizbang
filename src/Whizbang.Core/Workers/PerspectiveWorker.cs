@@ -28,9 +28,9 @@ namespace Whizbang.Core.Workers;
 /// Uses lease-based coordination for reliable perspective processing across instances.
 /// </summary>
 /// <docs>operations/workers/perspective-worker</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCoverageTests.cs:Worker_WithWork_TransitionsToActiveAndFiresEventAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_NormalPathWithoutCoordinator_FiresPostLifecycleFallbackAndDetachedStagesAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCoverageTests.cs:Worker_WithWork_TransitionsToActiveAndFiresEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_NormalPathWithoutCoordinator_FiresPostLifecycleFallbackAndDetachedStagesAsync</tests>
 #pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
@@ -446,8 +446,8 @@ public partial class PerspectiveWorker(
   /// to materialize immediately. Safe to call from any thread; redundant calls are harmless.
   /// </remarks>
   /// <docs>operations/workers/perspective-worker#immediate-poll</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:RequestImmediatePoll_CalledRepeatedly_CoalescesWithoutThrowingAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_WithNotificationListener_SubscribesCoalescesAndUnsubscribesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:RequestImmediatePoll_CalledRepeatedly_CoalescesWithoutThrowingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_WithNotificationListener_SubscribesCoalescesAndUnsubscribesAsync</tests>
   public void RequestImmediatePoll() {
     if (Interlocked.CompareExchange(ref _wakeSignaled, 1, 0) == 0) {
       _pollWakeSignal.Release();
@@ -1065,9 +1065,9 @@ public partial class PerspectiveWorker(
   /// In Background mode, logs the summary and lets normal polling handle them.
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanDisabled_NeverQueriesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanDisabled_NeverQueriesAsync</tests>
   private async Task _scanAndRepairRewindsOnStartupAsync(CancellationToken ct) {
     if (!_rewindOptions.StartupScanEnabled) {
       return;
@@ -1705,7 +1705,7 @@ public partial class PerspectiveWorker(
   /// </summary>
   /// <param name="olderThan">Minimum hold age to include; <see cref="TimeSpan.Zero"/> lists every hold.</param>
   /// <param name="nowUtcTicks">The clock to age against; defaults to the worker's clock.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
   internal IReadOnlyList<AffinityHold> SnapshotAffinityHolds(TimeSpan olderThan, long? nowUtcTicks = null) {
     var now = nowUtcTicks ?? _timeProvider.GetUtcNow().UtcTicks;
     return [.. _affinityHoldsOlderThan(olderThan.Ticks, now).Select(static h => h.Hold)];
@@ -1716,7 +1716,7 @@ public partial class PerspectiveWorker(
   /// <see cref="PerspectiveStreamAffinityOptions.LongHoldWarning"/>: once when the hold crosses the
   /// threshold and once per threshold thereafter while it persists. Returns how many were named.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
   internal int ReportLongAffinityHolds(long? nowUtcTicks = null) {
     var threshold = _streamAffinityOptions.LongHoldWarning;
     if (threshold <= TimeSpan.Zero) {
@@ -1856,7 +1856,7 @@ public partial class PerspectiveWorker(
   /// PostAllPerspectives + PostLifecycle fire via FirePostLifecycleDetachedAsync after this returns.
   /// </summary>
   /// <docs>fundamentals/perspectives/drain-mode</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.cs</tests>
   private async Task _processDrainModeStreamsAsync(
       AsyncServiceScope scope,
       List<Guid> streamIds,
@@ -4936,10 +4936,10 @@ public partial class PerspectiveWorker(
   /// Same pattern as ReceptorInvoker for consistency.
   /// </summary>
   /// <docs>operations/workers/perspective-worker#security-context</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync</tests>
   private static async ValueTask _establishSecurityContextAsync(
       IMessageEnvelope envelope,
       IServiceProvider scopedProvider,
@@ -5568,9 +5568,9 @@ public partial class PerspectiveWorker(
 /// Configure via: "Whizbang.Core.Workers.PerspectiveStartupScan": "Information"
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBackgroundMode_DoesNotRepollAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBackgroundMode_DoesNotRepollAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
 internal static partial class PerspectiveStartupScanLog {
   [LoggerMessage(
     EventId = 54,
@@ -5667,7 +5667,7 @@ public class PerspectiveWorkerOptions {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_BusyApplyLock_IsNotReportedAsAFailure_AndKeepsItsRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_BusyApplyLock_IsNotReportedAsAFailure_AndKeepsItsRowAsync</tests>
   public bool CollectiveLockBusyCountsAsFailure { get; set; }
 
   /// <summary>
@@ -5682,7 +5682,7 @@ public class PerspectiveWorkerOptions {
   /// rows are this instance's only while their lease lasts.
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.Predecessor.cs:CollectiveSink_Predecessor_WaitDisabled_AppliesAtOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.Predecessor.cs:CollectiveSink_Predecessor_WaitDisabled_AppliesAtOnceAsync</tests>
   public int CollectivePredecessorWaitSeconds { get; set; } = 30;
 
   /// <summary>

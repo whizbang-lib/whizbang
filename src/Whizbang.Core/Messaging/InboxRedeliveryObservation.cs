@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// current one. <c>1</c> is never reported — that is a first sighting, not a redelivery.
 /// </param>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerPoisonQuarantineTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerPoisonQuarantineTests.cs</tests>
 public readonly record struct InboxRedeliveryObservation(Guid MessageId, int ObservationCount) {
 
   /// <summary>

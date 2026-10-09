@@ -186,7 +186,7 @@ public sealed record RehydrateResult {
   /// Null when the body was never obtained (unknown provider, hash mismatch, unopenable cipher).
   /// </summary>
   /// <docs>fundamentals/offloads/message-body-store</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:OffloadedBodyUnreadable_DeadLetteredWithDownloadedBodyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:OffloadedBodyUnreadable_DeadLetteredWithDownloadedBodyAsync</tests>
   public string? RawBody { get; init; }
 
   /// <summary>True when the input envelope carried a body claim and was successfully rehydrated.</summary>

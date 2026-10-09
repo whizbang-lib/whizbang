@@ -370,7 +370,7 @@ public class CoalesceShipWorkerTests {
     var tagOptions = new TagOptions();
     tagOptions.Coalesce("record-digest", configureBinding);
     var resolver = new CoalesceGroupResolver(tagOptions, time,
-      () => [CoalesceGroupResolverTests.TagRegistration(typeof(TestFoldedEvent), "record-digest")]);
+      () => [CoalesceTestTags.TagRegistration(typeof(TestFoldedEvent), "record-digest")]);
     var worker = _buildWorker(coordinator, resolver, time);
     return (worker, coordinator, time);
   }
@@ -824,8 +824,8 @@ public class CoalesceShipWorkerTests {
     tagOptions.Coalesce("poison-group", c => { c.SlideSeconds = 15; c.MaxDelaySeconds = 120; });
     var resolver = new CoalesceGroupResolver(tagOptions, time,
       () => [
-        CoalesceGroupResolverTests.TagRegistration(typeof(TestFoldedEvent), "record-digest"),
-        CoalesceGroupResolverTests.TagRegistration(typeof(TestFoldedEvent), "poison-group"),
+        CoalesceTestTags.TagRegistration(typeof(TestFoldedEvent), "record-digest"),
+        CoalesceTestTags.TagRegistration(typeof(TestFoldedEvent), "poison-group"),
       ]);
     var worker = _buildWorker(coordinator, resolver, time);
     coordinator.Stats = [

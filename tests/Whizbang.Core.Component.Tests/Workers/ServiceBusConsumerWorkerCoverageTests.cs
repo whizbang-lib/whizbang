@@ -139,7 +139,7 @@ public class ServiceBusConsumerWorkerCoverageTests {
     var messageId = MessageId.New();
     var failingStreamId = Guid.NewGuid();
     var healthyStreamId = Guid.NewGuid();
-    const string messageTypeName = "Whizbang.Core.Tests.Workers.CoverageWorkerTestEvent, Whizbang.Core.Tests";
+    const string messageTypeName = "Whizbang.Core.Tests.Workers.CoverageWorkerTestEvent, Whizbang.Core.Component.Tests";
 
     var batch = new WorkBatch {
       InboxWork = [
@@ -202,7 +202,7 @@ public class ServiceBusConsumerWorkerCoverageTests {
     // tracking) must still finish for the message.
     var messageId = MessageId.New();
     var streamId = Guid.NewGuid();
-    const string messageTypeName = "Whizbang.Core.Tests.Workers.CoverageWorkerTestEvent, Whizbang.Core.Tests";
+    const string messageTypeName = "Whizbang.Core.Tests.Workers.CoverageWorkerTestEvent, Whizbang.Core.Component.Tests";
 
     var inboxWork = new InboxWork {
       MessageId = messageId.Value,
@@ -264,7 +264,7 @@ public class ServiceBusConsumerWorkerCoverageTests {
     // main flow.
     var messageId = MessageId.New();
     var streamId = Guid.NewGuid();
-    const string messageTypeName = "Whizbang.Core.Tests.Workers.CoverageWorkerTestEvent, Whizbang.Core.Tests";
+    const string messageTypeName = "Whizbang.Core.Tests.Workers.CoverageWorkerTestEvent, Whizbang.Core.Component.Tests";
 
     var inboxWork = new InboxWork {
       MessageId = messageId.Value,

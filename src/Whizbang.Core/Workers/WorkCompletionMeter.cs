@@ -29,7 +29,7 @@ namespace Whizbang.Core.Workers;
 /// <para>AOT-safe: interlocked arithmetic over a long, no reflection.</para>
 /// </remarks>
 /// <docs>operations/workers/claim-backpressure</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCompletionMeterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/WorkCompletionMeterTests.cs</tests>
 public sealed class WorkCompletionMeter {
   private long _completed;
 

@@ -8,7 +8,7 @@ namespace Whizbang.Core.Security;
 /// Provides ambient scope context that flows across async calls within the same logical context.
 /// </summary>
 /// <docs>fundamentals/security/security#scope-context-accessor</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Security/ScopeContextAccessorTests.cs</tests>
 /// <remarks>
 /// <para>
 /// Uses AsyncLocal&lt;T&gt; for proper async flow semantics:
@@ -76,7 +76,7 @@ public sealed class ScopeContextAccessor : IScopeContextAccessor {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messages/cascade-context#initiating-context</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
   public static IMessageContext? CurrentInitiatingContext {
     get => _initiatingContext.Value;
     set => _initiatingContext.Value = value;
@@ -108,7 +108,7 @@ public sealed class ScopeContextAccessor : IScopeContextAccessor {
 
   /// <inheritdoc />
   /// <docs>fundamentals/messages/cascade-context#initiating-context</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
   public IMessageContext? InitiatingContext {
     get => _initiatingContext.Value;
     set => _initiatingContext.Value = value;

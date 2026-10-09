@@ -61,7 +61,7 @@ public class WorkerPipelineExtensionsBranchCoverageTests {
       MessageId = messageId.Value,
       Envelope = envelope,
       Metadata = new EnvelopeMetadata { MessageId = messageId, Hops = [] },
-      EnvelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.BranchFlushTestEvent, Whizbang.Core.Tests]], Whizbang.Core",
+      EnvelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.BranchFlushTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core",
       MessageType = "Whizbang.Core.Tests.Workers.BranchFlushTestEvent",
     };
   }

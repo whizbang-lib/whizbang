@@ -31,7 +31,7 @@ namespace Whizbang.Core.Tags;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#system-tags</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerControlClassReceiveTests.cs:ControlClassResolver_RecognizesTaggedTypesByNameAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerControlClassReceiveTests.cs:ControlClassResolver_RecognizesTaggedTypesByNameAsync</tests>
 public sealed class ControlClassResolver {
   private readonly Func<IEnumerable<MessageTagRegistration>> _registrationSource;
   private readonly ConcurrentDictionary<string, bool> _byTypeName = new(StringComparer.Ordinal);

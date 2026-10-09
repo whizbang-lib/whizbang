@@ -349,7 +349,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var inboxWork = new InboxWork {
       MessageId = messageId.Value,
       Envelope = _createJsonEnvelope(messageId, streamId),
-      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests",
+      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests",
       Status = MessageProcessingStatus.None,
       Attempts = 0
     };
@@ -380,7 +380,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act - invoke the captured handler with a JsonElement envelope
     var envelope = _createJsonEnvelope(messageId, streamId);
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
@@ -422,7 +422,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act - handler should return without invoking further processing
     var envelope = _createJsonEnvelope(messageId, Guid.NewGuid());
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
@@ -443,7 +443,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
         InboxWork = [new InboxWork {
           MessageId = messageId.Value,
           Envelope = _createJsonEnvelope(messageId, Guid.NewGuid()),
-          MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests",
+          MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests",
           Status = MessageProcessingStatus.None,
           Attempts = 0
         }],
@@ -469,7 +469,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, Guid.NewGuid());
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     // Act & Assert - the exception from the final flush is propagated
     await Assert.That(async () =>
@@ -505,7 +505,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var inboxWork = new InboxWork {
       MessageId = messageId.Value,
       Envelope = _createJsonEnvelope(messageId, streamId),
-      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests",
+      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests",
       Status = MessageProcessingStatus.None,
       Attempts = 0
     };
@@ -558,7 +558,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, streamId);
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
     await worker.DrainDetachedAsync();
@@ -579,7 +579,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var inboxWork = new InboxWork {
       MessageId = messageId.Value,
       Envelope = _createJsonEnvelope(messageId, streamId),
-      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests",
+      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests",
       Status = MessageProcessingStatus.None,
       Attempts = 0
     };
@@ -635,7 +635,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, streamId);
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     // Act
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
@@ -660,7 +660,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var inboxWork = new InboxWork {
       MessageId = messageId.Value,
       Envelope = _createJsonEnvelope(messageId, streamId),
-      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests",
+      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests",
       Status = MessageProcessingStatus.None,
       Attempts = 0
     };
@@ -717,7 +717,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, streamId);
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     // Act
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
@@ -740,7 +740,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var inboxWork = new InboxWork {
       MessageId = messageId.Value,
       Envelope = _createJsonEnvelope(messageId, streamId),
-      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests",
+      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests",
       Status = MessageProcessingStatus.None,
       Attempts = 0
     };
@@ -796,7 +796,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, streamId);
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     // Act
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
@@ -819,7 +819,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var inboxWork = new InboxWork {
       MessageId = messageId.Value,
       Envelope = _createJsonEnvelope(messageId, streamId),
-      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests",
+      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests",
       Status = MessageProcessingStatus.None,
       Attempts = 0
     };
@@ -857,7 +857,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
         ClrTypeName: "TestPerspective",
         FullyQualifiedName: "Test.TestPerspective",
         ModelType: "TestModel",
-        EventTypes: ["Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests"]
+        EventTypes: ["Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests"]
       )
     ]);
 
@@ -884,7 +884,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     var envelope = _createJsonEnvelope(messageId, streamId);
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     // Act
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
@@ -1043,7 +1043,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Create envelope with AggregateId in hop metadata
     var envelope = _createJsonEnvelopeWithAggregateId(messageId, expectedStreamId);
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
@@ -1084,7 +1084,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Create envelope WITHOUT AggregateId metadata
     var envelope = _createJsonEnvelopeWithoutMetadata(messageId);
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestCommand, Whizbang.Core.Tests]], Whizbang.Core";
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestCommand, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
@@ -1193,7 +1193,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Create envelope with TraceParent
     var envelope = _createJsonEnvelopeWithTraceParent(messageId, streamId);
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
     // Act
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);

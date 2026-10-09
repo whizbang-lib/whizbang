@@ -13,7 +13,7 @@ namespace Whizbang.Core.Workers;
 /// occurrence's receptor at the configured idle-time cron.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
 public interface IIntegritySweepRunner {
   /// <summary>Runs one full sweep cycle now, regardless of the counter cadence.</summary>
   Task RunSweepOnceAsync(CancellationToken cancellationToken);

@@ -58,7 +58,7 @@ internal sealed partial class SbcGapJsonContext : JsonSerializerContext;
 public class ServiceBusConsumerWorkerGapTests {
 
   private const string JSON_ENVELOPE_TYPE =
-    "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Component.Tests]], Whizbang.Core";
 
   // ========================================
   // Concurrency semaphore branches
@@ -323,7 +323,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var inboxWork = new InboxWork {
       MessageId = messageId.Value,
       Envelope = _createJsonEnvelope(messageId, streamId),
-      MessageType = "Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Tests",
+      MessageType = "Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Component.Tests",
       Status = MessageProcessingStatus.None,
       Attempts = 0
     };
@@ -419,7 +419,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var inboxWork = new InboxWork {
       MessageId = messageId.Value,
       Envelope = _createJsonEnvelope(messageId, streamId),
-      MessageType = "Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Tests",
+      MessageType = "Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Component.Tests",
       Status = MessageProcessingStatus.None,
       Attempts = 0
     };
@@ -493,7 +493,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var inboxWork = new InboxWork {
       MessageId = messageId.Value,
       Envelope = _createJsonEnvelope(messageId, streamId),
-      MessageType = "Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Tests",
+      MessageType = "Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Component.Tests",
       Status = MessageProcessingStatus.None,
       Attempts = 0
     };

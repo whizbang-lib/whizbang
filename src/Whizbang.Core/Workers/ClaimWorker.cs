@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerAttemptAccountingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerAttemptAccountingTests.cs</tests>
 public sealed partial class ClaimWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
@@ -302,7 +302,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// How many times a full outbox acquisition made the loop claim again without waiting (#917).
   /// Exposed for observability and tests. Resets on process restart.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerAcquisitionBoundsTests.cs:FullOutboxAcquisition_ClaimsAgainWithoutSpacingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerAcquisitionBoundsTests.cs:FullOutboxAcquisition_ClaimsAgainWithoutSpacingAsync</tests>
   public long ImmediateReclaimCount => Interlocked.Read(ref _immediateReclaimCount);
 
   /// <summary>
@@ -330,7 +330,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// (see <see cref="RequestImmediatePoll"/>), so a burst of completions cannot turn the nap into a
   /// tight loop.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerGateCadenceTests.cs:GateFlipsToAvailable_TriggersImmediatePollAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerGateCadenceTests.cs:GateFlipsToAvailable_TriggersImmediatePollAsync</tests>
   private void _wakeNow() {
     RequestImmediatePoll();
     CancelNapIgnoringDisposal(Volatile.Read(ref _napCts));
@@ -694,7 +694,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// in the batch) is offered to the hooks and the streams are handed over by the adjusted number, stable within
   /// equal numbers. A hook sets a stream's number, never a row's position, so per-stream order holds.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Priority/ClaimWorkerPriorityBatchHookTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Priority/ClaimWorkerPriorityBatchHookTests.cs</tests>
   private List<Guid> _orderForDispatch(WorkBatch batch) {
     if ((_priorityHooks?.IsEmpty ?? true) || batch.InboxStreams.Count == 0) {
       return batch.InboxStreamIds;

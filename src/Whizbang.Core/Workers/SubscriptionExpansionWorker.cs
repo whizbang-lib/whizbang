@@ -25,7 +25,7 @@ namespace Whizbang.Core.Workers;
 /// surface). One-shot: runs once after the schema gate, then completes.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/SubscriptionExpansionWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/SubscriptionExpansionWorkerTests.cs</tests>
 public sealed partial class SubscriptionExpansionWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,

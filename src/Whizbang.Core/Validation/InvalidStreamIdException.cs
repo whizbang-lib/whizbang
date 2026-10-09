@@ -13,7 +13,7 @@ namespace Whizbang.Core.Validation;
 /// <tests>tests/Whizbang.Core.Tests/Validation/StreamIdGuardTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Validation/StreamIdGuardTests.cs:ThrowIfEmpty_WithGuidEmpty_ThrowsInvalidStreamIdExceptionAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Validation/StreamIdGuardTests.cs:ThrowIfEmpty_CapturesCallerInfoAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerGapTests.cs:HandleMessage_EventWithEmptyStreamId_ThrowsInvalidStreamIdExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerGapTests.cs:HandleMessage_EventWithEmptyStreamId_ThrowsInvalidStreamIdExceptionAsync</tests>
 public sealed class InvalidStreamIdException : Exception {
   /// <summary>
   /// Creates a new InvalidStreamIdException.

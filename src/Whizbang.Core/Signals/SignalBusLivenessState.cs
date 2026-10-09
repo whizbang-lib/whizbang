@@ -14,8 +14,8 @@ namespace Whizbang.Core.Signals;
 /// state is Interlocked/Volatile only — no locks.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeTests.cs:Report_ConsecutiveMissedDoorbells_DegradesAtThreshold_DoorbellWakeResetsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeTests.cs:HostedStart_DeadTransport_ProbeMarksWireRouteFailedAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusProbeTests.cs:Report_ConsecutiveMissedDoorbells_DegradesAtThreshold_DoorbellWakeResetsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusProbeTests.cs:HostedStart_DeadTransport_ProbeMarksWireRouteFailedAsync</tests>
 public sealed class SignalBusLivenessState {
   private const int VERDICT_VERIFIED = 1;
   private const int VERDICT_FAILED = 2;
@@ -82,8 +82,8 @@ public sealed class SignalBusLivenessState {
   /// the startup self-test has not reached yet, and never overrides a probe that failed after it.
   /// </remarks>
   /// <docs>fundamentals/signal-bus/signal-bus#probe-backoff-and-recovery</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeBackoffTests.cs:WireSignalAfterAFailedProbe_ClearsTheFailureAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeBackoffTests.cs:WireSignalBeforeAnyProbe_DoesNotVouchForTheRouteAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusProbeBackoffTests.cs:WireSignalAfterAFailedProbe_ClearsTheFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusProbeBackoffTests.cs:WireSignalBeforeAnyProbe_DoesNotVouchForTheRouteAsync</tests>
   public void MarkWireSignalReceived(DateTimeOffset at) {
     Volatile.Write(ref _lastWireSignalTicks, at.UtcTicks);
     if (Volatile.Read(ref _verdict) == VERDICT_FAILED && at.UtcTicks > Volatile.Read(ref _lastProbeTicks)
