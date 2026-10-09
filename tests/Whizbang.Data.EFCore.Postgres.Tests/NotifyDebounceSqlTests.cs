@@ -49,13 +49,19 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, control, TimeSpan.Zero);
     await _ownStreamAsync(conn, streamA, suppressed);
     await _ownStreamAsync(conn, streamB, control);
-    await _primeRowAsync(conn, suppressed, "inbox", lastWorkAgeSeconds: 2, lastAttemptMsAgo: 30, rapidRun: 4);
-    await _setWatermarkAsync(conn, control, ageSeconds: 600);    // stale: must fire
+    var instant = default(DateTime);
 
-    var received = await _captureNotificationsAsync(conn, [suppressed, control], async () => {
-      await _notifyAsync(conn, "inbox", streamA);   // toward the flooded, draining target
-      await _notifyAsync(conn, "inbox", streamB);   // toward the stale one — the ordering fence
-    });
+    // Primed and rung at ONE instant (see _atOneInstantAsync): the 30 ms gap and the 2 s watermark
+    // age are exactly what the debounce reads, however long this test takes to get here.
+    var received = await _captureNotificationsAsync(conn, [suppressed, control], async () =>
+      instant = await _atOneInstantAsync(conn, async () => {
+        await _registerInstanceAsync(conn, suppressed, TimeSpan.Zero);
+        await _registerInstanceAsync(conn, control, TimeSpan.Zero);
+        await _primeRowAsync(conn, suppressed, "inbox", lastWorkAgeSeconds: 2, lastAttemptMsAgo: 30, rapidRun: 4);
+        await _setWatermarkAsync(conn, control, ageSeconds: 600);    // stale: must fire
+        await _notifyAsync(conn, "inbox", streamA);   // toward the flooded, draining target
+        await _notifyAsync(conn, "inbox", streamB);   // toward the stale one — the ordering fence
+      }));
 
     // The control notification is the fence: same connection, ordered delivery — when it
     // has arrived, the suppressed one would already be here if it had fired.
@@ -65,9 +71,10 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
       .Because("a sustained flood toward a draining target is the redundant pg_notify load the "
              + "debounce exists to remove — the linger poll delivers the suppressed store");
 
-    await Assert.That(await _watermarkAgeSecondsAsync(conn, suppressed)).IsLessThan(2)
-      .Because("a suppressed store slides the watermark: it IS work, and the drainer's "
-             + "linger poll restarting on it is exactly what the slide predicts");
+    await Assert.That(await _readWatermarkAsync(conn, suppressed)).IsEqualTo(instant)
+      .Because("a suppressed store slides the watermark (primed 2 s earlier) to the ring's own "
+             + "instant: it IS work, and the drainer's linger poll restarting on it is exactly "
+             + "what the slide predicts");
   }
 
   [Test]
@@ -201,9 +208,9 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
       await cmd.ExecuteNonQueryAsync();
     }
 
-    await _claimAsync(conn, inst);
+    var claimedAt = await _atOneInstantAsync(conn, () => _claimAsync(conn, inst));
 
-    await Assert.That(await _watermarkAgeSecondsAsync(conn, inst, "outbox")).IsLessThan(2)
+    await Assert.That(await _readWatermarkAsync(conn, inst, "outbox")).IsEqualTo(claimedAt)
       .Because("the stamp rides inside claim_work — zero extra round trips — and it is "
              + "what tells producers this instance is awake and polling");
   }
@@ -250,9 +257,9 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await _insertEventStoreRowAsync(conn, eventId, stream, commitSequenceNull: false);
     await _insertPerspectiveEventAsync(conn, stream, eventId, inst);
 
-    await _claimAsync(conn, inst);
+    var claimedAt = await _atOneInstantAsync(conn, () => _claimAsync(conn, inst));
 
-    await Assert.That(await _watermarkAgeSecondsAsync(conn, inst, "perspective")).IsLessThan(2)
+    await Assert.That(await _readWatermarkAsync(conn, inst, "perspective")).IsEqualTo(claimedAt)
       .Because("a drainable perspective stream is real progress — its watermark must arm so "
              + "producers suppress redundant doorbells toward this actively-draining instance");
   }
@@ -330,10 +337,12 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     var stream = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _ownStreamAsync(conn, stream, inst);
-    await _primeRowAsync(conn, inst, "inbox", lastWorkAgeSeconds: 2, lastAttemptMsAgo: 30, rapidRun: 4);
-
     var received = await _captureNotificationsAsync(conn, [inst], async () =>
-      await _notifyAsync(conn, "inbox", stream));
+      await _atOneInstantAsync(conn, async () => {
+        await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
+        await _primeRowAsync(conn, inst, "inbox", lastWorkAgeSeconds: 2, lastAttemptMsAgo: 30, rapidRun: 4);
+        await _notifyAsync(conn, "inbox", stream);
+      }));
 
     await Assert.That(received.Any(r => r.Channel == $"wh_work_i_{inst}")).IsFalse()
       .Because("a sustained rapid run toward a draining live target debounces at the ceiling — "
@@ -357,6 +366,7 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
     await _ownStreamAsync(conn, stream, inst);
     await _primeRowAsync(conn, inst, "inbox", lastWorkAgeSeconds: 2, lastAttemptMsAgo: 5000, rapidRun: 10);
+    var armedAt = await _readWatermarkAsync(conn, inst);
 
     var received = await _captureNotificationsAsync(conn, [inst], async () =>
       await _notifyAsync(conn, "inbox", stream));
@@ -367,9 +377,9 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await Assert.That(RapidRun).IsEqualTo(0);
     await Assert.That(FiredCount).IsEqualTo(1L);
     await Assert.That(EffectiveWindowMs).IsEqualTo(50);
-    await Assert.That(await _watermarkAgeSecondsAsync(conn, inst)).IsLessThan(4)
+    await Assert.That(await _readWatermarkAsync(conn, inst)).IsEqualTo(armedAt)
       .Because("a fire must NOT reset the found-work watermark — claim_work alone owns last_work_at, "
-             + "so it stays ~2s armed, not slid or cleared by the fire");
+             + "so it stays exactly where it was armed, not slid or cleared by the fire");
   }
 
   [Test]
@@ -439,16 +449,41 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     return conn;
   }
 
+  /// <summary>
+  /// Heartbeats the instance at <c>NOW() + hbOffset</c>: the database clock the liveness check reads,
+  /// never the host's, which can disagree with it.
+  /// </summary>
   private static async Task _registerInstanceAsync(NpgsqlConnection conn, Guid id, TimeSpan hbOffset) {
-    var hb = DateTimeOffset.UtcNow + hbOffset;
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
       INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
-      VALUES (@id, 'test-svc', 'test-host', 1, @hb, @hb, '{}'::jsonb)
+      VALUES (@id, 'test-svc', 'test-host', 1, NOW() + @off, NOW() + @off, '{}'::jsonb)
       ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = EXCLUDED.last_heartbeat_at";
     cmd.Parameters.AddWithValue(nameof(id), id);
-    cmd.Parameters.Add(new NpgsqlParameter("hb", NpgsqlDbType.TimestampTz) { Value = hb });
+    cmd.Parameters.Add(new NpgsqlParameter("off", NpgsqlDbType.Interval) { Value = hbOffset });
     await cmd.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
+  /// Runs <paramref name="statements"/> in ONE transaction and returns that transaction's <c>NOW()</c>.
+  /// </summary>
+  /// <remarks>
+  /// The debounce judges every gap (watermark age, last-attempt gap, heartbeat age) against its own
+  /// <c>NOW()</c>, the transaction's start time. Seeded by earlier statements, a gap is the seeded
+  /// age plus however long the test took to reach the ring, raced against windows as small as 50 ms
+  /// (floor) and 100 ms (rapid gap). Seeded inside the ring's transaction, every <c>NOW()</c> is the
+  /// same instant, so the gap the debounce reads is exactly the seeded one, by construction. The
+  /// debounce's own row lock is taken by this same transaction, so seeding the row here never makes
+  /// the ring skip it.
+  /// </remarks>
+  private static async Task<DateTime> _atOneInstantAsync(NpgsqlConnection conn, Func<Task> statements) {
+    await using var tx = await conn.BeginTransactionAsync();
+    await using var now = conn.CreateCommand();
+    now.CommandText = "SELECT NOW()";
+    var instant = (DateTime)(await now.ExecuteScalarAsync())!;
+    await statements();
+    await tx.CommitAsync();
+    return instant;
   }
 
   private static async Task _ownStreamAsync(NpgsqlConnection conn, Guid streamId, Guid instanceId) {
@@ -471,13 +506,13 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private static async Task<double> _watermarkAgeSecondsAsync(NpgsqlConnection conn, Guid instanceId, string kind = "inbox") {
+  /// <summary>The found-work watermark as stored; null when there is no row or it was never armed.</summary>
+  private static async Task<DateTime?> _readWatermarkAsync(NpgsqlConnection conn, Guid instanceId, string kind = "inbox") {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT EXTRACT(EPOCH FROM (NOW() - last_work_at)) FROM wh_notify_state WHERE instance_id = @id AND payload_kind = @kind";
+    cmd.CommandText = "SELECT last_work_at FROM wh_notify_state WHERE instance_id = @id AND payload_kind = @kind";
     cmd.Parameters.AddWithValue("id", instanceId);
     cmd.Parameters.AddWithValue(nameof(kind), kind);
-    var v = await cmd.ExecuteScalarAsync();
-    return v is null or DBNull ? double.MaxValue : Convert.ToDouble(v, System.Globalization.CultureInfo.InvariantCulture);
+    return await cmd.ExecuteScalarAsync() as DateTime?;
   }
 
   // Prime a wh_notify_state row with an explicit watermark + rate state — no sleeps: ages are
