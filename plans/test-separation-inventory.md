@@ -193,7 +193,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Hosting.Azure.ServiceBus.Tests | 1 | 2 | 0 | 0 | 3 | 1 |
 | Whizbang.Hosting.RabbitMQ.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.LanguageServer.Tests | 18 | 0 | 0 | 0 | 18 | 0 |
-| Whizbang.Migrate.Tests | 39 | 0 | 0 | 23 | 62 | 0 |
+| Whizbang.Migrate.Tests | 39 | 0 | 0 | 0 | 39 | 0 |
 | Whizbang.Observability.Tests | 21 | 3 | 0 | 0 | 24 | 0 |
 | Whizbang.Offloads.AzureBlob.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
 | Whizbang.Offloads.InMemory.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
@@ -209,7 +209,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 21 | 0 | 1 | 45 | 2 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 420 | 1 | 40 | 2230 | 14 |
+| **Total** | 1769 | 420 | 1 | 17 | 2207 | 14 |
 
 ## Worklist: non-unit types by project
 
@@ -526,16 +526,16 @@ All 1 types are unit-pure.
 | PerspectiveWorkerCollectiveSinkTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.BranchCoverage.cs` | 2 | Component | StartAsync, TimeoutWait | partial PerspectiveWorkerCollectiveSinkTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerCollectiveSinkTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.Predecessor.cs` | 7 | Component | StartAsync, TimeoutWait, CrossThreadSignal | partial PerspectiveWorkerCollectiveSinkTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerCollectiveSinkTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs` | 34 | Component | StartAsync, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerCollectiveSinkTests (Component) | phase 2 waits for #1259 |
-| PerspectiveWorkerCoverageTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCoverageTests.cs` | 42 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component); PerspectiveWorkerTestHarness (Component) | phase 2 waits for #1259 |
+| PerspectiveWorkerCoverageTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCoverageTests.cs` | 39 | Component | StartAsync, TimeoutWait, CrossThreadSignal | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component); PerspectiveWorkerTestHarness (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeadLetterFilterTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeadLetterFilterTests.cs` | 8 | Component |  | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDedupTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDedupTests.cs` | 9 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component) | phase 2 waits for #1259 |
-| PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.BranchCoverage.cs` | 18 | Component | StartAsync, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
+| PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.BranchCoverage.cs` | 24 | Component | StartAsync, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.ConsumerWake.cs` | 4 | Component |  | partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.LifecycleFailurePaths.cs` | 3 | Component | StartAsync, TimeoutWait, CrossThreadSignal | EventIdSignalingLogger (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.StoredForm.cs` | 1 | Component | StartAsync, TimeoutWait | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.TransientFailure.cs` | 2 | Component | StartAsync | EventIdSignalingLogger (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs` | 13 | Component | StartAsync, TimeoutWait, CrossThreadSignal | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
-| PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.BranchCoverage.cs` | 6 | Component | StartAsync, TimeoutWait, CrossThreadSignal | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
+| PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.BranchCoverage.cs` | 8 | Component | StartAsync, TimeoutWait, CrossThreadSignal | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.RefetchExitPaths.cs` | 2 | Component | StartAsync, TimeoutWait, CrossThreadSignal | EventIdSignalingLogger (Component); partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.StoredForm.cs` | 3 | Component | StartAsync, TimeoutWait | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.TransientFailure.cs` | 4 | Component | StartAsync, TimeoutWait | EventIdSignalingLogger (Component); partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
@@ -710,33 +710,7 @@ All 18 types are unit-pure.
 
 ### Whizbang.Migrate.Tests
 
-23 of 62 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| MartenAnalyzerTests | `tests/Whizbang.Migrate.Tests/Analysis/MartenAnalyzerTests.cs` | 12 | Other | FileSystem |  |  |
-| WolverineAnalyzerTests | `tests/Whizbang.Migrate.Tests/Analysis/WolverineAnalyzerTests.cs` | 43 | Other | FileSystem |  |  |
-| AnalyzeCommandTests | `tests/Whizbang.Migrate.Tests/Commands/AnalyzeCommandTests.cs` | 6 | Other | FileSystem |  |  |
-| ApplyCommandTests | `tests/Whizbang.Migrate.Tests/Commands/ApplyCommandTests.cs` | 12 | Other | FileSystem |  |  |
-| ProgramCoverageTests | `tests/Whizbang.Migrate.Tests/Commands/ProgramCoverageTests.cs` | 3 | Other | FileSystem |  |  |
-| RevertCommandCoverageTests | `tests/Whizbang.Migrate.Tests/Commands/RevertCommandCoverageTests.cs` | 4 | Other | FileSystem, Process |  |  |
-| RevertCommandTests | `tests/Whizbang.Migrate.Tests/Commands/RevertCommandTests.cs` | 7 | Other | FileSystem |  |  |
-| StatusCommandCoverageTests | `tests/Whizbang.Migrate.Tests/Commands/StatusCommandCoverageTests.cs` | 4 | Other | FileSystem |  |  |
-| StatusCommandTests | `tests/Whizbang.Migrate.Tests/Commands/StatusCommandTests.cs` | 5 | Other | FileSystem |  |  |
-| GitWorktreeServiceCoverageTests | `tests/Whizbang.Migrate.Tests/Git/GitWorktreeServiceCoverageTests.cs` | 2 | Other | FileSystem, Process |  |  |
-| JsonMigrationJournalCoverageTests | `tests/Whizbang.Migrate.Tests/Journal/JsonMigrationJournalCoverageTests.cs` | 1 | Other | FileSystem |  |  |
-| JsonMigrationJournalTests | `tests/Whizbang.Migrate.Tests/Journal/JsonMigrationJournalTests.cs` | 17 | Other | FileSystem |  |  |
-| PackageManagerTests | `tests/Whizbang.Migrate.Tests/PackageManagement/PackageManagerTests.cs` | 18 | Other | FileSystem |  |  |
-| ProgramCliTests | `tests/Whizbang.Migrate.Tests/ProgramCliTests.cs` | 36 | Other | FileSystem |  |  |
-| MigrationProjectManagerCoverageTests | `tests/Whizbang.Migrate.Tests/Projects/MigrationProjectManagerCoverageTests.cs` | 5 | Other | FileSystem |  |  |
-| MigrationProjectManagerTests | `tests/Whizbang.Migrate.Tests/Projects/MigrationProjectManagerTests.cs` | 10 | Other | FileSystem |  |  |
-| DecisionFileTests | `tests/Whizbang.Migrate.Tests/Wizard/DecisionFileTests.cs` | 23 | Other | FileSystem |  |  |
-| GitOperationsCoverageTests | `tests/Whizbang.Migrate.Tests/Wizard/GitOperationsCoverageTests.cs` | 2 | Other | FileSystem, Process |  |  |
-| GitOperationsTests | `tests/Whizbang.Migrate.Tests/Wizard/GitOperationsTests.cs` | 13 | Other | FileSystem |  |  |
-| MigrationStateDetectorCoverageTests | `tests/Whizbang.Migrate.Tests/Wizard/MigrationStateDetectorCoverageTests.cs` | 4 | Other | FileSystem |  |  |
-| MigrationStateDetectorTests | `tests/Whizbang.Migrate.Tests/Wizard/MigrationStateDetectorTests.cs` | 5 | Other | FileSystem |  |  |
-| WizardRunnerCoverageTests | `tests/Whizbang.Migrate.Tests/Wizard/WizardRunnerCoverageTests.cs` | 6 | Other | FileSystem |  |  |
-| WizardRunnerTests | `tests/Whizbang.Migrate.Tests/Wizard/WizardRunnerTests.cs` | 13 | Other | FileSystem |  |  |
+All 39 types are unit-pure.
 
 ### Whizbang.Observability.Tests
 

@@ -117,11 +117,12 @@ despite the name, a unit project), `ECommerce.BFF.API.Tests`, `ECommerce.Invento
 `ECommerce.ShippingWorker.Tests`. `ECommerce.BFF.API.Tests` and `ECommerce.InventoryWorker.Tests` carry
 `Integration;Docker` tags while declaring Unit; the inventory classifies their classes.
 
-### Component (1)
+### Component (2)
 
 | Project | Purpose |
 |---------|---------|
 | `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core`; receives the component tests moved out of `Whizbang.Core.Tests` |
+| `Whizbang.Migrate.Component.Tests` | Tests of the migration tool that read and write the real file system (temporary folders and files), moved out of `Whizbang.Migrate.Tests`; tests that start `git` moved to `Whizbang.Migrate.Integration.Tests` |
 
 ### Integration (13)
 
