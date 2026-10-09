@@ -16,8 +16,8 @@ namespace Whizbang.Core.Transports;
 /// <docs>messaging/transports/transports</docs>
 /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_ShouldStoreTransportAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:GetTransport_WhenExists_ShouldReturnTransportAsync</tests>
-/// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithMultipleTargets_ShouldPublishToAllAsync</tests>
-/// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithMultipleTargets_ShouldCreateMultipleSubscriptionsAsync</tests>
+/// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithMultipleTargets_ShouldPublishToAllAsync</tests>
+/// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithMultipleTargets_ShouldCreateMultipleSubscriptionsAsync</tests>
 public interface ITransportManager {
   /// <summary>
   /// Registers a transport for a specific transport type.
@@ -62,12 +62,12 @@ public interface ITransportManager {
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithEmptyTargets_ShouldNotThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullMessage_ShouldThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithSingleTarget_ShouldPublishAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithMultipleTargets_ShouldPublishToAllAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithCustomContext_ShouldUseProvidedContextAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_CreatesEnvelopeWithHopsAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WhenTransportNotRegistered_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithSingleTarget_ShouldPublishAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithMultipleTargets_ShouldPublishToAllAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithCustomContext_ShouldUseProvidedContextAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_CreatesEnvelopeWithHopsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WhenTransportNotRegistered_ShouldThrowAsync</tests>
   Task PublishToTargetsAsync<TMessage>(
     TMessage message,
     IReadOnlyList<PublishTarget> targets,
@@ -85,18 +85,18 @@ public interface ITransportManager {
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithEmptyTargets_ShouldReturnEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullHandler_ShouldThrowAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithSingleTarget_ShouldCreateSubscriptionAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithMultipleTargets_ShouldCreateMultipleSubscriptionsAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithKafkaConsumerGroup_ShouldIncludeInMetadataAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithServiceBusSubscriptionName_ShouldIncludeInMetadataAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithServiceBusSqlFilter_ShouldIncludeInMetadataAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithRabbitMQQueueName_ShouldIncludeInMetadataAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithKafkaPartition_ShouldIncludeInMetadataAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithAllMetadata_ShouldIncludeAllInDestinationAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_HandlerReceivesEnvelope_ShouldWorkAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WhenTransportNotRegistered_ShouldThrowAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithEmptyStringsInMetadata_ShouldNotIncludeThemAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithSingleTarget_ShouldCreateSubscriptionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithMultipleTargets_ShouldCreateMultipleSubscriptionsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithKafkaConsumerGroup_ShouldIncludeInMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithServiceBusSubscriptionName_ShouldIncludeInMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithServiceBusSqlFilter_ShouldIncludeInMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithRabbitMQQueueName_ShouldIncludeInMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithKafkaPartition_ShouldIncludeInMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithAllMetadata_ShouldIncludeAllInDestinationAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_HandlerReceivesEnvelope_ShouldWorkAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WhenTransportNotRegistered_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithEmptyStringsInMetadata_ShouldNotIncludeThemAsync</tests>
   Task<List<ISubscription>> SubscribeFromTargetsAsync(
     IReadOnlyList<SubscriptionTarget> targets,
     Func<IMessageEnvelope, Task> handler
