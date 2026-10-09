@@ -203,13 +203,13 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Sequencing.Tests | 0 | 1 | 0 | 0 | 1 | 0 |
 | Whizbang.SignalR.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
 | Whizbang.Testing.Tests | 12 | 8 | 1 | 1 | 22 | 0 |
-| Whizbang.Transports.AzureServiceBus.Tests | 56 | 10 | 0 | 0 | 66 | 0 |
+| Whizbang.Transports.AzureServiceBus.Tests | 56 | 0 | 0 | 0 | 56 | 0 |
 | Whizbang.Transports.FastEndpoints.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
 | Whizbang.Transports.HotChocolate.Tests | 20 | 1 | 0 | 0 | 21 | 0 |
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 21 | 0 | 1 | 45 | 2 |
 | Whizbang.Transports.Tests | 12 | 8 | 0 | 0 | 20 | 0 |
-| **Total** | 1769 | 420 | 1 | 40 | 2230 | 14 |
+| **Total** | 1769 | 410 | 1 | 40 | 2220 | 14 |
 
 ## Worklist: non-unit types by project
 
@@ -529,13 +529,13 @@ All 1 types are unit-pure.
 | PerspectiveWorkerCoverageTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCoverageTests.cs` | 42 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component); PerspectiveWorkerTestHarness (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeadLetterFilterTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeadLetterFilterTests.cs` | 8 | Component |  | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDedupTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDedupTests.cs` | 9 | Component | StartAsync, TaskDelay, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component) | phase 2 waits for #1259 |
-| PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.BranchCoverage.cs` | 18 | Component | StartAsync, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
+| PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.BranchCoverage.cs` | 22 | Component | StartAsync, TimeoutWait, CrossThreadSignal | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.ConsumerWake.cs` | 4 | Component |  | partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.LifecycleFailurePaths.cs` | 3 | Component | StartAsync, TimeoutWait, CrossThreadSignal | EventIdSignalingLogger (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.StoredForm.cs` | 1 | Component | StartAsync, TimeoutWait | PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.TransientFailure.cs` | 2 | Component | StartAsync | EventIdSignalingLogger (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathChannelTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs` | 13 | Component | StartAsync, TimeoutWait, CrossThreadSignal | CapturingFailureChannel (Component); CapturingPerspectiveCompletionChannel (Component); PerspectiveWorkerTestHarness (Component); partial PerspectiveWorkerDeepPathChannelTests (Component) | phase 2 waits for #1259 |
-| PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.BranchCoverage.cs` | 6 | Component | StartAsync, TimeoutWait, CrossThreadSignal | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
+| PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.BranchCoverage.cs` | 7 | Component | StartAsync, TimeoutWait, CrossThreadSignal | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.RefetchExitPaths.cs` | 2 | Component | StartAsync, TimeoutWait, CrossThreadSignal | EventIdSignalingLogger (Component); partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.StoredForm.cs` | 3 | Component | StartAsync, TimeoutWait | partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
 | PerspectiveWorkerDeepPathDrainTests | `tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.TransientFailure.cs` | 4 | Component | StartAsync, TimeoutWait | EventIdSignalingLogger (Component); partial PerspectiveWorkerDeepPathDrainTests (Component) | phase 2 waits for #1259 |
@@ -810,20 +810,7 @@ All 6 types are unit-pure.
 
 ### Whizbang.Transports.AzureServiceBus.Tests
 
-10 of 96 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| AsbAcceptorAdaptiveWiringTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs` | 9 | Component | CrossThreadSignal |  |  |
-| AzureServiceBusErrorHandlingTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusErrorHandlingTests.cs` | 41 | Component | TaskDelay |  |  |
-| AzureServiceBusTransportBatchPipelineTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportBatchPipelineTests.cs` | 12 | Component | CrossThreadSignal |  |  |
-| AzureServiceBusTransportThrottleAndAdaptiveTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportThrottleAndAdaptiveTests.cs` | 11 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| AzureServiceBusTransportUnitTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs` | 31 | Component | TimeoutWait |  |  |
-| AsbFinalPassBranchTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/BranchCoverage/AsbFinalPassBranchTests.cs` | 6 | Component | CrossThreadSignal |  |  |
-| ReceiveLivenessWatchdogCoverageTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ReceiveLivenessWatchdogCoverageTests.cs` | 2 | Component | TimeoutWait, CrossThreadSignal |  |  |
-| ReceiveLivenessWatchdogTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ReceiveLivenessWatchdogTests.cs` | 13 | Component | CrossThreadSignal |  |  |
-| ServiceBusReadinessCheckCoverageTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusReadinessCheckCoverageTests.cs` | 4 | Component | TaskRun, TimeoutWait |  |  |
-| ServiceBusReadinessCheckTests | `tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusReadinessCheckTests.cs` | 5 | Component | TaskDelay |  |  |
+All 85 types are unit-pure.
 
 ### Whizbang.Transports.FastEndpoints.Tests
 

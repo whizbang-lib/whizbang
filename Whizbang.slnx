@@ -107,6 +107,7 @@
     <Project Path="tests/Whizbang.Offloads.AzureBlob.Tests/Whizbang.Offloads.AzureBlob.Tests.csproj" />
     <Project Path="tests/Whizbang.Offloads.AzureBlob.Integration.Tests/Whizbang.Offloads.AzureBlob.Integration.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.AzureServiceBus.Tests/Whizbang.Transports.AzureServiceBus.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.AzureServiceBus.Component.Tests/Whizbang.Transports.AzureServiceBus.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.AzureServiceBus.Integration.Tests/Whizbang.Transports.AzureServiceBus.Integration.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.FastEndpoints.Tests/Whizbang.Transports.FastEndpoints.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.FastEndpoints.Integration.Tests/Whizbang.Transports.FastEndpoints.Integration.Tests.csproj" />
