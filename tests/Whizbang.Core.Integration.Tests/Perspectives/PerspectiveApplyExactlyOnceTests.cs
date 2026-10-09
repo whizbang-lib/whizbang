@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
@@ -411,6 +412,108 @@ public class PerspectiveApplyExactlyOnceTests {
     await Assert.That(runner.Entries).IsEqualTo(1).Because(
       "with the affinity gate the event is applied exactly once across both drain consumers");
   }
+
+  /// <summary>
+  /// The affinity gate must stay held for as long as the apply it guards is still running, including
+  /// an apply its drain consumer stopped waiting for. The lease executor abandons an apply whose lease
+  /// runs out (or whose worker is stopping) and lets the consumer move on, but the abandoned apply keeps
+  /// running, and it has not marked its events processed yet. Releasing the gate when the consumer moved
+  /// on let a second consumer for the same (stream, perspective) find the event still fresh and apply it
+  /// a second time, concurrently with the first.
+  /// </summary>
+  /// <remarks>
+  /// Deterministic: consumer A blocks inside the runner; the fake clock passes A's lease deadline, so A's
+  /// consumer abandons the apply and finishes its drain (the drain channel's <c>MarkDrained</c>, which runs
+  /// after the gate scope, is the signal). Only then is the second signal enqueued, so consumer B arrives
+  /// at a gate whose holder is provably gone from the consumer loop while its apply is provably still in
+  /// the runner. B must park; when A's apply returns, B must find the event already processed.
+  /// </remarks>
+  [Test]
+  public async Task DrainMode_ApplyOutlivesItsLease_GateStaysHeldUntilTheAbandonedApplyReturns_AppliesOnceAsync() {
+    var streamId = TrackedGuid.New().Value;
+    var eventId = TrackedGuid.New().Value;
+    const string perspectiveName = "Test.AbandonedApplyPerspective";
+    var runner = new BlockingDrainRunner();
+
+    var coordinator = new DualPathCoordinator {
+      StreamIdsToReturnOnce = [],
+      PerspectiveWorkToReturnOnce = [],
+      StreamEventsToReturn = [
+        new StreamEventData {
+          StreamId = streamId,
+          EventId = eventId,
+          EventType = TypeNameFormatter.Format(typeof(FakeApplyEvent)),
+          EventData = JsonSerializer.Serialize(new FakeApplyEvent(1)),
+          Metadata = null,
+          Scope = null,
+          EventWorkId = Guid.CreateVersion7()
+        }
+      ]
+    };
+    var envelope = new MessageEnvelope<IEvent> {
+      MessageId = new MessageId(eventId),
+      Payload = new FakeApplyEvent(1),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+    var eventStore = new ApplyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
+    var registry = new SingleRegistry(runner, perspectiveName, [typeof(FakeApplyEvent)]);
+    var clock = new FakeTimeProvider();
+    var drainChannel = new DrainedSignalingChannel(streamId);
+
+    using var cts = new CancellationTokenSource();
+    var (worker, _) = _createWorker(coordinator, registry, eventStore,
+      o => {
+        o.MaxConcurrentDrainConsumers = 2;
+        o.DrainLoopMaxIterations = 1;
+        // The drain batcher's coalescing window runs on the worker's clock; with the clock fake, a zero
+        // window lets each signal go straight to a consumer instead of waiting for an Advance.
+        o.DrainBatcher = new SlidingWindowBatcherOptions { SlidingWindow = TimeSpan.Zero, MaxWait = TimeSpan.Zero, MaxSize = 1000 };
+      },
+      timeProvider: clock, drainChannel: drainChannel);
+    var gateParked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStreamAffinityGateContended += key => {
+      if (key.StreamId == streamId && key.PerspectiveName == perspectiveName) {
+        gateParked.TrySetResult();
+      }
+    };
+    await worker.StartAsync(cts.Token);
+
+    try {
+      // A enters the runner and blocks there, ignoring its token like a hung handler.
+      await drainChannel.WriteAsync(streamId, cts.Token);
+      await runner.FirstEntered.WaitAsync(TimeSpan.FromSeconds(10));
+
+      // A's lease runs out: the executor abandons the still-running apply and A's consumer finishes its
+      // drain of the stream. The apply itself is still inside the runner.
+      clock.Advance(_drainLeaseWindow + TimeSpan.FromSeconds(1));
+      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+      await Assert.That(runner.FirstReturned.IsCompleted).IsFalse()
+        .Because("the abandoned apply is still running when its consumer has moved on");
+
+      // B drains the same stream. The gate is still held by A's running apply, so B parks; if the gate
+      // had been released with A's consumer, B finds the event fresh and enters the runner instead.
+      await drainChannel.WriteAsync(streamId, cts.Token);
+      var winner = await Task.WhenAny(gateParked.Task, runner.SecondEntered)
+        .WaitAsync(TimeSpan.FromSeconds(10));
+      await Assert.That(winner == gateParked.Task).IsTrue().Because(
+        "an apply abandoned by its consumer still holds the (stream, perspective) gate until it returns; "
+        + "a second consumer must park behind it, never apply the same event concurrently");
+    } finally {
+      runner.Release();
+    }
+
+    // A's apply returns, marks the event processed, and only then lets the gate go; B takes it and skips.
+    await drainChannel.SecondDrained.WaitAsync(TimeSpan.FromSeconds(10));
+    await _stopWorkerAsync(worker, cts);
+
+    await Assert.That(runner.Entries).IsEqualTo(1).Because(
+      "the event is applied once: the second consumer runs only after the abandoned apply marked it processed");
+  }
+
+  /// <summary>The drain apply's lease window under the default options: lease seconds less the grace.</summary>
+  private static readonly TimeSpan _drainLeaseWindow = TimeSpan.FromSeconds(
+    new LeaseRenewalWorkerOptions().LeaseSeconds - new LeaseHandleOptions().LeaseGraceSeconds);
 
   // ==================== Scenario 2: IPerspectiveRunner not double-registered ====================
 
@@ -835,6 +938,39 @@ public class PerspectiveApplyExactlyOnceTests {
   }
 
   /// <summary>
+  /// Drain channel that signals each time a drain consumer finishes a stream. <c>MarkDrained</c> runs in
+  /// the consumer's <c>finally</c>, after the affinity gate scope, so it proves the consumer has left the
+  /// gate scope and returned to its loop.
+  /// </summary>
+  private sealed class DrainedSignalingChannel(Guid watchedStreamId) : IPerspectiveDrainChannel {
+    private readonly PerspectiveDrainChannel _inner = new();
+    private readonly TaskCompletionSource _firstDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _secondDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _drained;
+
+    public Task FirstDrained => _firstDrained.Task;
+    public Task SecondDrained => _secondDrained.Task;
+
+    public System.Threading.Channels.ChannelReader<Guid> Reader => _inner.Reader;
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _inner.WriteAsync(streamId, cancellationToken);
+    public bool TryWrite(Guid streamId) => _inner.TryWrite(streamId);
+    public bool IsInFlight(Guid streamId) => _inner.IsInFlight(streamId);
+    public void MarkDraining(Guid streamId) => _inner.MarkDraining(streamId);
+
+    public void MarkDrained(Guid streamId) {
+      _inner.MarkDrained(streamId);
+      if (streamId != watchedStreamId) {
+        return;
+      }
+      if (Interlocked.Increment(ref _drained) == 1) {
+        _firstDrained.TrySetResult();
+      } else {
+        _secondDrained.TrySetResult();
+      }
+    }
+  }
+
+  /// <summary>
   /// Coordinator that returns a WorkBatch with BOTH PerspectiveStreamIds AND PerspectiveWork
   /// populated for the same stream. Models the production condition the plan calls out as
   /// suspect #1. After one cycle, subsequent polls return an empty batch so the test settles.
@@ -975,7 +1111,9 @@ public class PerspectiveApplyExactlyOnceTests {
       IWorkCoordinator coordinator,
       IPerspectiveRunnerRegistry registry,
       IEventStore eventStore,
-      Action<PerspectiveWorkerOptions>? configureOptions = null) {
+      Action<PerspectiveWorkerOptions>? configureOptions = null,
+      TimeProvider? timeProvider = null,
+      IPerspectiveDrainChannel? drainChannel = null) {
     var instanceProvider = new FakeInstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -1015,13 +1153,14 @@ public class PerspectiveApplyExactlyOnceTests {
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
-      perspectiveDrainChannel: harness.DrainChannel,
+      perspectiveDrainChannel: drainChannel ?? harness.DrainChannel,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options)).Value),
+      timeProvider: timeProvider,
       // Production ALWAYS wires the cooldown cache (WorkerPipelineExtensions). Omitting it here left
       // the drain refetch loop (slice 30, DrainLoopMaxIterations>1) with no dedup: GetStreamEventsAsync
       // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop

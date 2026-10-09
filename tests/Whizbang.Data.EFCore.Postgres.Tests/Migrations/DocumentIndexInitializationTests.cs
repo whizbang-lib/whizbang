@@ -12,8 +12,8 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
 /// <summary>
-/// The shipped schema pass, end to end: it builds the document indexes a model declares, never
-/// removes one it no longer declares, and does not build a second index over a definition the
+/// The shipped schema pass, end to end: it builds the document indexes a model declares, retires one it no
+/// longer declares through the managed-object ledger, and does not build a second index over a definition the
 /// table already has.
 /// </summary>
 /// <remarks>
@@ -111,31 +111,99 @@ public class DocumentIndexInitializationTests {
   }
 
   /// <summary>
-  /// An index an earlier release built, which this release no longer declares, is still there
-  /// after the pass runs again.
+  /// An index an earlier release built, which this release no longer declares, is recorded the first time
+  /// the reconcile sees it and dropped on the start after that; one Whizbang did not build is never dropped.
   /// </summary>
   [Test]
   [Timeout(180000)]
-  public async Task AnIndexNoLongerDeclaredIsLeftInPlaceAsync(CancellationToken cancellationToken) {
+  public async Task AnIndexNoLongerDeclared_IsRecordedFirst_ThenDroppedOnTheNextStartAsync(CancellationToken cancellationToken) {
     await _initializeAsync(cancellationToken);
-    // What an earlier release left: both document indexes on every table.
+    // What an earlier release left: both document indexes on every table. And one a DBA added.
     await _execAsync($"""
       CREATE INDEX idx_document_index_opted_out_data_gin ON {OPTED_OUT} USING gin (data);
       CREATE INDEX idx_document_index_undeclared_data_gin ON {UNDECLARED} USING gin (data);
       CREATE INDEX idx_document_index_undeclared_metadata_gin ON {UNDECLARED} USING gin (metadata);
+      CREATE INDEX reporting_status ON {UNDECLARED} ((data ->> 'Status'));
       """);
-    await _forgetPerspectiveHashesAsync();
 
     await _initializeAsync(cancellationToken);
 
     await Assert.That(await _indexesAsync(OPTED_OUT, "gin (data)"))
       .IsEquivalentTo(["idx_document_index_opted_out_data_gin"])
-      .Because("dropping an index a production query may use is an operator's decision, never an upgrade's");
-    await Assert.That(await _indexesAsync(UNDECLARED, "gin (data)"))
-      .IsEquivalentTo(["idx_document_index_undeclared_data_gin"])
-      .Because("the 1.0 default stops building the index on new databases; it never drops an existing one");
-    await Assert.That(await _indexesAsync(UNDECLARED, "gin (metadata)"))
-      .IsEquivalentTo(["idx_document_index_undeclared_metadata_gin"]);
+      .Because("the start that first sees an undeclared index records it as pending retirement and drops nothing");
+
+    await _initializeAsync(cancellationToken);
+
+    await Assert.That(await _indexesAsync(OPTED_OUT, "gin (data)")).IsEmpty();
+    await Assert.That(await _indexesAsync(UNDECLARED, "gin (data)")).IsEmpty();
+    await Assert.That(await _indexesAsync(UNDECLARED, "gin (metadata)")).IsEmpty();
+    await Assert.That(await _indexesAsync(UNDECLARED, "reporting_status")).IsEquivalentTo(["reporting_status"])
+      .Because("an index Whizbang did not build is foreign, and a foreign object is never dropped");
+  }
+
+  /// <summary>
+  /// An index the model declares and someone dropped by hand is built again at the next start, though nothing
+  /// in the model changed and the schema pass would otherwise skip the table.
+  /// </summary>
+  [Test]
+  [Timeout(180000)]
+  public async Task ADeclaredIndexDroppedByHand_IsBuiltAgainAtTheNextStartAsync(CancellationToken cancellationToken) {
+    await _initializeAsync(cancellationToken);
+    var declared = await _indexesAsync(UNDECLARED, "Status");
+    await Assert.That(declared).Count().IsEqualTo(1);
+    await _execAsync($"DROP INDEX {declared[0]}");
+
+    await _initializeAsync(cancellationToken);
+
+    await Assert.That(await _indexesAsync(UNDECLARED, "Status")).IsEquivalentTo(declared);
+  }
+
+  /// <summary>
+  /// An index the model pins with <c>[KeepSchemaObject]</c> survives every start, and the ledger records the pin
+  /// as the model's.
+  /// </summary>
+  [Test]
+  [Timeout(180000)]
+  public async Task AnObjectTheModelPins_IsKeptAndRecordedAsPinnedByCodeAsync(CancellationToken cancellationToken) {
+    await _initializeAsync(cancellationToken);
+    await _execAsync($"CREATE INDEX idx_document_index_opted_out_legacy ON {OPTED_OUT} ((data ->> 'Code'))");
+
+    await _initializeAsync(cancellationToken);
+    await _initializeAsync(cancellationToken);
+
+    await Assert.That(await _indexesAsync(OPTED_OUT, "Code")).IsEquivalentTo(["idx_document_index_opted_out_legacy"]);
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    await using var command = new NpgsqlCommand("""
+      SELECT code_pinned::text || '|' || code_pin_source || '|' || code_pin_reason FROM wh_managed_objects
+      WHERE object_name = 'idx_document_index_opted_out_legacy'
+      """, db);
+    await Assert.That(await command.ExecuteScalarAsync(cancellationToken)).IsEqualTo("true|code|the reporting job reads it");
+  }
+
+  /// <summary>
+  /// An index the model declares that exists only as a twin under an earlier name is the declared index: the
+  /// reconcile keeps it on every start, and does not report the declared name missing.
+  /// </summary>
+  [Test]
+  [Timeout(180000)]
+  public async Task ADeclaredIndexThatExistsUnderAnEarlierName_IsKeptOnEveryStartAsync(CancellationToken cancellationToken) {
+    await _initializeAsync(cancellationToken);
+    // The state an earlier release left: the declared index under an earlier name in Whizbang's own naming (a
+    // long table's name truncated, where the declared one is hashed), and no index under the declared name.
+    await _execAsync($"""
+      DROP INDEX idx_document_index_undeclared_scope_tenant;
+      CREATE INDEX idx_document_index_undeclared_scope_t ON {UNDECLARED} ((scope->>'t'));
+      """);
+    await _forgetPerspectiveHashesAsync();
+
+    await _initializeAsync(cancellationToken);
+    await _initializeAsync(cancellationToken);
+    await _initializeAsync(cancellationToken);
+
+    await Assert.That(await _indexesAsync(UNDECLARED, "(scope ->> 't'::text)"))
+      .IsEquivalentTo(["idx_document_index_undeclared_scope_t"])
+      .Because("the earlier name stands for the declared index, so it is neither dropped nor joined by a twin");
   }
 
   /// <summary>

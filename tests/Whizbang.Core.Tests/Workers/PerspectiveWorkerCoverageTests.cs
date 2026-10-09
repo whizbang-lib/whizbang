@@ -2347,9 +2347,9 @@ public class PerspectiveWorkerCoverageTests {
     const string second = "Test.EvictedSecondPerspective";
 
     // Each completed apply leaves its gate resident and free, which is the state the cache evicts.
-    await worker.WithStreamAffinityGateAsync(evicted, first, () => Task.CompletedTask, CancellationToken.None);
-    await worker.WithStreamAffinityGateAsync(evicted, second, () => Task.CompletedTask, CancellationToken.None);
-    await worker.WithStreamAffinityGateAsync(kept, first, () => Task.CompletedTask, CancellationToken.None);
+    await worker.WithStreamAffinityGateAsync(evicted, first, _ => Task.CompletedTask, CancellationToken.None);
+    await worker.WithStreamAffinityGateAsync(evicted, second, _ => Task.CompletedTask, CancellationToken.None);
+    await worker.WithStreamAffinityGateAsync(kept, first, _ => Task.CompletedTask, CancellationToken.None);
     await Assert.That(worker.HasStreamAffinityGate(evicted, first)).IsTrue();
     await Assert.That(worker.HasStreamAffinityGate(evicted, second)).IsTrue();
 
@@ -2363,7 +2363,7 @@ public class PerspectiveWorkerCoverageTests {
       .Because("a stream the cache kept keeps its gate");
 
     // The evicted stream is still usable: the next apply takes a fresh gate rather than the disposed one.
-    await worker.WithStreamAffinityGateAsync(evicted, first, () => Task.CompletedTask, CancellationToken.None);
+    await worker.WithStreamAffinityGateAsync(evicted, first, _ => Task.CompletedTask, CancellationToken.None);
     await Assert.That(worker.HasStreamAffinityGate(evicted, first)).IsTrue()
       .Because("an apply after the eviction recreates the gate it needs");
   }

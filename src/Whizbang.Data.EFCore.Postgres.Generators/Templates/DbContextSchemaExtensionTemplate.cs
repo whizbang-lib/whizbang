@@ -364,10 +364,26 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
                   "__SCHEMA__", fastPathStale.Count);
                 infraChanged = true;
               } else {
-                if (logger is not null) {
-                  Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
+                // Hashes cannot see a declared object dropped by hand either. The tables missing one have their
+                // hashes forgotten, so the slow path's pass builds them again (the managed-object ledger, #1252).
+                var tablesMissingObjects = await Whizbang.Data.Postgres.Schema.ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(
+                  connection, "__SCHEMA__", GetManagedSchemaObjects(), cancellationToken);
+                if (tablesMissingObjects.Count > 0) {
+                  await using (var forget = new Npgsql.NpgsqlCommand(
+                    @"DELETE FROM __QUOTED_SCHEMA__.wh_schema_migrations WHERE file_name = ANY(@keys)", connection)) {
+                    forget.Parameters.AddWithValue("keys", tablesMissingObjects.Select(t => "perspective:" + t).ToArray());
+                    await forget.ExecuteNonQueryAsync(cancellationToken);
+                  }
+                  logger?.LogInformation(
+                    "Schema '{Schema}' is hash-clean but {Tables} lack an object the model declares — taking the slow path to build them again.",
+                    "__SCHEMA__", string.Join(", ", tablesMissingObjects));
+                  perspChanged = true;
+                } else {
+                  if (logger is not null) {
+                    Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
+                  }
+                  break; // Exit retry loop — no changes, no lock needed
                 }
-                break; // Exit retry loop — no changes, no lock needed
               }
             }
           }
@@ -698,6 +714,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // index until autovacuum next analyzes the table (#1004). Outside the transaction and the lock, and
     // never fatal: a table left unanalyzed is found by the maintenance step.
     await _analyzeNewlyIndexedTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
+
+    // The managed-object reconcile runs at every start, the fast path included: an object retired by a release
+    // whose schema hash did not change, or dropped by hand, is found by reading the catalog, not the hash. After
+    // the commit, on a connection of its own, because DROP INDEX CONCURRENTLY cannot run in a transaction.
+    await _reconcileManagedObjectsAsync(dbContext, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
 
     // Step 7: Run database maintenance (purge completed messages, etc.)
     // Runs outside the transaction and advisory lock because:
@@ -1374,6 +1395,20 @@ END $$;
       // Perspective entries will be embedded here by the source generator
       #endregion
     };
+  }
+
+  /// <summary>
+  /// The database objects this context's perspectives declare: every index and constraint the generated schema
+  /// SQL builds, and every object a model pins. The managed-object reconcile drops a Whizbang-built object that
+  /// is missing from this set, so it is read from the very SQL the schema pass runs.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
+  public static global::Whizbang.Data.Postgres.Schema.ManagedSchemaObjectSet GetManagedSchemaObjects() {
+    var objects = new global::Whizbang.Data.Postgres.Schema.ManagedSchemaObjectSet();
+    #region MANAGED_OBJECTS
+    // Managed objects will be embedded here by the source generator
+    #endregion
+    return objects;
   }
 
   /// <summary>
@@ -2141,6 +2176,32 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       logger?.LogWarning(ex,
         "Could not analyze the tables the schema pass indexed for {Schema}; the index-statistics "
         + "maintenance step analyzes them", "__SCHEMA__");
+    }
+  }
+
+  /// <summary>
+  /// Reconciles the managed-object ledger with what this context declares: records every object on its
+  /// perspective tables, drops the ones Whizbang built and no longer declares, and reports declared objects the
+  /// database lacks. Never fatal: a reconcile that fails leaves every object in place, and the next start
+  /// tries again.
+  /// </summary>
+  private static async Task _reconcileManagedObjectsAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
+    IServiceProvider? serviceProvider,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+    // Read outside the catch below: a setting that is not one fails the start, rather than being ignored into a
+    // drop the operator meant to switch off.
+    var settings = Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.Settings(serviceProvider);
+    try {
+      await Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.RunAsync(
+        dbContext, new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(typeof(__DBCONTEXT_FQN__), "__SCHEMA__", GetManagedSchemaObjects),
+        settings, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      logger?.LogWarning(ex,
+        "The managed-object reconcile for {Schema} failed; nothing was dropped that it did not report, and the "
+        + "next start tries again", "__SCHEMA__");
     }
   }
 
