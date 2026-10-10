@@ -205,5 +205,5 @@ public class DeclaredSurfaceDefaultsTests {
 
   /// <summary>A concrete tag attribute, because <see cref="MessageTagAttribute"/> is abstract.</summary>
   [AttributeUsage(AttributeTargets.Class)]
-  private sealed class DeclaredSurfaceTagAttribute : MessageTagAttribute { }
+  private sealed class DeclaredSurfaceTagAttribute : MessageTagAttribute;
 }
