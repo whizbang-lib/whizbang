@@ -101,7 +101,7 @@ public sealed partial class MaintenanceWorker(
 
     var decision = _housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, backlog);
     if (!decision.Granted) {
-      var logged = backlog ?? _unmeasuredBacklog;
+      var logged = _orUnmeasured(backlog);
       LogMaintenanceDeferred(
         _logger, decision.Reason,
         logged.UnprocessedInboxRows, logged.ActiveLeasedRows,
@@ -112,7 +112,7 @@ public sealed partial class MaintenanceWorker(
     if (decision.Reason == HousekeepingCoordinator.Verdict.ProceedDeferralLimit) {
       // Reaching this branch means the service did not settle once across the whole deferral
       // window — worth surfacing on its own, separately from the sweep it is about to run.
-      var logged = backlog ?? _unmeasuredBacklog;
+      var logged = _orUnmeasured(backlog);
       LogMaintenanceForcedAfterDeferrals(
         _logger, logged.UnprocessedInboxRows, logged.ActiveLeasedRows,
         logged.PendingOutboxRows, logged.PendingPerspectiveRows);
@@ -141,6 +141,10 @@ public sealed partial class MaintenanceWorker(
     PendingOutboxRows = -1,
     PendingPerspectiveRows = -1,
   };
+
+  // The backlog a log line reports. One place, because only a deferral can see an unmeasured backlog (a
+  // slot already held refuses before settledness is asked); the forced pass is always measured.
+  private static ServiceBacklog _orUnmeasured(ServiceBacklog? backlog) => backlog ?? _unmeasuredBacklog;
 
   /// <summary>Type names for a log line: the simple name of each normalized assembly-qualified name.</summary>
   private static string _shortTypeNames(IReadOnlyList<string> normalizedNames)

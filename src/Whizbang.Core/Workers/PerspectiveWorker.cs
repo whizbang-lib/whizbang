@@ -2281,14 +2281,20 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
-  /// The registered perspectives an event's type feeds, or none when its type is not in the stream's
-  /// type-name cache or no perspective takes it.
+  /// The registered perspectives an event's type feeds. The batch's type-name cache is built from the
+  /// same events the drain iterates (_buildDrainModeTypeNameCache), so every payload's type is in it.
   /// </summary>
   private IReadOnlyList<string> _perspectivesFor(Dictionary<Type, string> typeNameCache, IEvent payload) =>
-    typeNameCache.TryGetValue(payload.GetType(), out var eventTypeKey)
-      && _perspectivesPerEventType!.TryGetValue(eventTypeKey, out var perspectives)
-      ? perspectives
-      : [];
+    PerspectivesFor(_perspectivesPerEventType!, typeNameCache[payload.GetType()]);
+
+  /// <summary>
+  /// The perspectives registered for an event type, or none when no registered perspective takes it: a
+  /// stream can hold events this service registers no perspective for, and those feed nothing here.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerPerspectivesForTests.cs</tests>
+  internal static IReadOnlyList<string> PerspectivesFor(
+      IReadOnlyDictionary<string, IReadOnlyList<string>> perspectivesPerEventType, string eventTypeKey) =>
+    perspectivesPerEventType.TryGetValue(eventTypeKey, out var perspectives) ? perspectives : [];
 
   /// <summary>Collects the set of perspective names that apply to the event types in this stream.</summary>
   private HashSet<string> _collectDrainModePerspectiveNames(

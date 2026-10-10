@@ -4,6 +4,7 @@
 #nullable disable
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
@@ -196,13 +197,43 @@ public class PostgresDriverExtensionsTests {
     await Assert.That(hostLogger.Messages[0]).Contains("Pruned 3 claimed-emission claim(s)");
   }
 
+  /// <summary>
+  /// A host without logging still gets a working prune step: the registration falls back to a logger that
+  /// discards, where the step itself refuses a missing one.
+  /// </summary>
+  [Test]
+  public async Task Postgres_TheClaimPruneStepWorksInAHostWithoutLoggingAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+    services.RemoveAll(typeof(ILogger<>));
+    services.RemoveAll<ILoggerFactory>();
+
+    await using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    await Assert.That(scope.ServiceProvider.GetService<ILogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep>>()).IsNull();
+    var step = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>()
+      .OfType<Whizbang.Core.Workers.ClaimedEmissionPruneStep>().Single();
+
+    var store = new PrunesThreeClaimedEmissionStore();
+    var runServices = new ServiceCollection().AddSingleton<IClaimedEmissionStore>(store).BuildServiceProvider();
+    await step.RunAsync(runServices, CancellationToken.None);
+
+    await Assert.That(store.PruneCalls).IsEqualTo(1)
+      .Because("the step is built and prunes although the host registered no logging");
+  }
+
   private sealed class PrunesThreeClaimedEmissionStore : IClaimedEmissionStore {
+    public int PruneCalls { get; private set; }
+
     public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken)
       => Task.FromResult(true);
 
     public Task<int> PruneExpiredAsync(
-        DateTimeOffset expiredBefore, IReadOnlyCollection<string> retainedKeyPrefixes, int maxClaims, CancellationToken cancellationToken)
-      => Task.FromResult(3);
+        DateTimeOffset expiredBefore, IReadOnlyCollection<string> retainedKeyPrefixes, int maxClaims, CancellationToken cancellationToken) {
+      PruneCalls++;
+      return Task.FromResult(3);
+    }
   }
 
   private sealed class CapturingPruneLogger : ILogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep> {

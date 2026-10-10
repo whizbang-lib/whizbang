@@ -118,8 +118,8 @@ public static class ServiceCollectionExtensions {
     // Logger left at NullLogger — we deliberately do NOT call
     // services.BuildServiceProvider() here. Doing so leaks a parallel singleton
     // universe (and, worse, when combined with `using` further down, disposes
-    // the host's shared ConfigurationManager — see Bijan Camp's 2026-06-12
-    // report). Startup connection-retry diagnostics surface via the host's
+    // the host's shared ConfigurationManager, as a consumer once
+    // reported). Startup connection-retry diagnostics surface via the host's
     // normal logging once MessageTypeRegistryReconciliationHostedService runs
     // and via any failure thrown out of WaitForConnectionAsync below.
     ILogger<PostgresConnectionRetry> logger = NullLogger<PostgresConnectionRetry>.Instance;
