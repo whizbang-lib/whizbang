@@ -107,7 +107,9 @@ public class HotChocolateOptionsConfigurationBindingTests {
     services.AddWhizbangScope();
     await using var provider = services.BuildServiceProvider();
 
-    await Assert.That(provider.GetRequiredService<WhizbangScopeOptions>().TenantIdHeaderName).IsEqualTo("X-Tenant-Id");
+    var options = provider.GetRequiredService<WhizbangScopeOptions>();
+    await Assert.That(options.TenantIdClaimType).IsEqualTo("tenant_id");
+    await Assert.That(options.TenantIdHeaderName).IsNull();
   }
 
   private static WhizbangStartupStatusGraphOptions _startupStatus(Dictionary<string, string?> settings, bool includeReasons) {
