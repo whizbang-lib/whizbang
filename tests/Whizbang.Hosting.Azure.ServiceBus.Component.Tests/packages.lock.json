@@ -4,12 +4,12 @@
     "net10.0": {
       "Aspire.Hosting.Azure.ServiceBus": {
         "type": "Direct",
-        "requested": "[13.6.0, )",
-        "resolved": "13.6.0",
-        "contentHash": "M9I2eh4tFmPTrrifqyhh2KHsZ0DorYSME2yDjQD+HC5mf8HD+2XjZFZb1fTEefrwACJD0fq/fODlfBfsM8+sFw==",
+        "requested": "[13.6.1, )",
+        "resolved": "13.6.1",
+        "contentHash": "uQU2Fkle16Lb5geUeaZEWCBVuzu880/HuFHSSzoysbBYjGEHaaBS++B4TCmAEucHNnz2bTJsXNH9H2h2LcmQkQ==",
         "dependencies": {
           "AspNetCore.HealthChecks.Uris": "9.0.0",
-          "Aspire.Hosting.Azure": "13.6.0",
+          "Aspire.Hosting.Azure": "13.6.1",
           "Azure.Core": "1.62.0",
           "Azure.Identity": "1.21.0",
           "Azure.Provisioning": "1.6.0",
@@ -128,8 +128,8 @@
       },
       "Aspire.Hosting": {
         "type": "Transitive",
-        "resolved": "13.6.0",
-        "contentHash": "o6N282WsIcyT3+CH5WGwG/4oTVrE2ZfPS6FkjAPFqPWoidymd0Oak5dWfImvPbpfaZfhmGoBdAOfSJBu5YIvdQ==",
+        "resolved": "13.6.1",
+        "contentHash": "gIcP7+rPSBPWLlEpFGCWGKdjoXvyn0rZRCbjxUHTMnw8Y+a6Esp915o8MOROpYI++MQN3Fo55Yu0XuBJ6MqEIw==",
         "dependencies": {
           "AspNetCore.HealthChecks.Uris": "9.0.0",
           "Google.Protobuf": "3.36.1",
@@ -165,11 +165,11 @@
       },
       "Aspire.Hosting.Azure": {
         "type": "Transitive",
-        "resolved": "13.6.0",
-        "contentHash": "V9TQnI0crwG+uaAS/ZJz+UUEDJQDTSe9ZwLDn19oyM37y16efgyPdiKthYZ++qdAXKKt2aNZanRULdrviQcb9Q==",
+        "resolved": "13.6.1",
+        "contentHash": "MOH3XkZO07jfdOCPzivTKUw1+3bQruIdI3fr+t2lPccjrNkg5ZizuSHrj6EbWTtmyQ7LKQf3mM3JRW/aPby8Jg==",
         "dependencies": {
           "AspNetCore.HealthChecks.Uris": "9.0.0",
-          "Aspire.Hosting": "13.6.0",
+          "Aspire.Hosting": "13.6.1",
           "Azure.Core": "1.62.0",
           "Azure.Identity": "1.21.0",
           "Azure.Provisioning": "1.6.0",
@@ -955,7 +955,7 @@
       "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus": {
         "type": "Project",
         "dependencies": {
-          "Aspire.Hosting.Azure.ServiceBus": "[13.6.0, )",
+          "Aspire.Hosting.Azure.ServiceBus": "[13.6.1, )",
           "Azure.Messaging.ServiceBus": "[7.21.0, )",
           "MessagePack": "[2.5.302, )",
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.12, )",
