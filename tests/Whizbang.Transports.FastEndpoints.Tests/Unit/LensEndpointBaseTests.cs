@@ -92,6 +92,19 @@ public class LensEndpointBaseTests {
   }
 
   [Test]
+  public async Task ApplyPaging_WithAPageBeyondTheIntegerRange_ClampsTheSkipAsync() {
+    // Arrange
+    _ = new TestLensEndpoint();
+    var request = new LensRequest { Page = int.MaxValue, PageSize = 10 };
+
+    // Act
+    var (skip, _) = TestLensEndpoint.TestCalculatePaging(request, defaultPageSize: 10, maxPageSize: 100);
+
+    // Assert - the product overflows int; it must clamp, never wrap to a negative offset
+    await Assert.That(skip).IsEqualTo(int.MaxValue);
+  }
+
+  [Test]
   public async Task ParseSortExpression_WithDescendingPrefix_ShouldParseCorrectlyAsync() {
     // Arrange
     _ = new TestLensEndpoint();

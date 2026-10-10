@@ -500,7 +500,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
       sb.AppendLine($"    var pageSize = req.PageSize ?? {lens.DefaultPageSize};");
       sb.AppendLine($"    pageSize = Math.Min(pageSize, {lens.MaxPageSize});");
       sb.AppendLine("    pageSize = Math.Max(1, pageSize);");
-      sb.AppendLine("    var skip = (page - 1) * pageSize;");
+      sb.AppendLine("    var skip = LensQueryShaping.Skip(page, pageSize);");
       sb.AppendLine();
       sb.AppendLine("    var totalCount = await ordered.CountAsync(ct);");
       sb.AppendLine("    var items = await ordered.Skip(skip).Take(pageSize).ToListAsync(ct);");

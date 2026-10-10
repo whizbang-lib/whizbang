@@ -54,8 +54,7 @@ public abstract class LensEndpointBase<TModel> where TModel : class {
     pageSize = Math.Min(pageSize, maxPageSize);
     pageSize = Math.Max(1, pageSize);
 
-    var skip = (page - 1) * pageSize;
-    return (skip, pageSize);
+    return (LensQueryShaping.Skip(page, pageSize), pageSize);
   }
 
   /// <summary>
