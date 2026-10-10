@@ -89,7 +89,8 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
       Options.Create(new ClaimWorkerOptions { PartitionCount = partitionCount }),
       Options.Create(new SchemaInitializationOptions()),
       TimeProvider.System,
-      logger ?? NullLogger<WhizbangDatabaseInitializerService>.Instance);
+      logger ?? NullLogger<WhizbangDatabaseInitializerService>.Instance,
+      []);
   }
 
   /// <summary>Runner that completes immediately; StartAsync/StopAsync are not under test here.</summary>

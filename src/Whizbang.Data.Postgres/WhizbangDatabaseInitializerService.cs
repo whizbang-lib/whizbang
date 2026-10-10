@@ -57,7 +57,10 @@ internal sealed partial class WhizbangDatabaseInitializerService(
     IOptions<ClaimWorkerOptions> claimWorkerOptions,
     IOptions<SchemaInitializationOptions> schemaInitOptions,
     TimeProvider timeProvider,
-    ILogger<WhizbangDatabaseInitializerService> logger) : IHostedService, IDisposable {
+    ILogger<WhizbangDatabaseInitializerService> logger,
+    IEnumerable<ISchemaInitializationObserver> observers) : IHostedService, IDisposable {
+
+  private readonly ISchemaInitializationObserver[] _observers = [.. observers];
 
   private readonly IServiceProvider _serviceProvider = serviceProvider;
   // Materialized once: the registration order is the run order, and a lazily enumerated sequence would be
@@ -122,6 +125,9 @@ internal sealed partial class WhizbangDatabaseInitializerService(
         var delay = _schemaInitOptions.Value.InitRetryDelay;
         LogBackgroundInitializationRetrying(_logger, ex, attempt, delay.TotalSeconds);
         try {
+          foreach (var observer in _observers) {
+            await observer.OnAttemptFailedAsync(attempt, ex, _stopCts.Token).ConfigureAwait(false);
+          }
           await Task.Delay(delay, _timeProvider, _stopCts.Token).ConfigureAwait(false);
         } catch (OperationCanceledException) {
           return;   // host shutdown ends the loop; the gate stays closed.

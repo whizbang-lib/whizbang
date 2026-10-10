@@ -34,7 +34,9 @@ public static class SchemaInitializationRegistration {
     services.AddLogging();
     services.AddOptions();
     services.TryAddSingleton(TimeProvider.System);
-    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, WhizbangDatabaseInitializerService>(sp =>
+    // Registered as itself too, so a host (or a test) can reach the one initializer without activating every
+    // hosted service; the hosted-service registration forwards to it.
+    services.TryAddSingleton(sp =>
       new WhizbangDatabaseInitializerService(
         sp,
         sp.GetServices<ISchemaInitializationRunner>(),
@@ -42,7 +44,10 @@ public static class SchemaInitializationRegistration {
         sp.GetRequiredService<IOptions<ClaimWorkerOptions>>(),
         sp.GetRequiredService<IOptions<SchemaInitializationOptions>>(),
         sp.GetRequiredService<TimeProvider>(),
-        sp.GetRequiredService<ILogger<WhizbangDatabaseInitializerService>>())));
+        sp.GetRequiredService<ILogger<WhizbangDatabaseInitializerService>>(),
+        sp.GetServices<ISchemaInitializationObserver>()));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, WhizbangDatabaseInitializerService>(sp =>
+      sp.GetRequiredService<WhizbangDatabaseInitializerService>()));
     return services;
   }
 }

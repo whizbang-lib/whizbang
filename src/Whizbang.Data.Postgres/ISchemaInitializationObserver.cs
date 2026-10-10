@@ -21,6 +21,7 @@ namespace Whizbang.Data.Postgres;
 /// </remarks>
 /// <docs>data/turnkey-initialization#watching-initialization</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_WaitsForTheSchemaLock_WhileAnotherSessionHoldsItAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs</tests>
 public interface ISchemaInitializationObserver {
   /// <summary>
   /// Another session holds the schema initialization lock for <paramref name="schema"/>, so this start is about to
@@ -30,4 +31,15 @@ public interface ISchemaInitializationObserver {
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_WaitsForTheSchemaLock_WhileAnotherSessionHoldsItAsync</tests>
   ValueTask OnSchemaLockContendedAsync(string schema, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+
+  /// <summary>
+  /// A background initialization attempt failed (the database was unreachable, a migration threw, the migration
+  /// timeout passed); the schema-ready gate stays closed and the next attempt starts after
+  /// <c>SchemaInitializationOptions.InitRetryDelay</c>, once this returns.
+  /// </summary>
+  /// <param name="attempt">Which attempt failed, from 1.</param>
+  /// <param name="exception">Why it failed.</param>
+  /// <param name="cancellationToken">Canceled at host shutdown.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:ADatabaseThatComesUpLate_IsWaitedFor_ThenTheGateOpensAsync</tests>
+  ValueTask OnAttemptFailedAsync(int attempt, Exception exception, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 }

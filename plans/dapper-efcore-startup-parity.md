@@ -111,3 +111,22 @@ change recorded in the changelog with the upgrade note.
   the EF Core re-run too. `FleetClaim` is the one once-per-fleet claim (the store when registered, the claim table
   otherwise); the EF Core reconcile and column-fill steps no longer stand down without a store. Shared pieces:
   `ManagedSchemaHostPass` (claim window and key, contributors, instance id).
+- **Phase 4, one migration engine: deferred, much larger than expected.** See "Phase 4 remaining" below.
+- **Phase 5, parity suite: done.** `tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs`
+  runs eight scenarios against both drivers (16 cases, all green). Making it pass needed three changes: the
+  initializer reports a failed attempt to observers (`OnAttemptFailedAsync`); the EF Core schema pass reports a held
+  lock (`SchemaInitializationObservers.LockContendedAsync`); an EF Core instance registers itself at start with or
+  without a duty elector; and EF Core reads the reconcile settings before it touches the database, so a bad
+  value fails the start before the instance registers, as on Dapper.
+
+## Phase 4 remaining
+
+Folding `PostgresSchemaInitializer` and the EF Core template's infrastructure DDL into one engine means moving, out of
+2,268 lines of generated template, into shared runtime code: the bootstrap closure and migrator election, the
+stored-form and temporal rewrite phases (derived from the EF model), the lock-free hash fast path, the duplicate
+overload and stale-definition sweeps, the single DDL transaction under `pg_try_advisory_xact_lock` with its deferral
+and takeover, associations and the two registries, post-commit ANALYZE and maintenance; and giving the Dapper driver
+an object list in place of its per-file transactions, blue-green column copy, preview, rollback and backup cleanup.
+Until then the drivers share the lock key, the instance registration, the cleanup and the gate, but not the
+transaction boundary (one DDL transaction on EF Core, one per migration file on Dapper), and the physical column
+fill is still two step types sharing one claim helper.

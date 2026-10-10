@@ -248,7 +248,8 @@ public class WhizbangDatabaseInitializerServiceTests {
         InitRetryDelay = initRetryDelay ?? TimeSpan.FromSeconds(30),
       }),
       timeProvider ?? TimeProvider.System,
-      logger ?? NullLogger<WhizbangDatabaseInitializerService>.Instance);
+      logger ?? NullLogger<WhizbangDatabaseInitializerService>.Instance,
+      []);
   }
 
   /// <summary>Captures the exceptions the service logged instead of rethrowing.</summary>

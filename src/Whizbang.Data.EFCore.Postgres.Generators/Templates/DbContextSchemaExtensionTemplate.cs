@@ -65,6 +65,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     CancellationToken cancellationToken = default,
     int? commandTimeoutSeconds = null) {
 
+    // The managed-object reconcile's settings, read before anything touches the database: a setting that is not one
+    // fails the start here, before this instance registers itself or migrates, as on the Dapper driver.
+    var reconcileSettings = Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.Settings(serviceProvider);
     _schemaCommandTimeout.Value = commandTimeoutSeconds ?? Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(initConnectionString);
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
@@ -263,6 +266,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           : ct => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, ct);
         if (isWaiter
             || await Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, cancellationToken)) {
+          // Another instance is doing the schema work; this one waits for it, and says so first.
+          await Whizbang.Data.Postgres.SchemaInitializationObservers.LockContendedAsync(serviceProvider, "__SCHEMA__", cancellationToken);
           var waitOutcome = await Whizbang.Data.Postgres.SchemaMigrationDeferral.DeferAsync(
             ct => _isSchemaCurrentAsync(waitConnection, ct),
             isMigrating,
@@ -448,6 +453,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             await dbTransaction.RollbackAsync(CancellationToken.None);
             await dbTransaction.DisposeAsync();
             dbTransaction = null;
+
+            await Whizbang.Data.Postgres.SchemaInitializationObservers.LockContendedAsync(serviceProvider, "__SCHEMA__", cancellationToken);
 
             // Another instance IS the migrator, so wait for its result instead of queuing behind
             // it. Contending would win nothing this instance wants: the prize is the in-lock hash
@@ -718,7 +725,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // The managed-object reconcile runs at every start, the fast path included: an object retired by a release
     // whose schema hash did not change, or dropped by hand, is found by reading the catalog, not the hash. After
     // the commit, on a connection of its own, because DROP INDEX CONCURRENTLY cannot run in a transaction.
-    await _reconcileManagedObjectsAsync(dbContext, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
+    await _reconcileManagedObjectsAsync(dbContext, reconcileSettings, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
 
     // Step 7: Run database maintenance (purge completed messages, etc.)
     // Runs outside the transaction and advisory lock because:
@@ -2187,13 +2194,13 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   /// </summary>
   private static async Task _reconcileManagedObjectsAsync(
     __DBCONTEXT_FQN__ dbContext,
+    global::Whizbang.Data.Postgres.Schema.ManagedSchemaSettings settings,
     Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
     IServiceProvider? serviceProvider,
     ILogger? logger,
     CancellationToken cancellationToken) {
-    // Read outside the catch below: a setting that is not one fails the start, rather than being ignored into a
-    // drop the operator meant to switch off.
-    var settings = Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.Settings(serviceProvider);
+    // The settings were read at the top of initialization, outside any catch: a setting that is not one fails the
+    // start, rather than being ignored into a drop the operator meant to switch off.
     try {
       await Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.RunAsync(
         dbContext, new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(typeof(__DBCONTEXT_FQN__), "__SCHEMA__", GetManagedSchemaObjects),

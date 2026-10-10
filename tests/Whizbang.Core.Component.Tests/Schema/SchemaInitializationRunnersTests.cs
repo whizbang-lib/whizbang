@@ -79,7 +79,8 @@ public class SchemaInitializationRunnersTests {
       Options.Create(new ClaimWorkerOptions()),
       Options.Create(new SchemaInitializationOptions { NonBlockingSchemaInit = false }),
       TimeProvider.System,
-      NullLogger<WhizbangDatabaseInitializerService>.Instance);
+      NullLogger<WhizbangDatabaseInitializerService>.Instance,
+      []);
   }
 
   private sealed class RecordingRunner(string name, List<string> order, ISchemaReadyGate gate, Exception? failure = null)

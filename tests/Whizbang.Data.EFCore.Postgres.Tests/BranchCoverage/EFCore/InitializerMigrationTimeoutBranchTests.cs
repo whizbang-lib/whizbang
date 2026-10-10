@@ -85,7 +85,8 @@ public class InitializerMigrationTimeoutBranchTests {
       Options.Create(new ClaimWorkerOptions()),
       Options.Create(new SchemaInitializationOptions { NonBlockingSchemaInit = false, MigrationTimeout = _ceiling }),
       clock,
-      NullLogger<WhizbangDatabaseInitializerService>.Instance);
+      NullLogger<WhizbangDatabaseInitializerService>.Instance,
+      []);
   }
 
   /// <summary>

@@ -58,15 +58,15 @@ public abstract class StartupDriver {
 
     public override string Name => "dapper";
     public override string Table => TABLE;
-    public override string Retired => $"idx_{TABLE}_data_gin";
+    public override string Retired => "idx_parity_probe_data_gin";
 
     public override void Register(IServiceCollection services, string connectionString) =>
       services.AddWhizbangPostgres(
         connectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: true,
         [new KeyValuePair<string, string>("ParityProbe", $"""
           CREATE TABLE IF NOT EXISTS {TABLE} (id uuid PRIMARY KEY, data jsonb NOT NULL);
-          CREATE INDEX IF NOT EXISTS idx_{TABLE}_status ON {TABLE} ((data ->> 'Status'));
+          CREATE INDEX IF NOT EXISTS idx_parity_probe_status ON {TABLE} ((data ->> 'Status'));
           """)],
-        [(TABLE, "index", $"idx_{TABLE}_status", "ParityProbeModel")]);
+        [(TABLE, "index", "idx_parity_probe_status", "ParityProbeModel")]);
   }
 }

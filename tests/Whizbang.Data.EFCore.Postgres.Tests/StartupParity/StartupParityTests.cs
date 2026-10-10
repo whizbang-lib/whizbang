@@ -72,7 +72,7 @@ public class StartupParityTests {
   }
 
   private static WhizbangDatabaseInitializerService _initializer(IServiceProvider instance) =>
-    instance.GetServices<Microsoft.Extensions.Hosting.IHostedService>().OfType<WhizbangDatabaseInitializerService>().Single();
+    instance.GetRequiredService<WhizbangDatabaseInitializerService>();
 
   /// <summary>Starts one instance's schema initialization inline: returns once its gate is open.</summary>
   private async Task<ServiceProvider> _startAsync(StartupDriver driver, params (string Key, string Value)[] config) {
