@@ -327,8 +327,10 @@ public static class ServiceCollectionExtensions {
         commandInboxResolver.DefaultCommandInboxAddress,
         loggerFactory,
         namespaceRouting: commandInboxResolver,
-        // Bound from Whizbang:ThrottleRetry by the worker pipeline (#1014); absent, the strategy's defaults.
-        throttleRetryOptions: sp.GetService<Microsoft.Extensions.Options.IOptions<ThrottleRetryOptions>>()?.Value, metrics: null,
+        // Bound from Whizbang:ThrottleRetry by the worker pipeline (#1014); unbound, the options' defaults.
+        // Required, not optional: TryAddWhizbangDefaults above registers logging, and with it the
+        // open-generic IOptions<>, so every container this factory runs in resolves it.
+        throttleRetryOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ThrottleRetryOptions>>().Value, metrics: null,
         postSerializeHookChain: hookChain, jsonOptions: jsonOptions,
         transportNamespaces: transportNamespaces);
     });
@@ -371,8 +373,10 @@ public static class ServiceCollectionExtensions {
 
     // Absorbed namespaces — an unconsumed event on one of these is KEPT (persisted) at the
     // ASB receive gate instead of dropped, mirroring the core MessageDiscardPolicy behavior.
-    var absorbedNamespaces = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()
-      ?.Value.AbsorbedNamespaces;
+    // Required for the same reason AzureServiceBusOptions is: the registration adds the options
+    // infrastructure, so the open-generic IOptions<> always resolves; unconfigured, it is empty.
+    var absorbedNamespaces = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()
+      .Value.AbsorbedNamespaces;
 
     // Poison detector (topology arc phase 8.5) — Core owns the decision, this transport executes
     // it. Optional: a container without the Whizbang worker pipeline keeps pre-8.5 behavior.

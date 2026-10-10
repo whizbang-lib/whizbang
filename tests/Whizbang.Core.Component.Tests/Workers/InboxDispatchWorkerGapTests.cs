@@ -175,6 +175,12 @@ public class InboxDispatchWorkerGapTests {
     public IEnumerable<IMessage> InnerEvents => Enumerable.Range(0, count).Select(i => (IMessage)new InnerImportEvent($"J-{i}"));
   }
 
+  /// <summary>Carries more inner events than identities: an expansion failure, not a cap breach.</summary>
+  private sealed class IdShortComposite : IIdentityPreservingComposite {
+    public IEnumerable<IMessage> InnerEvents => [new InnerImportEvent("J-0"), new InnerImportEvent("J-1")];
+    public IReadOnlyList<Guid> InnerEventIds { get; } = [Guid.NewGuid()];
+  }
+
   /// <summary>
   /// Discard policy that always says "skip" for the inbox gate and records the
   /// RecordDiscard call so tests can assert the telemetry contract.
@@ -773,6 +779,24 @@ public class InboxDispatchWorkerGapTests {
     await Assert.That(counted[0].Reason).IsEqualTo("CompositeInnerEventLimitExceeded");
     await Assert.That(handlerCommit.All).IsEmpty()
       .Because("a successful composite dead-letter deletes the row atomically — no handler commit may follow");
+  }
+
+  /// <summary>A composite that fails to expand (not over its cap) is dead-lettered as an expansion failure.</summary>
+  [Test]
+  public async Task CompositeExpansionFails_DeadLettersAsExpansionFailureAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var store = new CapturingDeadLetterStore();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, NullLogger<InboxDispatchWorker>.Instance, new IdShortComposite(),
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider());
+
+    await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+
+    await Assert.That(store.Moves.Single().Reason).IsEqualTo(MessageFailureReason.CompositeExpansionFailure);
   }
 
   // ============================================================

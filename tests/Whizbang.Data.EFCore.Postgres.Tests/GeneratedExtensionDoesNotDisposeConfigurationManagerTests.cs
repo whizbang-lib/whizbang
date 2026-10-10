@@ -15,7 +15,7 @@ using Whizbang.Core.Lenses;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Strict RED→GREEN regression tests for the 2026-06-12 Bijan Camp report:
+/// Strict RED→GREEN regression tests for a consumer-reported defect:
 /// <c>EFCoreServiceRegistrationGenerator</c> emitted a temp-provider pattern in
 /// two distinct sites that, in a host whose <c>IConfiguration</c> is registered
 /// via factory (every minimal/generic host built by

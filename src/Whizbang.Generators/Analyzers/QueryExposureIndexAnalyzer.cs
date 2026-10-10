@@ -205,7 +205,7 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
     // failure would surface as AD0001 rather than as anything an author could read.
     context.ReportDiagnostic(Diagnostic.Create(
       SortableExposureDiscovery.SortableFieldsHaveNoIndex,
-      surface.Locations.FirstOrDefault() ?? Location.None,
+      LocationUtilities.FirstOrNone(surface),
       model.Name,
       unattributed.Length,
       string.Join(", ", unattributed)));

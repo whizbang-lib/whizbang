@@ -10,6 +10,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
@@ -302,6 +303,22 @@ public partial class EnvelopeSerializerTests {
     await Assert.That(() => serializer.DeserializeMessage(jsonEnvelope, "Unknown.NonExistent.Type, UnknownAssembly"))
       .Throws<InvalidOperationException>()
       .WithMessageMatching("*Failed to resolve message type*");
+  }
+
+  [Test]
+  public async Task DeserializeMessage_NullPayload_ThrowsAsync() {
+    var serializer = new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions());
+    var jsonEnvelope = new MessageEnvelope<JsonElement> {
+      MessageId = MessageId.New(),
+      Payload = JsonDocument.Parse("null").RootElement,
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+    var typeName = TypeNameFormatter.Format(typeof(Whizbang.Core.Minting.RedeliveryComposite));
+
+    await Assert.That(() => serializer.DeserializeMessage(jsonEnvelope, typeName))
+      .Throws<InvalidOperationException>()
+      .WithMessageMatching("*returned null*");
   }
 
   // ========================================

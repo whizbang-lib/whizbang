@@ -212,10 +212,7 @@ public sealed class EFCoreEventStore<TDbContext>(
         continue;   // reaped ephemeral body — consumed, snapshot-covered history
       }
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
-      var eventDataJson = record.EventData.Value.GetRawText();
-      var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
-        ?? throw new InvalidOperationException($"Failed to deserialize event at version {record.Version}");
+      var eventData = (TMessage)_deserializePayload(record, record.EventData.Value, typeof(TMessage));
 
       var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
@@ -263,10 +260,7 @@ public sealed class EFCoreEventStore<TDbContext>(
         continue;   // reaped ephemeral body — consumed, snapshot-covered history
       }
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
-      var eventDataJson = record.EventData.Value.GetRawText();
-      var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
-        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id}");
+      var eventData = (TMessage)_deserializePayload(record, record.EventData.Value, typeof(TMessage));
 
       var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
@@ -389,10 +383,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       }
 
       // Deserialize the event payload to the concrete type
-      var eventDataJson = record.EventData.Value.GetRawText();
-      var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
-        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
+      var eventData = _deserializePayload(record, record.EventData.Value, concreteType);
 
       var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
@@ -459,16 +450,13 @@ public sealed class EFCoreEventStore<TDbContext>(
       if (record.EventData is null || record.Metadata is null) {
         continue;   // reaped ephemeral body — consumed, snapshot-covered history
       }
-      var eventDataJson = record.EventData.Value.GetRawText();
-      var typeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage));
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
-        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
+      var eventData = (TMessage)_deserializePayload(record, record.EventData.Value, typeof(TMessage));
 
       var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
       envelopes.Add(new MessageEnvelope<TMessage> {
         MessageId = record.Metadata.MessageId,
-        Payload = (TMessage)eventData,
+        Payload = eventData,
         Hops = hops,
         DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
       });
@@ -538,10 +526,7 @@ public sealed class EFCoreEventStore<TDbContext>(
         continue;   // reaped ephemeral body — consumed, snapshot-covered history
       }
 
-      var eventDataJson = record.EventData.Value.GetRawText();
-      var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
-        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
+      var eventData = _deserializePayload(record, record.EventData.Value, concreteType);
 
       var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
@@ -578,6 +563,17 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// Restores scope from the dedicated scope column into the first hop's ScopeDelta.
   /// Returns the (possibly modified) hops list.
   /// </summary>
+  /// <summary>
+  /// Deserializes one stored event payload. A payload stored as JSON null holds no event, and handing a
+  /// reader a null in its place would fail later and further from the cause, so it is refused here, for
+  /// every read path, naming the row.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs</tests>
+  private object _deserializePayload(EventRow record, JsonElement eventData, Type payloadType) =>
+    JsonSerializer.Deserialize(eventData.GetRawText(), _jsonOptions.GetTypeInfo(payloadType))
+      ?? throw new InvalidOperationException(
+        $"Failed to deserialize event ID {record.Id} at version {record.Version} of type {record.EventType}: the stored payload is JSON null.");
+
   private static List<MessageHop> _restoreScopeInHops(EnvelopeMetadata? metadata, PerspectiveScope? scope) {
     var hops = metadata?.Hops?.ToList() ?? [];
     if (scope == null || (hops.Count > 0 && hops[0].Scope != null)) {

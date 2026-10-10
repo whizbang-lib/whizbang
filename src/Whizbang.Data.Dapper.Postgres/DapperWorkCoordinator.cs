@@ -1067,7 +1067,7 @@ public partial class DapperWorkCoordinator(
       // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
       rows = await connection.QueryAsync<ClaimWorkRow>(
         "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp, "
-        + "p_assignment_epoch => @AssignmentEpoch, p_assignment_revision => @AssignmentRevision)",
+        + "p_assignment_epoch => @AssignmentEpoch, p_assignment_revision => @AssignmentRevision, p_alive_lock_held => @AliveLockHeld)",
         new {
           Id = request.InstanceId,
           Svc = request.ServiceName,
@@ -1083,7 +1083,9 @@ public partial class DapperWorkCoordinator(
           Persp = request.MaxPerspectiveStreams,
           // 203 (#1254): the cached partition assignment's version, fenced in the claim. Null ranks as before.
           AssignmentEpoch = request.PartitionAssignment?.Epoch,
-          AssignmentRevision = request.PartitionAssignment?.Revision
+          AssignmentRevision = request.PartitionAssignment?.Revision,
+          // 204 (#1286): a direct caller holding its alive-lock is not reported stale between slow beats.
+          request.AliveLockHeld
         },
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
     } finally {

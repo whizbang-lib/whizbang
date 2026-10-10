@@ -201,7 +201,7 @@ public sealed class RedeliveryPump(
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = _instanceProvider.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider.ToInfoOrUnknown(),
           // The original events' scope, carried forward. Fan-out at the consumer derives every
           // child's scope from this hop, and the children are then WRITTEN to the event store with
           // whatever it holds. Publishing unscoped therefore does not merely inconvenience the

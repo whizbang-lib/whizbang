@@ -133,12 +133,7 @@ public static class CollectiveEventApplier<TModel> where TModel : class {
 
     // §6: fold this handler's per-apply knob overrides onto the global default (0 = inherit). SerializeApplies
     // stays global — exclusive serialization is not per-handler optional (D4 safety).
-    var effectiveOptions = options with {
-      BatchSize = entry.BatchSizeOverride > 0 ? entry.BatchSizeOverride : options.BatchSize,
-      StatementTimeoutSeconds = entry.StatementTimeoutSecondsOverride > 0
-        ? entry.StatementTimeoutSecondsOverride
-        : options.StatementTimeoutSeconds,
-    };
+    var effectiveOptions = options.For(entry);
 
     return await EFCoreCollectiveAdapter<TModel>.ExecuteAsync(
       dbContext,

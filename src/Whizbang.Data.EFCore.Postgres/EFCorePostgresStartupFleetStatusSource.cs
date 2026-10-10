@@ -48,7 +48,11 @@ public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatus
       SELECT i.instance_id, i.service_name, i.host_name, i.last_heartbeat_at,
              COALESCE(array_agg(c.capability ORDER BY c.capability) FILTER (WHERE c.capability IS NOT NULL), '{{}}') AS capabilities,
              i.lifecycle_phase, i.library_version,
-             (e.instance_id IS NOT NULL) AS evicted
+             (e.instance_id IS NOT NULL) AS evicted,
+             -- #1286: whether the instance's alive-lock is held now. is_instance_alive (055) with a zero heartbeat
+             -- threshold answers the lock alone. Read through 055 rather than 204's helper because the handshake
+             -- reads the fleet before this release's migrations have run.
+             {prefix}is_instance_alive(i.instance_id, 0) AS alive_lock_held
       FROM {prefix}wh_service_instances i
       LEFT JOIN {prefix}wh_instance_capabilities c ON c.instance_id = i.instance_id
       LEFT JOIN {prefix}wh_instance_evictions e ON e.instance_id = i.instance_id
@@ -70,7 +74,8 @@ public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatus
         await reader.GetFieldValueAsync<string[]>(4, cancellationToken),
         await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5),
         await reader.IsDBNullAsync(6, cancellationToken) ? null : reader.GetString(6),
-        reader.GetBoolean(7)));
+        reader.GetBoolean(7),
+        reader.GetBoolean(8)));
     }
     return rows;
   }

@@ -14,6 +14,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Configuration;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Lifecycle;
@@ -330,7 +331,7 @@ public abstract partial class Dispatcher(
   // pre-authentication event, a health check). Stamped so those stay distinguishable from an event
   // that simply LOST its scope — without it, the missing-scope invariant flags them as defects.
   private readonly IReadOnlySet<Type>? _declaredUnscopedTypes =
-    serviceProvider.GetService<Microsoft.Extensions.Options.IOptions<Security.MessageSecurityOptions>>()?.Value?.ExemptMessageTypes;
+    serviceProvider.GetOptionsValue<Security.MessageSecurityOptions>()?.ExemptMessageTypes;
 #pragma warning restore S4487, S1144
   // Core options for tag processing configuration
   private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
@@ -367,8 +368,7 @@ public abstract partial class Dispatcher(
         return _cascadeLogger;
       }
       try {
-        _cascadeLogger = _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher.Cascade")
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+        _cascadeLogger = _internalServiceProvider.GetLoggerOrNullLogger("Whizbang.Core.Dispatcher.Cascade");
       } catch (ObjectDisposedException) {
         // Service provider disposed during shutdown - use null logger
         _cascadeLogger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
@@ -385,8 +385,7 @@ public abstract partial class Dispatcher(
         return _dispatcherLogger;
       }
       try {
-        _dispatcherLogger = _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher")
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+        _dispatcherLogger = _internalServiceProvider.GetLoggerOrNullLogger("Whizbang.Core.Dispatcher");
       } catch (ObjectDisposedException) {
         _dispatcherLogger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
       }
@@ -2567,7 +2566,7 @@ public abstract partial class Dispatcher(
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
       Scope = _getScopeDeltaForHop(context, typeof(TMessage)),
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
 
     // Populate SentAt-phase properties directly on the message record
@@ -2623,7 +2622,7 @@ public abstract partial class Dispatcher(
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
       Scope = _getScopeDeltaForHop(context, messageType),
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
 
     // Populate SentAt-phase properties directly on the message record
@@ -3977,13 +3976,13 @@ public abstract partial class Dispatcher(
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
-      Topic = destination ?? "(event-store)",
+      Topic = _hopTopic(destination),
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
       Scope = finalScope,
       CorrelationId = correlation,
       CausationId = causation,
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
 
     // Populate SentAt-phase properties (SentAt, CorrelationId, identifiers) onto the event object so a PUBLISHED
@@ -4205,13 +4204,13 @@ public abstract partial class Dispatcher(
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
-      Topic = destination ?? "(event-store)",
+      Topic = _hopTopic(destination),
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
       Scope = Security.OutboxHopScope.Resolve(sourceEnvelope, payloadType, _declaredUnscopedTypes),
       CorrelationId = correlation,
       CausationId = causation,
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
     jsonEnvelope.AddHop(hop);
   }
@@ -4259,15 +4258,13 @@ public abstract partial class Dispatcher(
       Envelope = jsonEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = jsonEnvelope.MessageId,
-        Hops = jsonEnvelope.Hops?.ToList() ?? [],
+        Hops = jsonEnvelope.CopyHops(),
         EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(eventData, ephemeralModeResolver)
       },
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
       StreamId = streamId,
       IsEvent = eventData is IEvent,
-      Flags = (eventData is Whizbang.Core.Minting.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
-            | (eventData is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
-            | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(eventData, ephemeralModeResolver),
+      Flags = Whizbang.Core.Messaging.EventFlagsDeriver.FromPayload(eventData, ephemeralModeResolver),
       Scope = _extractScope(jsonEnvelope),
       MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType),
       Priority = jsonEnvelope.Priority,
@@ -4316,7 +4313,7 @@ public abstract partial class Dispatcher(
   /// <param name="eventType">The event type to resolve topic for</param>
   /// <param name="context">Optional routing context (tenant ID, region, etc.)</param>
   /// <returns>The resolved topic name</returns>
-  private string? _resolveEventTopic(Type eventType, IReadOnlyDictionary<string, object>? context = null) {
+  private string _resolveEventTopic(Type eventType, IReadOnlyDictionary<string, object>? context = null) {
     // PRIORITY: Use outbox routing strategy if configured (routes events to namespace topics)
     // This ensures events are stored with their ACTUAL destination in the outbox,
     // providing proper durability guarantees
@@ -4596,7 +4593,7 @@ public abstract partial class Dispatcher(
             ? _resolveEventTopic(messageType)
             : _resolveCommandDestination(messageType);
         var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
-        // Null destination = owned-domain event → event-store-only (no transport)
+        // A batch send always has a destination: both resolvers return one (event-store-only is a publish option).
         var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
         await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
@@ -4607,7 +4604,7 @@ public abstract partial class Dispatcher(
         // Create receipt for this message
         receipts.Add(DeliveryReceipt.Accepted(
           envelope.MessageId,
-          destination ?? messageType.Name,
+          destination,
           context.CorrelationId,
           context.CausationId,
           streamId
@@ -4685,11 +4682,11 @@ public abstract partial class Dispatcher(
       var result = await LocalInvokeAsync<TMessage, TResult>(message);
 
       // Wait for all perspectives to process emitted events
-      var syncResult = await _waitForAllPerspectivesAsync(timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+      var syncResult = await _waitForAllPerspectivesAsync(_syncTimeout(timeout), onWaiting, onDecisionMade, cancellationToken);
 
       if (syncResult.Outcome == SyncOutcome.TimedOut) {
         throw new TimeoutException(
-            $"Perspectives did not complete processing within {timeout ?? _defaultSyncTimeout}. " +
+            $"Perspectives did not complete processing within {_syncTimeout(timeout)}. " +
             $"Handler completed successfully but {syncResult.EventsAwaited} event(s) are still being processed.");
       }
 
@@ -4719,7 +4716,7 @@ public abstract partial class Dispatcher(
       await LocalInvokeAsync(message);
 
       // Wait for all perspectives to process emitted events
-      return await _waitForAllPerspectivesAsync(timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+      return await _waitForAllPerspectivesAsync(_syncTimeout(timeout), onWaiting, onDecisionMade, cancellationToken);
     } finally {
       sw.Stop();
       _dispatcherMetrics?.LocalInvokeAndSyncDuration.Record(sw.Elapsed.TotalMilliseconds);
@@ -4747,11 +4744,11 @@ public abstract partial class Dispatcher(
 
       // Wait for the specific perspective to process emitted events
       var syncResult = await _waitForSpecificPerspectiveAsync<TMessage, TPerspective>(
-          message, timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+          message, _syncTimeout(timeout), onWaiting, onDecisionMade, cancellationToken);
 
       if (syncResult.Outcome == SyncOutcome.TimedOut) {
         throw new TimeoutException(
-            $"Perspective {typeof(TPerspective).Name} did not complete processing within {timeout ?? _defaultSyncTimeout}. " +
+            $"Perspective {typeof(TPerspective).Name} did not complete processing within {_syncTimeout(timeout)}. " +
             $"Handler completed successfully but {syncResult.EventsAwaited} event(s) are still being processed.");
       }
 
@@ -4815,7 +4812,7 @@ public abstract partial class Dispatcher(
 
       // Wait for the specific perspective to process emitted events
       return await _waitForSpecificPerspectiveAsync<TMessage, TPerspective>(
-          message, timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+          message, _syncTimeout(timeout), onWaiting, onDecisionMade, cancellationToken);
     } finally {
       sw.Stop();
       _dispatcherMetrics?.LocalInvokeAndSyncDuration.Record(sw.Elapsed.TotalMilliseconds);
@@ -5315,13 +5312,13 @@ public abstract partial class Dispatcher(
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
-      Topic = destination ?? "(event-store)",
+      Topic = _hopTopic(destination),
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
       Scope = finalScope3,
       CorrelationId = correlation3,
       CausationId = causation3,
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
 
     // 4. Populate SentAt-phase properties onto the event object (parity with _createEnvelope) so a deferred
@@ -5347,13 +5344,19 @@ public abstract partial class Dispatcher(
   // SERIALIZATION HELPERS
   // ========================================
 
+  // The wait a sync call allows: the caller's timeout, or the dispatcher's default.
+  private static TimeSpan _syncTimeout(TimeSpan? timeout) => timeout ?? _defaultSyncTimeout;
+
+  // The topic a hop records: the destination it was sent to, or the event store when it was only stored.
+  private static string _hopTopic(string? destination) => destination ?? "(event-store)";
+
   /// <summary>
   /// Creates an OutboxMessage for work coordinator pattern.
   /// Extracts stream_id from aggregate ID or falls back to message ID.
   /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
   /// </summary>
   private OutboxMessage _serializeToNewOutboxMessage<TMessage>(
-    IMessageEnvelope<TMessage> envelope,
+    MessageEnvelope<TMessage> envelope,
     TMessage payload,
     Type payloadType,
     string? destination,
@@ -5365,7 +5368,7 @@ public abstract partial class Dispatcher(
         "BUG IN DISPATCHER: _serializeToNewOutboxMessage called with TMessage=JsonElement. " +
         $"MessageId: {envelope.MessageId}. " +
         $"Envelope type: {TypeNameFormatter.DisplayName(envelope.GetType())}. " +
-        $"Payload type: {(payload is null ? "null" : TypeNameFormatter.DisplayName(payload.GetType()))}. " +
+        $"Payload type: {TypeNameFormatter.RuntimeDisplayName(payload)}. " +
         $"PayloadType parameter: {TypeNameFormatter.DisplayName(payloadType)}. " +
         "This indicates Dispatcher is being passed a MessageEnvelope<JsonElement> instead of a strongly-typed envelope.");
     }
@@ -5381,9 +5384,7 @@ public abstract partial class Dispatcher(
     // Priority step 1: declared before the row is built so the number travels inside the stored envelope
     // and sits on the row for the store. The message type is rendered by the shared helper.
     var declaredPriority = _declarePriority(envelope, TypeNameFormatter.AssemblyQualifiedNameOrDisplay(payloadType), scheduledFor);
-    if (envelope is MessageEnvelope<TMessage> concreteEnvelope) {
-      concreteEnvelope.Priority = declaredPriority;
-    }
+    envelope.Priority = declaredPriority;
 
     // Use centralized envelope serializer (REQUIRED)
     if (_envelopeSerializer == null) {
@@ -5397,7 +5398,7 @@ public abstract partial class Dispatcher(
 
     // Measured on the serialized form, which is what is stored and sent; an oversized message stops here.
     _payloadLimits.Enforce(serialized.JsonEnvelope.Payload, payloadType, envelope.MessageId.Value, streamId,
-      (envelope as MessageEnvelope<TMessage>)?.PayloadLimitOverride);
+      envelope.PayloadLimitOverride);
 
     // DIAGNOSTIC: Log if MessageType is JsonElement (should never happen after serializer checks)
     if (serialized.MessageType.Contains("JsonElement", StringComparison.OrdinalIgnoreCase)) {
@@ -5406,7 +5407,7 @@ public abstract partial class Dispatcher(
         $"MessageId: {envelope.MessageId}. " +
         $"Envelope type: {TypeNameFormatter.DisplayName(envelope.GetType())}. " +
         $"TMessage type parameter: {TypeNameFormatter.DisplayName(typeof(TMessage))}. " +
-        $"Payload type: {(payload is null ? "null" : TypeNameFormatter.DisplayName(payload.GetType()))}. " +
+        $"Payload type: {TypeNameFormatter.RuntimeDisplayName(payload)}. " +
         $"PayloadType parameter: {TypeNameFormatter.DisplayName(payloadType)}. " +
         "The serializer defensive checks should have caught this!");
     }
@@ -5417,15 +5418,13 @@ public abstract partial class Dispatcher(
       Envelope = serialized.JsonEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
-        Hops = envelope.Hops?.ToList() ?? [],
+        Hops = envelope.CopyHops(),
         EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, _ephemeralModeResolver)
       },
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,
       IsEvent = payload is IEvent,
-      Flags = (payload is Whizbang.Core.Minting.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
-            | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
-            | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(payload, _ephemeralModeResolver),
+      Flags = Whizbang.Core.Messaging.EventFlagsDeriver.FromPayload(payload, _ephemeralModeResolver),
       Scope = _extractScope(envelope),
       MessageType = serialized.MessageType,
       ScheduledFor = scheduledFor,
@@ -5443,7 +5442,7 @@ public abstract partial class Dispatcher(
         $"EnvelopeType={outboxMessage.EnvelopeType}, " +
         $"TMessage={TypeNameFormatter.DisplayName(typeof(TMessage))}, " +
         $"PayloadType={TypeNameFormatter.DisplayName(payloadType)}, " +
-        $"Payload runtime type={(payload is null ? "null" : TypeNameFormatter.DisplayName(payload.GetType()))}. " +
+        $"Payload runtime type={TypeNameFormatter.RuntimeDisplayName(payload)}. " +
         "This means either: (1) Envelope parameter was MessageEnvelope<JsonElement>, " +
         "(2) Payload was JsonElement, or (3) PayloadType parameter was typeof(JsonElement). " +
         "All these cases should have been caught by earlier checks!");
@@ -5456,7 +5455,7 @@ public abstract partial class Dispatcher(
   /// Extracts stream_id from envelope for stream-based ordering.
   /// Tries to get stream ID from first hop metadata, falls back to message ID.
   /// </summary>
-  private static Guid _extractStreamId(IMessageEnvelope envelope) {
+  private static Guid _extractStreamId<TMessage>(MessageEnvelope<TMessage> envelope) {
     // Check first hop for stream ID (stored as "AggregateId" for backward compatibility).
     // Every outbox path builds its envelope with that hop before serializing (_createEnvelope,
     // _createOutboxEnvelopeWithHop, the deferred-publish path), and Hops is required.

@@ -505,8 +505,10 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     } else {
       var arg0 = mc.Arguments.Count > 0 ? mc.Arguments[0].Type.Name : "-";
       var arg1 = mc.Arguments.Count > 1 ? mc.Arguments[1].Type.Name : "-";
+      // Only a module-level (global) function has no declaring type, and C# cannot declare one, so a
+      // method a C# lambda calls always has its type to name.
       throw new NotSupportedException(
-        $"Unsupported Contains shape in collective scope filter. Method={mc.Method.DeclaringType?.Name}.{mc.Method.Name}, " +
+        $"Unsupported Contains shape in collective scope filter. Method={mc.Method.DeclaringType!.Name}.{mc.Method.Name}, " +
         $"Object={(mc.Object is null ? "null" : mc.Object.Type.Name)}, Args={mc.Arguments.Count} [{arg0}, {arg1}].");
     }
 

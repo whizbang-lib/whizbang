@@ -733,17 +733,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
 
       // Create updated row with new complex type instances.
       // We use Update() to attach as Modified, which will update all columns.
-      row = new PerspectiveRow<TModel> {
-        Id = existingRow.Id,
-        Data = model,
-        Metadata = CloneMetadata(metadata),
-        Scope = forceUpdateScope ? CloneScope(scope) : CloneScope(existingRow.Scope),
-        CreatedAt = existingRow.CreatedAt,
-        // A hook may declare the event non-activity (integrity repair, backfill, reclassification):
-        // the row is still written, but business time stays where it was.
-        UpdatedAt = hookPlan.SuppressActivity ? existingRow.UpdatedAt : updatedAt,
-        Version = hookPlan.BumpVersion ? existingRow.Version + 1 : existingRow.Version
-      };
+      row = BuildUpdatedRow(existingRow, model, metadata, scope, forceUpdateScope, hookPlan, updatedAt);
       context.Set<PerspectiveRow<TModel>>().Update(row);
       if (!forceUpdateScope) {
         // SECURITY: Exclude scope from UPDATE SQL. Scope is set only on INSERT.
@@ -895,6 +885,45 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       CommitSequence = metadata.CommitSequence
     };
   }
+
+  /// <summary>
+  /// The row the SELECT-then-UPDATE path writes over an existing one: the new model and metadata, the
+  /// existing identity and creation time, and the scope, business time and version the event and its
+  /// hooks decide.
+  /// </summary>
+  /// <remarks>
+  /// The scope is replaced only when the event is allowed to change it (an <c>IScopeEvent</c>). A hook
+  /// may declare the event non-activity (integrity repair, backfill, reclassification): the row is still
+  /// written, but business time stays where it was. The version moves only when a hook asks for it.
+  /// </remarks>
+  /// <typeparam name="TModel">The perspective model.</typeparam>
+  /// <param name="existingRow">The stored row.</param>
+  /// <param name="model">The new model.</param>
+  /// <param name="metadata">The applied event's metadata.</param>
+  /// <param name="scope">The applied event's scope.</param>
+  /// <param name="forceUpdateScope">Whether the event may replace the stored scope.</param>
+  /// <param name="hookPlan">The per-event hooks' decisions.</param>
+  /// <param name="updatedAt">The business time this write would stamp.</param>
+  /// <returns>The row to attach as modified.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyUpdatedRowTests.cs</tests>
+  internal static PerspectiveRow<TModel> BuildUpdatedRow<TModel>(
+      PerspectiveRow<TModel> existingRow,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerEventApplyHookPlan hookPlan,
+      DateTime updatedAt)
+      where TModel : class =>
+    new() {
+      Id = existingRow.Id,
+      Data = model,
+      Metadata = CloneMetadata(metadata),
+      Scope = CloneScope(forceUpdateScope ? scope : existingRow.Scope),
+      CreatedAt = existingRow.CreatedAt,
+      UpdatedAt = hookPlan.SuppressActivity ? existingRow.UpdatedAt : updatedAt,
+      Version = hookPlan.BumpVersion ? existingRow.Version + 1 : existingRow.Version
+    };
 
   /// <summary>
   /// Creates a clone of PerspectiveScope to avoid EF Core tracking issues.

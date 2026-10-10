@@ -94,12 +94,10 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
       return new NoOpBorrow();
     }
 
-    var borrowDeadline = _options.BorrowTimeoutMilliseconds > 0
-      ? _options.BorrowTimeoutMilliseconds
-      : Timeout.Infinite;
+    // A non-positive borrow timeout means "no deadline": the borrow waits as long as the caller does.
     using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    if (borrowDeadline > 0) {
-      linked.CancelAfter(borrowDeadline);
+    if (_options.BorrowTimeoutMilliseconds > 0) {
+      linked.CancelAfter(_options.BorrowTimeoutMilliseconds);
     }
 
     var sw = Stopwatch.StartNew();

@@ -235,4 +235,45 @@ public class MappedPathDiscoveryTests {
     await Assert.That(_unmappable(SOURCE)).IsEqualTo("Middle.Inner.Tags")
       .Because("the path is what makes the message actionable two levels down");
   }
+
+  /// <summary>
+  /// A nested type with no public constructor at all is left to Entity Framework, which has its own
+  /// ways to construct it, so it is not called unmappable.
+  /// </summary>
+  [Test]
+  public async Task ANestedTypeWithNoPublicConstructorIsNotReportedAsync() {
+    var member = _unmappable(_modelWith("""
+        public Sealed Item { get; init; } = null!;
+      }
+
+      public class Sealed {
+        private Sealed(IReadOnlyList<Tag> tags) { }
+        public string Label { get; init; } = "";
+      """));
+
+    await Assert.That(member).IsNull()
+      .Because("with no public constructor there is nothing for this check to judge, and routing the "
+        + "model to the opaque form would take its indexing away on a guess");
+  }
+
+  /// <summary>
+  /// A public copy constructor does not make a type constructible from mapped properties: it takes the
+  /// type itself. A class whose only other constructor takes a collection is still unmappable.
+  /// </summary>
+  [Test]
+  public async Task AnExplicitCopyConstructorDoesNotCountAsBindableAsync() {
+    var member = _unmappable(_modelWith("""
+        public Basket Item { get; init; } = null!;
+      }
+
+      public class Basket {
+        public Basket(Basket other) { }
+        public Basket(IReadOnlyList<Tag> tags) { }
+        public string Label { get; init; } = "";
+      """));
+
+    await Assert.That(member).IsEqualTo("Item")
+      .Because("the copy constructor needs a Basket to make a Basket, and the other one takes a "
+        + "collection no mapped property can supply");
+  }
 }

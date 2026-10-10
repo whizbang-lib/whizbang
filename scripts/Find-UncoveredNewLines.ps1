@@ -12,10 +12,12 @@
 
     - Uncovered new lines: an added line the merged report knows about and that no test hit.
     - Uncovered new branches: an added line that ran, carries conditions, not all of which any test took,
-      AND whose source contains a hand-written decision (see Test-HandWrittenDecision). Conditions on a
-      line with no decision construct (a bare await, an object initializer) are the compiler's: async
-      state machines and initializer null checks that no test can target. They are not counted. The rule
-      and its reason are in ai-docs/coverage-exclusions.md, "What 100% of branches means".
+      AND whose statement contains a hand-written decision (see Test-HandWrittenStatement). The collector
+      reports a statement's conditions on its first line, so the whole statement is read, continuation
+      lines included. Conditions on a statement with no decision construct (a bare await, an object
+      initializer) are the compiler's: async state machines and initializer null checks that no test can
+      target. They are not counted. The rule and its reason are in ai-docs/coverage-exclusions.md, "What
+      100% of branches means".
 
     A line the report does not know about (comments, braces, declarations) is not coverable and is not
     reported. Test projects, tools and generated files are outside src/ or excluded by the coverage
@@ -31,7 +33,9 @@
     whose outcomes ran in different processes. Each process also writes a binary report (*.coverage)
     whose block hits merge exactly; when they are present (CI uploads them) they are merged with
     dotnet-coverage and a decision counts as fully covered once every block of its function ran in
-    some process (Merge-BlockCoverage). Without them the script warns that counts may be overstated.
+    some process, or once every block of its own statement ran when the statement only branches within
+    itself, as a ?. or ?? does (Merge-BlockCoverage). Without them the script warns that counts may be
+    overstated.
 
     The whole library: every run also prints, and with -SummaryOutFile saves, the coverage of all
     hand-written library code: lines, and outcomes of hand-written decisions by the same classifier.
@@ -267,8 +271,12 @@ function Find-ClosingBraceLine([string[]]$Source, [int]$Line) {
 <#
   Reads the block data `dotnet-coverage merge <*.coverage> -f xml` writes: relative path ->
   @{ Complete = lines some function every block of which ran touches; Incomplete = lines some function
-  with a block that never ran touches }. The binary reports record each block's hit, and merging them is
-  an exact union across test processes, which the per-line Cobertura summaries are not.
+  with a block that never ran touches; NotRun = lines a range touches some block of which never ran
+  (covered="no" or "partial"); Starts = lines a range starts on; Unreached = lines a range starts on whose
+  next range in its function, a different statement, never ran }. The binary reports record each block's
+  hit, and merging them is an exact union across test processes, which the per-line Cobertura summaries
+  are not. A function lists its ranges in IL order, so the range after a statement's last one is the code
+  it falls through to.
 #>
 function Read-BlockCoverage([string]$XmlPath) {
   $blocks = @{}
@@ -288,11 +296,11 @@ function Read-BlockCoverage([string]$XmlPath) {
       if ($reader.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
       switch ($reader.Name) {
         'function' {
-          $current = @{ Complete = ([int]$reader.GetAttribute('blocks_not_covered') -eq 0); Ranges = [System.Collections.Generic.List[int[]]]::new() }
+          $current = @{ Complete = ([int]$reader.GetAttribute('blocks_not_covered') -eq 0); Ranges = [System.Collections.Generic.List[object]]::new() }
           $functions.Add($current)
         }
         'range' {
-          $current.Ranges.Add(@([int]$reader.GetAttribute('source_id'), [int]$reader.GetAttribute('start_line'), [int]$reader.GetAttribute('end_line')))
+          $current.Ranges.Add(@([int]$reader.GetAttribute('source_id'), [int]$reader.GetAttribute('start_line'), [int]$reader.GetAttribute('end_line'), [string]$reader.GetAttribute('covered')))
         }
         'source_file' {
           $files[[int]$reader.GetAttribute('id')] = Get-RelativeSourcePath ([string]$reader.GetAttribute('path')) @()
@@ -308,13 +316,25 @@ function Read-BlockCoverage([string]$XmlPath) {
 function Add-ModuleBlocks([hashtable]$Blocks, $Functions, [hashtable]$Files) {
   foreach ($function in $Functions) {
     $set = if ($function.Complete) { 'Complete' } else { 'Incomplete' }
-    foreach ($range in $function.Ranges) {
+    for ($r = 0; $r -lt $function.Ranges.Count; $r++) {
+      $range = $function.Ranges[$r]
       $path = $Files[$range[0]]
       if (-not $path) { continue }
       if (-not $Blocks.ContainsKey($path)) {
-        $Blocks[$path] = @{ Complete = [System.Collections.Generic.HashSet[int]]::new(); Incomplete = [System.Collections.Generic.HashSet[int]]::new() }
+        $Blocks[$path] = @{}
+        foreach ($name in @('Complete', 'Incomplete', 'NotRun', 'Starts', 'Unreached')) { $Blocks[$path][$name] = [System.Collections.Generic.HashSet[int]]::new() }
       }
-      for ($line = $range[1]; $line -le $range[2]; $line++) { [void]$Blocks[$path][$set].Add($line) }
+      $entry = $Blocks[$path]
+      [void]$entry.Starts.Add($range[1])
+      for ($line = $range[1]; $line -le $range[2]; $line++) {
+        [void]$entry[$set].Add($line)
+        if ($range[3] -ne 'yes') { [void]$entry.NotRun.Add($line) }
+      }
+      if ($r + 1 -lt $function.Ranges.Count) {
+        $next = $function.Ranges[$r + 1]
+        $sameLine = $next[0] -eq $range[0] -and $next[1] -eq $range[1]
+        if (-not $sameLine -and $next[3] -eq 'no') { [void]$entry.Unreached.Add($range[1]) }
+      }
     }
   }
 }
@@ -322,28 +342,70 @@ function Add-ModuleBlocks([hashtable]$Blocks, $Functions, [hashtable]$Files) {
 <#
   Marks fully covered every line whose conditions the block data proves were all taken, and returns how
   many lines it changed. The collector counts an outcome of a condition as taken when the block it leads
-  to ran (its cobertura writer derives conditions from block hits), and both ends of a condition are
-  blocks of the function that contains it. So when every block of every function touching a line ran in
-  some test process, every outcome on that line was taken, whichever process took it. A line some function
-  with an unrun block touches is left as the reports say: which of its outcomes is missing is unknowable
-  without the IL, so nothing is claimed for it.
+  to ran (its cobertura writer derives conditions from block hits), and merged block hits are an exact
+  union across test processes. Two proofs, either of which is enough:
+
+  - Every block of every function touching the line ran in some test process: both ends of every
+    condition are blocks of the function that contains it, so every outcome on the line was taken.
+  - The line proves itself (Test-LineProvenByItsBlocks, with $ReadSource): every block on the statement
+    ran, the code it falls through to ran, and the statement is one that only branches within itself.
+    This is the case of a ?. or ?? whose outcomes ran in two processes inside a function some other
+    statement of which no test ran (#1305).
+
+  Any other line is left as the reports say: which of its outcomes is missing is unknowable without the
+  IL, so nothing is claimed for it. Without $ReadSource only the first proof is used.
 #>
-function Merge-BlockCoverage([hashtable]$Coverage, [hashtable]$Blocks) {
+function Merge-BlockCoverage([hashtable]$Coverage, [hashtable]$Blocks, [scriptblock]$ReadSource = $null) {
   $changed = 0
   foreach ($path in $Coverage.Keys) {
     if (-not $Blocks.ContainsKey($path)) { continue }
     $proof = $Blocks[$path]
     $entry = $Coverage[$path]
+    $fileLines = $null
+    $sourceRead = $false
     foreach ($n in @($entry.Conditions.Keys)) {
       $c = $entry.Conditions[$n]
       if ($c[0] -ge $c[1]) { continue }
-      if ($proof.Complete.Contains($n) -and -not $proof.Incomplete.Contains($n)) {
+      $proven = $proof.Complete.Contains($n) -and -not $proof.Incomplete.Contains($n)
+      if (-not $proven -and $null -ne $ReadSource) {
+        if (-not $sourceRead) {
+          $read = & $ReadSource $path
+          $fileLines = if ($null -eq $read) { $null } else { [string[]]@($read) }
+          $sourceRead = $true
+        }
+        $proven = $null -ne $fileLines -and (Test-LineProvenByItsBlocks $proof $fileLines $n)
+      }
+      if ($proven) {
         $entry.Conditions[$n] = @($c[1], $c[1])
         $changed++
       }
     }
   }
   return $changed
+}
+
+<#
+  True when the block data and the source prove every outcome of the conditions on line $Line was taken,
+  though its function has a block no test ran. Each condition's two outcomes lead to blocks, and the
+  collector counts an outcome as taken when the block it leads to ran. For a statement that only branches
+  within itself, a hand-written ?., ??, ?:, && or || (Test-HandWrittenStatement) with none of if, else, a
+  loop, switch, case, when, catch, goto, break, continue, yield, await, using, lock, fixed, try or finally,
+  each outcome leads either to a block of the statement itself or to the code the statement falls through
+  to. So the line is proven when:
+
+  - a statement starts on it, and every range touching it is covered="yes" (every block ran);
+  - the range after the statement's in its function did not go unrun (the fall-through target ran: a ?.
+    whose only path throws never reaches it, and its null outcome was never taken);
+  - the statement is hand-written and branches only within itself, as above.
+
+  An if, a loop or a switch leads its outcomes to blocks elsewhere in the function, and await adds the
+  state machine's hidden blocks, so such a line is never proven this way.
+#>
+function Test-LineProvenByItsBlocks([hashtable]$Proof, [string[]]$Source, [int]$Line) {
+  if (-not $Proof.Starts.Contains($Line) -or $Proof.NotRun.Contains($Line) -or $Proof.Unreached.Contains($Line)) { return $false }
+  if (-not (Test-HandWrittenStatement $Source $Line)) { return $false }
+  $code = (Get-StatementCode $Source $Line) -join ' '
+  return $code -cnotmatch '\b(if|else|while|for|foreach|do|switch|case|when|catch|goto|break|continue|yield|await|using|lock|fixed|try|finally)\b'
 }
 
 # The dotnet-coverage version CI installs; the same one reads the binary reports locally.
@@ -435,7 +497,7 @@ function Test-LibrarySourcePath([string]$Path) {
 
 <#
   The whole library's coverage: every line the collector knows in hand-written library source, and every
-  outcome of every hand-written decision (the same classifier as the new-code gate, Test-HandWrittenDecision).
+  outcome of every hand-written decision (the same classifier as the new-code gate, Test-HandWrittenStatement).
   A file $ReadSource cannot return is skipped: its lines cannot be classified.
 #>
 function Get-WholeLibraryCoverage([hashtable]$Coverage, [scriptblock]$ReadSource) {
@@ -447,13 +509,13 @@ function Get-WholeLibraryCoverage([hashtable]$Coverage, [scriptblock]$ReadSource
     if (-not (Test-LibrarySourcePath $path)) { continue }
     $source = & $ReadSource $path
     if ($null -eq $source) { continue }
-    $source = @($source)
+    $source = [string[]]@($source)
     $entry = $Coverage[$path]
     foreach ($n in ($entry.Hits.Keys | Sort-Object)) {
       $lines++
       $text = if ($n -le $source.Count) { ([string]$source[$n - 1]).Trim() } else { '' }
       if ($entry.Hits[$n] -gt 0) { $coveredLines++ } else { $gap.Add("${path}:${n}: (never ran) $text") }
-      if (-not $entry.Conditions.ContainsKey($n) -or -not (Test-HandWrittenDecision $text)) { continue }
+      if (-not $entry.Conditions.ContainsKey($n) -or -not (Test-HandWrittenStatement $source $n)) { continue }
       $c = $entry.Conditions[$n]
       $outcomes += $c[1]
       $coveredOutcomes += $c[0]
@@ -583,6 +645,130 @@ function Test-HandWrittenDecision([string]$Line) {
 }
 
 <#
+  True when the statement whose conditions the collector reports on line $Line (1-based) contains a
+  hand-written decision (Test-HandWrittenDecision) on any of its lines. The collector reports every
+  condition of a statement on the statement's first line, so a decision written on a continuation line,
+  a ?. starting the second line of a call chain or a ?? inside an initializer, is counted on a line whose
+  own text has none (#1305). A ?. or ?[ split at the line break ("x?" then ".Member") counts too.
+#>
+function Test-HandWrittenStatement([string[]]$Source, [int]$Line) {
+  if ($Line -gt $Source.Count) { return $false }
+  if (Test-HandWrittenDecision $Source[$Line - 1]) { return $true }
+  # Most lines are whole statements: code ending in ; with every ( closed and no brace. Nothing to read on.
+  $firstCode = (Get-CodeText $Source[$Line - 1]).TrimEnd()
+  if ($firstCode.EndsWith(';') -and $firstCode.Split('(').Count -eq $firstCode.Split(')').Count -and $firstCode.IndexOfAny([char[]]'{}') -lt 0) { return $false }
+  $codes = Get-StatementCode $Source $Line
+  for ($i = 1; $i -lt $codes.Count; $i++) {
+    if (Test-HandWrittenDecision $codes[$i]) { return $true }
+    if ($codes[$i - 1].TrimEnd().EndsWith('?') -and $codes[$i].TrimStart() -match '^[.\[]') { return $true }
+  }
+  return $false
+}
+
+<#
+  The code of the statement that starts on line $Line (1-based), one string per source line from $Line to
+  the line the statement ends on, with comments and the text of literals removed (Get-CodeText).
+
+  The statement ends at a ';' outside its parentheses, at the '{' that opens a block (after ')' that is not
+  an object creation's argument list, or after else, try, finally, do or an accessor keyword), at a '}'
+  closing the block it is in, or at a ')' or ']' closing a bracket opened before it. Any other '{' (an
+  object or collection initializer, an anonymous object, a switch expression) is part of the statement.
+  A lambda's body is a function of its own, whose conditions the collector reports on the lambda's own
+  lines, so a block body is left out after line $Line, and so is an expression body that starts on a
+  continuation line; on line $Line everything is kept, as the single-line rule always did. A '}' that
+  opens line $Line ("} else {") belongs to the block before it, and a line that is nothing but closing
+  braces ends there.
+
+  Reading stops after a line that opens a multi-line string ("""raw""" or @"verbatim") or block comment:
+  a per-line reader would take the text after it for code (a raw SQL string's CASE WHEN for a decision).
+#>
+function Get-StatementCode([string[]]$Source, [int]$Line) {
+  $blockWords = '^(else|try|finally|do|get|set|init|add|remove|checked|unchecked|unsafe)$'
+  $codes = [System.Collections.Generic.List[string]]::new()
+  $paren = 0          # ( and [ the statement opened and has not closed
+  $brace = 0          # initializer, collection and switch-expression braces it opened
+  $creations = [System.Collections.Generic.Stack[bool]]::new()  # per open (: whether it is an object creation's
+  $closedCreation = $false  # whether the last ) closed an object creation's argument list
+  $body = 0           # brace depth inside a lambda's block body
+  $exprBody = -1      # bracket depth inside a lambda's expression body that began on a continuation line
+  $arrow = -1         # the line of a => whose body has not begun
+  $seen = $false      # whether any code but a closing brace has been read
+  $last = ' '         # the last code character read
+  $word = ''; $lastWord = ''
+  for ($i = $Line - 1; $i -lt $Source.Count; $i++) {
+    $first = $i -eq $Line - 1
+    $raw = [string]$Source[$i]
+    $code = Get-CodeText $raw
+    $kept = [System.Text.StringBuilder]::new()
+    $end = $false
+    for ($k = 0; $k -lt $code.Length -and -not $end; $k++) {
+      $c = $code[$k]
+      $space = [char]::IsWhiteSpace($c)
+      if ($arrow -ge 0 -and -not $space) {
+        $bodyLine = $arrow
+        $arrow = -1
+        if ($c -eq '{') {
+          $body = 1
+          if ($first) { [void]$kept.Append($c) }
+          continue
+        }
+        if ($bodyLine -gt $Line - 1) { $exprBody = 0 }
+      }
+      if ($body -gt 0) {
+        if ($c -eq '{') { $body++ } elseif ($c -eq '}') { $body-- }
+        if ($first) { [void]$kept.Append($c) }
+        continue
+      }
+      if ($exprBody -ge 0) {
+        if ('([{'.IndexOf($c) -ge 0) { $exprBody++; continue }
+        $close = ')]}'.IndexOf($c) -ge 0
+        if ($close -and $exprBody -gt 0) { $exprBody--; continue }
+        if (-not $close -and -not (($c -eq ',' -or $c -eq ';') -and $exprBody -eq 0)) { continue }
+        $exprBody = -1
+      }
+      if ([char]::IsLetterOrDigit($c) -or $c -eq '_') { $word += $c } elseif ($word) { $lastWord = $word; $word = '' }
+      if ($c -eq '=' -and $k + 1 -lt $code.Length -and $code[$k + 1] -eq '>') {
+        $k++
+        $arrow = $i
+        $seen = $true
+        $last = '>'
+        if ($first) { [void]$kept.Append('=>') }
+        continue
+      }
+      if ($c -eq '(' -or $c -eq '[') {
+        $paren++
+        $creations.Push($c -eq '(' -and $kept.ToString() -match '\bnew\b[^;(){}=]*$')
+      } elseif ($c -eq ')' -or $c -eq ']') {
+        $paren--
+        if ($paren -lt 0) { $end = $true; break }
+        $closedCreation = $creations.Pop()
+      } elseif ($c -eq '{') {
+        $opensBlock = ($last -eq ')' -and -not $closedCreation) -or ([string]$last -match '\w' -and $lastWord -cmatch $blockWords)
+        if ($paren -eq 0 -and $brace -eq 0 -and $opensBlock) { $end = $true } else { $brace++ }
+      } elseif ($c -eq '}') {
+        if ($brace -gt 0) {
+          $brace--
+        } elseif ($seen) {
+          $end = $true
+          break
+        } else {
+          continue
+        }
+      } elseif ($c -eq ';' -and $paren -le 0) {
+        $end = $true
+      }
+      [void]$kept.Append($c)
+      if (-not $space) { $last = $c; $seen = $true }
+    }
+    if ($word) { $lastWord = $word; $word = '' }
+    $codes.Add($kept.ToString())
+    if ($end -or -not $seen) { break }
+    if ($raw.Contains('"""') -or $raw.Contains('@"') -or $raw.LastIndexOf('/*') -gt $raw.LastIndexOf('*/')) { break }
+  }
+  return , $codes.ToArray()
+}
+
+<#
   Intersects the added lines with the merged coverage. $Added: path -> HashSet[int]; $Coverage: from
   Read-CoberturaCoverage; $ReadSource: a scriptblock taking a path and returning its lines.
 #>
@@ -598,11 +784,11 @@ function Get-UncoveredNewCode([hashtable]$Added, [hashtable]$Coverage, [scriptbl
       $uncoveredLine = $entry.Hits[$n] -eq 0
       $partial = $entry.Conditions.ContainsKey($n) -and $entry.Conditions[$n][0] -lt $entry.Conditions[$n][1]
       if (-not $uncoveredLine -and -not $partial) { continue }
-      if ($null -eq $source) { $source = @(& $ReadSource $path) }
+      if ($null -eq $source) { $source = [string[]]@(& $ReadSource $path) }
       $text = if ($n -le $source.Count) { ([string]$source[$n - 1]).Trim() } else { '' }
       if ($uncoveredLine) {
         $lines.Add("${path}:${n}: $text")
-      } elseif (Test-HandWrittenDecision $text) {
+      } elseif (Test-HandWrittenStatement $source $n) {
         $c = $entry.Conditions[$n]
         $branches.Add("${path}:${n}: ($($c[0])/$($c[1]) conditions) $text")
       }
@@ -645,7 +831,7 @@ if ($coverage.Count -eq 0) {
 $blockXml = Get-BlockCoverageXml -CoverageRoot $CoverageRoot -OutFile (Join-Path ([System.IO.Path]::GetTempPath()) "whizbang-blocks-$PID.xml")
 $blockUnion = $null -ne $blockXml
 if ($blockUnion) {
-  $proven = Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage $blockXml)
+  $proven = Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage $blockXml) -ReadSource $readSource
   Remove-Item -LiteralPath $blockXml -ErrorAction SilentlyContinue
   Write-Host "Block data: $proven line(s) whose outcomes ran in different test processes are fully covered."
 } else {

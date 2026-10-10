@@ -73,6 +73,12 @@ namespace Whizbang.Core.Messaging;
 /// believes are alive; otherwise the claim ranks itself as before and reports the copy stale
 /// (<see cref="WorkBatch.PartitionAssignmentStale"/>). Null: no assignment, the claim ranks itself.
 /// </param>
+/// <param name="AliveLockHeld">
+/// Whether this instance holds its session alive-lock right now (#1286), from
+/// <see cref="Whizbang.Core.Workers.IInstanceAliveLockSource"/>. A direct instance holding it is live by the lock and
+/// beats on the slow cadence, so the claim does not report its registration stale between beats
+/// (<see cref="WorkBatch.InstanceRegistrationStale"/>). A missing registration is reported whatever this says.
+/// </param>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 public sealed record ClaimWorkRequest(
   Guid InstanceId,
@@ -93,4 +99,5 @@ public sealed record ClaimWorkRequest(
   TimeSpan? IdleForceAfter = null,
   int? MaxOutboxAcquireRows = null,
   int? OutboxRunLength = null,
-  Whizbang.Core.Workers.PartitionAssignmentVersion? PartitionAssignment = null);
+  Whizbang.Core.Workers.PartitionAssignmentVersion? PartitionAssignment = null,
+  bool AliveLockHeld = false);

@@ -121,14 +121,12 @@ public class DispatcherSyncTests : DiagnosticTestBase {
     var context = MessageContext.Create(CorrelationId.New());
 
     // Act
-    var task = dispatcher.LocalInvokeAsync<DispatcherSyncOrderCreatedResult>(command, context);
+    var result = await dispatcher.LocalInvokeAsync<DispatcherSyncOrderCreatedResult>(command, context);
 
-    // Assert - Should NOT be immediately completed (async receptor used)
-    // Note: This test verifies the async receptor was chosen by checking it's not pre-completed
-    await Assert.That(task.IsCompletedSuccessfully).IsFalse();
-
-    var result = await task;
-    await Assert.That(result).IsNotNull();
+    // Assert: the result names the receptor that produced it, so the choice is checked directly
+    // rather than inferred from whether the task happened to be pending yet (a race).
+    await Assert.That(result.OrderId).IsEqualTo(AsyncOrderReceptor.ResultOrderId)
+      .Because("with both a sync and an async receptor registered, the async one is preferred");
   }
 
   /// <summary>
@@ -177,9 +175,12 @@ public class DispatcherSyncTests : DiagnosticTestBase {
   }
 
   public class AsyncOrderReceptor : IReceptor<DispatcherSyncCreateOrderCommand, DispatcherSyncOrderCreatedResult> {
+    /// <summary>The order id this receptor always returns, so a test can tell which receptor ran.</summary>
+    public static readonly Guid ResultOrderId = new("a5a5a5a5-0000-0000-0000-00000000a5a5");
+
     public async ValueTask<DispatcherSyncOrderCreatedResult> HandleAsync(DispatcherSyncCreateOrderCommand message, CancellationToken cancellationToken = default) {
       await Task.Yield(); // Ensure async
-      return new DispatcherSyncOrderCreatedResult(Guid.NewGuid());
+      return new DispatcherSyncOrderCreatedResult(ResultOrderId);
     }
   }
 

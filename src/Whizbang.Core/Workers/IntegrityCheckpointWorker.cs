@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -93,8 +94,7 @@ public sealed partial class IntegrityCheckpointWorker(
       // The address consumers publish directed integrity requests to — a topic THIS service
       // consumes (its own first destination, or the RepairTopic override). Carried because the
       // requester cannot guess an origin-reachable topic in a domain-scoped topology.
-      RequestTopic = _options.RepairTopic
-        ?? scope.ServiceProvider.GetService<TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address,
+      RequestTopic = RepairTopicResolver.Resolve(_options.RepairTopic, scope.ServiceProvider),
       FromCommitSequence = window.FromCommitSequence,
       ToCommitSequence = window.ToCommitSequence,
       Buckets = [.. window.Buckets],
@@ -182,7 +182,7 @@ public sealed partial class IntegrityCheckpointWorker(
 
     var lookup = EventTypeMatchingHelper.BuildTypeLookup(
       [.. catalog.GetAll().Where(e => e.Kind == "event").Select(e => e.Type)]);
-    var ownedDomains = services.GetService<IOptions<RoutingOptions>>()?.Value
+    var ownedDomains = services.GetOptionsValue<RoutingOptions>()?
       .OwnedDomains.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     var topicStrategy = services.GetService<ITopicRoutingStrategy>();
     var destinations = new Dictionary<string, TransportDestination>(StringComparer.Ordinal);

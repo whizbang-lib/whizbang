@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -112,6 +113,38 @@ public class DapperManagedObjectsTests {
 
     await _initializeAsync();
 
+    await Assert.That(await _indexesAsync()).Contains($"ix_{TABLE}_status");
+  }
+
+  /// <summary>
+  /// The registration hands the declared objects to the schema initialization it runs, so a host that
+  /// declares them gets the reconcile without building the initializer itself.
+  /// </summary>
+  [Test]
+  public async Task TheRegistration_WithDeclaredObjects_ReconcilesAtStartAsync() {
+    var services = new ServiceCollection();
+    services.AddWhizbangPostgres(
+      _connectionString, new System.Text.Json.JsonSerializerOptions(), initializeSchema: true,
+      [new KeyValuePair<string, string>("ProbePerspective", ENTRY)],
+      managedObjects: [(TABLE, "index", $"ix_{TABLE}_status", "ProbeModel")]);
+
+    await using var db = new NpgsqlConnection(_connectionString);
+    var recorded = await db.QueryAsync<string>("SELECT object_name FROM wh_managed_objects ORDER BY object_name");
+    await Assert.That(recorded).Contains($"ix_{TABLE}_status")
+      .Because("the declared objects reached the initialization the registration ran");
+  }
+
+  /// <summary>The registration without a declaration leaves every object in place and records none.</summary>
+  [Test]
+  public async Task TheRegistration_WithoutADeclaration_ReconcilesNothingAsync() {
+    var services = new ServiceCollection();
+    services.AddWhizbangPostgres(
+      _connectionString, new System.Text.Json.JsonSerializerOptions(), initializeSchema: true,
+      [new KeyValuePair<string, string>("ProbePerspective", ENTRY)],
+      managedObjects: null);
+
+    await using var db = new NpgsqlConnection(_connectionString);
+    await Assert.That(await db.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_managed_objects")).IsEqualTo(0L);
     await Assert.That(await _indexesAsync()).Contains($"ix_{TABLE}_status");
   }
 

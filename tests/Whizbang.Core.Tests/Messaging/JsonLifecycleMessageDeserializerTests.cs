@@ -287,6 +287,16 @@ public partial class JsonLifecycleMessageDeserializerTests {
       .WithMessageMatching("*Failed to resolve message type*");
   }
 
+  [Test]
+  public async Task DeserializeFromJsonElement_NullJson_ThrowsAsync() {
+    var deserializer = new JsonLifecycleMessageDeserializer(JsonContextRegistry.CreateCombinedOptions());
+    var typeName = TypeNameFormatter.Format(typeof(Whizbang.Core.Minting.RedeliveryComposite));
+
+    await Assert.That(() => deserializer.DeserializeFromJsonElement(JsonDocument.Parse("null").RootElement, typeName))
+      .Throws<InvalidOperationException>()
+      .WithMessageMatching("*returned null*");
+  }
+
   // ========================================
   // DeserializeFromJsonElement - Undefined JsonElement Tests
   // ========================================

@@ -53,7 +53,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     // cycle already running) is a no-op hold rather than a skip -- checkpoints arrive per origin
     // and dropping one would trade a lock collision for a missed gap.
     using var integrityHold =
-      services.GetService<Whizbang.Core.Workers.HousekeepingCoordinator>()?.BeginIntegrityScope()
+      services.GetService<HousekeepingCoordinator>()?.BeginIntegrityScope()
       ?? default;
 
     var self = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
@@ -74,9 +74,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     // is re-requested for as long as the service runs. The repair ledger is what bounds the repeat,
     // through RepairRequestBackoffSeconds and MaxRepairAttemptsPerBucket, and the manifest path has
     // always consulted it. Same guard here, so both rungs are bounded in both dimensions.
-    var ledger = services.GetService<IIntegrityRepairLedger>()
-      ?? (IIntegrityRepairLedger?)services.GetService<IntegrityRepairLedger>()
-      ?? new IntegrityRepairLedger();
+    var ledger = IntegrityRepairSupport.ResolveLedger(services);
     var repairBackoff = TimeSpan.FromSeconds(options.RepairRequestBackoffSeconds);
     var repairNow = DateTimeOffset.UtcNow;
 
@@ -102,12 +100,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     // upgrade — the same silent-disable this codebase refuses elsewhere ("the 0s are precisely the
     // silent-disable this method exists to make impossible"). Stores that CAN report get the gate —
     // stores that cannot get a loud one-line warning and the old behavior.
-    var measurable = backlog is not null;
-    // IsQuiescent, not IsSettled: since 167 the latter ignores the idle band, and a gap check that
-    // ran while idle work was still queued could call a row missing that is merely not yet run.
-    // IsQuiescent is the pre-167 meaning of IsSettled, so this gate is unchanged.
-    var settled = backlog?.IsQuiescent != false;
-    if (!measurable) {
+    if (backlog is null) {
       LogSettlednessUnmeasurable(logger, message.OriginServiceName);
     }
     var gapReportCap = Math.Max(1, options.MaxGapReportsPerCheckpoint);
@@ -154,10 +147,16 @@ public sealed partial class IntegrityCheckpointReceptor(
       // cycle. UNMEASURED (backlog null) keeps the old behavior — same rationale as the
       // repair gate above: a store that cannot report must not have detection silently
       // switched off by an upgrade.
-      if (measurable && !settled) {
+      //
+      // Measured and not settled, in one test: the pattern only matches a backlog that was
+      // measured, so the log below reads its counts without a second null check. IsQuiescent, not
+      // IsSettled: since 167 the latter ignores the idle band, and a gap check that ran while idle
+      // work was still queued could call a row missing that is merely not yet run. IsQuiescent is
+      // the pre-167 meaning of IsSettled, so this gate is unchanged.
+      if (backlog is { IsQuiescent: false }) {
         tracker.AddPending(pending);
         LogGapDeferredConsumerBehind(logger, pending.EventType, pending.TenantScope,
-          pending.OriginServiceName, backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1);
+          pending.OriginServiceName, backlog.UnprocessedInboxRows, backlog.ActiveLeasedRows);
         continue;
       }
 
@@ -283,8 +282,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
     var requester = services.GetService<IServiceInstanceProvider>()?.ServiceName;
-    var topic = options.RepairTopic
-      ?? services.GetService<TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
+    var topic = IntegrityRepairSupport.ResolveRepairTopic(options, services);
     if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       LogRepairSkipped(logger, pending.OriginServiceName,
         transport is null, serializer is null, string.IsNullOrEmpty(requester), string.IsNullOrEmpty(topic));
