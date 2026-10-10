@@ -4,6 +4,8 @@
     <ProjectReference Include="..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres\Whizbang.Data.EFCore.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Data.Postgres\Whizbang.Data.Postgres.csproj" />
+    <!-- The startup parity suite runs the same scenarios against both Postgres drivers. -->
+    <ProjectReference Include="..\..\src\Whizbang.Data.Dapper.Postgres\Whizbang.Data.Dapper.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Testing\Whizbang.Testing.csproj" />
     <!-- The index expressions a declared JSON index is built from live here, and the container tests
          assert against that renderer rather than a copy of it: an index over a different expression

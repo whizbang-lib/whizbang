@@ -6,15 +6,16 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
-using Whizbang.Core.RunControl;
 using Whizbang.Core.Workers;
 
-namespace Whizbang.Data.EFCore.Postgres;
+namespace Whizbang.Data.Postgres;
 
 /// <summary>
 /// Hosted service that initializes the Whizbang database schema, then signals
 /// <see cref="ISchemaReadyGate"/> so workers (which await the gate at the top of their ExecuteAsync)
-/// can issue SQL.
+/// can issue SQL. One for every driver: each driver registers an <see cref="ISchemaInitializationRunner"/>
+/// for what it initializes, and this service runs every one of them, in registration order, before it opens
+/// the gate.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -47,17 +48,24 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>data/turnkey-initialization</docs>
+/// <tests>tests/Whizbang.Core.Component.Tests/Schema/SchemaInitializationRunnersTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangDatabaseInitializerServiceTests.cs</tests>
 internal sealed partial class WhizbangDatabaseInitializerService(
     IServiceProvider serviceProvider,
-    ISchemaInitializationRunner initRunner,
+    IEnumerable<ISchemaInitializationRunner> runners,
     ISchemaReadyGate schemaReadyGate,
     IOptions<ClaimWorkerOptions> claimWorkerOptions,
     IOptions<SchemaInitializationOptions> schemaInitOptions,
     TimeProvider timeProvider,
-    ILogger<WhizbangDatabaseInitializerService> logger) : IHostedService, IDisposable {
+    ILogger<WhizbangDatabaseInitializerService> logger,
+    IEnumerable<ISchemaInitializationObserver> observers) : IHostedService, IDisposable {
+
+  private readonly ISchemaInitializationObserver[] _observers = [.. observers];
 
   private readonly IServiceProvider _serviceProvider = serviceProvider;
-  private readonly ISchemaInitializationRunner _initRunner = initRunner;
+  // Materialized once: the registration order is the run order, and a lazily enumerated sequence would be
+  // re-enumerated on every attempt of the retry loop.
+  private readonly ISchemaInitializationRunner[] _runners = [.. runners];
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
   private readonly IOptions<ClaimWorkerOptions> _claimWorkerOptions = claimWorkerOptions;
   private readonly IOptions<SchemaInitializationOptions> _schemaInitOptions = schemaInitOptions;
@@ -117,6 +125,9 @@ internal sealed partial class WhizbangDatabaseInitializerService(
         var delay = _schemaInitOptions.Value.InitRetryDelay;
         LogBackgroundInitializationRetrying(_logger, ex, attempt, delay.TotalSeconds);
         try {
+          foreach (var observer in _observers) {
+            await observer.OnAttemptFailedAsync(attempt, ex, _stopCts.Token).ConfigureAwait(false);
+          }
           await Task.Delay(delay, _timeProvider, _stopCts.Token).ConfigureAwait(false);
         } catch (OperationCanceledException) {
           return;   // host shutdown ends the loop; the gate stays closed.
@@ -138,7 +149,7 @@ internal sealed partial class WhizbangDatabaseInitializerService(
 
   private async Task _runMigrationsAsync(CancellationToken cancellationToken) {
     if (_schemaInitOptions.Value.MigrationTimeout is not { } ceiling) {
-      await _initRunner.RunAsync(cancellationToken);
+      await _runAllAsync(cancellationToken);
       return;
     }
 
@@ -146,11 +157,17 @@ internal sealed partial class WhizbangDatabaseInitializerService(
     using var timeoutCts = new CancellationTokenSource(ceiling, _timeProvider);
     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
     try {
-      await _initRunner.RunAsync(linkedCts.Token);
+      await _runAllAsync(linkedCts.Token);
     } catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested) {
       // The migration blew past its configured ceiling (not host shutdown). Surface it as a failure
       // so the gate never opens — the pod stays out of rotation and the rollout fails cleanly.
       throw new TimeoutException($"Schema initialization exceeded the configured MigrationTimeout of {ceiling}.");
+    }
+  }
+
+  private async Task _runAllAsync(CancellationToken cancellationToken) {
+    foreach (var runner in _runners) {
+      await runner.RunAsync(cancellationToken);
     }
   }
 

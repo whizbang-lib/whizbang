@@ -25,7 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// already uses to guard the same static state, so the two classes serialize against each other
 /// instead of racing. No database is used in this file.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/ISchemaInitializationRunner.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/DbContextSchemaInitializationRunner.cs</code-under-test>
 [NotInParallel("DbContextInitializationRegistry")]
 [Category("Shard1")]
 public class ISchemaInitializationRunnerCoverageTests {

@@ -73,6 +73,16 @@ public class ManagedSchemaManifestGenerationTests {
   }
 
   [Test]
+  public async Task TheModelRegistration_KeysTheManifest_SoAConsumerRegisteredContextHasOneAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(SOURCE);
+    var models = result.GeneratedSources.Single(s => s.SourceText.ToString().Contains("ModelRegistrationRegistry.RegisterModels", StringComparison.Ordinal))
+      .SourceText.ToString();
+
+    await Assert.That(models).Contains(
+      "services.TryAddKeyedSingleton<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof(global::TestApp.LedgerDbContext)");
+  }
+
+  [Test]
   public async Task TheRegistration_KeysTheManifestByItsContextAsync() {
     var (_, registration) = await _generateAsync();
 

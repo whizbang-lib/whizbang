@@ -30,6 +30,24 @@ public class DbContextInitializationRegistryTests {
     await Assert.That(DbContextInitializationRegistry.Count).IsEqualTo(1);
   }
 
+  /// <summary>
+  /// A module initializer that runs twice (a test fixture re-running the generated registration, or a host that
+  /// calls it explicitly) must not make every start initialize the context twice: a second pass reconciles again
+  /// within one start, so the first sighting of a retired object became its drop.
+  /// </summary>
+  [Test]
+  public async Task Register_TheSameContextTwice_KeepsOne_SoAStartInitializesItOnceAsync() {
+    var first = 0;
+    var second = 0;
+    DbContextInitializationRegistry.Register<FakeDbContextA>((_, _, _) => { first++; return Task.CompletedTask; });
+    DbContextInitializationRegistry.Register<FakeDbContextA>((_, _, _) => { second++; return Task.CompletedTask; });
+
+    await DbContextInitializationRegistry.InitializeAllAsync(new FakeServiceProvider());
+
+    await Assert.That(DbContextInitializationRegistry.Count).IsEqualTo(1);
+    await Assert.That((first, second)).IsEqualTo((0, 1)).Because("the latest registration for a context replaces the earlier one");
+  }
+
   [Test]
   public async Task InitializeAllAsync_CallsAllRegisteredCallbacksAsync() {
     // Arrange
@@ -202,8 +220,8 @@ public class DbContextInitializationRegistryTests {
     DbContextInitializationRegistry.Register<FakeDbContextA>(
         (_, _, _) => Task.CompletedTask);
 
-    // Act & Assert
-    await Assert.That(DbContextInitializationRegistry.Count).IsEqualTo(3);
+    // Act & Assert: one per context; registering A again replaced its initializer rather than adding a second
+    await Assert.That(DbContextInitializationRegistry.Count).IsEqualTo(2);
   }
 
   // --- Fake DbContext types for test isolation ---

@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core.Data;
+using Whizbang.Core.Observability;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
@@ -95,11 +96,23 @@ public sealed class PostgresSchemaInitializer {
   /// </summary>
   public ManagedSchemaObjectSet? ManagedObjects { get; init; }
 
-  /// <summary>The reconcile's settings; the defaults when not set.</summary>
+  /// <summary>The reconcile's settings; the defaults when not set. The driver reads them from <c>Whizbang:Schema:Reconcile</c>.</summary>
   public ManagedSchemaSettings ManagedObjectSettings { get; init; } = ManagedSchemaSettings.Read(null);
 
   /// <summary>Where the managed-object reconcile reports what it dropped and kept.</summary>
   public ILogger? Logger { get; init; }
+
+  /// <summary>
+  /// This instance. When set, initialization registers it in <c>wh_service_instances</c> before it releases the
+  /// schema lock, so the instances that start after it see it as running, and the managed-object reconcile records
+  /// what it declares under its id, so their fleet gate reads it as reported (#1253).
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_RegistersThisInstanceAsync</tests>
+  public IServiceInstanceProvider? Instance { get; init; }
+
+  /// <summary>Told when another session holds the schema lock, before this initialization waits for it.</summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_WaitsForTheSchemaLock_WhileAnotherSessionHoldsItAsync</tests>
+  public IReadOnlyList<ISchemaInitializationObserver> Observers { get; init; } = [];
 
   /// <summary>
   /// Initializes the Whizbang schema by generating SQL from C# schema definitions.
@@ -117,7 +130,35 @@ public sealed class PostgresSchemaInitializer {
 
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
+    string schema;
+    await using (var current = new NpgsqlCommand("SELECT current_schema()", connection)) {
+      schema = (string)(await current.ExecuteScalarAsync(cancellationToken))!;
+    }
 
+    // Everything up to the managed-object reconcile runs under the schema initialization lock, the key the EF Core
+    // driver's DDL transaction takes, so instances starting together migrate one after the other.
+    await using (await SchemaInitializationLock.AcquireAsync(_connectionString, schema, Observers, cancellationToken)) {
+      await _migrateAsync(connection, schemaSql, schema, cancellationToken);
+    }
+
+    // The managed-object reconcile, after the lock is released (it takes the same lock itself, with a try). Never
+    // fatal, as on the EF Core driver: a reconcile that cannot finish leaves every object where it is, and the next
+    // start tries again.
+    if (ManagedObjects is { } declared) {
+      try {
+        await ManagedSchemaReconciler.RunAsync(
+          connection, schema, declared, ManagedObjectSettings, Instance?.InstanceId, Logger, cancellationToken);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        if (Logger is { } logger) {
+          _logReconcileFailed(logger, ex);
+        }
+      }
+    }
+  }
+
+  /// <summary>The migration pass, under the schema lock: infrastructure, migrations, perspectives, then this instance.</summary>
+  private async Task _migrateAsync(
+      NpgsqlConnection connection, string schemaSql, string schema, CancellationToken cancellationToken) {
     // Execute infrastructure schema (event store, inbox, outbox, etc.)
     await using var command = connection.CreateCommand();
     command.CommandText = schemaSql;
@@ -148,19 +189,11 @@ public sealed class PostgresSchemaInitializer {
     await _executeApplicationObjectsAsync(
       connection, _applicationObjects?.AfterPerspectives, "after", cancellationToken);
 
-    // The managed-object reconcile, after everything above is in place. Never fatal, as on the EF Core driver: a
-    // reconcile that cannot finish leaves every object where it is, and the next start tries again.
-    if (ManagedObjects is { } declared) {
-      try {
-        await using var current = new NpgsqlCommand("SELECT current_schema()", connection);
-        var schema = (string)(await current.ExecuteScalarAsync(cancellationToken))!;
-        await ManagedSchemaReconciler.RunAsync(
-          connection, schema, declared, ManagedObjectSettings, instanceId: null, Logger, cancellationToken);
-      } catch (NpgsqlException ex) {
-        if (Logger is { } logger) {
-          _logReconcileFailed(logger, ex);
-        }
-      }
+    // This instance joins the registry while the lock is still held: an instance that starts after it, and
+    // reconciles, sees it running. The registration function exists now that the migrations have run.
+    if (Instance is { } instance) {
+      await SchemaBootstrapPhase.RegisterInstanceAsync(
+        () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
     }
   }
 

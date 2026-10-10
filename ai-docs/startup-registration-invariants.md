@@ -144,6 +144,28 @@ promised depended on which wait the worker happened to be in.
   change and never in isolation; that pattern (timing budget, passes alone) is the signature to look
   for. `ClaimWorkerReemissionBackoffTests` pins that completion feedback still cannot reach the nap.
 
+## 8. Both drivers initialize the schema at host start, through one initializer
+
+Registration never touches the database, on either driver. `AddWhizbangSchemaInitialization()` registers
+`WhizbangDatabaseInitializerService` once (as itself, with `IHostedService` forwarding to it), and each driver adds an
+`ISchemaInitializationRunner`: EF Core's delegates to `DbContextInitializationRegistry`, Dapper's waits for the
+database (`PostgresOptions` retry), runs `PostgresSchemaInitializer` and probes. The service runs every runner in
+registration order, then opens `ISchemaReadyGate`; with no runner (Dapper, `initializeSchema: false`) it opens at once.
+
+- Before: the Dapper driver connected and migrated inside `AddWhizbangPostgres`, before the container existed. Its
+  managed-object cleanup had no instance id, settings or logger, so a multi-instance fleet held every drop (#1253);
+  nothing opened the gate, so a Dapper-only host's workers waited forever; and it took no lock.
+- The Dapper pass runs under `SchemaInitializationLock`: the EF Core key (`SchemaInitializationLockKey`), held
+  transaction-scoped on a connection of its own while each migration file runs in its own transaction. A held lock
+  is reported to `ISchemaInitializationObserver` before the wait; the EF Core template reports it too
+  (`SchemaInitializationObservers.LockContendedAsync`).
+- Both drivers register the instance at start (`MigratorDutyStaging.ElectAsync` registers before it checks for an
+  elector) and read `Whizbang:Schema:Reconcile` before touching the database.
+- The transaction boundary still differs (one DDL transaction on EF Core, one per file on Dapper): the two
+  migration engines are not yet one. `plans/dapper-efcore-startup-parity.md` lists what remains.
+- Tests: `StartupParity/StartupParityTests` in the EF Core test project runs every scenario against both drivers;
+  `DapperSchemaStartupTests`, `DapperManagedObjectsStartupTests`, `SchemaInitializationRunnersTests`.
+
 ---
 
 ## Verifying a change here
@@ -154,4 +176,4 @@ promised depended on which wait the worker happened to be in.
 - Docs pages: `fundamentals/dispatcher/routing#owned-and-subscribed`,
   `data/turnkey-initialization#idempotency`, `operations/startup/rolling-upgrades#assess`,
   `data/drivers#bring-your-own-dbcontext`, `messaging/work-coordinator#local-service-identity`,
-  `operations/deployment/troubleshooting#workers-not-wired`.
+  `operations/deployment/troubleshooting#workers-not-wired`, `data/turnkey-initialization#both-drivers`.
