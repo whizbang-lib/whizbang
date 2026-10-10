@@ -131,7 +131,14 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
   /// </summary>
   private async Task _runFlushLoopAsync(CancellationToken ct) {
     try {
-      while (!ct.IsCancellationRequested) {
+      while (true) {
+        // One cancellation exit, not two. The condition used to be `!ct.IsCancellationRequested`, whose
+        // false arm is only reached when cancellation lands during a flush that returns without observing
+        // it: a race, so the arm was covered or not depending on the run. Every other path out of this
+        // loop already throws OperationCanceledException into the catch below, so asking here makes the
+        // exit uniform and the behavior identical.
+        ct.ThrowIfCancellationRequested();
+
         // Wait for interval (next flush starts AFTER previous completes)
         await Task.Delay(_interval, ct);
 
