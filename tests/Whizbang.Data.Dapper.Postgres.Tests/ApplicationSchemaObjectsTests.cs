@@ -194,9 +194,9 @@ public class ApplicationSchemaObjectsTests : IAsyncDisposable {
     await using var db = new NpgsqlConnection(_connectionString);
     await db.OpenAsync(cancellationToken);
     await Assert.That(await db.ExecuteScalarAsync<int>("SELECT answer()")).IsEqualTo(2);
-    var record = await db.QuerySingleAsync<(short Status, string Description)>(
+    var (status, description) = await db.QuerySingleAsync<(short Status, string Description)>(
       "SELECT status, status_description FROM wh_schema_migrations WHERE file_name = 'app:before:answer'");
-    await Assert.That(record.Status).IsEqualTo((short)2);
-    await Assert.That(record.Description).IsEqualTo("Re-applied after change");
+    await Assert.That(status).IsEqualTo((short)2);
+    await Assert.That(description).IsEqualTo("Re-applied after change");
   }
 }

@@ -36,9 +36,6 @@ public sealed partial class ManagedSchemaReconcileStep(
     ILogger<ManagedSchemaReconcileStep>? logger = null,
     TimeProvider? timeProvider = null) : IMaintenanceStep {
 
-  /// <summary>How long one instance's claim to run the step lasts: the fleet reconciles once per window.</summary>
-  public static readonly TimeSpan ClaimWindow = ManagedSchemaHostPass.ClaimWindow;
-
   private readonly Type _dbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
   private readonly ILogger _logger = (ILogger?)logger ?? NullLogger.Instance;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;

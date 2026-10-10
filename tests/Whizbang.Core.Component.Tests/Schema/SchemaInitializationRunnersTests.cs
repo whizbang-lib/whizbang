@@ -56,6 +56,29 @@ public class SchemaInitializationRunnersTests {
   }
 
   [Test]
+  public async Task Background_AFailedAttempt_IsReportedToEveryObserver_ThenRetriedAsync() {
+    var gate = new SchemaReadyGate();
+    var attempts = 0;
+    var flaky = new FlakyRunner(() => ++attempts == 1);
+    var watching = new FailureRecorder();
+    var service = new WhizbangDatabaseInitializerService(
+      new ServiceCollection().BuildServiceProvider(),
+      [flaky],
+      gate,
+      Options.Create(new ClaimWorkerOptions()),
+      Options.Create(new SchemaInitializationOptions { NonBlockingSchemaInit = true, InitRetryDelay = TimeSpan.Zero }),
+      TimeProvider.System,
+      NullLogger<WhizbangDatabaseInitializerService>.Instance,
+      [new SilentObserver(), watching]);
+
+    await service.StartAsync(CancellationToken.None);
+    await service.BackgroundInitTask!;
+
+    await Assert.That(watching.Attempts).IsEquivalentTo([1]);
+    await Assert.That(gate.IsReady).IsTrue();
+  }
+
+  [Test]
   public async Task Registration_OpensTheRegisteredGate_WhenNoDriverRegisteredAnythingAsync() {
     var services = new ServiceCollection();
     services.AddWhizbangSchemaInitialization();
@@ -81,6 +104,23 @@ public class SchemaInitializationRunnersTests {
       TimeProvider.System,
       NullLogger<WhizbangDatabaseInitializerService>.Instance,
       []);
+  }
+
+  private sealed class FlakyRunner(Func<bool> fails) : ISchemaInitializationRunner {
+    public Task RunAsync(CancellationToken cancellationToken) =>
+      fails() ? Task.FromException(new InvalidOperationException("the database is not up yet")) : Task.CompletedTask;
+  }
+
+  /// <summary>Watches nothing; every notification takes its default.</summary>
+  private sealed class SilentObserver : ISchemaInitializationObserver;
+
+  private sealed class FailureRecorder : ISchemaInitializationObserver {
+    public List<int> Attempts { get; } = [];
+
+    public ValueTask OnAttemptFailedAsync(int attempt, Exception exception, CancellationToken cancellationToken) {
+      Attempts.Add(attempt);
+      return ValueTask.CompletedTask;
+    }
   }
 
   private sealed class RecordingRunner(string name, List<string> order, ISchemaReadyGate gate, Exception? failure = null)
