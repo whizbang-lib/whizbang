@@ -1258,13 +1258,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var requests = BuildSchemaQualifiedName(schema, "wh_standby_requests");
     var instances = BuildSchemaQualifiedName(schema, "wh_service_instances");
+    var aliveFn = BuildSchemaQualifiedName(schema, "is_instance_alive");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified names built from validated schema constant
     cmd.CommandText = $@"
-      SELECT r.requested_by, r.requested_version, r.requested_at, i.last_heartbeat_at
+      SELECT r.requested_by, r.requested_version, r.requested_at, i.last_heartbeat_at,
+             -- #1286: the requester's alive-lock alone (055, zero heartbeat threshold); read before migrations run.
+             {aliveFn}(r.requested_by, 0) AS alive_lock_held
       FROM {requests} r
       LEFT JOIN {instances} i ON i.instance_id = r.requested_by";
 #pragma warning restore S2077
@@ -1278,7 +1281,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await reader.GetFieldValueAsync<DateTime>(2, cancellationToken) is { } at ? new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc)) : DateTimeOffset.MinValue,
       await reader.IsDBNullAsync(3, cancellationToken)
         ? null
-        : new DateTimeOffset(DateTime.SpecifyKind(await reader.GetFieldValueAsync<DateTime>(3, cancellationToken), DateTimeKind.Utc)));
+        : new DateTimeOffset(DateTime.SpecifyKind(await reader.GetFieldValueAsync<DateTime>(3, cancellationToken), DateTimeKind.Utc)),
+      reader.GetBoolean(4));
   }
 
   /// <summary>Executes a schema-qualified scalar function with named parameters — the shared
@@ -2094,7 +2098,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText =
       "SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
       "envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
-      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision)";
+      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held)";
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
       // from the same snapshot, instead of a separate per-cycle call. Untruncated by design: they
@@ -2138,6 +2142,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_assignment_revision", NpgsqlTypes.NpgsqlDbType.Bigint) {
       Value = (object?)request.PartitionAssignment?.Revision ?? DBNull.Value
     });
+    // 204 (#1286): a direct caller holding its alive-lock is not reported stale between slow beats.
+    cmd.Parameters.Add(new NpgsqlParameter("p_alive_lock_held", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = request.AliveLockHeld });
 
     var rows = new List<WorkBatchRow>();
     OutstandingWork? outstanding = null;

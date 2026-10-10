@@ -87,14 +87,23 @@ public sealed partial class PgSharedNotifyConnection(
   private string? _lastFailureReason;
 
   /// <summary>
-  /// True when this conn holds the session-level alive-lock claimed at open.
-  /// HeartbeatWorker reads this to switch between fast (5 s) and slow (60 s) cadence
-  /// per the adaptive heartbeat design in slice 7b.
+  /// True when this connection holds the session-level alive-lock claimed at open, and the connection is one of its
+  /// own (<see cref="ConnectionMode"/> is direct). Registered as the instance's
+  /// <see cref="Whizbang.Core.Workers.IInstanceAliveLockSource"/> (#1286): the heartbeat beats on its slow cadence while
+  /// this is true, and its peers judge the instance by the lock instead of the heartbeat's age.
   /// </summary>
+  /// <remarks>
+  /// Behind the pooled fallback the lock may still be taken, but on a pooled session its peers cannot attribute to
+  /// this instance, and a pooled instance is judged by its heartbeat alone. Reporting it held there would put a pooled
+  /// instance on the slow cadence and let its peers count it out between beats, so it is never reported.
+  /// </remarks>
+  /// <docs>fundamentals/workers/instance-liveness</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AliveLockSourcePostgresTests.cs:OnADirectConnection_TheLockIsHeld_AndReportedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AliveLockSourcePostgresTests.cs:BehindThePooledFallback_NoLockIsReported_WhateverTheSessionTookAsync</tests>
   public bool IsAliveLockHeld {
     get {
       lock (_connectionGate) {
-        return _aliveLockHeld && _isAvailable;
+        return _aliveLockHeld && _isAvailable && Volatile.Read(ref _hasDedicatedConnection);
       }
     }
   }

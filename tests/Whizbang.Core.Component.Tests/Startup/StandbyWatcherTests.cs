@@ -224,6 +224,30 @@ public class StandbyWatcherTests {
   }
 
   [Test]
+  public async Task ARequesterHoldingItsAliveLock_BindsUs_BetweenItsSlowBeatsAsync() {
+    // #1286: a migrator holding its alive-lock beats on the slow cadence, so its heartbeat is past the
+    // liveness window for half of every beat. It is alive; voiding its request would resume this
+    // instance in the middle of the migration it asked us to make way for.
+    var request = _request(version: "2.0.0", heartbeatSecondsAgo: 45) with { RequesterAliveLockHeld = true };
+    using var h = _harness(request, ourVersion: "1.0.0");
+
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.StandingBy)
+      .Because("a requester live by its lock is alive, whatever its heartbeat's age");
+  }
+
+  [Test]
+  public async Task ARequesterPastTheWindowWithoutItsLock_IsVoidAsync() {
+    using var h = _harness(_request(version: "2.0.0", heartbeatSecondsAgo: 45), ourVersion: "1.0.0");
+
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.Lifecycle.Advanced).IsEmpty()
+      .Because("without its lock a requester is judged by its heartbeat, which is past the window");
+  }
+
+  [Test]
   public async Task ARequestWithNoHeartbeatAtAll_IsVoidAsync() {
     using var h = _harness(
       new StandbyRequest(_peer, "2.0.0", DateTimeOffset.UtcNow, RequesterLastHeartbeatAt: null),
