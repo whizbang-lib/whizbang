@@ -53,6 +53,54 @@ public class AzureBlobStoreDownloadDeleteTests {
   }
 
   [Test]
+  public async Task DownloadAsync_BlobLargerThanItsClaim_StopsReadingAtTheClaimedSizeAsync() {
+    // The size cap is checked against the size the claim declares, and the claim comes from the sender.
+    // A blob larger than its claim must not be read into memory in full before the hash rejects it.
+    var connectionString = await AzuriteFixture.EnsureStartedAsync(CancellationToken.None);
+
+    var services = new ServiceCollection();
+    services.AddWhizbangAzureBlobOffload("azurite", opts => {
+      opts.ConnectionString = connectionString;
+      opts.ContainerName = $"understated-{Guid.NewGuid():N}";
+      opts.MaxDownloadBytes = 1_500;
+    });
+    await using var provider = services.BuildServiceProvider();
+    var store = provider.GetRequiredKeyedService<IMessageBodyStore>("azurite");
+
+    var claim = await store.UploadAsync(new byte[4_000], "application/octet-stream");
+    var understated = claim with { Size = 1_000 };
+
+    var ex = await Assert.That(async () => await store.DownloadAsync(understated))
+      .ThrowsExactly<InvalidOperationException>();
+
+    await Assert.That(ex!.Message).Contains("larger than its claim")
+      .Because("an understated size passes the cap, so the read itself must stop at the claimed size");
+    await Assert.That(ex.Message).Contains(claim.StorageKey);
+  }
+
+  [Test]
+  public async Task DownloadAsync_BlobOfExactlyItsClaimedSize_ReturnsEveryByteAsync() {
+    var connectionString = await AzuriteFixture.EnsureStartedAsync(CancellationToken.None);
+
+    var services = new ServiceCollection();
+    services.AddWhizbangAzureBlobOffload("azurite", opts => {
+      opts.ConnectionString = connectionString;
+      opts.ContainerName = $"exact-{Guid.NewGuid():N}";
+    });
+    await using var provider = services.BuildServiceProvider();
+    var store = provider.GetRequiredKeyedService<IMessageBodyStore>("azurite");
+
+    // Larger than one read buffer, so the bounded copy loops.
+    var body = new byte[200_000];
+    Random.Shared.NextBytes(body);
+    var claim = await store.UploadAsync(body, "application/octet-stream");
+
+    var downloaded = await store.DownloadAsync(claim);
+
+    await Assert.That(downloaded.ToArray()).IsEquivalentTo(body);
+  }
+
+  [Test]
   public async Task DownloadAsync_PerCallMaxBytesOverridesProviderCap_AllowsDownloadAsync() {
     var connectionString = await AzuriteFixture.EnsureStartedAsync(CancellationToken.None);
 
