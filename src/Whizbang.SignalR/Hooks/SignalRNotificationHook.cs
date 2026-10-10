@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
@@ -33,8 +36,8 @@ namespace Whizbang.SignalR.Hooks;
 /// [SignalTag(Tag = "order-shipped", Group = "customer-{CustomerId}", Priority = SignalPriority.High)]
 /// public record OrderShippedEvent(Guid OrderId, Guid CustomerId, string TrackingNumber) : IEvent;
 ///
-/// // Broadcast notification
-/// [SignalTag(Tag = "system-announcement", Priority = SignalPriority.Critical)]
+/// // Broadcast to every connected client: only with the explicit "all" group
+/// [SignalTag(Tag = "system-announcement", Group = "all", Priority = SignalPriority.Critical)]
 /// public record SystemAnnouncementEvent(string Message) : IEvent;
 /// </code>
 /// </example>
@@ -45,18 +48,38 @@ namespace Whizbang.SignalR.Hooks;
 /// Creates a new SignalR notification hook.
 /// </remarks>
 /// <param name="hubContext">The SignalR hub context for sending notifications.</param>
-public sealed class SignalRNotificationHook<THub>(IHubContext<THub> hubContext) : IMessageTagHook<SignalTagAttribute>
+public sealed class SignalRNotificationHook<THub>(
+    IHubContext<THub> hubContext,
+    ILogger<SignalRNotificationHook<THub>>? logger = null) : IMessageTagHook<SignalTagAttribute>
     where THub : Hub {
   private readonly IHubContext<THub> _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
+  private readonly ILogger _logger = logger ?? (ILogger)NullLogger.Instance;
 
   /// <summary>
-  /// Sends a SignalR notification for the tagged message.
+  /// Sends the notification to the tag's group: every connected client only for the explicit
+  /// <see cref="SignalRGroupResolver.BROADCAST_GROUP"/> (<c>"all"</c>), otherwise the resolved group. A tag with
+  /// no group, or a group whose placeholders do not all resolve, sends nothing and logs a warning.
   /// </summary>
   public async ValueTask<JsonElement?> OnTaggedMessageAsync(
       TagContext<SignalTagAttribute> context,
       CancellationToken ct) {
     var attribute = context.Attribute;
-    var groupName = _resolveGroup(attribute.Group, context.Payload, context.Scope);
+    if (string.IsNullOrEmpty(attribute.Group)) {
+      SignalRGroupResolver.LogNoGroup(_logger, attribute.Tag, context.MessageType.Name);
+      return null;
+    }
+
+    IClientProxy target;
+    if (string.Equals(attribute.Group, SignalRGroupResolver.BROADCAST_GROUP, StringComparison.OrdinalIgnoreCase)) {
+      target = _hubContext.Clients.All;
+    } else {
+      var groupName = SignalRGroupResolver.Resolve(attribute.Group, context.Payload, context.Scope);
+      if (groupName is null) {
+        SignalRGroupResolver.LogUnresolvedGroup(_logger, attribute.Tag, context.MessageType.Name, attribute.Group);
+        return null;
+      }
+      target = _hubContext.Clients.Group(groupName);
+    }
 
     var notification = new NotificationMessage {
       Tag = attribute.Tag,
@@ -65,75 +88,77 @@ public sealed class SignalRNotificationHook<THub>(IHubContext<THub> hubContext) 
       Payload = context.Payload,
       Timestamp = DateTimeOffset.UtcNow
     };
-
-    if (string.IsNullOrEmpty(groupName)) {
-      // Broadcast to all clients
-      await _hubContext.Clients.All.SendAsync(
-        "ReceiveNotification",
-        notification,
-        ct
-      ).ConfigureAwait(false);
-    } else {
-      // Send to specific group
-      await _hubContext.Clients.Group(groupName).SendAsync(
-        "ReceiveNotification",
-        notification,
-        ct
-      ).ConfigureAwait(false);
-    }
+    await target.SendAsync("ReceiveNotification", notification, ct).ConfigureAwait(false);
 
     // Return null to pass original payload to next hook
     return null;
   }
+}
 
-  private static string? _resolveGroup(
-      string? template,
-      JsonElement payload,
-      IScopeContext? scope) {
-    if (string.IsNullOrEmpty(template)) {
+/// <summary>
+/// Resolves a <see cref="SignalTagAttribute.Group"/> template for <see cref="SignalRNotificationHook{THub}"/>.
+/// </summary>
+/// <remarks>
+/// <c>{TenantId}</c> resolves from the message's scope only, so a payload field of that name can never route a
+/// notification to another tenant. Every other placeholder resolves from the payload first and then, for
+/// <c>{UserId}</c>, <c>{OrganizationId}</c> and <c>{CustomerId}</c>, from the scope: routing to the customer an
+/// order belongs to, or to an assigned user, is a payload value. A placeholder with no value makes the whole
+/// group unresolved rather than a literal group name every such message would share.
+/// </remarks>
+/// <docs>fundamentals/messages/message-tags#signal-tag</docs>
+internal static partial class SignalRGroupResolver {
+  /// <summary>The group value that broadcasts to every connected client.</summary>
+  public const string BROADCAST_GROUP = "all";
+
+  private const string TENANT_PLACEHOLDER = "TenantId";
+
+  /// <summary>Returns the resolved group, or <see langword="null"/> when any placeholder has no value.</summary>
+  public static string? Resolve(string template, JsonElement payload, IScopeContext? scope) {
+    var unresolved = false;
+    var result = _placeholder().Replace(template, match => {
+      var name = match.Groups[1].Value;
+      var value = name == TENANT_PLACEHOLDER
+          ? scope?.Scope.TenantId
+          : _payloadValue(payload, name) ?? _scopeValue(scope, name);
+      if (string.IsNullOrEmpty(value)) {
+        unresolved = true;
+        return match.Value;
+      }
+      return value;
+    });
+    return unresolved ? null : result;
+  }
+
+  private static string? _scopeValue(IScopeContext? scope, string name) => name switch {
+    "UserId" => scope?.Scope.UserId,
+    "OrganizationId" => scope?.Scope.OrganizationId,
+    "CustomerId" => scope?.Scope.CustomerId,
+    _ => null,
+  };
+
+  private static string? _payloadValue(JsonElement payload, string name) {
+    if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty(name, out var prop)) {
       return null;
     }
-
-    var result = template;
-
-    // Replace {PropertyName} placeholders with payload values
-    if (payload.ValueKind == JsonValueKind.Object) {
-      foreach (var prop in payload.EnumerateObject()) {
-        var placeholder = $"{{{prop.Name}}}";
-        if (result.Contains(placeholder, StringComparison.Ordinal)) {
-          var value = prop.Value.ValueKind switch {
-            // GetString returns null only for JsonValueKind.Null, never for this arm.
-            JsonValueKind.String => prop.Value.GetString()!,
-            JsonValueKind.Number => prop.Value.GetRawText(),
-            JsonValueKind.True => "true",
-            JsonValueKind.False => "false",
-            _ => prop.Value.GetRawText()
-          };
-          result = result.Replace(placeholder, value, StringComparison.Ordinal);
-        }
-      }
-    }
-
-    // Also replace from scope properties
-    if (scope?.Scope is not null) {
-      var perspectiveScope = scope.Scope;
-
-      result = _replacePlaceholder(result, "TenantId", perspectiveScope.TenantId);
-      result = _replacePlaceholder(result, "UserId", perspectiveScope.UserId);
-      result = _replacePlaceholder(result, "CustomerId", perspectiveScope.CustomerId);
-      result = _replacePlaceholder(result, "OrganizationId", perspectiveScope.OrganizationId);
-    }
-
-    return result;
+    return prop.ValueKind switch {
+      // GetString returns null only for JsonValueKind.Null, never for this arm.
+      JsonValueKind.String => prop.GetString()!,
+      JsonValueKind.True => "true",
+      JsonValueKind.False => "false",
+      _ => prop.GetRawText()
+    };
   }
 
-  private static string _replacePlaceholder(string template, string propertyName, string? value) {
-    var placeholder = $"{{{propertyName}}}";
-    if (template.Contains(placeholder, StringComparison.Ordinal) && value is not null) {
-      return template.Replace(placeholder, value, StringComparison.Ordinal);
-    }
-    return template;
-  }
+  [GeneratedRegex(@"\{([^{}]+)\}")]
+  private static partial Regex _placeholder();
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "SignalR notification {Tag} for {MessageType} was not sent: the tag has no Group. Set Group = \"all\" to broadcast to every connected client, or name a group.")]
+  public static partial void LogNoGroup(ILogger logger, string tag, string messageType);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "SignalR notification {Tag} for {MessageType} was not sent: group template {GroupTemplate} has a placeholder with no value (identity placeholders come from the message's scope, others from its payload).")]
+  public static partial void LogUnresolvedGroup(ILogger logger, string tag, string messageType, string groupTemplate);
 }
 
 /// <summary>

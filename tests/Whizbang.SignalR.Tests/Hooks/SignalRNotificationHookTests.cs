@@ -23,7 +23,7 @@ namespace Whizbang.SignalR.Tests.Hooks;
 [Category("Hooks")]
 public class SignalRNotificationHookTests {
   [Test]
-  public async Task OnTaggedMessage_SendsToAllClients_WhenNoGroupSpecifiedAsync() {
+  public async Task OnTaggedMessage_SendsNothing_WhenNoGroupSpecifiedAsync() {
     // Arrange
     var sentNotifications = new List<(string Method, object? Notification)>();
     var mockClients = new MockHubClients(sentNotifications);
@@ -46,10 +46,9 @@ public class SignalRNotificationHookTests {
     // Act
     var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
 
-    // Assert
+    // Assert: no group is not a broadcast
     await Assert.That(result).IsNull();
-    await Assert.That(sentNotifications.Count).IsEqualTo(1);
-    await Assert.That(sentNotifications[0].Method).IsEqualTo("ReceiveNotification");
+    await Assert.That(sentNotifications.Count).IsEqualTo(0);
   }
 
   [Test]
@@ -160,6 +159,7 @@ public class SignalRNotificationHookTests {
 
     var attribute = new SignalTagAttribute {
       Tag = "critical-alert",
+      Group = "all",
       Priority = SignalPriority.Critical
     };
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
@@ -189,6 +189,7 @@ public class SignalRNotificationHookTests {
 
     var attribute = new SignalTagAttribute {
       Tag = "test-tag",
+      Group = "all",
       Priority = SignalPriority.Normal
     };
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
