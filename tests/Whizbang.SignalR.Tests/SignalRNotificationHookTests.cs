@@ -222,10 +222,11 @@ public class SignalRNotificationHookTests {
   }
 
   [Test]
+  [Arguments("tenant-{TenantId}")]
   [Arguments("user-{UserId}")]
   [Arguments("org-{OrganizationId}")]
   [Arguments("customer-{CustomerId}")]
-  public async Task OtherIdentityPlaceholders_WithNoScope_AndNoPayloadValue_SendNothingAsync(string template) {
+  public async Task IdentityPlaceholders_WithNoScope_AndNoPayloadValue_SendNothingAsync(string template) {
     // Neither the payload nor a scope supplies the value, so there is no group to send to.
     var sent = await _dispatchAsync(template, """{"Region":"emea"}""", scope: null);
 
