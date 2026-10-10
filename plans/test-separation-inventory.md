@@ -198,6 +198,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Observability.Tests | 23 | 0 | 0 | 0 | 23 | 0 |
 | Whizbang.Offloads.AzureBlob.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
 | Whizbang.Offloads.InMemory.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
+| Whizbang.Partitioning.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
 | Whizbang.Policies.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
 | Whizbang.Sagas.Tests | 39 | 0 | 0 | 0 | 39 | 0 |
 | Whizbang.SignalR.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
@@ -208,7 +209,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 24 | 0 | 0 | 0 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
-| **Total** | 1798 | 0 | 0 | 0 | 1798 | 0 |
+| **Total** | 1803 | 0 | 0 | 0 | 1803 | 0 |
 
 ## Worklist: non-unit types by project
 
@@ -305,6 +306,10 @@ All 5 types are unit-pure.
 ### Whizbang.Offloads.InMemory.Tests
 
 All 1 types are unit-pure.
+
+### Whizbang.Partitioning.Tests
+
+All 8 types are unit-pure.
 
 ### Whizbang.Policies.Tests
 

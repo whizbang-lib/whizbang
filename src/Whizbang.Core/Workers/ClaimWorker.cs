@@ -898,6 +898,15 @@ public sealed partial class ClaimWorker : BackgroundService {
     var idleSettled = scope.ServiceProvider.GetService<HousekeepingCoordinator>()
       ?.ServiceReadsSettled(_idleSettledReadingMaxAge) ?? false;
 
+    // #1254: the assignment's version, from memory while the cached copy is current. Null when there is none, it has
+    // expired, or this instance is not in it: the claim then ranks itself, so a missing assignment never stops a claim.
+    // Resolved from the claim's scope, as the coordinator is; a host without the assigner registered ranks every claim
+    // itself, as before.
+    var partitionAssignments = scope.ServiceProvider.GetService<IPartitionAssignmentSource>();
+    var assignment = partitionAssignments is null
+      ? null
+      : await partitionAssignments.ForClaimAsync(_instanceProvider.InstanceId, ct);
+
     var claimStarted = _time.GetTimestamp();
     var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
       InstanceId: _instanceProvider.InstanceId,
@@ -917,7 +926,8 @@ public sealed partial class ClaimWorker : BackgroundService {
       MaxPerspectiveStreams: maxPerspectiveStreams,
       IdleSettled: idleSettled,
       MaxOutboxAcquireRows: maxOutboxRows,
-      OutboxRunLength: Math.Max(1, _options.OutboxRunLength)), ct);
+      OutboxRunLength: Math.Max(1, _options.OutboxRunLength),
+      PartitionAssignment: assignment), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
 
     // #1226: the claim reads this instance's registration and never writes it, because a write inside
@@ -926,6 +936,11 @@ public sealed partial class ClaimWorker : BackgroundService {
     // claim has returned, so this is a statement of its own, on the same pinned connection.
     if (batch.InstanceRegistrationStale) {
       await _refreshRegistrationAsync(coordinator, ct);
+    }
+
+    // #1254: the version this claim presented was superseded or expired; the next claim reads the published one.
+    if (batch.PartitionAssignmentStale) {
+      partitionAssignments?.MarkStale();
     }
 
     _recordClaimShape(batch, allowSteal);

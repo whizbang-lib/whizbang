@@ -76,6 +76,7 @@ internal static class WhizbangVersionInfo
     <InternalsVisibleTo Include="Whizbang.Core.Tests" />
     <InternalsVisibleTo Include="Whizbang.Core.Component.Tests" />
     <InternalsVisibleTo Include="Whizbang.Core.Integration.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Partitioning.Tests" />
     <InternalsVisibleTo Include="Whizbang.Testing" />
     <InternalsVisibleTo Include="Whizbang.Observability.Tests" />
     <InternalsVisibleTo Include="Whizbang.Transports.Tests" />

@@ -376,7 +376,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var conn = scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077
-    cmd.CommandText = $"SELECT {functionName}(@instanceId, @serviceName, @hostName, @processId, @metadata::jsonb, @phase, @version, @staleSeconds)";
+    cmd.CommandText = $"SELECT {functionName}(@instanceId, @serviceName, @hostName, @processId, @metadata::jsonb, @phase, @version, @staleSeconds, @connectionMode)";
 #pragma warning restore S2077
     cmd.Parameters.AddWithValue("instanceId", request.InstanceId);
     cmd.Parameters.AddWithValue("serviceName", request.ServiceName);
@@ -389,6 +389,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("phase", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)request.LifecyclePhase ?? DBNull.Value });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("version", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)request.LibraryVersion ?? DBNull.Value });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("staleSeconds", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)request.StaleThresholdSeconds ?? DBNull.Value });
+    // 203 (#1254): how this instance reaches the database, so the partition assigner judges it by the right signal.
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("connectionMode", NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = request.ConnectionMode is { } mode ? Whizbang.Core.Workers.InstanceConnectionModes.ToDatabaseValue(mode) : DBNull.Value
+    });
 
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return ScalarResult.IsTrue(result);
@@ -2142,7 +2146,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText =
       "SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
       "envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
-      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run)";
+      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision)";
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
       // from the same snapshot, instead of a separate per-cycle call. Untruncated by design: they
@@ -2179,6 +2183,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // previous behavior (bounded by p_max, one row per chosen head).
     cmd.Parameters.Add(new NpgsqlParameter("p_outbox_rows", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)request.MaxOutboxAcquireRows ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("p_outbox_run", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)request.OutboxRunLength ?? DBNull.Value });
+    // 203 (#1254): the cached partition assignment's version, fenced in the claim. Null ranks as before.
+    cmd.Parameters.Add(new NpgsqlParameter("p_assignment_epoch", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = (object?)request.PartitionAssignment?.Epoch ?? DBNull.Value
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("p_assignment_revision", NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = (object?)request.PartitionAssignment?.Revision ?? DBNull.Value
+    });
 
     var rows = new List<WorkBatchRow>();
     OutstandingWork? outstanding = null;
@@ -2188,9 +2199,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // 196 (#1226): the claim no longer writes this instance's registration row; it says when the row
     // is missing or stale, and the caller registers after the claim.
     var registrationStale = false;
+    // 203 (#1254): the cached partition assignment was superseded or expired; the claim ranked itself.
+    var assignmentStale = false;
     void OnClaimNotice(object? sender, NpgsqlNoticeEventArgs e) {
       outboxAcquisitionFull |= string.Equals(e.Notice.MessageText, OutboxClaimNotices.ACQUISITION_FULL, StringComparison.Ordinal);
       registrationStale |= string.Equals(e.Notice.MessageText, OutboxClaimNotices.REGISTRATION_STALE, StringComparison.Ordinal);
+      assignmentStale |= string.Equals(e.Notice.MessageText, OutboxClaimNotices.PARTITION_ASSIGNMENT_STALE, StringComparison.Ordinal);
     }
     conn.Notice += OnClaimNotice;
     try {
@@ -2255,7 +2269,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       InboxStreams = ClaimedInboxStreamFolder.Fold(rows),
       Outstanding = outstanding,
       OutboxAcquisitionFull = outboxAcquisitionFull,
-      InstanceRegistrationStale = registrationStale
+      InstanceRegistrationStale = registrationStale,
+      PartitionAssignmentStale = assignmentStale
     };
   }
 
@@ -5665,6 +5680,9 @@ internal static class OutboxClaimNotices {
 
   /// <summary>Raised when the calling instance's registration row is missing or stale (196).</summary>
   internal const string REGISTRATION_STALE = "whizbang.instance_registration_stale=true";
+
+  /// <summary>203 (#1254): the claim was handed a partition assignment version that is no longer published or leased.</summary>
+  internal const string PARTITION_ASSIGNMENT_STALE = "whizbang.partition_assignment_stale=true";
 }
 
 internal static partial class EFCoreWorkCoordinatorLog {

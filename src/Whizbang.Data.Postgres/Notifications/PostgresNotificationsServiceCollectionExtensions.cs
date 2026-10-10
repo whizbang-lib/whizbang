@@ -191,6 +191,9 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       IPostConfigureOptions<Whizbang.Core.Startup.RoleAssignmentOptions>, CommitOrderStamperRoleOptions>());
     services.AddWhizbangRoleAssignmentByDefault();
 
+    // #1254: the elected partition assigner and the claimers' cached assignment, built on the role election above.
+    services.AddWhizbangPartitionAssigner();
+
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call
     // AddWhizbangNotificationDataSource), and no explicit

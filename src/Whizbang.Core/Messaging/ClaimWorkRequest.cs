@@ -67,6 +67,12 @@ namespace Whizbang.Core.Messaging;
 /// which streams move (at most <paramref name="MaxStreams"/> of them); each then leases a run of its
 /// next rows within <paramref name="MaxOutboxAcquireRows"/>. Null or 1 is one row per chosen head.
 /// </param>
+/// <param name="PartitionAssignment">
+/// The version of the partition assignment the caller has cached (#1254). While it is still the published one and
+/// unexpired, the claim takes this instance's rank and the member count from it instead of ranking the instances it
+/// believes are alive; otherwise the claim ranks itself as before and reports the copy stale
+/// (<see cref="WorkBatch.PartitionAssignmentStale"/>). Null: no assignment, the claim ranks itself.
+/// </param>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 public sealed record ClaimWorkRequest(
   Guid InstanceId,
@@ -86,4 +92,5 @@ public sealed record ClaimWorkRequest(
   int? IdleTrickleSlice = null,
   TimeSpan? IdleForceAfter = null,
   int? MaxOutboxAcquireRows = null,
-  int? OutboxRunLength = null);
+  int? OutboxRunLength = null,
+  Whizbang.Core.Workers.PartitionAssignmentVersion? PartitionAssignment = null);
