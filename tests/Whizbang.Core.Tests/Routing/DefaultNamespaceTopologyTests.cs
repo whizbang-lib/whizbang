@@ -296,6 +296,8 @@ public class DefaultNamespaceTopologyTests {
     await Assert.That(options.SharedInboxRetired).IsFalse();
     await Assert.That(options.IsCommandNamespaceRoutedToInbox("outboxtesttypes.orders.commands")).IsTrue();
     await Assert.That(options.IsCommandNamespaceRoutedToInbox("outboxtesttypes.users.commands")).IsFalse();
+    await Assert.That(options.IsCommandNamespaceRoutedToInbox(" ")).IsFalse()
+      .Because("a blank namespace names no flip, whatever the flip set holds");
 
     var topics = options.InboxStrategy.GetSubscriptions(_context()).Select(s => s.Topic).ToList();
     await Assert.That(topics).Contains("inbox")
@@ -359,6 +361,26 @@ public class DefaultNamespaceTopologyTests {
     await Assert.That(options.SharedInboxRetired).IsFalse()
       .Because("retirement follows the flip by default, so rolling back the flip cannot strand it "
              + "in the guard-throwing combination");
+  }
+
+  [Test]
+  public async Task Configuration_RouteAllTrue_OverridesThePerNamespaceCallbackAsync() {
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["Whizbang:Routing:RouteAllCommandNamespacesToInbox"] = "true"
+      })
+      .Build();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IConfiguration>(configuration);
+    new WhizbangBuilder(services).WithRouting(r => r.RouteCommandNamespaceToInbox("outboxtesttypes.orders.commands"));
+
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
+
+    await Assert.That(options.AllCommandNamespacesRouteToInbox).IsTrue()
+      .Because("configuration binds after the code callback, so an operator can assert the full flip");
+    await Assert.That(options.IsCommandNamespaceRoutedToInbox("outboxtesttypes.users.commands")).IsTrue();
   }
 
   [Test]

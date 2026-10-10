@@ -375,7 +375,10 @@ public class OutboxDrainWorkerGapTests {
     };
   }
 
-  private static async Task<MessageEnvelope<JsonElement>> _publishOneAsync(OutboxBatchRow row) {
+  private static async Task<MessageEnvelope<JsonElement>> _publishOneAsync(OutboxBatchRow row) =>
+    (MessageEnvelope<JsonElement>)(await _publishWorkAsync(row)).Envelope;
+
+  private static async Task<OutboxWork> _publishWorkAsync(OutboxBatchRow row) {
     var streamId = row.StreamId!.Value;
     var coord = new GapWorkCoordinator { LocalServiceId = (Guid)TrackedGuid.New() };
     coord.RowsByStream[streamId] = [row];
@@ -390,7 +393,17 @@ public class OutboxDrainWorkerGapTests {
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
     _ = publish.Published.TryDequeue(out var work);
-    return (MessageEnvelope<JsonElement>)work!.Envelope;
+    return work!;
+  }
+
+  /// <summary>A row stored without an envelope type is published with an empty one, never a null.</summary>
+  [Test]
+  public async Task OutboxDrainWorker_RowWithoutEnvelopeType_PublishesEmptyAsync() {
+    var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New()) with { EnvelopeType = null };
+
+    var work = await _publishWorkAsync(row);
+
+    await Assert.That(work.EnvelopeType).IsEqualTo(string.Empty);
   }
 
   /// <summary>

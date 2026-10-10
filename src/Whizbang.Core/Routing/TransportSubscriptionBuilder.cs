@@ -43,9 +43,9 @@ public sealed class TransportSubscriptionBuilder {
   /// precedence over <see cref="RoutingOptions.InboxStrategy"/> (topology arc phase 3 fix —
   /// the builder previously read the strategy off options only, silently ignoring a
   /// DI-registered override). Null falls back to the options strategy.</param>
-  /// <param name="receptorRegistry">Receptor registry query; when resolvable its
+  /// <param name="receptorRegistry">Receptor registry query; its
   /// <see cref="Messaging.IReceptorRegistryQuery.GetHandledMessages"/> enumeration feeds the
-  /// <see cref="InboxSubscriptionContext"/>. Null yields an empty enumeration.</param>
+  /// <see cref="InboxSubscriptionContext"/>.</param>
   public TransportSubscriptionBuilder(
       IOptions<RoutingOptions> routingOptions,
       EventSubscriptionDiscovery discovery,
@@ -55,6 +55,7 @@ public sealed class TransportSubscriptionBuilder {
     ArgumentNullException.ThrowIfNull(routingOptions);
     ArgumentNullException.ThrowIfNull(discovery);
     ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
+    ArgumentNullException.ThrowIfNull(receptorRegistry);
 
     _routingOptions = routingOptions.Value;
     _discovery = discovery;
@@ -114,7 +115,7 @@ public sealed class TransportSubscriptionBuilder {
     var context = new InboxSubscriptionContext(
         _serviceName,
         _routingOptions.OwnedDomains,
-        _receptorRegistry?.GetHandledMessages() ?? []) {
+        _receptorRegistry.GetHandledMessages()) {
       // Consumed event namespaces reuse EventSubscriptionDiscovery (perspectives + event
       // receptors + manual subscriptions) — the composite/raw-carry surface for strategies
       // computing "namespaces this service consumes ANY constituent from" (phase 5).
@@ -261,7 +262,7 @@ public static class TransportSubscriptionBuilderExtensions {
         var context = new InboxSubscriptionContext(
             serviceName,
             routingOptions.OwnedDomains,
-            registry?.GetHandledMessages() ?? []) {
+            registry.GetHandledMessages()) {
           ConsumedEventNamespaces = discovery?.DiscoverEventNamespaces()
             ?? System.Collections.Frozen.FrozenSet<string>.Empty
         };

@@ -49,6 +49,21 @@ public class TableStatisticsCollectorBranchTests {
   }
 
   [Test]
+  public async Task NoLogger_StillLogsAndExitsAsync() {
+    // A null logger falls back to a discarding one: the missing-provider line is written to it
+    // instead of faulting the worker on a null reference.
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new TableStatisticsCollector(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      metrics: _newMetrics(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: null!);
+
+    await worker.StartAsync(CancellationToken.None);
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
+    await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue();
+  }
+
+  [Test]
   public async Task ProviderRegistered_PopulatesMetricsThenWaitsAsync() {
     // Happy path: provider returns sizes + depths, both land on the metrics
     // before the collector enters its 30s Task.Delay.

@@ -60,8 +60,11 @@ public class MessagePublishStrategyTests {
   public async Task ToFailure_CarriesTheResultAsync() {
     var messageId = Guid.NewGuid();
     var result = new MessagePublishResult {
-      MessageId = messageId, Success = false, CompletedStatus = MessageProcessingStatus.Stored,
-      Error = "boom", Reason = MessageFailureReason.TransportException
+      MessageId = messageId,
+      Success = false,
+      CompletedStatus = MessageProcessingStatus.Stored,
+      Error = "boom",
+      Reason = MessageFailureReason.TransportException
     };
 
     var failure = result.ToFailure(messageId);

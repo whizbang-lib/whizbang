@@ -35,6 +35,21 @@ public class ServiceProviderLookupsTests {
   }
 
   [Test]
+  public async Task Category_Registered_IsTheFactorysAsync() {
+    using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+
+    await Assert.That(services.GetLoggerOrNullLogger("Cat"))
+      .IsSameReferenceAs(services.GetRequiredService<ILoggerFactory>().CreateLogger("Cat"));
+  }
+
+  [Test]
+  public async Task Category_Unregistered_DiscardsAsync() {
+    using var services = new ServiceCollection().BuildServiceProvider();
+
+    await Assert.That(services.GetLoggerOrNullLogger("Cat")).IsSameReferenceAs(NullLogger.Instance);
+  }
+
+  [Test]
   public async Task Options_Registered_IsTheValueAsync() {
     using var services = new ServiceCollection().Configure<Probe>(p => p.Value = 7).BuildServiceProvider();
 

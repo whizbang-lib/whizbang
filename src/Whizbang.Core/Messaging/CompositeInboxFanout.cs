@@ -13,6 +13,7 @@ using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Messaging;
 
@@ -143,7 +144,7 @@ public static partial class CompositeInboxFanout {
     var ephemeralModeResolver = scope.GetService<IEphemeralModeResolver>();
     // Null-object default so a dropped inner event is ALWAYS logged (NullLogger no-ops only when the
     // host has no logging configured).
-    var logger = scope.GetService<ILoggerFactory>()?.CreateLogger(LOG_CATEGORY) ?? NullLogger.Instance;
+    var logger = scope.GetLoggerOrNullLogger(LOG_CATEGORY);
 
     // Raw-inner composites (re-delivery bundles) carry children as stored wire JSON + type names —
     // no typed payloads exist on either side, so they expand through the raw path. A replacement

@@ -74,24 +74,7 @@ public sealed class SystemEventEmitter(
     var scopeContext = envelope.GetCurrentScope();
     var correlationId = envelope.GetCorrelationId();
 
-    // Build scope dictionary from scope context
-    var scope = new Dictionary<string, string?>();
-    if (scopeContext?.Scope.TenantId != null) {
-      scope[SCOPE_TENANT_ID] = scopeContext.Scope.TenantId;
-    }
-    if (scopeContext?.Scope.UserId != null) {
-      scope["UserId"] = scopeContext.Scope.UserId;
-    }
-    if (correlationId != null) {
-      scope["CorrelationId"] = correlationId.ToString();
-    }
-
-    // Add all claims to scope dictionary (includes name, email, etc.)
-    if (scopeContext?.Claims is not null) {
-      foreach (var claim in scopeContext.Claims) {
-        scope[claim.Key] = claim.Value;
-      }
-    }
+    var scope = EventAuditScope.Build(scopeContext, correlationId);
 
     // Serialize payload to JsonElement in AOT-compatible way
     var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions, _logger);
@@ -105,11 +88,11 @@ public sealed class SystemEventEmitter(
       OriginalBody = payloadJson,
       Timestamp = DateTimeOffset.UtcNow,
       // Store individual properties for backward compatibility
-      TenantId = scopeContext?.Scope?.TenantId,
-      UserId = scopeContext?.Scope?.UserId,
+      TenantId = scopeContext?.Scope.TenantId,
+      UserId = scopeContext?.Scope.UserId,
       CorrelationId = correlationId?.ToString(),
       // Store full scope for generic access
-      Scope = scope.Count > 0 ? scope : null
+      Scope = scope
     };
 
     // Emit to the system stream

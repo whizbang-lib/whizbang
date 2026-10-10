@@ -118,6 +118,14 @@ public class TypeNameFormatterBranchCoverageTests {
       .ThrowsExactly<InvalidOperationException>().WithMessageContaining("Assembly.GetName().Name");
   }
 
+  [Test]
+  public async Task RuntimeDisplayName_Null_SaysNullAsync() =>
+    await Assert.That(TypeNameFormatter.RuntimeDisplayName(null)).IsEqualTo("null");
+
+  [Test]
+  public async Task RuntimeDisplayName_Value_ItsTypeAsync() =>
+    await Assert.That(TypeNameFormatter.RuntimeDisplayName("x")).IsEqualTo("System.String");
+
   /// <summary>A real type reported as living in another assembly.</summary>
   private sealed class InAssembly(Type type, Assembly assembly) : TypeDelegator(type) {
     public override Assembly Assembly => assembly;

@@ -101,19 +101,21 @@ public sealed partial class MaintenanceWorker(
 
     var decision = _housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, backlog);
     if (!decision.Granted) {
+      var logged = backlog ?? _unmeasuredBacklog;
       LogMaintenanceDeferred(
         _logger, decision.Reason,
-        backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1,
-        backlog?.PendingOutboxRows ?? -1, backlog?.PendingPerspectiveRows ?? -1);
+        logged.UnprocessedInboxRows, logged.ActiveLeasedRows,
+        logged.PendingOutboxRows, logged.PendingPerspectiveRows);
       return;
     }
 
     if (decision.Reason == HousekeepingCoordinator.Verdict.ProceedDeferralLimit) {
       // Reaching this branch means the service did not settle once across the whole deferral
       // window — worth surfacing on its own, separately from the sweep it is about to run.
+      var logged = backlog ?? _unmeasuredBacklog;
       LogMaintenanceForcedAfterDeferrals(
-        _logger, backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1,
-        backlog?.PendingOutboxRows ?? -1, backlog?.PendingPerspectiveRows ?? -1);
+        _logger, logged.UnprocessedInboxRows, logged.ActiveLeasedRows,
+        logged.PendingOutboxRows, logged.PendingPerspectiveRows);
     }
 
     try {
@@ -124,6 +126,21 @@ public sealed partial class MaintenanceWorker(
       _housekeeping.End(HousekeepingCoordinator.Activity.Maintenance);
     }
   }
+
+  // A guard decides only the rows it names; a row it leaves out is deferred and asked again later,
+  // never destroyed by omission.
+  private static Whizbang.Core.Lifecycle.PerspectiveRowDecision _decisionFor(
+      IReadOnlyDictionary<Guid, Whizbang.Core.Lifecycle.PerspectiveRowDecision> decisions, Guid rowId, DateTimeOffset defaultDefer) =>
+    decisions.TryGetValue(rowId, out var decision) ? decision : Whizbang.Core.Lifecycle.PerspectiveRowDecision.Defer(defaultDefer);
+
+  // What a log line reports for a backlog the probe could not measure: -1 in every count, so
+  // "unmeasured" never reads as "empty".
+  private static readonly ServiceBacklog _unmeasuredBacklog = new() {
+    UnprocessedInboxRows = -1,
+    ActiveLeasedRows = -1,
+    PendingOutboxRows = -1,
+    PendingPerspectiveRows = -1,
+  };
 
   /// <summary>Type names for a log line: the simple name of each normalized assembly-qualified name.</summary>
   private static string _shortTypeNames(IReadOnlyList<string> normalizedNames)
@@ -536,9 +553,7 @@ public sealed partial class MaintenanceWorker(
         var defaultDefer = DateTimeOffset.UtcNow.AddSeconds(_options.DestructionRetryBackoffSeconds);
         foreach (var target in batch) {
           var rowRef = new Whizbang.Core.Lifecycle.PerspectiveRowRef(target.TableName, target.RowId);
-          var decision = decisions.TryGetValue(target.RowId, out var d)
-            ? d
-            : Whizbang.Core.Lifecycle.PerspectiveRowDecision.Defer(defaultDefer);
+          var decision = _decisionFor(decisions, target.RowId, defaultDefer);
           switch (decision.Kind) {
             case Whizbang.Core.Lifecycle.PerspectiveRowDispositionKind.Proceed:
               proceed.Add(rowRef);
@@ -656,9 +671,7 @@ public sealed partial class MaintenanceWorker(
             var held = new List<Whizbang.Core.Lifecycle.PerspectiveRowRef>();
             var defaultDefer = DateTimeOffset.UtcNow.AddSeconds(_options.DestructionRetryBackoffSeconds);
             foreach (var target in targets) {
-              var decision = decisions.TryGetValue(target.RowId, out var d)
-                ? d
-                : Whizbang.Core.Lifecycle.PerspectiveRowDecision.Defer(defaultDefer);
+              var decision = _decisionFor(decisions, target.RowId, defaultDefer);
               switch (decision.Kind) {
                 case Whizbang.Core.Lifecycle.PerspectiveRowDispositionKind.Proceed:
                   proceedIds.Add(target.RowId);

@@ -64,4 +64,17 @@ public class EventMarkerResolverCoverageTests {
     await Assert.That(EventFlagsDeriver.ToClrTypeName("Ns.Outer+Nested, Some.Assembly, Version=1.0.0.0")).IsEqualTo("Ns.Outer+Nested");
     await Assert.That(EventFlagsDeriver.ToClrTypeName(", Some.Assembly")).IsNull();
   }
+
+  [Test]
+  public async Task IndexedCountOf_CatalogResolver_ItsCountAsync() =>
+    await Assert.That(EventMarkerResolver.IndexedCountOf(new EventMarkerResolver(new Catalog()))).IsEqualTo(1);
+
+  [Test]
+  public async Task IndexedCountOf_OtherResolver_MinusOneAsync() =>
+    await Assert.That(EventMarkerResolver.IndexedCountOf(new OtherResolver())).IsEqualTo(-1)
+      .Because("a resolver with no catalog index reports that it has none, not an empty index");
+
+  private sealed class OtherResolver : IEventMarkerResolver {
+    public EventFlags? Resolve(string clrTypeName) => null;
+  }
 }

@@ -32,10 +32,21 @@ public static class EventFlagsDeriver {
         return resolved.Value;
       }
     }
-    return (payload is ICompositeEvent ? EventFlags.Composite : EventFlags.None)
-         | (payload is ICollectiveEvent ? EventFlags.Collective : EventFlags.None)
-         | EphemeralFlagDeriver.Derive(payload, ephemeralModeResolver);
+    return FromPayload(payload, ephemeralModeResolver);
   }
+
+  /// <summary>
+  /// The flags a typed payload declares through its marker interfaces (composite, collective) and its
+  /// ephemeral mode, with no catalog lookup: what a payload in hand says about itself.
+  /// </summary>
+  /// <param name="payload">The payload, possibly null.</param>
+  /// <param name="ephemeralModeResolver">Resolves the ephemeral mode, when one is registered.</param>
+  /// <returns>The payload's flags.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsDeriverTests.cs</tests>
+  internal static EventFlags FromPayload(object? payload, IEphemeralModeResolver? ephemeralModeResolver) =>
+    (payload is ICompositeEvent ? EventFlags.Composite : EventFlags.None)
+    | (payload is ICollectiveEvent ? EventFlags.Collective : EventFlags.None)
+    | EphemeralFlagDeriver.Derive(payload, ephemeralModeResolver);
 
   /// <summary>
   /// Reduces an assembly-qualified wire type name ("Ns.Outer+Nested, Asm, Version=…") to the

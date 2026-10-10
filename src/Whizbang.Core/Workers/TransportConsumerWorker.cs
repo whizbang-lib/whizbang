@@ -250,7 +250,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     if (_logger.IsEnabled(LogLevel.Information)) {
       _logger.LogInformation(
         "Receive-path flag derivation: indexedTypeNames={IndexedTypeNames}",
-        (_eventMarkerResolver as EventMarkerResolver)?.IndexedTypeNameCount ?? -1);
+        EventMarkerResolver.IndexedCountOf(_eventMarkerResolver));
     }
     if (_logger.IsEnabled(LogLevel.Information)) {
       var destinationCount = _options.Destinations.Count;
@@ -1186,8 +1186,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         $"Envelope has JsonElement payload but envelope type is {envelope.GetType().Name}. MessageId: {envelope.MessageId}");
     } else {
       // Strongly-typed envelope - serialize it
-      var serializer = scopeServiceProvider.GetService<IEnvelopeSerializer>()
-        ?? throw new InvalidOperationException("IEnvelopeSerializer is required but not registered");
+      // Required: an unregistered serializer throws InvalidOperationException naming the type.
+      var serializer = scopeServiceProvider.GetRequiredService<IEnvelopeSerializer>();
 
       // Call generic SerializeEnvelope method via reflection
       var genericMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));

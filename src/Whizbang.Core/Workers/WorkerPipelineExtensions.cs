@@ -194,8 +194,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<Whizbang.Core.Observability.StartupPipelineMetrics>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.LoggingStartupStepObserver>(sp =>
       new Whizbang.Core.Startup.LoggingStartupStepObserver(
-        sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Startup.Pipeline")
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)));
+        sp.GetLoggerOrNullLogger("Whizbang.Core.Startup.Pipeline"))));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.MetricsStartupStepObserver>(sp =>
       new Whizbang.Core.Startup.MetricsStartupStepObserver(
         sp.GetRequiredService<Whizbang.Core.Observability.StartupPipelineMetrics>())));
