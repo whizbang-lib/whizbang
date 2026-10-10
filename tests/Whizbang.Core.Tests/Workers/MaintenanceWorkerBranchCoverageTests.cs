@@ -20,7 +20,8 @@ namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
 /// Branches of <see cref="MaintenanceWorker"/> the other maintenance suites leave untaken: the
-/// options guard, per-task metrics when results and metrics are both present, a runner registry that
+/// options guard, per-task metrics when results and metrics are both present or metrics are absent, the
+/// housekeeping volume rollup when that meter is registered, a runner registry that
 /// has no runner for one perspective, and a container that answers an unregistered enumerable with
 /// null rather than an empty sequence (both the guard phase and the stream-group cascade).
 /// </summary>
@@ -185,6 +186,51 @@ public class MaintenanceWorkerBranchCoverageTests {
     await Assert.That(reported).Contains("Maintenance task 'purge_stale_instances' affected 3 rows in 12.5ms");
     await Assert.That(reported).Contains("Maintenance task 'reap_expired_perspective_rows' affected 0 rows in 4ms")
       .Because("without a meter each task's outcome is still reported, and the loop reaches every result");
+  }
+
+  [Test]
+  public async Task MaintenanceCycle_WithHousekeepingMetrics_RecordsTheRowsSweptAsOneRollupAsync() {
+    await using var meterServices = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    var housekeeping = new HousekeepingMetrics(new WhizbangMetrics(meterFactory: meterServices.GetRequiredService<IMeterFactory>()), idleTracker: null);
+    var readings = new List<(long Value, string? Activity)>();
+    using var listener = new MeterListener();
+    // Pinned to this instance's instrument: parallel tests build HousekeepingMetrics on the same meter name.
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument, housekeeping.Items.Instrument)) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      string? activity = null;
+      foreach (var tag in tags) {
+        if (tag.Key == "activity") {
+          activity = tag.Value?.ToString();
+        }
+      }
+      lock (readings) {
+        readings.Add((value, activity));
+      }
+    });
+    listener.Start();
+
+    var coord = new BranchCoordinator {
+      Results = [
+        new MaintenanceResult("purge_stale_instances", 3, 12.5, "ok"),
+        new MaintenanceResult("reap_expired_perspective_rows", -2, 4.0, "ok"),
+      ],
+    };
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    services.AddSingleton(housekeeping);
+    await using var sp = services.BuildServiceProvider();
+
+    await _build(sp.GetRequiredService<IServiceScopeFactory>()).RunMaintenanceOnceAsync(CancellationToken.None);
+    listener.RecordObservableInstruments();
+
+    await Assert.That(readings).Contains((3L, "Maintenance"))
+      .Because("a registered housekeeping meter receives the rows the cycle swept, and a negative count adds nothing");
+    await Assert.That(readings.Where(r => r.Value != 0)).Count().IsEqualTo(1)
+      .Because("the sweep rolls its rows up once, under its own activity");
   }
 
   [Test]
