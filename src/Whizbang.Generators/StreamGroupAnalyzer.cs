@@ -122,7 +122,7 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
     }
 
     collected.Add(new PerspectiveGroupInfo(
-      symbol.Name, symbol.Locations.FirstOrDefault() ?? Location.None,
+      symbol.Name, LocationUtilities.FirstOrNone(symbol),
       memberships, hasEvictor, isolated, eventTypes));
   }
 

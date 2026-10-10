@@ -88,6 +88,28 @@ public class MintedCompositeConstructionAnalyzerCoverageTests {
       .Because("the framework's own registered producers inside the Whizbang.Core assembly ARE the sanctioned factory path, even outside the Minting namespace itself");
   }
 
+  // Exemption 1 names the Minting namespace itself as well as its sub-namespaces. Code that lives in
+  // exactly Whizbang.Core.Minting (not a child of it) is the mint's own internals, so it stays silent even
+  // when compiled outside the Whizbang.Core assembly, where exemption 2 cannot be what lets it through.
+  [Test]
+  public async Task ConstructionInTheMintingNamespaceItself_InAConsumerAssembly_IsSilentAsync() {
+    const string source = """
+      namespace Whizbang.Core.Minting {
+        public abstract class CompositeEventBase { }
+        public sealed class MintedBatch : CompositeEventBase { }
+
+        public static class MintInternals {
+          public static object Make() => new MintedBatch();
+        }
+      }
+      """;
+
+    var diagnostics = await _diagnosticsForAssemblyAsync("ConsumerApp", source);
+
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ150")).IsEmpty()
+      .Because("the Minting namespace itself is the mint, not only its sub-namespaces");
+  }
+
   // The same shape compiled under a DIFFERENT assembly name must still be flagged — proving the
   // exemption is scoped to the Whizbang.Core assembly specifically, not to "outside the Minting
   // namespace" generally.

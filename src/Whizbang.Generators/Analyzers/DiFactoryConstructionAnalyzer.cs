@@ -85,10 +85,13 @@ public class DiFactoryConstructionAnalyzer : DiagnosticAnalyzer {
         continue;
       }
 
+      // The parameter belongs to the constructor the creation bound to: the operation model fills in a
+      // DefaultValue argument only from a bound constructor's optional parameter, so its containing type is
+      // the service being constructed.
       context.ReportDiagnostic(Diagnostic.Create(
         DiagnosticDescriptors.DiFactoryOmitsDependency,
         creation.GetLocation(),
-        operation.Constructor?.ContainingType.Name ?? "service",
+        parameter.ContainingSymbol.ContainingType.Name,
         parameter.Name,
         parameter.Type.Name));
     }

@@ -137,8 +137,10 @@ public static class SortableExposureDiscovery {
       return 0;
     }
 
-    return marker.ConstructorArguments.Length > 0
-           && marker.ConstructorArguments[0].Value is int declared
+    // The marker's parameter is optional, so a bound marker always carries its argument. One whose
+    // argument did not bind carries none (the empty constant's value is null) and reads as the widest
+    // exposure, which is also the marker's default.
+    return marker.ConstructorArguments.FirstOrDefault().Value is int declared
       ? declared
       : EXPOSURE_ORDERING | EXPOSURE_FILTERING;
   }
