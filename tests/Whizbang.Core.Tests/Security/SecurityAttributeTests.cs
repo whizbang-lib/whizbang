@@ -4,7 +4,6 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Attributes;
 
@@ -13,7 +12,7 @@ using Whizbang.Core.Security.Attributes;
 namespace Whizbang.Core.Tests.Security;
 
 /// <summary>
-/// Tests for security-related attributes (FieldPermission, RequirePermission, Scoped).
+/// Tests for security-related attributes (FieldPermission, RequirePermission).
 /// </summary>
 public class SecurityAttributeTests {
   #region FieldPermissionAttribute
@@ -134,55 +133,6 @@ public class SecurityAttributeTests {
     [RequirePermission("thing:read", Operation = ScopeOperation.Read)]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3400:Methods should not return constants", Justification = "The attribute targets a method; the body is irrelevant.")]
     public string GetThing() => "x";
-  }
-
-  #endregion
-
-  #region ScopedAttribute
-
-  [Test]
-  public async Task ScopedAttribute_DefaultConstructor_UsesTenantFilterAsync() {
-    // Arrange & Act
-    var attr = new ScopedAttribute();
-
-    // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Tenant);
-  }
-
-  [Test]
-  public async Task ScopedAttribute_Constructor_WithFilter_SetsFilterAsync() {
-    // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilters.User);
-
-    // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.User);
-  }
-
-  [Test]
-  public async Task ScopedAttribute_Constructor_WithCombinedFilters_SetsFilterAsync() {
-    // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilters.Tenant | ScopeFilters.User);
-
-    // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Tenant | ScopeFilters.User);
-  }
-
-  [Test]
-  public async Task ScopedAttribute_Constructor_WithOrganization_SetsFilterAsync() {
-    // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilters.Organization);
-
-    // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Organization);
-  }
-
-  [Test]
-  public async Task ScopedAttribute_Constructor_WithPrincipal_SetsFilterAsync() {
-    // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilters.Principal);
-
-    // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Principal);
   }
 
   #endregion
