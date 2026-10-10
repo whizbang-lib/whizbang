@@ -1,13 +1,14 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Workers;
+using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Schema;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -20,9 +21,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <remarks>
 /// <para>
 /// Run once per fleet per window: only the instance that wins the window's claim in
-/// <c>wh_unique_emission_claims</c> (the claim <c>PublishOnceAsync</c> uses) reconciles, and the reconcile itself
-/// takes the schema lock with a try, so it never waits on a start that is migrating. A host with no claim store
-/// skips the step rather than have every instance reconcile every cycle; its starts still reconcile.
+/// <c>wh_unique_emission_claims</c> reconciles (<see cref="FleetClaim"/>: through the claim store when one is
+/// registered, directly in the table otherwise), and the reconcile itself takes the schema lock with a try, so it
+/// never waits on a start that is migrating.
 /// </para>
 /// </remarks>
 /// <param name="dbContextType">The DbContext whose manifest this step reconciles.</param>
@@ -36,7 +37,7 @@ public sealed partial class ManagedSchemaReconcileStep(
     TimeProvider? timeProvider = null) : IMaintenanceStep {
 
   /// <summary>How long one instance's claim to run the step lasts: the fleet reconciles once per window.</summary>
-  public static readonly TimeSpan ClaimWindow = TimeSpan.FromMinutes(15);
+  public static readonly TimeSpan ClaimWindow = ManagedSchemaHostPass.ClaimWindow;
 
   private readonly Type _dbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
   private readonly ILogger _logger = (ILogger?)logger ?? NullLogger.Instance;
@@ -56,19 +57,21 @@ public sealed partial class ManagedSchemaReconcileStep(
     if (settings.Mode == ReconcileMode.Off) {
       return;
     }
-    if (services.GetService<IClaimedEmissionStore>() is not { } claims) {
-      LogNoClaimStore(_logger);
-      return;
-    }
-
-    var now = _timeProvider.GetUtcNow();
-    var window = now.UtcTicks - (now.UtcTicks % ClaimWindow.Ticks);
-    var key = string.Create(CultureInfo.InvariantCulture, $"whizbang:managed-schema-objects:{manifest.Schema}:{window}");
-    if (!await claims.TryClaimAsync(key, Guid.CreateVersion7(), cancellationToken).ConfigureAwait(false)) {
-      return;
-    }
-
     var context = (DbContext)services.GetRequiredService(_dbContextType);
+    var key = ManagedSchemaHostPass.ClaimKey(manifest.Schema, _timeProvider.GetUtcNow());
+    await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+    bool claimed;
+    try {
+      claimed = await FleetClaim.TryClaimAsync(
+        services.GetService<IClaimedEmissionStore>(), (NpgsqlConnection)context.Database.GetDbConnection(),
+        PgIdentifier.Quote(manifest.Schema), key, cancellationToken).ConfigureAwait(false);
+    } finally {
+      await context.Database.CloseConnectionAsync().ConfigureAwait(false);
+    }
+    if (!claimed) {
+      return;
+    }
+
     await ManagedSchemaReconcile.RunAsync(
       context, manifest, settings,
       SchemaBoundaryConnections.Resolve(context, initConnectionString: null, services), services, _logger,
@@ -78,8 +81,4 @@ public sealed partial class ManagedSchemaReconcileStep(
   [LoggerMessage(Level = LogLevel.Debug,
     Message = "Managed-object step skipped: {DbContext} registered no managed-object manifest")]
   private static partial void LogNoManifest(ILogger logger, string dbContext);
-
-  [LoggerMessage(Level = LogLevel.Debug,
-    Message = "Managed-object step skipped: no claim store is registered to run it on one instance")]
-  private static partial void LogNoClaimStore(ILogger logger);
 }

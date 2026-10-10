@@ -104,3 +104,10 @@ change recorded in the changelog with the upgrade note.
   transaction-scoped lock on a connection of its own, try first, report contention to `ISchemaInitializationObserver`,
   then wait on the server). The instance registers itself before the lock is released. The driver registers an
   instance identity when the host has none.
+- **Phase 3, cleanup parity: done.** The Dapper reconcile runs with this instance's id, settings read from
+  `Whizbang:Schema:Reconcile` (a bad value fails the start, as on EF Core), the host's logger and every registered
+  contributor, and any failure is logged and never fatal. `DapperManagedSchemaReconcileStep` re-runs it between
+  starts. The generated model registration keys each context's manifest, so a consumer-registered DbContext gets
+  the EF Core re-run too. `FleetClaim` is the one once-per-fleet claim (the store when registered, the claim table
+  otherwise); the EF Core reconcile and column-fill steps no longer stand down without a store. Shared pieces:
+  `ManagedSchemaHostPass` (claim window and key, contributors, instance id).

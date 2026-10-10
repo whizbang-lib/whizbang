@@ -3,6 +3,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -117,13 +118,28 @@ public static class ServiceCollectionExtensions {
 
     // Registration records what to initialize; the shared schema initializer does it at host start, with the
     // container (see _addSchemaInitialization).
-    var declared = managedObjects is null ? null : ManagedSchemaObjectSet.FromDeclarations(managedObjects);
+    // Built per attempt with the container: a fresh declaration set plus the contributors, this instance, the
+    // reconcile settings (a value that is not one fails the attempt) and the host's logger.
     _addSchemaInitialization(services, connectionString, options, initializeSchema, sp =>
       new PostgresSchemaInitializer(connectionString, perspectiveEntries) {
-        ManagedObjects = declared,
+        ManagedObjects = managedObjects is null
+          ? null
+          : ManagedSchemaHostPass.Declared(ManagedSchemaObjectSet.FromDeclarations(managedObjects), sp),
+        ManagedObjectSettings = ManagedSchemaSettings.Read(sp.GetService<IConfiguration>()),
+        Logger = sp.GetRequiredService<ILogger<PostgresSchemaInitializer>>(),
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });
+    if (initializeSchema && managedObjects is not null) {
+      // The periodic re-run of the reconcile, so a drop a start held back lands once the instance that still
+      // declared the object is gone, without another deploy.
+      services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+        new DapperManagedSchemaReconcileStep(
+          connectionString,
+          () => ManagedSchemaObjectSet.FromDeclarations(managedObjects),
+          sp.GetRequiredService<ILogger<DapperManagedSchemaReconcileStep>>(),
+          sp.GetRequiredService<TimeProvider>()));
+    }
 
     // Register database infrastructure
     services.AddSingleton<IDbConnectionFactory>(_ =>

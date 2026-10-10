@@ -6,7 +6,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using Whizbang.Core.Observability;
 using Whizbang.Data.Postgres.Schema;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -40,11 +39,8 @@ public static class ManagedSchemaReconcile {
       CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(manifest);
-    var declared = manifest.Declare();
-    foreach (var contributor in services?.GetServices<IManagedSchemaObjectContributor>() ?? []) {
-      contributor.Contribute(declared);
-    }
-    var instanceId = services?.GetService<IServiceInstanceProvider>()?.InstanceId;
+    var declared = ManagedSchemaHostPass.Declared(manifest.Declare(), services);
+    var instanceId = ManagedSchemaHostPass.InstanceId(services);
 
     // A connection of its own when one can be opened; otherwise the context's, borrowed and closed again.
     var owned = connectionFactory?.Invoke();

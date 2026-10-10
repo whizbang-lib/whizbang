@@ -96,7 +96,7 @@ public sealed class PostgresSchemaInitializer {
   /// </summary>
   public ManagedSchemaObjectSet? ManagedObjects { get; init; }
 
-  /// <summary>The reconcile's settings; the defaults when not set.</summary>
+  /// <summary>The reconcile's settings; the defaults when not set. The driver reads them from <c>Whizbang:Schema:Reconcile</c>.</summary>
   public ManagedSchemaSettings ManagedObjectSettings { get; init; } = ManagedSchemaSettings.Read(null);
 
   /// <summary>Where the managed-object reconcile reports what it dropped and kept.</summary>
@@ -104,7 +104,8 @@ public sealed class PostgresSchemaInitializer {
 
   /// <summary>
   /// This instance. When set, initialization registers it in <c>wh_service_instances</c> before it releases the
-  /// schema lock, so the instances that start after it see it as running.
+  /// schema lock, so the instances that start after it see it as running, and the managed-object reconcile records
+  /// what it declares under its id, so their fleet gate reads it as reported (#1253).
   /// </summary>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_RegistersThisInstanceAsync</tests>
   public IServiceInstanceProvider? Instance { get; init; }
@@ -146,8 +147,8 @@ public sealed class PostgresSchemaInitializer {
     if (ManagedObjects is { } declared) {
       try {
         await ManagedSchemaReconciler.RunAsync(
-          connection, schema, declared, ManagedObjectSettings, instanceId: null, Logger, cancellationToken);
-      } catch (NpgsqlException ex) {
+          connection, schema, declared, ManagedObjectSettings, Instance?.InstanceId, Logger, cancellationToken);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
         if (Logger is { } logger) {
           _logReconcileFailed(logger, ex);
         }

@@ -161,7 +161,7 @@ public class DapperSchemaStartupTests {
     await holder.ExecuteAsync("SELECT pg_advisory_xact_lock(@key)", new { key }, held);
     using var cancel = new CancellationTokenSource();
 
-    var acquire = SchemaInitializationLock.AcquireAsync(_database.ConnectionString, "public", [observer], cancel.Token);
+    var acquire = SchemaInitializationLock.AcquireAsync(_database.ConnectionString, "public", [new SilentObserver(), observer], cancel.Token);
     await observer.Contended.Task;
     await cancel.CancelAsync();
 
@@ -170,6 +170,9 @@ public class DapperSchemaStartupTests {
       "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted", transaction: held)).IsEqualTo(0L)
       .Because("a canceled wait gives its connection back instead of staying queued for the lock");
   }
+
+  /// <summary>Watches nothing: the default for every notification is to carry on.</summary>
+  private sealed class SilentObserver : ISchemaInitializationObserver;
 
   private sealed class LockObserver : ISchemaInitializationObserver {
     public TaskCompletionSource<string> Contended { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

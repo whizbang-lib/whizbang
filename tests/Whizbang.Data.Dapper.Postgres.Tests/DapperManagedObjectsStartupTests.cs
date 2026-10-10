@@ -5,7 +5,6 @@ using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -41,12 +40,12 @@ public class DapperManagedObjectsStartupTests {
     [(TABLE, "index", $"ix_{TABLE}_status", "ProbeModel")];
 
   private PerTestDatabase _database;
-  private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 10, 12, 0, 0, TimeSpan.Zero));
+  private readonly SettableClock _clock = new(new DateTimeOffset(2026, 10, 10, 12, 0, 0, TimeSpan.Zero));
 
   [Before(Test)]
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _database = await PerTestDatabaseFactory.CreateAsync("dapper_mgd_start");
+    _database = await PerTestDatabaseFactory.CreateAsync("dapper_mgd_st");
   }
 
   [After(Test)]
@@ -63,6 +62,11 @@ public class DapperManagedObjectsStartupTests {
     services.AddWhizbangPostgres(_database.ConnectionString, JsonContextRegistry.CreateCombinedOptions(), true,
       [new KeyValuePair<string, string>("ProbePerspective", ENTRY)], _declared);
     return services;
+  }
+
+  /// <summary>One start of an instance: the schema initializer runs to the open gate, then the instance stops.</summary>
+  private static async Task _startOnceAsync(ServiceCollection services) {
+    await using var provider = await SchemaStartup.StartAsync(services);
   }
 
   private async Task _execAsync(string sql) {
@@ -95,11 +99,11 @@ public class DapperManagedObjectsStartupTests {
 
   [Test]
   public async Task AtStart_TheConfiguredModeIsHonoredAsync() {
-    await using (await SchemaStartup.StartAsync(_services())) { }
+    await _startOnceAsync(_services());
     await _execAsync($"CREATE INDEX {RETIRED} ON {TABLE} USING gin (data)");
-    await using (await SchemaStartup.StartAsync(_services())) { }
+    await _startOnceAsync(_services());
 
-    await using (await SchemaStartup.StartAsync(_services(config: ("Whizbang:Schema:Reconcile:Mode", "ReportOnly")))) { }
+    await _startOnceAsync(_services(config: ("Whizbang:Schema:Reconcile:Mode", "ReportOnly")));
 
     await Assert.That(await _existsAsync(RETIRED)).IsTrue()
       .Because("ReportOnly reports the drop and makes none");
@@ -113,25 +117,25 @@ public class DapperManagedObjectsStartupTests {
 
   [Test]
   public async Task AtStart_TheReconcileReportsThroughTheHostsLoggerAsync() {
-    await using (await SchemaStartup.StartAsync(_services())) { }
+    await _startOnceAsync(_services());
     await _execAsync($"CREATE INDEX {RETIRED} ON {TABLE} USING gin (data)");
-    await using (await SchemaStartup.StartAsync(_services())) { }
+    await _startOnceAsync(_services());
     var logs = new ListLoggerProvider();
 
-    await using (await SchemaStartup.StartAsync(_services(logs))) { }
+    await _startOnceAsync(_services(logs));
 
     await Assert.That(logs.Messages.Any(m => m.Contains($"dropped Index {RETIRED}", StringComparison.Ordinal))).IsTrue();
   }
 
   [Test]
   public async Task AtStart_AContributorsObjectIsDeclaredAndKeptAsync() {
-    await using (await SchemaStartup.StartAsync(_services())) { }
+    await _startOnceAsync(_services());
     await _execAsync($"CREATE INDEX {RETIRED} ON {TABLE} USING gin (data)");
-    await using (await SchemaStartup.StartAsync(_services())) { }
+    await _startOnceAsync(_services());
     var services = _services();
     services.AddSingleton<IManagedSchemaObjectContributor>(new Contributor());
 
-    await using (await SchemaStartup.StartAsync(services)) { }
+    await _startOnceAsync(services);
 
     await Assert.That(await _existsAsync(RETIRED)).IsTrue();
   }
@@ -172,6 +176,13 @@ public class DapperManagedObjectsStartupTests {
     await using var scope = provider.CreateAsyncScope();
 
     await Assert.That(scope.ServiceProvider.GetServices<IMaintenanceStep>().Any(s => s.Name == "managed-schema-objects")).IsFalse();
+  }
+
+  /// <summary>A clock the test moves; nothing here waits on time, so no timers are needed.</summary>
+  private sealed class SettableClock(DateTimeOffset now) : TimeProvider {
+    private DateTimeOffset _now = now;
+    public override DateTimeOffset GetUtcNow() => _now;
+    public void Advance(TimeSpan by) => _now += by;
   }
 
   private sealed class Contributor : IManagedSchemaObjectContributor {

@@ -1886,6 +1886,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     _generateMultiLensQueryRegistrations(context, sb, group.DbContext, group.Models, multiLensQueries);
 
+    // The context's managed-object manifest, keyed by the context, for the periodic reconcile. The turnkey context
+    // registration adds it too; this one runs whoever registered the context, so a consumer-registered context has
+    // one as well. TryAdd: the turnkey registration's stands when both ran.
+    var dbContextFqn = group.DbContext.FullyQualifiedName;
+    sb.AppendLine($"        services.TryAddKeyedSingleton<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof({dbContextFqn}), new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(");
+    sb.AppendLine($"          typeof({dbContextFqn}), {_csharpString(group.DbContext.Schema)}, global::{_generatedNamespace(group.DbContext.Namespace)}.{group.DbContext.ClassName}SchemaExtensions.GetManagedSchemaObjects));");
+
     sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
     sb.AppendLine();
   }
