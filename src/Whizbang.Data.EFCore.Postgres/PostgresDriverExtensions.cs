@@ -232,6 +232,9 @@ public static class PostgresDriverExtensions {
         selector.Services.AddOptions<WorkCoordinatorGateOptions>()
           .PostConfigure<Microsoft.Extensions.Options.IOptions<PostgresOptions>>(
             (gate, postgres) => gate.MaxConcurrent ??= postgres.Value.MaxInFlightCommands);
+        // The identity the initializer registers and the managed-object reconcile records its declarations under;
+        // a host composed without the core registration still has one.
+        selector.Services.AddWhizbangInstanceIdentity();
         selector.Services.AddWhizbangSchemaInitialization();
 
         // Message type registry populator — reconciles wh_message_type_registry against the
