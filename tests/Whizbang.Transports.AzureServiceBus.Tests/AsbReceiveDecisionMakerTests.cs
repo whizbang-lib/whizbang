@@ -142,6 +142,45 @@ public class AsbReceiveDecisionMakerTests {
   }
 
   [Test]
+  public async Task Decide_IsClaimHeaderPresentWithNullValue_IsNotAClaim_ReturnsProcessAsync() {
+    // AMQP application properties may carry a null. An is-claim header holding null says nothing
+    // about a claim, so the envelope type is resolved as named and the message processes normally,
+    // rather than being treated as a claim whose original body must be downloaded.
+    var decider = new AsbReceiveDecisionMaker();
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]";
+    var props = new Dictionary<string, object> {
+      [AsbMessageHeaderReader.ENVELOPE_TYPE_PROPERTY_KEY] = envelopeType,
+      [BodyOffloadPostSerializeHook.IS_CLAIM_METADATA_KEY] = null!,
+    };
+    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var body = JsonSerializer.Serialize(_makeEnvelope(), typeInfo);
+    var requestedNames = new List<string>();
+
+    var decision = decider.Decide(props, body, (name, _) => { requestedNames.Add(name); return typeInfo; }, combinedOptions);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
+    await Assert.That(requestedNames).Contains(envelopeType)
+      .Because("a null is-claim header must leave the envelope type to resolve as named, not swap in the claim envelope");
+  }
+
+  [Test]
+  public async Task Decide_PoisonVerdictWithoutDetail_DescribesTheQuarantineByItsReasonAsync() {
+    // A detector may quarantine without a human-readable detail. The dead-letter description
+    // must still say why, so it falls back to the verdict's reason rather than going blank.
+    var decider = new AsbReceiveDecisionMaker();
+    var detector = new StubPoisonDetector(
+      new Whizbang.Core.Routing.PoisonVerdict(true, Whizbang.Core.Routing.PoisonQuarantineReason.MessageAgeExceeded));
+
+    var decision = decider.Decide(
+      new Dictionary<string, object>(), "{}", _resolveAlwaysNull, _jsonOptions,
+      poisonDetector: detector);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter);
+    await Assert.That(decision.Description).IsEqualTo(nameof(Whizbang.Core.Routing.PoisonQuarantineReason.MessageAgeExceeded));
+  }
+
+  [Test]
   public async Task Decide_PayloadHasLocalConsumer_ReturnsProcessAsync() {
     var decider = new AsbReceiveDecisionMaker();
     var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");

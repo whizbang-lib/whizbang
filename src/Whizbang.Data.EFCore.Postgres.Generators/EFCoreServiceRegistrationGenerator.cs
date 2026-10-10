@@ -281,13 +281,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     // Extract schema from attribute's Schema property, or derive from namespace if not specified
-    var schema = _extractSchemaFromAttribute(attribute);
-    if (string.IsNullOrEmpty(schema)) {
-      // Roslyn renders the global namespace as the literal "<global namespace>", which is never
-      // empty (issue #707): ask the symbol, and let an empty string reach the default-schema arm.
-      schema = _deriveSchemaFromNamespace(
-        TypeNameUtilities.NamespaceName(symbol.ContainingNamespace));
-    }
+    // Roslyn renders the global namespace as the literal "<global namespace>", which is never
+    // empty (issue #707): ask the symbol, and let an empty string reach the default-schema arm.
+    // Either arm yields a non-null schema, so the DbContextInfo below needs no fallback of its own.
+    var schema = _extractSchemaFromAttribute(attribute) is { Length: > 0 } declaredSchema
+        ? declaredSchema
+        : _deriveSchemaFromNamespace(TypeNameUtilities.NamespaceName(symbol.ContainingNamespace));
 
     // Extract connection string name from attribute, or derive from class name
     var explicitConnectionStringName = _extractConnectionStringNameFromAttribute(attribute);
@@ -299,7 +298,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         // Empty for the global namespace (issue #707): Roslyn's display string for it is the
         // literal "<global namespace>", which is neither a schema name nor a namespace declaration.
         Namespace: TypeNameUtilities.NamespaceName(symbol.ContainingNamespace),
-        Schema: schema ?? "public", // Should never be null, but satisfy compiler
+        Schema: schema,
         Keys: keys,
         ConnectionStringName: connectionStringName,
         // The name earlier releases derived from the class, read as a fallback only when the context
@@ -2695,9 +2694,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       entries.Add($"      (\"{fileName}\", @\"{escaped}\")");
     }
 
-    return entries.Count == 0
-      ? "// No bootstrap regions found in embedded migrations"
-      : string.Join(",\n", entries);
+    // Never empty: the list is this assembly's own embedded migrations, fixed at build time, and
+    // the election cycle exists because some of them carry bootstrap regions
+    // (SchemaMigratorDeferralGenerationTests.TheBootstrapSubsetIsEmittedAndIsASubsetAsync pins it).
+    // An empty list could not be emitted anyway: the template's implicitly typed new[] { } with no
+    // element has no type (CS0826), so a placeholder comment would not have compiled either.
+    return string.Join(",\n", entries);
   }
 
   private static string _generateMigrationsCode(SourceProductionContext context) {
@@ -4060,12 +4062,34 @@ internal sealed record MultiLensQueryInfo(
 /// template substitution and the generated ILibraryVersionProvider registration, so the ledger
 /// and the instance rows can never disagree about what a binary runs.
 /// </summary>
-internal static class GeneratorLibraryVersion {
+/// <remarks>
+/// Public rather than internal for the reason given on
+/// <see cref="EFCoreServiceRegistrationGenerator.TryLoadRegistrationSnippets"/>: InternalsVisibleTo exposes this
+/// assembly's polyfills to the test project. This assembly ships as an analyzer, so its public surface is not a
+/// consumer API.
+/// </remarks>
+public static class GeneratorLibraryVersion {
+  /// <summary>The version of this generator's own assembly, build metadata stripped.</summary>
+  /// <returns>The version the generated code records.</returns>
   internal static string Get() {
-    var libraryVersion = typeof(EFCoreServiceRegistrationGenerator).Assembly
-        .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? typeof(EFCoreServiceRegistrationGenerator).Assembly.GetName().Version?.ToString()
-        ?? "unknown";
+    var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
+    return From(
+        assembly.GetCustomAttributes<System.Reflection.AssemblyInformationalVersionAttribute>()
+          .Select(a => a.InformationalVersion)
+          .FirstOrDefault(),
+        assembly.GetName().Version);
+  }
+
+  /// <summary>
+  /// The version an assembly reports: its informational version when it has one, else its assembly version, else
+  /// <c>unknown</c>, with any <c>+build</c> metadata stripped.
+  /// </summary>
+  /// <param name="informationalVersion">The assembly's informational version, or null when it declares none.</param>
+  /// <param name="assemblyVersion">The assembly's version, or null when it has none.</param>
+  /// <returns>The version without build metadata.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/GeneratorLibraryVersionTests.cs</tests>
+  public static string From(string? informationalVersion, Version? assemblyVersion) {
+    var libraryVersion = informationalVersion ?? assemblyVersion?.ToString() ?? "unknown";
     var plusIdx = libraryVersion.IndexOf('+');
     if (plusIdx > 0) {
       libraryVersion = libraryVersion[..plusIdx];

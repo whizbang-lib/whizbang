@@ -176,27 +176,39 @@ public class ApplicationSchemaObjectsTests : IAsyncDisposable {
   }
 
   /// <summary>
-  /// An object whose SQL changed is applied again on the next start, and the ledger says it was a re-apply rather
-  /// than a first apply, so a reader can tell a new object from a changed one.
+  /// An object whose SQL changed since the last start is applied again, and the ledger says it was a
+  /// re-apply rather than a first one.
   /// </summary>
   [Test]
   [Timeout(180000)]
-  public async Task AnObjectWhoseSqlChanged_IsReappliedAndRecordedAsAChangeAsync(CancellationToken cancellationToken) {
-    static ApplicationSchemaObject answer(int value) => new("answer", $"""
-      CREATE OR REPLACE FUNCTION answer() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT {value} $$;
+  public async Task AChangedObjectIsReappliedOnTheNextStartAsync(CancellationToken cancellationToken) {
+    var first = new ApplicationSchemaObject("fold_label", """
+      CREATE OR REPLACE FUNCTION fold_label(value text) RETURNS text
+        LANGUAGE sql IMMUTABLE AS $$ SELECT lower(btrim(value)) $$;
       """);
-    await new PostgresSchemaInitializer(_connectionString, [], null, null, new Objects([answer(1)], []))
-      .InitializeSchemaAsync(cancellationToken);
+    var changed = new ApplicationSchemaObject("fold_label", """
+      CREATE OR REPLACE FUNCTION fold_label(value text) RETURNS text
+        LANGUAGE sql IMMUTABLE AS $$ SELECT upper(btrim(value)) $$;
+      """);
 
-    await new PostgresSchemaInitializer(_connectionString, [], null, null, new Objects([answer(2)], []))
+    await new PostgresSchemaInitializer(_connectionString, [], null, null, new Objects([first], []))
       .InitializeSchemaAsync(cancellationToken);
 
     await using var db = new NpgsqlConnection(_connectionString);
     await db.OpenAsync(cancellationToken);
-    await Assert.That(await db.ExecuteScalarAsync<int>("SELECT answer()")).IsEqualTo(2);
-    var (status, description) = await db.QuerySingleAsync<(short Status, string Description)>(
-      "SELECT status, status_description FROM wh_schema_migrations WHERE file_name = 'app:before:answer'");
-    await Assert.That(status).IsEqualTo((short)2);
-    await Assert.That(description).IsEqualTo("Re-applied after change");
+    var firstStatus = await db.ExecuteScalarAsync<string>(
+      "SELECT status_description FROM wh_schema_migrations WHERE file_name = 'app:before:fold_label'");
+    await Assert.That(firstStatus).IsEqualTo("First apply");
+
+    await new PostgresSchemaInitializer(_connectionString, [], null, null, new Objects([changed], []))
+      .InitializeSchemaAsync(cancellationToken);
+
+    var status = await db.ExecuteScalarAsync<string>(
+      "SELECT status_description FROM wh_schema_migrations WHERE file_name = 'app:before:fold_label'");
+    await Assert.That(status).IsEqualTo("Re-applied after change")
+      .Because("a changed object has to reach the database, and the ledger has to say it was a change");
+    var folded = await db.ExecuteScalarAsync<string>("SELECT fold_label('  Mixed ')");
+    await Assert.That(folded).IsEqualTo("MIXED")
+      .Because("the second start applied the changed definition, not the first one");
   }
 }

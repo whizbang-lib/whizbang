@@ -5,6 +5,7 @@ using System;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tracing;
 
@@ -65,7 +66,7 @@ public static class WorkCoordinatorStrategyFactory {
     return new StreamAffinityWorkCoordinatorStrategy(
       inner, outboxBatch,
       sp.GetRequiredService<ILogger<StreamAffinityWorkCoordinatorStrategy>>(),
-      systemEventOptions: sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>()?.Value,
+      systemEventOptions: sp.GetOptionsValue<Whizbang.Core.SystemEvents.SystemEventOptions>(),
       coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>());
   }
 
@@ -79,7 +80,7 @@ public static class WorkCoordinatorStrategyFactory {
       ScopeFactory = sp.GetRequiredService<IServiceScopeFactory>(),
       LifecycleMessageDeserializer = sp.GetRequiredService<ILifecycleMessageDeserializer>(),
       TracingOptions = sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
-      SystemEventOptions = sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>()?.Value,
+      SystemEventOptions = sp.GetOptionsValue<Whizbang.Core.SystemEvents.SystemEventOptions>(),
       CoalesceResolver = sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>()
     };
     return new ScopedWorkCoordinatorStrategy(

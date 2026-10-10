@@ -143,6 +143,20 @@ public class MaintenanceWorkerIntegritySweepTests {
   }
 
   [Test]
+  public async Task GapDetectionOff_SweepsOnlyTheInboxAsync() {
+    var coord = new SweepCoordinator { InboxDiscarded = 4 };
+    var options = _everythingOn();
+    options.GapDetectionEnabled = false;
+    var (worker, _) = _build(coord, options);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.InboxCalls.Count).IsEqualTo(1);
+    await Assert.That(coord.OutboxCalls).IsEmpty()
+      .Because("received checkpoints are inbox traffic; with checkpoints still published, the outbox keeps its rows");
+  }
+
+  [Test]
   public async Task NoIntegrityOptionsRegistered_SweepsAsTheDefaultsAsync() {
     var coord = new SweepCoordinator();
     var (worker, _) = _build(coord, integrity: null);

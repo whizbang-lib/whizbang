@@ -72,6 +72,22 @@ public class CollectiveInMemoryUpsertElementTests {
   }
 
   [Test]
+  public async Task Upsert_AfterTheSameSpecClearedTheList_StartsFromAnEmptyListAsync() {
+    // The spec's own earlier write is what an upsert composes onto, as SQL does in call order. When
+    // that write cleared the list, the upsert starts from nothing: the list the model held before
+    // the spec is gone, and only the upserted element remains.
+    var model = _twoCells();
+    var cell = new Cell { Key = "k9", Value = "v9" };
+
+    CollectiveInMemoryEvaluator<Model>.Apply(new Spec(s => s
+      .SetProperty(m => m.Cells, (List<Cell>?)null)
+      .UpsertElement(m => m.Cells, c => c.Key, cell)), model);
+
+    await Assert.That(_render(model.Cells)).IsEquivalentTo(["k9=v9"])
+      .Because("the upsert composes onto the spec's own null write, not onto the list from before the spec");
+  }
+
+  [Test]
   public async Task Upsert_OnAReadOnlyList_ReplacesItWithAWritableCopyAsync() {
     var model = new Model { Frozen = new List<Cell> { new() { Key = "k1", Value = "v1" } }.AsReadOnly() };
     var cell = new Cell { Key = "k1", Value = "new" };

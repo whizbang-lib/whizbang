@@ -180,6 +180,19 @@ public class RepairDrainWorkerBranchCoverageTests {
   }
 
   [Test]
+  public async Task DrainTick_NoTenantScope_AsksUnscopedAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, sp) = _build(origin);
+    await using var ownedServices = sp;
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "", "Contracts.TypeA", TrackedGuid.New().Value, 10, 20));
+
+    await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
+
+    await Assert.That(_deserializeRedelivery(transport.Published.Single()).TenantScope).IsNull()
+      .Because("an empty tenant scope is no tenant: the request must not name an empty one");
+  }
+
+  [Test]
   public async Task DrainTick_WithStreamIntegrityMetrics_CountsTheRowsRequestedPerOriginAsync() {
     await using var meterServices = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterServices.GetRequiredService<IMeterFactory>()));

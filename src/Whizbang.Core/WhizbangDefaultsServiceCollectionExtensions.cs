@@ -47,7 +47,7 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
       var retry = sp.GetRequiredService<IOptions<Workers.PerspectiveWorkerOptions>>().Value.RetryOptions;
       return new Workers.BatchedCompletionStrategy(
         retryTimeout: TimeSpan.FromSeconds(retry.RetryTimeoutSeconds),
-        backoffMultiplier: retry.EnableExponentialBackoff ? retry.BackoffMultiplier : 1.0,
+        backoffMultiplier: retry.EffectiveBackoffMultiplier,
         maxTimeout: TimeSpan.FromSeconds(retry.MaxBackoffSeconds));
     });
     services.TryAddSingleton<Workers.IProcessedEventCacheObserver, Workers.NullProcessedEventCacheObserver>();

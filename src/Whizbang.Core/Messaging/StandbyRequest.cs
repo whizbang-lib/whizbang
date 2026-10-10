@@ -18,7 +18,11 @@ namespace Whizbang.Core.Messaging;
 /// The requester's last heartbeat, or null when its instance row is gone (reaped) — either way,
 /// a peer treats a silent requester as dead and the request as void.
 /// </param>
+/// <param name="RequesterAliveLockHeld">
+/// Whether the requester's session alive-lock is held right now (#1286). A requester holding it is alive
+/// whatever the age of <paramref name="RequesterLastHeartbeatAt"/>: it beats on the slow cadence.
+/// </param>
 /// <docs>operations/startup/rolling-upgrades#the-standby-handshake</docs>
 public sealed record StandbyRequest(
   Guid RequestedBy, string RequestedVersion, DateTimeOffset RequestedAt,
-  DateTimeOffset? RequesterLastHeartbeatAt);
+  DateTimeOffset? RequesterLastHeartbeatAt, bool RequesterAliveLockHeld = false);

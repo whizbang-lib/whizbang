@@ -193,9 +193,12 @@ public sealed partial class StandbyWatcher : BackgroundService {
     return requested.CompareTo(mine) > 0;
   }
 
+  // #1286: a requester holding its alive-lock is alive whatever its heartbeat's age (it beats on the slow cadence);
+  // otherwise its heartbeat decides.
   private bool _requesterIsAlive(StandbyRequest request) =>
-    request.RequesterLastHeartbeatAt is { } heardAt
-      && DateTimeOffset.UtcNow - heardAt <= _options.RequesterLivenessWindow;
+    request.RequesterAliveLockHeld
+      || (request.RequesterLastHeartbeatAt is { } heardAt
+          && DateTimeOffset.UtcNow - heardAt <= _options.RequesterLivenessWindow);
 
   private async Task _watchOutcomeAsync(StandbyRequest? request, CancellationToken cancellationToken) {
     if (request is not null && _requesterIsAlive(request)) {

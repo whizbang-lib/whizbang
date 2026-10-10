@@ -47,10 +47,7 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
     InstanceId = WhizbangIdProvider.NewGuid();
 
     // Resolve ServiceName from configuration or assembly
-    ServiceName = configuration["Whizbang:ServiceName"]
-                  ?? configuration["ServiceName"]
-                  ?? Assembly.GetEntryAssembly()?.GetName().Name
-                  ?? "Unknown";
+    ServiceName = ResolveServiceName(configuration, Assembly.GetEntryAssembly());
 
     HostName = Environment.MachineName;
     ProcessId = Environment.ProcessId;
@@ -71,6 +68,25 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
     HostName = hostName;
     ProcessId = processId;
   }
+
+  /// <summary>
+  /// The service name, in the order the constructor documents: the two configuration keys, then the
+  /// entry assembly's name, then <c>Unknown</c>.
+  /// </summary>
+  /// <remarks>
+  /// The entry assembly is a parameter because a test process always has one; the host that has
+  /// none (a native host calling into managed code) is the case the last fallback exists for.
+  /// </remarks>
+  /// <param name="configuration">The configuration to read the two keys from.</param>
+  /// <param name="entryAssembly">The process's entry assembly, when it has one.</param>
+  /// <returns>The resolved service name.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ResolveServiceName_NoEntryAssembly_UnknownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ResolveServiceName_NamelessEntry_UnknownAsync</tests>
+  internal static string ResolveServiceName(IConfiguration configuration, Assembly? entryAssembly) =>
+    configuration["Whizbang:ServiceName"]
+    ?? configuration["ServiceName"]
+    ?? entryAssembly?.GetName().Name
+    ?? "Unknown";
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ServiceInstanceProvider_ToInfo_ReturnsServiceInstanceInfoAsync</tests>

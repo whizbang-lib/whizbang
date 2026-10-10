@@ -270,6 +270,12 @@ Describe 'Get-LibraryFileCategory' {
     Get-LibraryFileCategory 'other/notes.md' | Should -BeNullOrEmpty
     Get-LibraryFileCategory 'tests/A.Tests/Foo.cs' | Should -BeNullOrEmpty
   }
+
+  It 'puts the link guard''s baseline under Baseline, and no other file next to it' {
+    Get-LibraryFileCategory '.github/scripts/tests-tag-link-baseline.txt' | Should -Be 'Baseline'
+    Get-LibraryFileCategory '.github/scripts/other-baseline.txt' | Should -BeNullOrEmpty
+    Get-LibraryFileCategory 'tests-tag-link-baseline.txt' | Should -BeNullOrEmpty
+  }
 }
 
 Describe 'Get-DocsSiteGeneratedRule' {
@@ -602,6 +608,99 @@ Describe 'Invoke-TestReferenceMove: without a docs site' {
     $result.TagsRewritten | Should -Be 2
     $result.DocsSiteReferencesFound | Should -Be 0
     @($result.Regenerate).Count | Should -Be 0
+  }
+}
+
+Describe 'Invoke-TestReferenceMove: the link guard''s baseline' {
+  BeforeAll {
+    $script:GuardPath = Join-Path -Path $PSScriptRoot -ChildPath '../Test-TestsTagLink.ps1' -Resolve
+    $script:BaselineRelative = '.github/scripts/tests-tag-link-baseline.txt'
+    $script:BaselineHeader = "# Known-broken tags.`r`n#   tests/A.Tests/Foo.cs is named in a comment, which is not an entry.`r`n`r`n"
+    $script:MovedEntry = 'src/Core/Svc.cs | tests/A.Tests/Foo.cs:GoneAsync | declared in no test file'
+    $script:UnrelatedEntry = 'src/Core/Svc.cs | tests/B.Tests/Bar.cs:AlsoGoneAsync | declared in no test file; tests/A.Tests/FooBar.cs is unrelated'
+
+    # A library whose source carries two known-broken tags, both baselined: one names the file that
+    # moves, the other a file that stays. The baseline keeps CRLF line endings and no final newline.
+    function New-BaselineFixture([string[]]$Entry) {
+      $lib = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
+      Set-FixtureFile $lib 'src/Core/Svc.cs' "/// <tests>tests/A.Tests/Foo.cs:GoneAsync</tests>`n/// <tests>tests/B.Tests/Bar.cs:AlsoGoneAsync</tests>`npublic class Svc { }`n"
+      Set-FixtureFile $lib 'tests/A.Tests/Foo.cs' "public class FooTests { }`n"
+      Set-FixtureFile $lib 'tests/A.Tests/FooBar.cs' "public class FooBarTests { }`n"
+      Set-FixtureFile $lib 'tests/B.Tests/Bar.cs' "public class BarTests { }`n"
+      Set-FixtureFile $lib 'tests/A.Component.Tests/A.Component.Tests.csproj' '<Project />'
+      Set-FixtureFile $lib $BaselineRelative ($BaselineHeader + ($Entry -join "`r`n"))
+      return $lib
+    }
+
+    function Invoke-BaselineMove([string]$Library, [switch]$DryRun) {
+      $resolved = @(Resolve-TestMove -RepositoryRoot $Library -From $OldFoo -To $NewFoo)
+      Invoke-TestReferenceMove -RepositoryRoot $Library -Moves $resolved -DryRun:$DryRun -WarningAction SilentlyContinue
+    }
+
+    # Runs the link guard on a fixture library and returns its exit code and output.
+    function Invoke-Guard([string]$Library) {
+      $output = & $GuardPath -Root $Library -BaselinePath (Join-Path -Path $Library -ChildPath $BaselineRelative)
+      [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join "`n") }
+    }
+
+    function Move-FixtureFile([string]$Library, [string]$OldPath, [string]$NewPath) {
+      $target = Join-Path -Path $Library -ChildPath $NewPath
+      New-Item -ItemType Directory -Path (Split-Path -Path $target -Parent) -Force | Out-Null
+      Move-Item -LiteralPath (Join-Path -Path $Library -ChildPath $OldPath) -Destination $target
+    }
+  }
+
+  It 'rewrites the entry of a baselined tag the move relinks, so the guard passes after the move' {
+    $lib = New-BaselineFixture @($MovedEntry, $UnrelatedEntry)
+    (Invoke-Guard $lib).ExitCode | Should -Be 0 -Because 'the fixture starts green: both broken tags are baselined'
+    $result = Invoke-BaselineMove $lib
+    Move-FixtureFile $lib $OldFoo $NewFoo
+
+    $guard = Invoke-Guard $lib
+    $guard.ExitCode | Should -Be 0 -Because $guard.Output
+    $guard.Output | Should -Match '2 broken, 2 baselined, 0 stale baseline entries\.'
+    $movedAfter = 'src/Core/Svc.cs | tests/A.Component.Tests/Foo.cs:GoneAsync | declared in no test file'
+    Get-FixtureBytes $lib $BaselineRelative | Should -Be (ConvertTo-Hex ([System.Text.UTF8Encoding]::new($false).GetBytes(
+          $BaselineHeader.Replace('tests/A.Tests/Foo.cs', 'tests/A.Component.Tests/Foo.cs') + "$movedAfter`r`n$UnrelatedEntry")))
+    $result.BaselineEntriesRewritten | Should -Be 1
+    @($result.BaselineEntries).Count | Should -Be 1
+    $result.BaselineEntries[0].Line | Should -Be 4
+    $result.BaselineEntries[0].From | Should -Be $MovedEntry
+    $result.BaselineEntries[0].To | Should -Be $movedAfter
+    $change = @($result.Changes | Where-Object Path -EQ $BaselineRelative)
+    $change.Count | Should -Be 1
+    $change[0].Category | Should -Be 'Baseline'
+    $change[0].References | Should -Be 2 -Because 'the entry and the comment both cite the moved path'
+    $change[0].Written | Should -BeTrue
+  }
+
+  It 'changes nothing in a dry run, and still lists the entry a real run would rewrite' {
+    $lib = New-BaselineFixture @($MovedEntry, $UnrelatedEntry)
+    $before = Get-TreeHash $lib
+    $result = Invoke-BaselineMove $lib -DryRun
+    Get-TreeHash $lib | Should -Be $before
+    $result.DryRun | Should -BeTrue
+    $result.BaselineEntriesRewritten | Should -Be 1
+    $result.BaselineEntries[0].From | Should -Be $MovedEntry
+    @($result.Changes | Where-Object Written).Count | Should -Be 0
+
+    $output = & $ScriptPath -RepositoryRoot $lib -From $OldFoo -To $NewFoo -DryRun -WarningAction SilentlyContinue 6>&1
+    Get-TreeHash $lib | Should -Be $before
+    $lines = @($output | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } | ForEach-Object { $_.MessageData.ToString() })
+    $lines | Should -Contain '  Link guard baseline entries would be rewritten: 1'
+    $lines | Should -Contain "    line 4: $MovedEntry"
+    $lines | Should -Contain '         -> src/Core/Svc.cs | tests/A.Component.Tests/Foo.cs:GoneAsync | declared in no test file'
+  }
+
+  It 'leaves a baseline whose entries name no moved path untouched' {
+    $lib = New-BaselineFixture @($UnrelatedEntry)
+    Set-FixtureFile $lib $BaselineRelative "# Known-broken tags.`n$UnrelatedEntry`n"
+    $before = Get-FixtureBytes $lib $BaselineRelative
+    $result = Invoke-BaselineMove $lib
+    Get-FixtureBytes $lib $BaselineRelative | Should -Be $before
+    $result.BaselineEntriesRewritten | Should -Be 0
+    @($result.BaselineEntries).Count | Should -Be 0
+    @(Get-ChangePath $result 'library') | Should -Not -Contain $BaselineRelative
   }
 }
 

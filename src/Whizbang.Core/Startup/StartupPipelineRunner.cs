@@ -264,7 +264,8 @@ public sealed class StartupPipelineRunner {
       } else if (attempt!.Refusal is not DutyRefusal.Contended) {
         return new StartupStepReport(StartupStepOutcome.Failed,
           $"duty '{descriptor.RequiredCapability}' is unacquirable ({attempt.Refusal}): "
-          + $"{attempt.Detail ?? "no detail"} — retrying cannot succeed, failing loudly instead of hanging");
+          // A refusal always carries its detail: DutyAttempt.Lost requires one, and a grant ends the loop.
+          + $"{attempt.Detail} — retrying cannot succeed, failing loudly instead of hanging");
       } else {
         // A clean refusal proves the elector is reachable, so any earlier failures were blips
         // and not the leading edge of an outage.

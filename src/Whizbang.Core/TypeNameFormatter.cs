@@ -47,6 +47,16 @@ public static class TypeNameFormatter {
   }
 
   /// <summary>
+  /// Display text for the runtime type of <paramref name="value"/>, or <c>null</c> when there is no
+  /// value. For diagnostics that describe whatever object they were handed.
+  /// </summary>
+  /// <param name="value">The object to describe, possibly null.</param>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameFormatterBranchCoverageTests.cs:RuntimeDisplayName_Null_SaysNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/TypeNameFormatterBranchCoverageTests.cs:RuntimeDisplayName_Value_ItsTypeAsync</tests>
+  internal static string RuntimeDisplayName(object? value) =>
+    value is null ? "null" : DisplayName(value.GetType());
+
+  /// <summary>
   /// The versioned assembly-qualified form (<code>Ns.Type, Assembly, Version=..., Culture=...,
   /// PublicKeyToken=...</code>) that the envelope-type wire header and a few storage paths carry.
   /// Compare it with <see cref="Whizbang.Core.Messaging.EventTypeMatchingHelper"/>, never with

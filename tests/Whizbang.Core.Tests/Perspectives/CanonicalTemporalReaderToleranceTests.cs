@@ -85,6 +85,9 @@ public class CanonicalTemporalReaderToleranceTests {
       .IsEqualTo(new DateTimeOffset(_instant));
     await Assert.That(_read(new CanonicalTemporalJsonConverters.DayConverter(), "\"2026-03-04\""))
       .IsEqualTo(new DateOnly(2026, 3, 4));
+    await Assert.That(_read(new CanonicalTemporalJsonConverters.DayConverter(), "\"2026-03-04T23:30:00-02:00\""))
+      .IsEqualTo(new DateOnly(2026, 3, 5))
+      .Because("an instant's rendering reads as the UTC date that instant falls on");
     await Assert.That(_read(new CanonicalTemporalJsonConverters.TimeOfDayConverter(), "\"05:06:07.1234567\""))
       .IsEqualTo(new TimeOnly(5, 6, 7).Add(TimeSpan.FromTicks(1234567)));
     await Assert.That(_read(new CanonicalTemporalJsonConverters.DurationConverter(), "\"2.05:06:07.1230000\""))

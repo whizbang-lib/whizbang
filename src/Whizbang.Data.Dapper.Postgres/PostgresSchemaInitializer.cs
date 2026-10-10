@@ -963,16 +963,20 @@ public sealed class PostgresSchemaInitializer {
   /// Splits DDL into the statements before the CREATE TABLE (moves into the existing table), the CREATE TABLE
   /// statement, and post-table DDL (indexes, comments, fills).
   /// </summary>
-  private static (string PreTableSql, string CreateTableSql, string PostTableSql) _splitDdl(string ddlSql) {
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerSplitDdlTests.cs</tests>
+  internal static (string PreTableSql, string CreateTableSql, string PostTableSql) _splitDdl(string ddlSql) {
     // Find the end of the CREATE TABLE statement (first ); after CREATE TABLE)
     var createTableMatch = Regex.Match(ddlSql,
         @"(CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+\s*\(.*?\)\s*;)",
         RegexOptions.Singleline | RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
 
-    // The only caller is the ColumnCopy strategy, which _parseColumnsFromDdl selects with this same
-    // "CREATE TABLE … );" match, so the DDL reaching here always matches; there is no unsplittable arm to handle.
-    return (ddlSql[..createTableMatch.Index].Trim(), createTableMatch.Groups[1].Value,
-      ddlSql[(createTableMatch.Index + createTableMatch.Length)..].Trim());
+    // DDL this cannot split comes back whole with nothing before or after it. The ColumnCopy strategy, the
+    // only caller, is selected by _parseColumnsFromDdl with the same "CREATE TABLE … );" match, so through
+    // it a DDL has always matched; the whole-DDL answer is asserted directly by its tests.
+    return createTableMatch.Success
+      ? (ddlSql[..createTableMatch.Index].Trim(), createTableMatch.Groups[1].Value,
+        ddlSql[(createTableMatch.Index + createTableMatch.Length)..].Trim())
+      : (string.Empty, ddlSql, string.Empty);
   }
 
   private static async Task _executeSqlAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string sql, CancellationToken ct) {

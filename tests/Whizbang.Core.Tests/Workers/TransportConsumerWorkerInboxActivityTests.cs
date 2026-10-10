@@ -58,6 +58,22 @@ public class TransportConsumerWorkerInboxActivityTests {
       .Because("with no listener on the transport source there is no span to tag");
   }
 
+  [Test]
+  public async Task StartInboxActivity_NoHopList_ReturnsNoSpanAsync() {
+    var envelope = _envelopeWithTraceParent();
+    var hopless = new MessageEnvelope<JsonElement> {
+      MessageId = envelope.MessageId,
+      Payload = envelope.Payload,
+      Hops = null!,
+      DispatchContext = envelope.DispatchContext,
+    };
+
+    using var activity = TransportConsumerWorker.StartInboxActivity(hopless, "OrderPlaced");
+
+    await Assert.That(activity).IsNull()
+      .Because("an envelope with no hop list carries no producer trace to continue");
+  }
+
   private static MessageEnvelope<JsonElement> _envelopeWithTraceParent() => new() {
     MessageId = MessageId.New(),
     Payload = JsonDocument.Parse("{}").RootElement,

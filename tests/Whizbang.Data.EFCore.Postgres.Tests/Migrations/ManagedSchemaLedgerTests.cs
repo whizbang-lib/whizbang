@@ -89,6 +89,21 @@ public class ManagedSchemaLedgerTests {
   }
 
   [Test]
+  public async Task Pin_WithoutAReason_StoresNoReasonAndFormatsTheSourceAloneAsync() {
+    // The reason is optional on the CLI. Pinning without one stores SQL NULL rather than an empty
+    // string, so the ledger reads "pinned by cli" and not "pinned by cli: " with nothing after it.
+    await using var db = await _openAsync();
+
+    var result = await ManagedSchemaLedger.PinAsync(db, "public", "wh_per_job", "idx_job_data_gin", reason: null);
+
+    await Assert.That(result).IsEqualTo("pinned");
+    var row = (await ManagedSchemaLedger.StatusAsync(db, "public")).Single(r => r.Name == "idx_job_data_gin");
+    await Assert.That(row.DbPinned).IsTrue();
+    await Assert.That(row.DbPinReason).IsNull();
+    await Assert.That(ManagedSchemaLedger.Format([row])).EndsWith($"pinned by {PinSources.CLI}");
+  }
+
+  [Test]
   public async Task Unpin_SaysWhenCSharpStillPinsTheObjectAsync() {
     await using var db = await _openAsync();
     await ManagedSchemaLedger.PinAsync(db, "public", "wh_per_job", "idx_job_legacy", "also by a DBA");

@@ -222,12 +222,12 @@ public class InboxDrainWorkerGapTests {
     };
   }
 
-  private static InboxBatchRow _malformedRow(Guid messageId, Guid streamId) => new() {
+  private static InboxBatchRow _malformedRow(Guid messageId, Guid streamId, string eventData = "{not valid json") => new() {
     MessageId = messageId,
     StreamId = streamId,
     HandlerName = "TestHandler",
     MessageType = "TestMessage",
-    EventData = "{not valid json",   // <-- deliberate, _toInboxWork must throw
+    EventData = eventData,   // <-- deliberate, _toInboxWork must throw
     Metadata = "{}",
     Scope = null,
     Status = 1,
@@ -722,6 +722,35 @@ public class InboxDrainWorkerGapTests {
   /// encountered during the cap-fill fallback is logged (EventId 5) and skipped while the
   /// remaining rows keep flowing.
   /// </summary>
+  /// <summary>
+  /// A row whose stored envelope is JSON null deserializes to nothing; it is refused like a
+  /// malformed one (logged and skipped) rather than handed on as a null envelope.
+  /// </summary>
+  [Test]
+  public async Task ExecuteAsync_NullEnvelopeRow_LogsAndSkipsAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var good = (Guid)TrackedGuid.New();
+    var coord = new ScriptedCoordinator();
+    coord.RowsByStream[streamId] = [_malformedRow((Guid)TrackedGuid.New(), streamId, "null"), _row(good, streamId)];
+    var drain = new RecordingDrainChannel();
+    var writer = new TestInboxWriter { TargetCount = 1 };
+    var logger = new RecordingLogger(LogLevel.Information);
+    var worker = _buildWorker(coord, drain, writer, new InboxDrainWorkerOptions { Enabled = true }, logger);
+    var idleTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => idleTcs.TrySetResult(true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+    await idleTcs.Task.WaitAsync(_timeout);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* teardown */ }
+
+    await Assert.That(writer.Written.Select(w => w.MessageId)).IsEquivalentTo([good]);
+    await Assert.That(logger.Entries.Count(e => e.EventId == 5)).IsEqualTo(1)
+      .Because("the null envelope is logged as a deserialize failure");
+  }
+
   [Test]
   public async Task ExecuteAsync_MalformedRowInInnerLoop_LogsAndSkips_ContinuesDrainAsync() {
     var streamId = (Guid)TrackedGuid.New();

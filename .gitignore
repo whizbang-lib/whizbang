@@ -180,6 +180,13 @@ coverage*.info
 *.coverage
 *.coveragexml
 
+# Coverage output is never committed, wherever it lands: the Cobertura report each test process writes
+# (<guid>.cobertura.xml), and merged block data. The coverage gate's tests produce theirs at test time
+# (.github/scripts/tests/shapes/New-ShapesCoverage.ps1).
+*.cobertura.xml
+*.blocks.xml
+merged-blocks.xml
+
 # NCrunch
 _NCrunch_*
 .NCrunch_*

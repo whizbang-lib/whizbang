@@ -201,27 +201,31 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
   }
 
   /// <summary>
-  /// A perspective whose DDL changed without changing its columns (an index added) re-runs its DDL in place: the
-  /// strategy is a direct apply, not a table swap.
+  /// A changed perspective whose table keeps exactly its columns (here an index is added) is neither a
+  /// column copy nor a replay: its DDL is re-executed in place, recorded as a DirectDdl update.
   /// </summary>
   [Test]
-  public async Task Initialize_ChangedPerspectiveWithTheSameColumns_AppliesDirectlyAsync() {
-    const string table = "CREATE TABLE IF NOT EXISTS wh_per_same (id UUID PRIMARY KEY, label TEXT);";
-    await new PostgresSchemaInitializer(_testConnectionString,
-      [new KeyValuePair<string, string>("SamePerspective", table)]).InitializeSchemaAsync();
+  public async Task Initialize_ChangedPerspectiveWithTheSameColumns_ReexecutesItsDdlInPlaceAsync() {
+    const string table = "CREATE TABLE IF NOT EXISTS wh_per_same_columns (id UUID PRIMARY KEY, label TEXT);";
+    var entries1 = new[] { new KeyValuePair<string, string>("SameColumnsPerspective", table) };
+    await new PostgresSchemaInitializer(_testConnectionString, entries1).InitializeSchemaAsync();
 
-    await new PostgresSchemaInitializer(_testConnectionString,
-      [new KeyValuePair<string, string>("SamePerspective", table + " CREATE INDEX IF NOT EXISTS ix_wh_per_same_label ON wh_per_same (label);")])
-      .InitializeSchemaAsync();
+    var entries2 = new[] {
+      new KeyValuePair<string, string>("SameColumnsPerspective",
+        table + " CREATE INDEX IF NOT EXISTS ix_same_columns_label ON wh_per_same_columns (label);")
+    };
+    await new PostgresSchemaInitializer(_testConnectionString, entries2).InitializeSchemaAsync();
 
     await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
     var record = await connection.QuerySingleAsync<dynamic>(
-      "SELECT status, status_description FROM wh_schema_migrations WHERE file_name = 'perspective:SamePerspective'");
+      "SELECT status, status_description FROM wh_schema_migrations WHERE file_name = 'perspective:SameColumnsPerspective'");
     await Assert.That((int)record.status).IsEqualTo(2);
-    await Assert.That((string)record.status_description).Contains("DirectDdl");
-    await Assert.That(await connection.ExecuteScalarAsync<long>(
-      "SELECT count(*) FROM pg_indexes WHERE indexname = 'ix_wh_per_same_label'")).IsEqualTo(1L);
+    await Assert.That((string)record.status_description).Contains("strategy: DirectDdl");
+    var index = await connection.ExecuteScalarAsync<long>(
+      "SELECT count(*) FROM pg_indexes WHERE indexname = 'ix_same_columns_label'");
+    await Assert.That(index).IsEqualTo(1L)
+      .Because("the changed DDL was executed in place on the existing table");
   }
 
   /// <summary>

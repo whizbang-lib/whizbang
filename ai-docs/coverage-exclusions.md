@@ -91,12 +91,13 @@ code only"). The PR gate (`scripts/Find-UncoveredNewLines.ps1`) applies it to ev
 
 - **Uncovered new line**: the line never ran.
 - **Uncovered new branch**: the line ran, the collector recorded conditions on it, not every outcome
-  was taken, **and** the line's source contains a decision construct: `if` / `else if`, the conditional
-  `?:`, `??`, `??=`, `?.` or `?[`, `&&`, `||`, `switch` / `case` / a switch-expression arm, `when`,
-  `catch`, a `while` / `for` / `foreach` condition, or an `is` pattern test. Constructs inside string
-  literals and comments do not count; constructs inside interpolation holes do.
+  was taken, **and** the statement that starts on the line contains a decision construct on any of its
+  lines: `if` / `else if`, the conditional `?:`, `??`, `??=`, `?.` or `?[`, `&&`, `||`, `switch` /
+  `case` / a switch-expression arm, `when`, `catch`, a `while` / `for` / `foreach` condition, or an `is`
+  pattern test. Constructs inside string literals and comments do not count; constructs inside
+  interpolation holes do.
 
-Conditions on a line with none of those constructs are **compiler-generated** and the gate does not
+Conditions on a statement with none of those constructs are **compiler-generated** and the gate does not
 count them: the state-machine branches behind a bare `await`, the null checks of an object or collection
 initializer, and similar. No test can target them as such, and covering the code around them already
 proves what the author wrote. Counting them would make 100% unreachable for reasons that say nothing
@@ -108,12 +109,23 @@ Two consequences worth knowing:
   statement, or `ArgumentGuard.NotNull(x)` in a Core field or property initializer, rather than
   `x ?? throw new ArgumentNullException(nameof(x))`. The exception is the same and the branch lives in
   the runtime, so it needs no per-constructor test.
-- The rule reads one line at a time. A decision split across lines is matched on the line that carries
-  the construct (`?` and `:` continuation lines count), which is also where the collector reports its
-  conditions.
+- The rule reads the whole statement. The collector reports every condition of a statement on the
+  statement's first line, so a decision on a continuation line (a `?.` starting the second line of a
+  call chain, a `??` inside an object initializer, a `switch` expression in an argument) is counted on a
+  line whose own text has none. Reading only that line once classified such a decision as
+  compiler-generated and hid it (#1305). The statement runs to the `;` that ends it, or to the `{` that
+  opens its block; an initializer's braces are part of it, and so is a `?.` split at the line break
+  (`x?` then `.Member`). A lambda's body is a function of its own whose conditions the collector reports
+  on the lambda's own lines, so a block body, and an expression body that starts on a continuation
+  line, are not part of the statement. Reading stops at a multi-line string or block comment, whose text
+  a per-line reader would take for code.
 
-The rule and its fixtures are tested in `.github/scripts/tests/Find-UncoveredNewLines.Tests.ps1`. Change
-both together.
+The rule is tested in `.github/scripts/tests/Find-UncoveredNewLines.Tests.ps1`. Change both together.
+Those tests never read a stored coverage report: they build the small libraries under
+`.github/scripts/tests/shapes/` and run each as two test processes under the real collector, with the
+settings and versions CI uses (`New-ShapesCoverage.ps1`), so the gate is tested against what the
+collector writes today. A new shape the gate must handle is added there as code, never as a report.
+The collector cannot instrument on macOS, so run them on Linux (CI's "Test · Pipeline scripts" job does).
 
 ### Outcomes taken in different test processes
 
@@ -124,10 +136,26 @@ that took the same one, so the gate can never add them up. It keeps the best cou
 the **binary** report (`*.coverage`) each process writes beside its Cobertura one. Those record every
 block's hit and merge exactly (`dotnet-coverage merge`). The collector counts an outcome as taken when
 the block it leads to ran, so once every block of a function ran in some process, every outcome in it
-was taken, whichever process took it, and the gate counts those lines as covered. A line in a function
-with a block no test ran keeps the reports' count: which of its outcomes is missing cannot be told
-without the IL, so nothing is claimed. A decision whose two outcomes run in two different suites is
-therefore covered as soon as the rest of its function is.
+was taken, whichever process took it, and the gate counts those lines as covered. A decision whose two
+outcomes run in two different suites is therefore covered as soon as the rest of its function is.
+
+A function with a block no test ran does not end the proof. A statement that only branches within
+itself (a `?.`, `??`, `?:`, `&&` or `||` with no `if`, loop, `switch`, `case`, `when`, `catch`,
+`await`, `yield`, `using`, `try` or jump in it) sends each outcome either to a block of the statement or
+to the code it falls through to. So when every block on the statement ran and the range after it in its
+function ran too, every outcome was taken, whatever else in the function went untested. That is the case
+of a `metrics?.Record(...)` whose null outcome ran in one suite and the other in another, inside a loop
+with an unrelated untested branch (#1305). Each condition is checked against what the block data shows:
+
+- a block on the statement that never ran (a `?.` no test took both ways) leaves it uncovered;
+- an `if`, loop or `switch` sends its outcomes to blocks elsewhere in the function, and `await` adds the
+  state machine's hidden blocks, so such a statement is never proven this way, even when every block on
+  its own line ran;
+- a statement whose following code never ran is not proven either: a `bomb?.Fail()` whose only path
+  threw never reached the code its null outcome would have jumped to.
+
+Anything else in a function with an unrun block keeps the reports' count: which of its outcomes is
+missing cannot be told without the IL, so nothing is claimed.
 
 One more piece of evidence is exact without the IL: an `if (...) {` whose body sits on lines of its
 own. C# cannot jump into a block from outside it, so the body is entered only through the true

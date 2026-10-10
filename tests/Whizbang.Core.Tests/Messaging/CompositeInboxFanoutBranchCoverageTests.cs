@@ -130,6 +130,20 @@ public class CompositeInboxFanoutBranchCoverageTests {
       .Because("with no hop carrying an AggregateId, the stream falls back to the composite's own id");
   }
 
+  [Test]
+  public async Task TryExpand_NoSerializer_ThrowsAsync() {
+    var source = new MessageEnvelope<JsonElement> {
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+      MessageId = MessageId.New(),
+      Payload = JsonSerializer.SerializeToElement(new { }),
+      Hops = [],
+    };
+    await using var scope = new ServiceCollection().BuildServiceProvider();
+
+    await Assert.That(() => CompositeInboxFanout.TryExpand(new Composite(new ChildEvent("a")), source, scope))
+      .ThrowsExactly<InvalidOperationException>().WithMessageContaining("IEnvelopeSerializer is required");
+  }
+
   // ---- classification of a non-event child ------------------------------------------------------
 
   [Test]

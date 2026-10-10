@@ -1848,6 +1848,27 @@ public class ReceptorInvokerTests {
     await Assert.That(accessor.LastSetContext.CallerInfo.CallerLineNumber).IsEqualTo(42);
   }
 
+  [Test]
+  public async Task CallerInfo_NoFileOrLine_DefaultsAsync() {
+    var registry = new TestReceptorRegistry(new InvocationTracker());
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+    var accessor = new TestMessageContextAccessor();
+    var provider = new ServiceCollection().AddSingleton<IMessageContextAccessor>(accessor).BuildServiceProvider();
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = new TestMessage("m"),
+      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown, CallerMemberName = "M" }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    await new ReceptorInvoker(registry, provider).InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    var caller = accessor.LastSetContext!.CallerInfo!;
+    await Assert.That(caller.CallerMemberName).IsEqualTo("M");
+    await Assert.That(caller.CallerFilePath).IsEqualTo(string.Empty);
+    await Assert.That(caller.CallerLineNumber).IsEqualTo(0);
+  }
+
   /// <summary>
   /// Verifies that CallerInfo is null when no hops have CallerMemberName.
   /// </summary>

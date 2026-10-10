@@ -39,6 +39,23 @@ public class RabbitMQControlClassTtlTests {
   }
 
   [Test]
+  public async Task PublishAsync_VeryLongLifetime_EncodesExactWholeMillisecondsAsync() {
+    // A lifetime near the top of TimeSpan's range still fits a millisecond count with room to spare
+    // (TimeSpan tops out at long.MaxValue ticks), so it is encoded exactly rather than clamped.
+    var channel = new RecordingChannel();
+    var connection = new FakeConnection(() => Task.FromResult<IChannel>(channel));
+    var transport = await RabbitTestWire.NewInitializedTransportAsync(connection);
+    var lifetime = TimeSpan.FromDays(10_000_000);
+
+    await transport.PublishAsync(
+      RabbitTestWire.NewEnvelope(),
+      ControlMessageTtl.Stamp(new TransportDestination("control-exchange"), lifetime));
+
+    await Assert.That(channel.Published[0].Properties.Expiration)
+      .IsEqualTo((10_000_000L * 86_400_000L).ToString(CultureInfo.InvariantCulture));
+  }
+
+  [Test]
   public async Task PublishAsync_NoTtlStamp_LeavesExpirationUnsetAsync() {
     // The no-op guarantee: an unstamped publish keeps the pre-phase-9 wire shape exactly.
     var channel = new RecordingChannel();

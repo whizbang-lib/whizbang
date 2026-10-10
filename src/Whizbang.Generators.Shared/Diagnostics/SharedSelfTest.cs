@@ -106,12 +106,11 @@ public static class SharedSelfTest {
   private static void _expectValid(List<string> failures, string kind, string? result) =>
     _expect(failures, result == null, $"{kind}: a name within the limit was rejected -- {result}");
 
-  private static void _expectRejected(List<string> failures, string kind, string? result) {
-    _expect(failures, result != null, $"{kind}: a name over the limit was accepted");
-    // Skipped when the name was wrongly accepted at all -- the line above already reported that,
-    // and a second message about a missing provider name in a null result would only mislead.
+  // One check covers both ways a rejection can go wrong. A name wrongly accepted answers null, which
+  // string.Concat reads as empty, so it fails the same test as a message that does not name the provider,
+  // and the failure reports what came back either way.
+  private static void _expectRejected(List<string> failures, string kind, string? result) =>
     _expect(failures,
-      result == null || result.IndexOf("SelfTest", System.StringComparison.Ordinal) >= 0,
-      $"{kind}: the message must name the provider so the author knows which limit -- got '{result}'");
-  }
+      string.Concat(result, string.Empty).IndexOf("SelfTest", System.StringComparison.Ordinal) >= 0,
+      $"{kind}: a name over the limit must be rejected with a message naming the provider, so the author knows which limit -- got '{result}' (empty means it was accepted)");
 }

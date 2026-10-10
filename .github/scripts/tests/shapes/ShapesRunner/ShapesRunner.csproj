@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Not named Whizbang.*, so the collector measures only the library it exercises. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../src/Whizbang.Shapes/Whizbang.Shapes.csproj" />
+  </ItemGroup>
+</Project>

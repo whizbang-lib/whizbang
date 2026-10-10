@@ -21,6 +21,9 @@ public partial class MessageRegistryGeneratorBranchTests {
   [GeneratedRegex(@"""+type""+:\s*""+(?<type>[^""]+)""+,\s*""+isCommand""+:\s*(?<command>true|false),\s*""+isEvent""+:\s*(?<event>true|false)")]
   private static partial Regex _messageHeader();
 
+  [GeneratedRegex(@"global::TestNamespace\.ShipOrderReceptor""+,\s*""+method""+:\s*""+HandleAsync""+,\s*""+filePath""+:\s*""+[^""]*""+,\s*""+lineNumber""+:\s*(?<line>\d+)")]
+  private static partial Regex _shipOrderReceptorEntry();
+
   private static Dictionary<string, (bool IsCommand, bool IsEvent)> _classified(string registry) =>
     _messageHeader().Matches(registry).ToDictionary(
       m => m.Groups["type"].Value,
@@ -108,5 +111,74 @@ public partial class MessageRegistryGeneratorBranchTests {
     await Assert.That(registry).Contains("global::App.Ping")
       .Because("the control: the message itself is still registered");
     await Assert.That(registry).DoesNotContain("App.Sender");
+  }
+
+  /// <summary>
+  /// A receptor that inherits its HandleAsync declares no such method in its own body. Its registry
+  /// entry then points at the class declaration, the nearest source line that belongs to it, rather than
+  /// at a method of another type or at nothing.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task ReceptorInheritingHandleAsync_PointsAtItsClassDeclarationAsync() {
+    const string source = """
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Whizbang.Core;
+
+      namespace TestNamespace;
+
+      public record ShipOrder(string Id) : ICommand;
+
+      public class ShipOrderReceptorBase {
+        public ValueTask HandleAsync(ShipOrder message, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+      }
+
+      public class ShipOrderReceptor : ShipOrderReceptorBase, IReceptor<ShipOrder> {
+      }
+      """;
+    var classLine = Array.FindIndex(source.Split('\n'), l => l.Contains("public class ShipOrderReceptor :", StringComparison.Ordinal)) + 1;
+
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(source);
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs") ?? "";
+    var entry = _shipOrderReceptorEntry().Match(registry);
+
+    await Assert.That(entry.Success).IsTrue();
+    await Assert.That(int.Parse(entry.Groups["line"].Value, System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(classLine)
+      .Because("with no HandleAsync in its own body, the receptor is located by its class declaration");
+  }
+
+  /// <summary>
+  /// A class written inside a method body is not legal C#, but the compiler's error recovery still binds
+  /// it, as a member of the enclosing type. A dispatch inside it is therefore attributed to that real type
+  /// (Host.Local), which is why the registry never needs a placeholder for a type it could not name.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task DispatchInsideAClassWrittenInAMethodBody_IsAttributedToTheRecoveredTypeAsync() {
+    const string source = """
+      using System.Threading.Tasks;
+      using Whizbang.Core;
+
+      namespace TestNamespace;
+
+      public record Pinged(string Id) : IEvent;
+
+      public class Host {
+        public void Run(IDispatcher dispatcher) {
+          class Local {
+            public Task GoAsync(IDispatcher d) => d.PublishAsync(new Pinged("p"));
+          }
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(source);
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs") ?? "";
+
+    await Assert.That(result.Results.SelectMany(r => r.Diagnostics).Where(d => d.Severity == DiagnosticSeverity.Error)).IsEmpty();
+    await Assert.That(registry).Contains("global::TestNamespace.Host.Local")
+      .Because("error recovery binds the misplaced class, so the dispatch has a real type to be recorded under");
+    await Assert.That(registry).DoesNotContain("<unknown>");
   }
 }

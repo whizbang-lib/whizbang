@@ -112,12 +112,9 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       .Where(a => !hookPlan.RemovedModelFields.Contains(a.PathName))
       .ToList();
 
-    var entityType = dbContext.Model.FindEntityType(typeof(PerspectiveRow<TModel>))
-      ?? throw new InvalidOperationException(
-        $"PerspectiveRow<{typeof(TModel).Name}> is not mapped in the DbContext model.");
-    var table = entityType.GetTableName()
-      ?? throw new InvalidOperationException($"PerspectiveRow<{typeof(TModel).Name}> has no table name.");
-    var schema = entityType.GetSchema();
+    var (table, schema) = PerspectiveRowTable.Resolve(
+      dbContext.Model, typeof(PerspectiveRow<TModel>), typeof(TModel).Name,
+      "the collective event's perspective is not registered in this DbContext.");
     var qualifiedTable = schema is null ? "\"" + table + "\"" : "\"" + schema + "\".\"" + table + "\"";
 
     var (setList, setParameters) = _compileSetList(assignments);

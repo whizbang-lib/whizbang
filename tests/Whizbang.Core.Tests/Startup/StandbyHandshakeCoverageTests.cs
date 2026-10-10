@@ -85,4 +85,28 @@ public class StandbyHandshakeCoverageTests {
     await Assert.That(acknowledged).IsEmpty()
       .Because("a peer that stopped heartbeating stops counting, and a same-or-newer peer is never asked to stand by — with both excluded and nothing else blocking, the wait must complete on the first pass instead of looping on peers that will never acknowledge");
   }
+
+  /// <summary>What breaks (#1286): an older peer holding its alive-lock beats on the slow cadence, so
+  /// its heartbeat is past the liveness window for half of every beat. Excused on the heartbeat
+  /// alone, it would no longer count, and the migration could run while it still serves against the
+  /// old schema. Counted, its acknowledgment is what the handshake reports.</summary>
+  [Test]
+  public async Task AwaitPeersStandingByAsync_AnOlderPeerHoldingItsAliveLock_StillCountsAsync() {
+    var self = Guid.NewGuid();
+    var olderPeer = Guid.NewGuid();
+    var fleet = new List<FleetInstanceStatus> {
+      new(olderPeer, "svc", "host", DateTimeOffset.UtcNow.AddSeconds(-45), [],
+        LifecyclePhase: "StandingBy", LibraryVersion: "0.5.0", AliveLockHeld: true),
+    };
+    var handshake = new StandbyHandshake(
+      scopeFactory: _emptyScopeFactory(),
+      fleetSource: new FakeFleetSource(fleet),
+      instanceProvider: new FakeInstanceProvider(self),
+      logger: NullLogger<StandbyHandshake>.Instance);
+
+    var acknowledged = await handshake.AwaitPeersStandingByAsync("1.0.0", CancellationToken.None);
+
+    await Assert.That(acknowledged).IsEquivalentTo([olderPeer])
+      .Because("a peer live by its lock is still a peer, whatever its heartbeat's age; skipped, it could not be waited for");
+  }
 }
