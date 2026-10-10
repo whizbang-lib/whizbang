@@ -877,7 +877,7 @@
 "Whizbang.Core.Tests","tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorBranchCoverageTests.cs","MessageHopSecurityExtractorBranchCoverageTests","20","Test","2","Unit","","","",""
 "Whizbang.Core.Tests","tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorCoverageTests.cs","MessageHopSecurityExtractorCoverageTests","25","Test","1","Unit","","","",""
 "Whizbang.Core.Tests","tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorTests.cs","MessageHopSecurityExtractorTests","21","Test","36","Unit","","","",""
-"Whizbang.Core.Tests","tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs","MessageSecurityContextProviderTests","24","Test","17","Component","TaskDelay","TaskDelay L297,L360","",""
+"Whizbang.Core.Tests","tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs","MessageSecurityContextProviderTests","25","Test","17","Unit","","","",""
 "Whizbang.Core.Tests","tests/Whizbang.Core.Tests/Security/MessageSecurityIntegrationTests.cs","MessageSecurityIntegrationTests","22","Test","9","Unit","","","",""
 "Whizbang.Core.Tests","tests/Whizbang.Core.Tests/Security/MessageSecurityOptionsTests.cs","MessageSecurityOptionsTests","14","Test","13","Unit","","","",""
 "Whizbang.Core.Tests","tests/Whizbang.Core.Tests/Security/MessageSecurityServiceCollectionExtensionsTests.cs","MessageSecurityServiceCollectionExtensionsTests","17","Test","25","Unit","","","",""

@@ -31,15 +31,18 @@ namespace Whizbang.Core.Security;
 /// <param name="callbacks">Callbacks to invoke after context establishment</param>
 /// <param name="options">Security options</param>
 /// <param name="onAuditEvent">Optional callback for audit events (for testing/custom audit)</param>
+/// <param name="timeProvider">The clock the extraction timeout runs on; the system clock when null.</param>
 public sealed class DefaultMessageSecurityContextProvider(
   IEnumerable<ISecurityContextExtractor> extractors,
   IEnumerable<ISecurityContextCallback> callbacks,
   MessageSecurityOptions options,
-  Action<ScopeContextEstablished>? onAuditEvent = null) : IMessageSecurityContextProvider {
+  Action<ScopeContextEstablished>? onAuditEvent = null,
+  TimeProvider? timeProvider = null) : IMessageSecurityContextProvider {
   private readonly IReadOnlyList<ISecurityContextExtractor> _extractors = [.. extractors.OrderBy(e => e.Priority)];
   private readonly IReadOnlyList<ISecurityContextCallback> _callbacks = [.. callbacks];
   private readonly MessageSecurityOptions _options = ArgumentGuard.NotNull(options);
   private readonly Action<ScopeContextEstablished>? _onAuditEvent = onAuditEvent;
+  private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
   /// <inheritdoc />
   public ValueTask<IScopeContext?> EstablishContextAsync(
@@ -105,7 +108,7 @@ public sealed class DefaultMessageSecurityContextProvider(
   private async ValueTask<SecurityExtraction?> _tryExtractWithTimeoutAsync(
       IMessageEnvelope envelope,
       CancellationToken cancellationToken) {
-    using var timeoutCts = new CancellationTokenSource(_options.Timeout);
+    using var timeoutCts = new CancellationTokenSource(_options.Timeout, _timeProvider);
     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
     try {

@@ -183,7 +183,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | ECommerce.PaymentWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.ShippingWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | Whizbang.CLI.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
-| Whizbang.Core.Tests | 1169 | 1 | 0 | 0 | 1170 | 0 |
+| Whizbang.Core.Tests | 1170 | 0 | 0 | 0 | 1170 | 0 |
 | Whizbang.Data.Schema.Tests | 30 | 0 | 0 | 0 | 30 | 0 |
 | Whizbang.Data.Tests | 11 | 0 | 0 | 0 | 11 | 0 |
 | Whizbang.Documentation.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
@@ -207,7 +207,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 0 | 23 | 0 |
 | Whizbang.Transports.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
-| **Total** | 1795 | 1 | 0 | 0 | 1796 | 3 |
+| **Total** | 1796 | 0 | 0 | 0 | 1796 | 3 |
 
 ## Worklist: non-unit types by project
 
@@ -260,11 +260,7 @@ All 6 types are unit-pure.
 
 ### Whizbang.Core.Tests
 
-1 of 1285 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| MessageSecurityContextProviderTests | `tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs` | 17 | Component | TaskDelay |  |  |
+All 1285 types are unit-pure.
 
 ### Whizbang.Data.Schema.Tests
 
