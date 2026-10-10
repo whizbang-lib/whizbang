@@ -31,6 +31,7 @@ public class GraphQLLensScopeSchemaTests {
   private static readonly string[] _noDataFields = ["createdAt", "id", "metadata", "scope", "updatedAt", "version"];
   private static readonly string[] _dataAndSystemFields = ["createdAt", "data", "id", "updatedAt", "version"];
   private static readonly string[] _dataAndMetadataFields = ["data", "metadata"];
+  private static readonly string[] _nameOnly = ["name"];
 
   [Test]
   [RequiresAssemblyFiles]
@@ -196,6 +197,25 @@ public class GraphQLLensScopeSchemaTests {
     await Assert.That(typesWithScopeField).IsEmpty();
   }
 
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ProtectedModelField_IsMaskableAndLeftOutOfTheLensFilterAndSortInputsAsync() {
+    // The interceptor AddWhizbangLenses registers reaches the model type behind the generated row's data
+    // field: the protected field is nullable (Hide returns null) and cannot be filtered or sorted by.
+    var schema = await _buildSchemaAsync(
+        """[GraphQLLens(QueryName = "items", Scope = GraphQLLensScopes.DataOnly)]""",
+        modelMembers: """
+          [Whizbang.Core.Security.Attributes.FieldPermission("pii:view")]
+          public string Secret { get; set; } = "";
+          """);
+
+    var data = (ObjectType)_rowType(schema, "items").Fields["data"].Type.NamedType();
+    await Assert.That(data.Fields["secret"].Type.IsNonNullType()).IsFalse();
+    await Assert.That(data.Fields["name"].Type.IsNonNullType()).IsTrue();
+    await Assert.That(_dataInputFieldNames(schema, "items", "where")).IsEquivalentTo(_nameOnly);
+    await Assert.That(_dataInputFieldNames(schema, "items", "order")).IsEquivalentTo(_nameOnly);
+  }
+
   // --- Harness --------------------------------------------------------------
 
   [RequiresAssemblyFiles]
@@ -203,7 +223,8 @@ public class GraphQLLensScopeSchemaTests {
       string lensDeclaration,
       Action<WhizbangGraphQLOptions>? configure = null,
       bool registerWhizbangLenses = true,
-      bool declarationIsComplete = false) {
+      bool declarationIsComplete = false,
+      string modelMembers = "") {
     var declarations = declarationIsComplete
         ? lensDeclaration
         : lensDeclaration + "\npublic interface IItemLens : ILensQuery<ItemModel> { }";
@@ -220,6 +241,7 @@ public class GraphQLLensScopeSchemaTests {
 
         public sealed class ItemModel {
           public string Name { get; set; } = "";
+          {{modelMembers}}
         }
 
         {{declarations}}
@@ -278,6 +300,12 @@ public class GraphQLLensScopeSchemaTests {
 
   private static string[] _rowFieldNames(ISchema schema, string queryField) =>
       [.. _rowType(schema, queryField).Fields.Where(f => !f.IsIntrospectionField).Select(f => f.Name).Order(StringComparer.Ordinal)];
+
+  private static string[] _dataInputFieldNames(ISchema schema, string queryField, string argument) {
+    var row = (InputObjectType)schema.QueryType.Fields[queryField].Arguments[argument].Type.NamedType();
+    var data = (InputObjectType)row.Fields["data"].Type.NamedType();
+    return [.. data.Fields.Select(f => f.Name).Where(n => n is not ("and" or "or")).Order(StringComparer.Ordinal)];
+  }
 
   private static string[] _filterFieldNames(ISchema schema, string queryField) =>
       _inputFieldNames(schema, queryField, "where", exclude: ["and", "or"]);

@@ -95,4 +95,32 @@ public class MultiPassMessageTypeBinderTests {
 
     await Assert.That(type).IsEqualTo(typeof(System.Collections.Generic.List<int>));
   }
+
+  [Test]
+  public async Task Bind_PastTheCacheCapacity_StillResolvesButCachesNoMoreAsync() {
+    // The names come from senders. Pass 3 ignores the assembly part, so one real type has endless
+    // spellings, and misses are cached too; without a cap every new spelling is held forever.
+    var binder = new MultiPassMessageTypeBinder(capacity: 3);
+
+    for (var i = 0; i < 3; i++) {
+      _ = binder.Bind($"System.String, Spelling{i}");
+    }
+    var past = binder.BindWithDiagnostics("System.String, SpellingPastTheCap");
+    var missPast = binder.BindWithDiagnostics("No.Such.Type, Anything");
+
+    await Assert.That(past.Type).IsEqualTo(typeof(string));
+    await Assert.That(missPast.Pass).IsEqualTo(MessageTypeBinderPass.Miss);
+    await Assert.That(binder.CachedCount).IsEqualTo(3)
+      .Because("a full cache keeps answering but stops growing");
+  }
+
+  [Test]
+  public async Task Bind_DefaultCapacity_IsBoundedAsync() {
+    await Assert.That(new MultiPassMessageTypeBinder().Capacity).IsEqualTo(MultiPassMessageTypeBinder.DEFAULT_CAPACITY);
+  }
+
+  [Test]
+  public async Task Constructor_ACapacityBelowOne_IsRejectedAsync() {
+    await Assert.That(() => new MultiPassMessageTypeBinder(capacity: 0)).Throws<ArgumentOutOfRangeException>();
+  }
 }

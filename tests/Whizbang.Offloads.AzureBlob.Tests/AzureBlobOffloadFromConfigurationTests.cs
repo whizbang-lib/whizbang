@@ -36,6 +36,7 @@ public class AzureBlobOffloadFromConfigurationTests {
       ["Whizbang:Offloads:AzureBlob:consumer-offload:ContainerName"] = "whizbang-offload-bodies-prod",
       ["Whizbang:BodyOffload:ProviderName"] = "consumer-offload",
       ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",
+      ["Whizbang:BodyOffload:RequireSealedBodies"] = "true",
       ["Whizbang:BodyOffload:Cipher:KeyId"] = "kek-2026-09",
       ["Whizbang:BodyOffload:Cipher:KeyEncryptionKey"] = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
     });
@@ -47,6 +48,8 @@ public class AzureBlobOffloadFromConfigurationTests {
     var bodyOptions = provider.GetRequiredService<IOptionsMonitor<MessageBodyOffloadOptions>>().CurrentValue;
     await Assert.That(bodyOptions.CipherName).IsEqualTo("body-aes-v1")
       .Because("the send side seals only when the options name the cipher");
+    await Assert.That(bodyOptions.RequireSealedBodies).IsTrue()
+      .Because("the receive side refuses unsealed bodies when the settings say so");
     var cipher = provider.GetKeyedService<IMessageBodyCipher>("body-aes-v1");
     await Assert.That(cipher).IsNotNull()
       .Because("the cipher named in settings is registered under that name from the same settings");
@@ -201,6 +204,7 @@ public class AzureBlobOffloadFromConfigurationTests {
       ["Whizbang:BodyOffload:ProviderName"] = "",
       ["Whizbang:BodyOffload:SizeThresholdBytes"] = "NaN",
       ["Whizbang:BodyOffload:ActiveCleanup"] = "not-a-bool",
+      ["Whizbang:BodyOffload:RequireSealedBodies"] = "not-a-bool",
     });
 
     var services = new ServiceCollection();
@@ -217,5 +221,6 @@ public class AzureBlobOffloadFromConfigurationTests {
     await Assert.That(bodyOptions.ProviderName).IsNull();
     await Assert.That(bodyOptions.SizeThresholdBytes).IsEqualTo(64L * 1024L);
     await Assert.That(bodyOptions.ActiveCleanup).IsFalse();
+    await Assert.That(bodyOptions.RequireSealedBodies).IsFalse();
   }
 }

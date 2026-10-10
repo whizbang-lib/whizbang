@@ -90,4 +90,16 @@ public class ManagedSchemaManifestGenerationTests {
       "services.AddKeyedSingleton<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof(global::TestApp.LedgerDbContext)");
     await Assert.That(registration).Contains("global::TestApp.Generated.LedgerDbContextSchemaExtensions.GetManagedSchemaObjects");
   }
+
+  [Test]
+  public async Task TheRegistration_KeysTheSchemaInitConnectionByItsContextAsync() {
+    // Schema work after startup reads the -init connection from here, resolved under the name startup uses.
+    var (_, registration) = await _generateAsync();
+
+    await Assert.That(registration).Contains(
+      "services.RemoveAllKeyed<global::Whizbang.Data.EFCore.Postgres.SchemaInitConnection>(typeof(global::TestApp.LedgerDbContext));");
+    await Assert.That(registration).Contains(
+      "services.AddKeyedSingleton<global::Whizbang.Data.EFCore.Postgres.SchemaInitConnection>(typeof(global::TestApp.LedgerDbContext), (sp, _) =>");
+    await Assert.That(registration).Contains("global::Whizbang.Data.EFCore.Postgres.SchemaInitConnection.FromConfiguration(");
+  }
 }

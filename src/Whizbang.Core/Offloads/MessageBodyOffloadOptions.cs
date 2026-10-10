@@ -29,6 +29,15 @@ public sealed class MessageBodyOffloadOptions {
   public string? CipherName { get; set; }
 
   /// <summary>
+  /// When <see langword="true"/>, a receiver refuses any body claim that carries no cipher descriptor
+  /// and dead-letters it as <see cref="Messaging.MessageFailureReason.BodyClaimUnsealed"/> without
+  /// fetching the body. Off by default so sealing can be turned on one sender at a time; turn it on
+  /// for a receiver once every sender it hears from sets <see cref="CipherName"/>. Without it, anyone
+  /// able to write the store and send a claim can hand the receiver a body in the clear.
+  /// </summary>
+  public bool RequireSealedBodies { get; set; }
+
+  /// <summary>
   /// Body size in bytes at or above which offload kicks in. Set BELOW the
   /// transport's <c>MaxMessageSizeBytes</c> to leave headroom for envelope
   /// metadata (typical: 64 KB for Azure Service Bus Standard's 256 KB

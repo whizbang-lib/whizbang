@@ -35,6 +35,7 @@ public class MessageBodyOffloadOptionsBindingTests {
       ("SizeThresholdBytes", "4096"),
       ("ActiveCleanup", "true"),
       ("CipherName", "aes-gcm"),
+      ("RequireSealedBodies", "true"),
       ("PassiveExpiry", "7.00:00:00"),
       ("PassiveSweepClaimWindow", "00:30:00"),
       ("PassiveSweepBatchSize", "250"),
@@ -45,6 +46,7 @@ public class MessageBodyOffloadOptionsBindingTests {
     await Assert.That(options.SizeThresholdBytes).IsEqualTo(4096L);
     await Assert.That(options.ActiveCleanup).IsTrue();
     await Assert.That(options.CipherName).IsEqualTo("aes-gcm");
+    await Assert.That(options.RequireSealedBodies).IsTrue();
     await Assert.That(options.PassiveExpiry).IsEqualTo(TimeSpan.FromDays(7));
     await Assert.That(options.PassiveSweepClaimWindow).IsEqualTo(TimeSpan.FromMinutes(30));
     await Assert.That(options.PassiveSweepBatchSize).IsEqualTo(250);
@@ -71,6 +73,7 @@ public class MessageBodyOffloadOptionsBindingTests {
     var options = _bound(
       ("SizeThresholdBytes", "big"),
       ("ActiveCleanup", "sometimes"),
+      ("RequireSealedBodies", "perhaps"),
       ("PassiveExpiry", "soon"),
       ("PassiveSweepClaimWindow", "later"),
       ("PassiveSweepBatchSize", "many"),
@@ -79,6 +82,7 @@ public class MessageBodyOffloadOptionsBindingTests {
 
     await Assert.That(options.SizeThresholdBytes).IsEqualTo(defaults.SizeThresholdBytes);
     await Assert.That(options.ActiveCleanup).IsEqualTo(defaults.ActiveCleanup);
+    await Assert.That(options.RequireSealedBodies).IsEqualTo(defaults.RequireSealedBodies);
     await Assert.That(options.PassiveExpiry).IsEqualTo(defaults.PassiveExpiry);
     await Assert.That(options.PassiveSweepClaimWindow).IsEqualTo(defaults.PassiveSweepClaimWindow);
     await Assert.That(options.PassiveSweepBatchSize).IsEqualTo(defaults.PassiveSweepBatchSize);

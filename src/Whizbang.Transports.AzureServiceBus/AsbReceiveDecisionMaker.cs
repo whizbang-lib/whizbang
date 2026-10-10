@@ -113,8 +113,9 @@ internal class AsbReceiveDecisionMaker {
       envelopeTypeName, isClaimHeader, jsonOptions, getTypeInfoByName);
 
     // Slice 4 (ASB-specific) — on a registry miss for a non-claim message, fall back to the
-    // multi-pass type binder. STJ's resolver can produce a JsonTypeInfo for any loadable type,
-    // even if no [ModuleInitializer] registered it explicitly.
+    // multi-pass type binder, which finds the type under a renamed assembly or a different version.
+    // Binding never widens what can be read: only a type some registered JSON context describes yields
+    // a JsonTypeInfo, so a sender naming any other loadable type is dropped below.
     if (typeInfo == null
         && !Whizbang.Core.Offloads.BodyClaimWireHelper.IsClaimHeader(isClaimHeader)
         && typeBinder != null) {

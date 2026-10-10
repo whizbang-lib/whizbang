@@ -42,6 +42,10 @@ internal sealed class MessageBodyOffloadOptionsPostConfigure(IConfiguration conf
       options.ActiveCleanup = activeCleanup;
     }
 
+    if (bool.TryParse(section[nameof(MessageBodyOffloadOptions.RequireSealedBodies)], out var requireSealed)) {
+      options.RequireSealedBodies = requireSealed;
+    }
+
     _timeSpan(section, nameof(MessageBodyOffloadOptions.PassiveExpiry), v => options.PassiveExpiry = v);
     _timeSpan(section, nameof(MessageBodyOffloadOptions.PassiveSweepClaimWindow), v => options.PassiveSweepClaimWindow = v);
     _int(section, nameof(MessageBodyOffloadOptions.PassiveSweepBatchSize), v => options.PassiveSweepBatchSize = v);

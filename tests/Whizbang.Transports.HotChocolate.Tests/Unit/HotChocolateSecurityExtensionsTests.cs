@@ -28,7 +28,9 @@ public class HotChocolateSecurityExtensionsTests {
           d.Name("Query");
           d.Field("hello").Type<StringType>().Resolve("world");
           d.Field("boom").Type<StringType>().Resolve<string>(_ => _throwBoom());
-        });
+          d.Field("node").Type<NodeType>().Resolve(new Node());
+        })
+        .AddType<NodeType>();
 
     if (preEnableExceptionDetails) {
       // Simulates a host that (like a dev-oriented default) turned details on earlier in the chain —
@@ -42,6 +44,24 @@ public class HotChocolateSecurityExtensionsTests {
 
     return services.BuildServiceProvider();
   }
+
+  // A self-referencing type, so a query can be made as deep as a test needs.
+  private sealed class Node {
+    public string Name { get; } = "n";
+  }
+
+  private sealed class NodeType : ObjectType<Node> {
+    protected override void Configure(IObjectTypeDescriptor<Node> descriptor) {
+      descriptor.Name("Node");
+      descriptor.Field(n => n.Name);
+      descriptor.Field("child").Type<NodeType>().Resolve(new Node());
+    }
+  }
+
+  // "{ node { child { child ... { name } } } }" with the given number of child levels.
+  private static string _nestedQuery(int childLevels)
+    => "{ node { " + string.Concat(Enumerable.Repeat("child { ", childLevels)) + "name"
+      + string.Concat(Enumerable.Repeat(" }", childLevels)) + " } }";
 
   private static string _throwBoom()
     => throw new InvalidOperationException("secret-internal-detail");
@@ -116,5 +136,63 @@ public class HotChocolateSecurityExtensionsTests {
     await Assert.That(json).Contains("does not exist")
       .Because("The unknown-field validation error itself is expected.");
     await Assert.That(json).DoesNotContain("Did you mean");
+  }
+
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task AQueryDeeperThanTheLimit_IsRejectedBeforeItRunsAsync(bool isProduction) {
+    // Depth multiplies resolver work and is not bounded by HotChocolate's defaults. The limit applies in
+    // every environment, so a query that development accepts is never one production refuses.
+    await using var provider = _createProvider(isProduction);
+
+    var json = await _executeToJsonAsync(provider,
+      _nestedQuery(HotChocolateSecurityExtensions.DEFAULT_MAX_EXECUTION_DEPTH + 1));
+
+    await Assert.That(json).Contains("depth")
+      .Because("the validation error names the execution-depth rule");
+    await Assert.That(json).DoesNotContain("\"name\"")
+      .Because("a rejected query resolves nothing");
+  }
+
+  [Test]
+  public async Task AQueryAtTheLimit_RunsAsync() {
+    await using var provider = _createProvider(isProduction: true);
+
+    // node is level 1 and name sits one level below the deepest child.
+    var json = await _executeToJsonAsync(provider,
+      _nestedQuery(HotChocolateSecurityExtensions.DEFAULT_MAX_EXECUTION_DEPTH - 2));
+
+    await Assert.That(json).Contains("\"name\"").Because("the deepest field resolved");
+    await Assert.That(json).DoesNotContain("errors");
+  }
+
+  [Test]
+  public async Task TheDepthLimit_CanBeSetByTheHostAsync() {
+    var services = new ServiceCollection();
+    _ = services.AddGraphQL()
+      .AddQueryType(d => {
+        d.Name("Query");
+        d.Field("node").Type<NodeType>().Resolve(new Node());
+      })
+      .AddType<NodeType>()
+      .AddWhizbangGraphQLSecurityDefaults(isProduction: true, maxExecutionDepth: 3);
+    await using var provider = services.BuildServiceProvider();
+
+    var json = await _executeToJsonAsync(provider, _nestedQuery(3));
+
+    await Assert.That(json).Contains("depth");
+  }
+
+  [Test]
+  public async Task Introspection_IsNotCountedAgainstTheDepthLimitInDevelopmentAsync() {
+    // A full introspection query nests ofType a dozen levels deep; development tooling sends one.
+    await using var provider = _createProvider(isProduction: false);
+
+    var json = await _executeToJsonAsync(provider,
+      "{ __schema { types { fields { type { ofType { ofType { ofType { ofType { ofType { ofType { ofType { ofType { ofType { ofType { name } } } } } } } } } } } } } } }");
+
+    await Assert.That(json).DoesNotContain("depth");
+    await Assert.That(json).Contains("__schema");
   }
 }

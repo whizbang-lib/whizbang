@@ -115,7 +115,9 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     var (table, schema) = PerspectiveRowTable.Resolve(
       dbContext.Model, typeof(PerspectiveRow<TModel>), typeof(TModel).Name,
       "the collective event's perspective is not registered in this DbContext.");
-    var qualifiedTable = schema is null ? "\"" + table + "\"" : "\"" + schema + "\".\"" + table + "\"";
+    var qualifiedTable = schema is null
+      ? PgIdentifier.Quote(table)
+      : PgIdentifier.Quote(schema) + "." + PgIdentifier.Quote(table);
 
     var (setList, setParameters) = _compileSetList(assignments);
 

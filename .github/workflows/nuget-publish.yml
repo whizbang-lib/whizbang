@@ -79,6 +79,29 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # A manual publish takes any ref. Only a commit already on a protected branch (develop, main, a release
+      # branch) has passed review and CI, so anything else is refused before it is built. This guards the ref
+      # input; the environment's deployment-branch policy is what guards a dispatch from an unprotected branch,
+      # since that run uses the branch's own copy of this file.
+      - name: Refuse a ref no protected branch contains
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          git fetch --quiet --no-tags origin \
+            '+refs/heads/develop:refs/remotes/origin/develop' \
+            '+refs/heads/main:refs/remotes/origin/main' \
+            '+refs/heads/release/*:refs/remotes/origin/release/*'
+          for branch in $(git for-each-ref --format='%(refname)' refs/remotes/origin/develop refs/remotes/origin/main 'refs/remotes/origin/release/*'); do
+            if git merge-base --is-ancestor "$sha" "$branch"; then
+              echo "$sha is on ${branch#refs/remotes/origin/}; publishing."
+              exit 0
+            fi
+          done
+          echo "::error title=Unreviewed ref::$sha is not on develop, main or a release branch. Merge it through a pull request first."
+          exit 1
 
       - name: Setup .NET
         uses: ./.github/actions/setup-dotnet-retry

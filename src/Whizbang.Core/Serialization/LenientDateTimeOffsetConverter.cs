@@ -60,7 +60,8 @@ public sealed class LenientDateTimeOffsetConverter : JsonConverter<DateTimeOffse
       return new DateTimeOffset(dateTime, TimeSpan.Zero);
     }
 
-    throw new JsonException($"Unable to parse DateTimeOffset from value: {value}");
+    // The value is caller-supplied text: report its length, never its content.
+    throw new JsonException($"Unable to parse DateTimeOffset from a string of length {value.Length}.");
   }
 
   /// <inheritdoc/>

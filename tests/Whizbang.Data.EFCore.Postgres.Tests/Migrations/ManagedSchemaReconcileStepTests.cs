@@ -99,6 +99,59 @@ public class ManagedSchemaReconcileStepTests {
     await Assert.That(await _existsAsync(RETIRED)).IsFalse();
   }
 
+  /// <summary>
+  /// With a schema-initialization connection configured, the reconcile runs through it. The application
+  /// connection here logs in as a role with data rights only, which cannot drop an index it does not own: a
+  /// reconcile on that connection leaves the retired index in place.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task UnderADataOnlyApplicationRole_TheInitConnectionDoesTheSchemaWorkAsync(bool withInitConnection) {
+    var role = $"wh_app_{Guid.NewGuid():N}"[..30];
+    await _execAsync($"""
+      CREATE ROLE {role} LOGIN PASSWORD 'data-only';
+      GRANT USAGE ON SCHEMA public TO {role};
+      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {role};
+      GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {role};
+      GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {role};
+      """);
+    try {
+      var applicationConnection = new NpgsqlConnectionStringBuilder(_connectionString) {
+        Username = role,
+        Password = "data-only",
+      }.ConnectionString;
+      await using var applicationContext = new DocumentIndexesDbContext(
+        new DbContextOptionsBuilder<DocumentIndexesDbContext>()
+          .UseNpgsql(applicationConnection)
+          .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
+          .Options);
+      var services = new ServiceCollection();
+      services.AddSingleton(applicationContext);
+      services.AddKeyedSingleton<ManagedSchemaManifest>(typeof(DocumentIndexesDbContext), new ManagedSchemaManifest(
+        typeof(DocumentIndexesDbContext), "public", DocumentIndexesDbContextSchemaExtensions.GetManagedSchemaObjects));
+      services.AddSingleton<IClaimedEmissionStore>(new GrantingClaims());
+      if (withInitConnection) {
+        services.AddKeyedSingleton<SchemaInitConnection>(typeof(DocumentIndexesDbContext), new SchemaInitConnection(_connectionString));
+      }
+      await using var provider = services.BuildServiceProvider();
+
+      await new ManagedSchemaReconcileStep(typeof(DocumentIndexesDbContext), timeProvider: new FakeTimeProvider(_now))
+        .RunAsync(provider, CancellationToken.None);
+
+      await Assert.That(await _existsAsync(RETIRED)).IsEqualTo(!withInitConnection)
+        .Because(withInitConnection
+          ? "the init connection, which owns the schema, dropped the retired index"
+          : "a data-only role cannot drop an index it does not own");
+    } finally {
+      await _execAsync($"DROP OWNED BY {role}; DROP ROLE {role};");
+    }
+  }
+
+  private sealed class GrantingClaims : IClaimedEmissionStore {
+    public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken) => Task.FromResult(true);
+  }
+
   [Test]
   public async Task ASecondRunInTheSameWindow_ReconcilesNothingAsync() {
     await _execAsync($"SELECT public.wh_pin_object('{TABLE}', '{RETIRED}', 'held for the first run')");

@@ -58,8 +58,14 @@ public static class BodyClaimRehydrator {
         $"Receiver does not have an IMessageBodyStore registered under provider name '{claim.ProviderName}'. Register the matching AddWhizbang*Offload(name) (e.g., AddWhizbangInMemoryOffload, AddWhizbangAzureBlobOffload) on the receiver service.");
     }
 
-    var downloadTimeout = serviceProvider.GetOptionsValue<MessageBodyOffloadOptions>()?.DownloadTimeout
-      ?? TimeSpan.FromSeconds(100);
+    var offloadOptions = serviceProvider.GetOptionsValue<MessageBodyOffloadOptions>();
+    if (claim.Cipher is null && offloadOptions?.RequireSealedBodies == true) {
+      return RehydrateResult.DeadLetter(
+        MessageFailureReason.BodyClaimUnsealed,
+        $"Body claim for storage key '{claim.StorageKey}' on provider '{claim.ProviderName}' is not sealed, and this receiver requires sealed bodies (MessageBodyOffloadOptions.RequireSealedBodies). Configure a cipher on the sender.");
+    }
+
+    var downloadTimeout = offloadOptions?.DownloadTimeout ?? TimeSpan.FromSeconds(100);
     ReadOnlyMemory<byte> downloaded;
     using (var downloadCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)) {
       downloadCts.CancelAfter(downloadTimeout);

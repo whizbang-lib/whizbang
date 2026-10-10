@@ -130,4 +130,23 @@ public class LensQueryShapingTests {
     await Assert.That(new InvalidLensRequestException("why").Message).IsEqualTo("why");
     await Assert.That(new InvalidLensRequestException("why", cause).InnerException).IsSameReferenceAs(cause);
   }
+
+  [Test]
+  [Arguments(1, 10, 0)]
+  [Arguments(3, 10, 20)]
+  [Arguments(0, 10, 0)]
+  [Arguments(-5, 10, 0)]
+  public async Task Skip_IsTheRowsBeforeTheRequestedPageAsync(int page, int pageSize, int expected) {
+    await Assert.That(LensQueryShaping.Skip(page, pageSize)).IsEqualTo(expected);
+  }
+
+  [Test]
+  [Arguments(int.MaxValue, 2)]
+  [Arguments(int.MaxValue, 100)]
+  [Arguments(1_073_741_825, 2)]
+  public async Task Skip_APageBeyondTheIntegerRange_ClampsInsteadOfWrappingNegativeAsync(int page, int pageSize) {
+    // (page - 1) * pageSize computed in int wraps to a negative OFFSET: an error on a database
+    // provider, and the first page instead of an empty one on others.
+    await Assert.That(LensQueryShaping.Skip(page, pageSize)).IsEqualTo(int.MaxValue);
+  }
 }
