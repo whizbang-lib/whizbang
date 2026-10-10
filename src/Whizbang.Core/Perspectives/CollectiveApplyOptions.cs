@@ -93,4 +93,26 @@ public sealed record CollectiveApplyOptions {
 
   /// <summary>The framework default policy.</summary>
   public static CollectiveApplyOptions Default { get; } = new();
+
+  /// <summary>
+  /// The policy for one handler's apply: this policy with the handler's <c>[CollectiveApplyFor]</c>
+  /// overrides folded on. An override of <c>0</c> inherits this policy's value.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="SerializeApplies"/> and the lock-wait knobs stay global: exclusive serialization is not a
+  /// per-handler choice.
+  /// </remarks>
+  /// <param name="entry">The handler's apply entry, carrying its overrides.</param>
+  /// <returns>The effective policy for that handler's apply.</returns>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveApplyOptionsTests.cs</tests>
+  public CollectiveApplyOptions For(CollectiveApplyEntry entry) {
+    ArgumentNullException.ThrowIfNull(entry);
+    return this with {
+      BatchSize = entry.BatchSizeOverride > 0 ? entry.BatchSizeOverride : BatchSize,
+      StatementTimeoutSeconds = entry.StatementTimeoutSecondsOverride > 0
+        ? entry.StatementTimeoutSecondsOverride
+        : StatementTimeoutSeconds,
+    };
+  }
 }
