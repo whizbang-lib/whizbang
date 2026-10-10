@@ -168,17 +168,26 @@ Codecov still receives the per-process reports and merges them its own way.
 ### The whole-library gate
 
 The PR comment's last row, **Whole library (gated)**, shows the coverage of all hand-written library
-code on every PR, and the quality job fails while it is not 100%: every hand-written decision in the
-library is covered, not only the ones a PR adds, so the library stays at 100% once it is there and any
-gap a change uncovers (a refactor that splits a decision, a test removed) is fixed in that change. Lines over
-everything under `src/` that is instrumented and not generated (`src/Whizbang.Testing` is not
-instrumented; `*.g.cs`, `obj/` and the `.whizbang` cache are generated), and outcomes of hand-written
-decisions by the same rule as above. For example, "Whole library: lines 99.9%, hand-written branches
-98.6% (382 outcomes untested)", and once nothing is left, "Whole library: lines 100%, hand-written
-branches 100%, every hand-written decision in the library is covered". Percentages are truncated, so a
-gap never reads as 100%. The gate counts untested outcomes of hand-written decisions; a line no test
-runs is listed in the gap and counted by the new-code gate, and a member excluded with
-`[ExcludeFromCodeCoverage]` is absent from the reports, so it is not counted. That makes every exclusion
+code on every PR, and the quality job fails while either half is not 100%: every line is run by some
+test, and every hand-written decision is covered, not only the ones a PR adds, so the library stays at
+100% once it is there and any gap a change uncovers (a refactor that splits a decision, a test removed)
+is fixed in that change. Lines over everything under `src/` that is instrumented and not generated
+(`src/Whizbang.Testing` is not instrumented; `*.g.cs`, `obj/` and the `.whizbang` cache are generated),
+and outcomes of hand-written decisions by the same rule as above. For example, "Whole library: lines
+99.9% (17 lines never run), hand-written branches 98.6% (382 outcomes untested)", and once nothing is
+left, "Whole library: lines 100%, hand-written branches 100%, every line and every hand-written decision
+in the library is covered". Percentages are truncated, so a gap never reads as 100%, and the line count
+is printed beside the percentage because a library this size truncates 17 uncovered lines and 80 to the
+same figure.
+
+**A line carrying no decision still gates.** It is tempting to read the line half as a weaker signal
+than the branch half, because an auto-property or a record's positional parameter has no logic in it.
+What it has is a contract: a documented default, a value the record promises to carry, the body of a
+default interface method a consumer reaches when it supplies no implementation of its own. An accessor
+no test ever runs is a promise nothing holds anyone to, and the test that pins it is a claim about the
+documented behavior rather than about the number. Assert the **documented** value, not a round-trip:
+"set it and read it back" would pass for any auto-property and so proves nothing. A member excluded with
+`[ExcludeFromCodeCoverage]` is absent from the reports, so it is counted by neither half. That makes every exclusion
 a decision someone has to defend: follow the procedure above, put the reason in the attribute's
 `Justification` and a comment, and, when the reason is an open issue, name the issue so the exclusion
 goes with its fix. The list of what is left is `library-gap.txt` in the `pr-quality-gate` artifact

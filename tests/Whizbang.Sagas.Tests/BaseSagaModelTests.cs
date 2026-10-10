@@ -34,6 +34,9 @@ public class BaseSagaModelTests {
     await Assert.That(saga.CompletedByItemIdentifier).IsNull();
     await Assert.That(saga.StartedAt).IsNull();
     await Assert.That(saga.CompletedAt).IsNull();
+    await Assert.That(saga.Summary).IsNull();
+    await Assert.That(saga.CreatedAt).IsEqualTo(default(DateTimeOffset))
+      .Because("CreatedAt is stamped by the insert, so a model the consumer just constructed carries no wall-clock yet.");
   }
 
   [Test]
