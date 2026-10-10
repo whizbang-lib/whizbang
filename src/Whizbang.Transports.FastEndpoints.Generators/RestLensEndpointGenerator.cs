@@ -21,6 +21,9 @@ namespace Whizbang.Transports.FastEndpoints.Generators;
 public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
   private const string REST_LENS_ATTRIBUTE_NAME = "Whizbang.Transports.FastEndpoints.RestLensAttribute";
   private const string LENS_QUERY_INTERFACE_NAME = "Whizbang.Core.Lenses.ILensQuery";
+  private const string FIELD_PERMISSION_ATTRIBUTE_NAME = "Whizbang.Core.Security.Attributes.FieldPermissionAttribute";
+  private const string JSON_PROPERTY_NAME_ATTRIBUTE_NAME = "System.Text.Json.Serialization.JsonPropertyNameAttribute";
+  private const string FIELD_PERMISSION_JSON = "global::Whizbang.Transports.FastEndpoints.FieldPermissionJson";
 
   /// <inheritdoc />
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -105,7 +108,8 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
         Namespace: TypeNameUtilities.Display(symbol.ContainingNamespace),
         EndpointClassName: endpointClassName,
         FilterCases: _renderFilterCases(fields),
-        SortCases: _renderSortCases(fields)
+        SortCases: _renderSortCases(fields),
+        FieldPermissionRegistrations: _renderFieldPermissionRegistrations(modelType)
     );
   }
 
@@ -140,7 +144,8 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
   /// <summary>
   /// The model's readable, public, instance properties whose value a request can compare and order
   /// by, most-derived first. A name that differs only in case from one already taken is skipped,
-  /// since request field names match ignoring case.
+  /// since request field names match ignoring case. A <c>[FieldPermission]</c> property is never
+  /// offered: a filter would compare the value it hides, and an ordering would rank it.
   /// </summary>
   private static List<ShapedField> _shapedFieldsOf(ITypeSymbol model) {
     var fields = new List<ShapedField>();
@@ -151,7 +156,8 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
         if (property.IsStatic || property.IsIndexer || property.GetMethod is null
             || property.DeclaredAccessibility != Accessibility.Public
             || _kindOf(property.Type) is not { } kind
-            || !taken.Add(property.Name)) {
+            || !taken.Add(property.Name)
+            || _fieldPermissionOf(property) is not null) {
           continue;
         }
 
@@ -164,6 +170,102 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
     }
 
     return fields;
+  }
+
+  /// <summary>
+  /// The property's <c>[FieldPermission]</c>, declared on it or on a property it overrides, as the runtime
+  /// reads it; <see langword="null"/> when it has none.
+  /// </summary>
+  private static AttributeData? _fieldPermissionOf(IPropertySymbol property) {
+    for (var current = property; current is not null; current = current.OverriddenProperty) {
+      var attribute = current.GetAttributes().FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, FIELD_PERMISSION_ATTRIBUTE_NAME));
+      if (attribute is not null) {
+        return attribute;
+      }
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// One registration per <c>[FieldPermission]</c> property of the model and of every type nested inside it
+  /// (property types, list and array element types, generic arguments), each on the type that declares it, so
+  /// the response serializer masks them wherever they appear. Rendered at discovery time, like the filter and
+  /// sort cases, to keep the lens record's value equality.
+  /// </summary>
+  private static string _renderFieldPermissionRegistrations(ITypeSymbol model) {
+    var lines = new List<string>();
+    var seenLines = new HashSet<string>(StringComparer.Ordinal);
+    var visited = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
+    var pending = new Queue<ITypeSymbol>();
+    pending.Enqueue(model);
+
+    while (pending.Count > 0) {
+      var type = pending.Dequeue();
+      if (!visited.Add(type)) {
+        continue;
+      }
+
+      foreach (var nested in _typesWithin(type)) {
+        pending.Enqueue(nested);
+      }
+
+      if (!_hasModelMembers(type)) {
+        continue;
+      }
+
+      for (var declaring = type; declaring is not null; declaring = declaring.BaseType) {
+        foreach (var property in declaring.GetMembers().OfType<IPropertySymbol>()) {
+          if (property.IsStatic || property.IsIndexer || property.GetMethod is null
+              || property.DeclaredAccessibility != Accessibility.Public) {
+            continue;
+          }
+
+          pending.Enqueue(property.Type);
+          if (_fieldPermissionOf(property) is { } attribute) {
+            var line = _renderRegistration(property, attribute);
+            if (seenLines.Add(line)) {
+              lines.Add(line);
+            }
+          }
+        }
+      }
+    }
+
+    return string.Concat(lines);
+  }
+
+  /// <summary>The element type of an array, and the type arguments of a generic type.</summary>
+  private static ImmutableArray<ITypeSymbol> _typesWithin(ITypeSymbol type) => type switch {
+    IArrayTypeSymbol array => [array.ElementType],
+    INamedTypeSymbol named => named.TypeArguments,
+    _ => [],
+  };
+
+  /// <summary>
+  /// Whether the type's own properties are part of a response: a class or struct of the application's, not
+  /// a framework type such as a list or a string.
+  /// </summary>
+  private static bool _hasModelMembers(ITypeSymbol type) =>
+    type.TypeKind is TypeKind.Class or TypeKind.Struct
+    && type.SpecialType == SpecialType.None
+    && !TypeNameUtilities.NamespaceName(type.ContainingNamespace).StartsWith("System", StringComparison.Ordinal);
+
+  private static string _renderRegistration(IPropertySymbol property, AttributeData attribute) {
+    var arguments = attribute.ConstructorArguments;
+    var permission = SymbolDisplay.FormatLiteral($"{arguments[0].Value}", quote: true);
+    var strategy = Convert.ToInt32(arguments[1].Value, CultureInfo.InvariantCulture);
+    var renderedJsonName = property.GetAttributes()
+      .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, JSON_PROPERTY_NAME_ATTRIBUTE_NAME))?
+      .ConstructorArguments[0].Value is string jsonName
+      ? SymbolDisplay.FormatLiteral(jsonName, quote: true)
+      : "null";
+    var isString = _withoutNullable(property.Type).SpecialType == SpecialType.System_String ? "true" : "false";
+
+    return $"    {FIELD_PERMISSION_JSON}.Register(typeof({TypeNameUtilities.FullyQualified(property.ContainingType)}), " +
+      $"\"{property.Name}\", {renderedJsonName}, " +
+      $"new global::Whizbang.Core.Security.Attributes.FieldPermissionAttribute({permission}, " +
+      $"(global::Whizbang.Core.Security.Attributes.MaskingStrategy){strategy.ToString(CultureInfo.InvariantCulture)}), {isString});\n";
   }
 
   private static ITypeSymbol _withoutNullable(ITypeSymbol type) =>
@@ -289,11 +391,45 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
     result = result.Replace("__LENS_COUNT__", validLenses.Length.ToString(CultureInfo.InvariantCulture));
     result = result.Replace("__TIMESTAMP__", timestamp);
 
+    endpointClasses.Append(_generateFieldPermissionRegistrations(validLenses));
     result = TemplateUtilities.ReplaceRegion(result, "ENDPOINT_CLASSES", endpointClasses.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "LENS_INFO_PROPERTIES", lensInfoProps.ToString());
 
     // Add source
     context.AddSource("WhizbangRestLensEndpoints.g.cs", result);
+  }
+
+  /// <summary>
+  /// The module initializer that registers every lens model's <c>[FieldPermission]</c> members with the
+  /// response serializer before any endpoint runs; empty when no model has one.
+  /// </summary>
+  private static string _generateFieldPermissionRegistrations(ImmutableArray<RestLensInfo> lenses) {
+    var lines = new List<string>();
+    var seen = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var line in lenses.SelectMany(l => l.FieldPermissionRegistrations.Split(['\n'], StringSplitOptions.RemoveEmptyEntries))) {
+      if (seen.Add(line)) {
+        lines.Add(line);
+      }
+    }
+
+    if (lines.Count == 0) {
+      return "";
+    }
+
+    var sb = new StringBuilder();
+    sb.AppendLine("/// <summary>");
+    sb.AppendLine("/// Registers the [FieldPermission] members of the REST lens models, so responses mask them.");
+    sb.AppendLine("/// </summary>");
+    sb.AppendLine("internal static class WhizbangRestLensFieldPermissions {");
+    sb.AppendLine("  /// <summary>Runs when this assembly loads, before any endpoint in it.</summary>");
+    sb.AppendLine("  [global::System.Runtime.CompilerServices.ModuleInitializer]");
+    sb.AppendLine("  internal static void Register() {");
+    foreach (var line in lines) {
+      sb.AppendLine(line);
+    }
+    sb.AppendLine("  }");
+    sb.AppendLine("}");
+    return sb.ToString();
   }
 
   /// <summary>
@@ -324,6 +460,10 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("  /// <inheritdoc />");
     sb.AppendLine("  public override async Task HandleAsync(LensRequest req, CancellationToken ct) {");
+    if (lens.FieldPermissionRegistrations.Length > 0) {
+      // Fail closed before reading anything: a response this endpoint cannot mask is never written.
+      sb.AppendLine($"    {FIELD_PERMISSION_JSON}.EnsureMasked(typeof({lens.ModelTypeName}));");
+    }
     // The default scope, not the unscoped legacy query: a public endpoint must return only the rows
     // the caller's scope allows.
     sb.AppendLine($"    IQueryable<{lens.ModelTypeName}> query = _lens.DefaultScope.Query.Select(r => r.Data);");

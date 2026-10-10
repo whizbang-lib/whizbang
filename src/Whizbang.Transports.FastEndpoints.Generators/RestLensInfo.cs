@@ -22,6 +22,10 @@ namespace Whizbang.Transports.FastEndpoints.Generators;
 /// record keeps value equality (a list would compare by reference and defeat incremental caching).
 /// </param>
 /// <param name="SortCases">The sort switch's arms, one per sortable model property, rendered likewise.</param>
+/// <param name="FieldPermissionRegistrations">
+/// One registration statement per line for each <c>[FieldPermission]</c> property of the model and the types
+/// nested inside it, rendered likewise; empty when there are none.
+/// </param>
 internal sealed record RestLensInfo(
     string InterfaceName,
     string ModelTypeName,
@@ -34,5 +38,6 @@ internal sealed record RestLensInfo(
     string Namespace,
     string EndpointClassName,
     string FilterCases,
-    string SortCases
+    string SortCases,
+    string FieldPermissionRegistrations
 );
