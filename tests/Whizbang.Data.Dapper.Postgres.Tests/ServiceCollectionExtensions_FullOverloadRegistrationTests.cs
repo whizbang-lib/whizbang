@@ -353,8 +353,11 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
 
     services.AddWhizbangPostgres(
       _connectionString!, jsonOptions, initializeSchema: true, _perspectiveEntries, configureOptions: null);
+    await Assert.That(await _tableExistsAsync("wh_event_store")).IsFalse()
+      .Because("registration records what to initialize; nothing is migrated until the host starts");
+    await using var started = await SchemaStartup.StartAsync(services);
 
-    // Schema was initialized eagerly: infrastructure tables + the per-perspective entry.
+    // Schema initialized at host start: infrastructure tables + the per-perspective entry.
     await Assert.That(await _tableExistsAsync("wh_event_store")).IsTrue();
     await Assert.That(await _tableExistsAsync("wh_message_type_registry")).IsTrue();
     await Assert.That(await _tableExistsAsync("wh_per_registration_coverage")).IsTrue()
@@ -416,6 +419,7 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
     services.AddWhizbangPostgres(
       _connectionString!, jsonOptions, initializeSchema: true, perspectiveSchemaSql: perspectiveSql,
       configureOptions: options => options.InitialRetryAttempts = 3);
+    await using var started = await SchemaStartup.StartAsync(services);
 
     await Assert.That(await _tableExistsAsync("wh_event_store")).IsTrue();
     await Assert.That(await _tableExistsAsync("wh_per_schema_sql_coverage")).IsTrue();
