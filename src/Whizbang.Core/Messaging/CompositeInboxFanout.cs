@@ -9,11 +9,11 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Messaging;
 

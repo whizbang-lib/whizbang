@@ -8,10 +8,10 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.Workers;
-using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Messaging;
 

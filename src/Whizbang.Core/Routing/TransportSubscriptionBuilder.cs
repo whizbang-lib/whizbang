@@ -3,9 +3,9 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
-using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Routing;
 

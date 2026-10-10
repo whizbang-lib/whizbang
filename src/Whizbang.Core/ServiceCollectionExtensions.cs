@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Lifecycle;
@@ -17,7 +18,6 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.Workers;
-using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core;
 

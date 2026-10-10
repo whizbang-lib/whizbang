@@ -6,8 +6,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Whizbang.Core.Messaging;
 using Whizbang.Core.DependencyInjection;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Workers;
 
