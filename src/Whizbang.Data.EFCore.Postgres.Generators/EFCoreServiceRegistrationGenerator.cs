@@ -357,6 +357,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"{indent}services.RemoveAllKeyed<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof({dbContextFqn}));");
     sb.AppendLine($"{indent}services.AddKeyedSingleton<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof({dbContextFqn}), new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(");
     sb.AppendLine($"{indent}  typeof({dbContextFqn}), {_csharpString(dbContext.Schema)}, global::{_generatedNamespace(dbContext.Namespace)}.{dbContext.ClassName}SchemaExtensions.GetManagedSchemaObjects));");
+    // The schema-initialization connection, keyed by the context, so schema work after startup (the
+    // managed-object reconcile, the blue-green swap, ANALYZE) runs on the role startup migrations use.
+    sb.AppendLine($"{indent}services.RemoveAllKeyed<global::Whizbang.Data.EFCore.Postgres.SchemaInitConnection>(typeof({dbContextFqn}));");
+    sb.AppendLine($"{indent}services.AddKeyedSingleton<global::Whizbang.Data.EFCore.Postgres.SchemaInitConnection>(typeof({dbContextFqn}), (sp, _) =>");
+    sb.AppendLine($"{indent}  global::Whizbang.Data.EFCore.Postgres.SchemaInitConnection.FromConfiguration(");
+    sb.AppendLine($"{indent}    sp.GetService<global::Microsoft.Extensions.Configuration.IConfiguration>(), \"{dbContext.ConnectionStringName}\", {_legacyLiteral(dbContext)}));");
   }
 
   /// <summary>

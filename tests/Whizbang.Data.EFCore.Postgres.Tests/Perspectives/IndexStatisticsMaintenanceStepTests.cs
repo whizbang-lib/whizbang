@@ -148,6 +148,36 @@ public class IndexStatisticsMaintenanceStepTests {
   }
 
   /// <summary>
+  /// With a schema-initialization connection configured, the step analyzes through it, not the application's
+  /// own connection: ANALYZE needs the table owner's rights, which a least-privilege application role lacks.
+  /// The application connection here names a database that does not exist, so a run that used it would fail.
+  /// </summary>
+  [Test]
+  public async Task WithAnInitConnection_AnalyzesThroughItAsync() {
+    var index = await _indexedAfterAnalyzeAsync(OPTED_OUT, "Lineage");
+    var unreachable = new NpgsqlConnectionStringBuilder(_connectionString) { Database = "wh_no_such_database" }.ConnectionString;
+    await using var applicationContext = new DocumentIndexesDbContext(
+      new DbContextOptionsBuilder<DocumentIndexesDbContext>()
+        .UseNpgsql(unreachable)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
+        .Options);
+    var services = new ServiceCollection();
+    services.AddSingleton(applicationContext);
+    services.AddSingleton<IClaimedEmissionStore>(new GrantingClaims());
+    services.AddKeyedSingleton<SchemaInitConnection>(typeof(DocumentIndexesDbContext), new SchemaInitConnection(_connectionString));
+    await using var provider = services.BuildServiceProvider();
+
+    await _step().RunAsync(provider, CancellationToken.None);
+
+    await Assert.That(await _statisticsAsync(index)).IsGreaterThan(0)
+      .Because("the init connection reached the database the application connection could not");
+  }
+
+  private sealed class GrantingClaims : IClaimedEmissionStore {
+    public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken) => Task.FromResult(true);
+  }
+
+  /// <summary>
   /// Only the instance that wins the window's claim runs; another run in the same window analyzes nothing,
   /// even when there is something to analyze.
   /// </summary>
