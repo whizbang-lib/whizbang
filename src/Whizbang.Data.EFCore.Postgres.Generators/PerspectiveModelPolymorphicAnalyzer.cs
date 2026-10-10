@@ -184,7 +184,7 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
 
     var diagnostic = Diagnostic.Create(
         DiagnosticDescriptors.PerspectiveModelPolymorphicProperty,
-        member.Locations.FirstOrDefault() ?? Location.None,
+        LocationUtilities.FirstOrNone(member),
         member.Name,
         containingType.Name,
         polymorphicType.Name);
