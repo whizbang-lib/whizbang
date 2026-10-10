@@ -118,7 +118,7 @@ public class EFCoreWorkCoordinatorSchemaTests {
 
   [Test]
   public async Task ResolveSchema_WhenModelMapsEntityToSchema_ReturnsThatSchemaAsync() {
-    using var context = SchemaProbeDbContext.Create();
+    await using var context = SchemaProbeDbContext.Create();
     var logger = new CapturingLogger();
 
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.ResolveSchema(
@@ -133,7 +133,7 @@ public class EFCoreWorkCoordinatorSchemaTests {
   public async Task ResolveSchema_WhenModelDoesNotMapEntity_LogsWarningAndReturnsDefaultAsync() {
     // The probe model maps no OutboxRecord, which is the "entity not in the model" outcome every
     // coordinator call shares: the SQL then runs in the default schema rather than failing.
-    using var context = SchemaProbeDbContext.Create();
+    await using var context = SchemaProbeDbContext.Create();
     var logger = new CapturingLogger();
 
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.ResolveSchema(

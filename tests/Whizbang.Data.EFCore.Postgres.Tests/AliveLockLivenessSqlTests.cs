@@ -424,8 +424,8 @@ public class AliveLockLivenessSqlTests : EFCoreTestBase {
         (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, connection_mode)
       VALUES (@id, 'test', 'test-host', 1, NOW() - @age, NOW() - INTERVAL '2 hours', @mode)";
     cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue("age", age);
-    cmd.Parameters.AddWithValue("mode", (object?)mode ?? DBNull.Value);
+    cmd.Parameters.AddWithValue(nameof(age), age);
+    cmd.Parameters.AddWithValue(nameof(mode), (object?)mode ?? DBNull.Value);
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -433,7 +433,7 @@ public class AliveLockLivenessSqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "UPDATE wh_service_instances SET last_heartbeat_at = NOW() - @age WHERE instance_id = @id";
     cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue("age", age);
+    cmd.Parameters.AddWithValue(nameof(age), age);
     await cmd.ExecuteNonQueryAsync();
   }
 

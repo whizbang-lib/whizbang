@@ -19,7 +19,7 @@ namespace Whizbang.Core.Tests.DependencyInjection;
 public class ServiceProviderLookupsTests {
   [Test]
   public async Task Logger_Registered_IsTheHostsAsync() {
-    using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+    await using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
 
     var logger = services.GetLoggerOrNullLogger<ServiceProviderLookupsTests>();
 
@@ -28,7 +28,7 @@ public class ServiceProviderLookupsTests {
 
   [Test]
   public async Task Logger_Unregistered_DiscardsAsync() {
-    using var services = new ServiceCollection().BuildServiceProvider();
+    await using var services = new ServiceCollection().BuildServiceProvider();
 
     await Assert.That(services.GetLoggerOrNullLogger<ServiceProviderLookupsTests>())
       .IsSameReferenceAs(NullLogger<ServiceProviderLookupsTests>.Instance);
@@ -36,7 +36,7 @@ public class ServiceProviderLookupsTests {
 
   [Test]
   public async Task Category_Registered_IsTheFactorysAsync() {
-    using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+    await using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
 
     await Assert.That(services.GetLoggerOrNullLogger("Cat"))
       .IsSameReferenceAs(services.GetRequiredService<ILoggerFactory>().CreateLogger("Cat"));
@@ -44,21 +44,21 @@ public class ServiceProviderLookupsTests {
 
   [Test]
   public async Task Category_Unregistered_DiscardsAsync() {
-    using var services = new ServiceCollection().BuildServiceProvider();
+    await using var services = new ServiceCollection().BuildServiceProvider();
 
     await Assert.That(services.GetLoggerOrNullLogger("Cat")).IsSameReferenceAs(NullLogger.Instance);
   }
 
   [Test]
   public async Task Options_Registered_IsTheValueAsync() {
-    using var services = new ServiceCollection().Configure<Probe>(p => p.Value = 7).BuildServiceProvider();
+    await using var services = new ServiceCollection().Configure<Probe>(p => p.Value = 7).BuildServiceProvider();
 
     await Assert.That(services.GetOptionsValue<Probe>()!.Value).IsEqualTo(7);
   }
 
   [Test]
   public async Task Options_Unregistered_NullAsync() {
-    using var services = new ServiceCollection().BuildServiceProvider();
+    await using var services = new ServiceCollection().BuildServiceProvider();
 
     await Assert.That(services.GetOptionsValue<Probe>()).IsNull();
   }

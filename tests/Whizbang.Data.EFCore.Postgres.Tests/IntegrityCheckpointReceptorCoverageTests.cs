@@ -187,10 +187,11 @@ public class IntegrityCheckpointReceptorCoverageTests {
   public async Task HousekeepingRegistered_HoldsTheIntegritySlotDuringTheCheckpointAndReleasesItAfterAsync() {
     var housekeeping = new HousekeepingCoordinator();
     HousekeepingCoordinator.Decision? cleanupDuringCheckpoint = null;
-    var coordinator = new FakeCoordinator();
-    // Mid-handler, after the hold is taken: ask for the cleanup slot the way the sweep would.
-    coordinator.OnCountServiceBacklog = () =>
-      cleanupDuringCheckpoint = housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, backlog: null);
+    var coordinator = new FakeCoordinator {
+      // Mid-handler, after the hold is taken: ask for the cleanup slot the way the sweep would.
+      OnCountServiceBacklog = () =>
+        cleanupDuringCheckpoint = housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, backlog: null),
+    };
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);

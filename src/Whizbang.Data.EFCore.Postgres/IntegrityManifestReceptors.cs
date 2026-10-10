@@ -915,7 +915,7 @@ public sealed partial class IntegrityManifestReceptor(
       return;
     }
 
-    var window = IntegrityRepairSupport.RedeliveryWindow(manifest);
+    var (fromSequence, toSequence) = IntegrityRepairSupport.RedeliveryWindow(manifest);
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -929,8 +929,8 @@ public sealed partial class IntegrityManifestReceptor(
         Topic = topic,
         // Same [since, until) → exclusive-floor/inclusive-ceiling mapping as the per-stream
         // repair — the bulk ask stays bounded to the window that disagreed.
-        FromCommitSequence = window.From,
-        ToCommitSequence = window.To,
+        FromCommitSequence = fromSequence,
+        ToCommitSequence = toSequence,
         StateOnly = true,
       },
       Hops = [
@@ -968,7 +968,7 @@ public sealed partial class IntegrityManifestReceptor(
       return;
     }
 
-    var window = IntegrityRepairSupport.RedeliveryWindow(manifest);
+    var (fromSequence, toSequence) = IntegrityRepairSupport.RedeliveryWindow(manifest);
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -982,8 +982,8 @@ public sealed partial class IntegrityManifestReceptor(
         // window — the origin re-ships the slice, not the streams' whole history. [since, until)
         // maps to the command's exclusive-floor / inclusive-ceiling pair; legacy (unwindowed)
         // manifests leave both null, the pre-existing whole-history semantics.
-        FromCommitSequence = window.From,
-        ToCommitSequence = window.To,
+        FromCommitSequence = fromSequence,
+        ToCommitSequence = toSequence,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)

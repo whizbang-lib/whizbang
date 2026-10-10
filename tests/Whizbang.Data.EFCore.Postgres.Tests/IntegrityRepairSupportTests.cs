@@ -104,28 +104,28 @@ public class IntegrityRepairSupportTests {
   [Test]
   public async Task RedeliveryWindow_ForAWindowedManifest_MapsTheHalfOpenWindowOntoTheCommandsBoundsAsync() {
     // [100, 300) becomes exclusive floor 99 and inclusive ceiling 299: exactly the compared slice.
-    var window = IntegrityRepairSupport.RedeliveryWindow(_manifest(since: 100, through: 300));
+    var (floor, ceiling) = IntegrityRepairSupport.RedeliveryWindow(_manifest(since: 100, through: 300));
 
-    await Assert.That(window.From).IsEqualTo(99L);
-    await Assert.That(window.To).IsEqualTo(299L);
+    await Assert.That(floor).IsEqualTo(99L);
+    await Assert.That(ceiling).IsEqualTo(299L);
   }
 
   [Test]
   public async Task RedeliveryWindow_ForAWindowStartingAtTheBeginning_LeavesTheFloorOpenAsync() {
     // A since of 0 has no predecessor to exclude; -1 would be a floor no sequence can sit under.
-    var window = IntegrityRepairSupport.RedeliveryWindow(_manifest(since: 0, through: 300));
+    var (floor, ceiling) = IntegrityRepairSupport.RedeliveryWindow(_manifest(since: 0, through: 300));
 
-    await Assert.That(window.From).IsNull();
-    await Assert.That(window.To).IsEqualTo(299L);
+    await Assert.That(floor).IsNull();
+    await Assert.That(ceiling).IsEqualTo(299L);
   }
 
   [Test]
   public async Task RedeliveryWindow_ForALegacyUnwindowedManifest_LeavesBothBoundsOpenAsync() {
-    var window = IntegrityRepairSupport.RedeliveryWindow(_manifest(since: null, through: null));
+    var (floor, ceiling) = IntegrityRepairSupport.RedeliveryWindow(_manifest(since: null, through: null));
 
-    await Assert.That(window.From).IsNull()
+    await Assert.That(floor).IsNull()
       .Because("an unwindowed manifest compared whole history, so the redelivery covers whole history");
-    await Assert.That(window.To).IsNull();
+    await Assert.That(ceiling).IsNull();
   }
 
   private static ServiceProvider _servicesWithDestinations(params string[] addresses) {

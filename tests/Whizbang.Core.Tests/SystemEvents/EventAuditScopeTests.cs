@@ -37,7 +37,7 @@ public class EventAuditScopeTests {
 
   [Test]
   public async Task Build_ScopeWithoutIds_EmptyNullAsync() {
-    var context = _context(new PerspectiveScope(), new Dictionary<string, string>());
+    var context = _context(new PerspectiveScope(), []);
 
     await Assert.That(EventAuditScope.Build(context, null)).IsNull();
   }

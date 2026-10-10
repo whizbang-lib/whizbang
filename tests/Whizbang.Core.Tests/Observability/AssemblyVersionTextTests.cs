@@ -40,9 +40,13 @@ public class AssemblyVersionTextTests {
 
   /// <summary>An assembly with the given name and no attributes at all.</summary>
   private sealed class BareAssembly(AssemblyName name) : Assembly {
+    // Typed Attribute[] although the signature says object[]: the runtime casts what this returns to
+    // Attribute[], as a real assembly's answer always is.
+    private static readonly Attribute[] _none = [];
+
     public override AssemblyName GetName() => name;
     public override AssemblyName GetName(bool copiedName) => name;
-    public override object[] GetCustomAttributes(Type attributeType, bool inherit) => Array.Empty<Attribute>();
-    public override object[] GetCustomAttributes(bool inherit) => Array.Empty<Attribute>();
+    public override object[] GetCustomAttributes(Type attributeType, bool inherit) => _none;
+    public override object[] GetCustomAttributes(bool inherit) => _none;
   }
 }

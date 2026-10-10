@@ -99,7 +99,7 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
     var connection = await _openAsync(dbContext);
     var messageId = await _seedPendingAsync(connection, "group-null-envelope", createdAgoSeconds: 10, eventDataJson: "null");
 
-    var thrown = await Assert.That(async () => { await coordinator.FetchPendingCoalesceAsync("group-null-envelope", limit: 10); })
+    var thrown = await Assert.That(async () => await coordinator.FetchPendingCoalesceAsync("group-null-envelope", limit: 10))
       .Throws<InvalidOperationException>();
 
     await Assert.That(thrown!.Message).Contains(messageId.ToString());
