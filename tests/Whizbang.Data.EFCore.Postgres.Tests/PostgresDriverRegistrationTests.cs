@@ -55,6 +55,20 @@ public class PostgresDriverRegistrationTests {
   }
 
   [Test]
+  public async Task Postgres_RegistersAnInstanceIdentity_WhenTheHostHasNoneAsync() {
+    // The schema initializer registers this instance and the managed-object reconcile records what it declares
+    // under its id; neither can when the driver is composed without the core registration.
+    var services = new ServiceCollection();
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddDbContext<DriverSelectorTestDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services)
+      .WithEFCore<DriverSelectorTestDbContext>()
+      .WithDriver.Postgres;
+
+    await Assert.That(services.Any(d => d.ServiceType == typeof(Whizbang.Core.Observability.IServiceInstanceProvider))).IsTrue();
+  }
+
+  [Test]
   public async Task Postgres_EveryServiceItRegistersCanBeResolvedAsync() {
     var services = new ServiceCollection();
     services.AddLogging();
