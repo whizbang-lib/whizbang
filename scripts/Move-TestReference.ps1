@@ -16,6 +16,9 @@
         - src/**: <tests> tags in any text file (C# XML doc comments, SQL comments, ...), counted as
           tags, and any other mention of the path (a plain comment), counted separately.
         - ai-docs/**, plans/**/*.md, docs/**/*.md, every README*.md and every CLAUDE.md.
+        - .github/scripts/tests-tag-link-baseline.txt, the link guard's list of known-broken
+          <tests> tags. An entry names a tag by its exact text, so a relinked tag whose entry kept
+          the old path would fail the guard. Each entry rewritten is reported with its line.
 
       Docs site (default: the sibling folder whizbang-lib.github.io next to the library checkout):
         - Hand-written files (doc pages with testReferences front matter, ai-docs, standards,
@@ -51,7 +54,8 @@
 
     Output: a summary on the host (the counts for the PR text) and a result object on the pipeline:
     DryRun, Moves, TagsRewritten, TagFiles, SourceReferencesRewritten, SourceReferenceFiles,
-    LibraryDocReferencesRewritten, LibraryDocFiles, DocsSiteRoot, DocsSiteUpdated,
+    LibraryDocReferencesRewritten, LibraryDocFiles, BaselineEntriesRewritten, BaselineEntries (Line,
+    From, To), DocsSiteRoot, DocsSiteUpdated,
     DocsSiteReferencesFound, DocsSiteFiles, DocsSiteReferencesRewritten, DocsSiteCodeReferences,
     DocsSiteCodeFiles, DocsSiteClassMarkers, Regenerate, Changes and Skipped. In a dry run the "Rewritten" counts are what a real run would
     rewrite.
@@ -111,6 +115,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# The link guard's baseline (.github/scripts/Test-TestsTagLink.ps1): known-broken <tests> tags, one
+# "source | tag | reason" entry per line.
+$script:TestsTagBaselinePath = '.github/scripts/tests-tag-link-baseline.txt'
 
 # A repository-relative path in the one spelling references use: forward slashes, no leading ./,
 # no trailing slash.
@@ -298,11 +306,24 @@ function Write-TextFile([string]$Path, [string]$Text, [bool]$Bom) {
 # The library files whose references are rewritten, by category; $null for the rest.
 function Get-LibraryFileCategory([string]$RelativePath) {
   $leaf = [System.IO.Path]::GetFileName($RelativePath)
+  if ($RelativePath -ceq $script:TestsTagBaselinePath) { return 'Baseline' }
   if ($RelativePath.StartsWith('src/')) { return 'Source' }
   if ($RelativePath.StartsWith('ai-docs/')) { return 'Doc' }
   if ($leaf -like 'README*.md' -or $leaf -eq 'CLAUDE.md') { return 'Doc' }
   if (($RelativePath.StartsWith('plans/') -or $RelativePath.StartsWith('docs/')) -and $leaf.EndsWith('.md')) { return 'Doc' }
   return $null
+}
+
+# The link-guard baseline entries a rewrite changes: each entry line (not a comment or blank line)
+# whose text differs, with its 1-based line. A path rewrite never adds or removes a line break, so
+# the old and new texts line up line for line.
+function Get-ChangedBaselineEntry([string]$OldText, [string]$NewText) {
+  $oldLines = $OldText -split "`n"
+  $newLines = $NewText -split "`n"
+  for ($i = 0; $i -lt $oldLines.Count; $i++) {
+    if ($oldLines[$i] -ceq $newLines[$i] -or $oldLines[$i] -match '^\s*#') { continue }
+    [pscustomobject]@{ Line = $i + 1; From = $oldLines[$i].TrimEnd("`r"); To = $newLines[$i].TrimEnd("`r") }
+  }
 }
 
 # The generator of a docs-site file that must never be hand-edited; $null for a hand-written file.
@@ -387,6 +408,7 @@ function Invoke-TestReferenceMove {
   $rewriter = New-PathRewriter $Moves
   $changes = [System.Collections.Generic.List[object]]::new()
   $skipped = [System.Collections.Generic.List[object]]::new()
+  $baselineEntries = @()
 
   foreach ($relative in Get-RepositoryFile -Root $RepositoryRoot -ExcludeRelative '.claude/worktrees') {
     $category = Get-LibraryFileCategory $relative
@@ -402,6 +424,7 @@ function Invoke-TestReferenceMove {
       $update = Update-PathReference -Text $file.Text -Rewriter $rewriter
       $tags = 0
       $references = $update.Count
+      if ($category -eq 'Baseline') { $baselineEntries = @(Get-ChangedBaselineEntry -OldText $file.Text -NewText $update.Text) }
     }
     if ($tags + $references -eq 0) { continue }
     $change = [pscustomobject]@{ Repository = 'library'; Path = $relative; Category = $category; Tags = $tags; References = $references; Written = $false }
@@ -479,6 +502,8 @@ function Invoke-TestReferenceMove {
     SourceReferenceFiles          = $sourceTotal.Files
     LibraryDocReferencesRewritten = $docTotal.Total
     LibraryDocFiles               = $docTotal.Files
+    BaselineEntriesRewritten      = $baselineEntries.Count
+    BaselineEntries               = $baselineEntries
     DocsSiteRoot                  = if ($DocsSiteRoot) { $DocsSiteRoot } else { $null }
     DocsSiteUpdated               = [bool]$UpdateDocsSite
     DocsSiteReferencesFound       = $siteTotal.Total
@@ -502,6 +527,11 @@ function Write-TestReferenceSummary([object]$Result) {
   Write-Host "  <tests> tags ${verb}: $($Result.TagsRewritten) in $($Result.TagFiles) file(s)"
   Write-Host "  Other source references ${verb}: $($Result.SourceReferencesRewritten) in $($Result.SourceReferenceFiles) file(s)"
   Write-Host "  Library doc references ${verb}: $($Result.LibraryDocReferencesRewritten) in $($Result.LibraryDocFiles) file(s)"
+  Write-Host "  Link guard baseline entries ${verb}: $($Result.BaselineEntriesRewritten)"
+  foreach ($entry in $Result.BaselineEntries) {
+    Write-Host "    line $($entry.Line): $($entry.From)"
+    Write-Host "         -> $($entry.To)"
+  }
   Write-Host "  Skipped (not valid UTF-8, fix by hand): $(@($Result.Skipped).Count)"
   foreach ($item in $Result.Skipped) { Write-Host "    $($item.Repository): $($item.Path)" }
   if (-not $Result.DocsSiteRoot) {
