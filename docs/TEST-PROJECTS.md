@@ -37,15 +37,18 @@ Tags follow the type: `Unit` for unit projects, `Component` for component projec
 integration projects the suite tag (`Postgres`, `RabbitMQ`, `AzureServiceBus`, `AzureBlob`,
 `InMemory`, or the plain `Integration` for in-process hosts) plus `Docker` when it starts containers.
 
-### Unit projects still hold non-unit tests
+### Unit projects are unit-pure
 
-The Unit projects predate the Component type and still hold tests that start real workers, use the
-real clock, or do real I/O. #1264 moves them, one source project per pull request:
+The Unit projects predate the Component type and once held tests that started real workers, used the
+real clock, or did real I/O. #1264 moved each one to the project its type calls for, and refactored the
+tests that only slept or read the clock onto a fake clock instead (`.claude/skills/testing/SKILL.md`,
+rule 5):
 
-- the worklist is `plans/test-separation-inventory.md` (with `plans/test-separation-inventory.csv`):
-  every test class in every Unit project, classified with the construct that makes it non-unit;
-- the purity guard (`.github/scripts/Get-TestPurity.ps1`, run by "Test · Pipeline scripts") lists
-  those classes per project. It reports only, and is switched to failing once the moves are done.
+- the record is `plans/test-separation-inventory.md` (with `plans/test-separation-inventory.csv`): every
+  test class in every Unit project, classified with the construct that would make it non-unit. Every
+  Unit project now shows zero non-unit classes;
+- the purity guard (`.github/scripts/Get-TestPurity.ps1`, run by "Test · Pipeline scripts") lists any
+  class that breaks this. It still reports only; making it fail the build is the next step.
 
 ## Running tests
 
