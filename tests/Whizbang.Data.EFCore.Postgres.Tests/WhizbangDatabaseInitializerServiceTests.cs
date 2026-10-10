@@ -13,6 +13,7 @@ using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.RunControl;
 using Whizbang.Core.Workers;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -238,7 +239,7 @@ public class WhizbangDatabaseInitializerServiceTests {
     var provider = services.BuildServiceProvider();
     return new WhizbangDatabaseInitializerService(
       provider,
-      runner ?? new FakeRunner(_ => Task.CompletedTask),
+      [runner ?? new FakeRunner(_ => Task.CompletedTask)],
       gate ?? new SchemaReadyGate(),
       Options.Create(new ClaimWorkerOptions()),
       Options.Create(new SchemaInitializationOptions {

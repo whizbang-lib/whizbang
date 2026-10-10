@@ -12,6 +12,7 @@ using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.RunControl;
 using Whizbang.Core.Workers;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.EFCore;
 
@@ -21,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.EFCore;
 /// alone or together with the ceiling, is shutdown and propagates as cancellation. Driven with a
 /// fake clock and a runner that throws only when released, so the ordering is deterministic.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/WhizbangDatabaseInitializerService.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/WhizbangDatabaseInitializerService.cs</code-under-test>
 [Category("Shard3")]
 public class InitializerMigrationTimeoutBranchTests {
 
@@ -79,7 +80,7 @@ public class InitializerMigrationTimeoutBranchTests {
     var provider = services.BuildServiceProvider();
     return new WhizbangDatabaseInitializerService(
       provider,
-      runner,
+      [runner],
       new SchemaReadyGate(),
       Options.Create(new ClaimWorkerOptions()),
       Options.Create(new SchemaInitializationOptions { NonBlockingSchemaInit = false, MigrationTimeout = _ceiling }),

@@ -223,14 +223,16 @@ public static class PostgresDriverExtensions {
         // initializer's registration order in the IHostedService chain doesn't matter — even
         // if a worker's StartAsync runs first, it blocks on the gate until the initializer
         // calls MarkReady() at the end of migrations.
-        selector.Services.TryAddSingleton<ISchemaInitializationRunner, DbContextSchemaInitializationRunner>();
+        // The driver's share of the shared schema initializer: every DbContext registered for initialization.
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Singleton<ISchemaInitializationRunner, DbContextSchemaInitializationRunner>(sp =>
+            new DbContextSchemaInitializationRunner(sp, sp.GetRequiredService<ILogger<DbContextSchemaInitializationRunner>>())));
         // PostgresOptions.MaxInFlightCommands is the documented cap on concurrent coordinator calls; carry
         // it into the gate the worker pipeline builds (it used to reach nothing: the gate was a literal 50).
         // Fill the gap only: a cap the Whizbang:WorkCoordinatorGate section set is the operator's word.
         selector.Services.AddOptions<WorkCoordinatorGateOptions>()
           .PostConfigure<Microsoft.Extensions.Options.IOptions<PostgresOptions>>(
             (gate, postgres) => gate.MaxConcurrent ??= postgres.Value.MaxInFlightCommands);
-        selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
+        selector.Services.AddWhizbangSchemaInitialization();
 
         // Message type registry populator — reconciles wh_message_type_registry against the
         // compile-time IMessageTypeCatalog at startup. Uses NpgsqlDataSource directly so it

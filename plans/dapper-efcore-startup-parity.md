@@ -93,4 +93,7 @@ change recorded in the changelog with the upgrade note.
 
 ## Status
 
-Not started.
+- **Phase 1, shared runner: done.** `WhizbangDatabaseInitializerService` moved to `Whizbang.Data.Postgres` and
+  runs every registered `ISchemaInitializationRunner` in order before it opens the gate;
+  `AddWhizbangSchemaInitialization()` registers it once, by factory. EF Core registers its runner through it; its
+  existing initializer tests pass unchanged apart from the constructor taking a list.
