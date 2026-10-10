@@ -398,7 +398,7 @@ public static partial class CompositeInboxFanout {
         // why the catalog stamp (by wire name) is load-bearing here.
         Flags = EventFlagsDeriver.Derive(payload: null, wireTypeName, eventMarkerResolver, ephemeralModeResolver)
               | EventFlags.NoRebroadcast,
-        Scope = source.GetCurrentScope()?.Scope,
+        Scope = source.GetCurrentPerspectiveScope(),
         Metadata = new EnvelopeMetadata {
           MessageId = childEnvelope.MessageId,
           Hops = childEnvelope.Hops,
@@ -502,7 +502,7 @@ public static partial class CompositeInboxFanout {
       // here means the emit chain never routes the child to the collective sink.
       Flags = EventFlagsDeriver.Derive(inner, messageTypeName, eventMarkerResolver, ephemeralModeResolver)
             | EventFlags.NoRebroadcast,
-      Scope = source.GetCurrentScope()?.Scope,
+      Scope = source.GetCurrentPerspectiveScope(),
       Metadata = new EnvelopeMetadata {
         MessageId = childEnvelope.MessageId,
         Hops = childEnvelope.Hops,

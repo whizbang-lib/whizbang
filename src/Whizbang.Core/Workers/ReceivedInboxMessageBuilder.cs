@@ -95,7 +95,7 @@ internal static class ReceivedInboxMessageBuilder {
       StreamId = streamId,
       IsEvent = isEvent,
       Flags = EventFlagsDeriver.Derive(payload, messageTypeName, eventMarkerResolver, ephemeralModeResolver),
-      Scope = envelope.GetCurrentScope()?.Scope,
+      Scope = envelope.GetCurrentPerspectiveScope(),
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
         Hops = envelope.CopyHops(),

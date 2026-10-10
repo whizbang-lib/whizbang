@@ -9,6 +9,7 @@ using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Observability;
@@ -76,6 +77,23 @@ public class HopStampingTests {
     var copy = _envelope(null!).CopyHops();
 
     await Assert.That(copy).IsEmpty();
+  }
+
+  [Test]
+  public async Task CurrentScope_Scoped_IsItAsync() {
+    var envelope = _envelope([new MessageHop {
+      ServiceInstance = ServiceInstanceInfo.Unknown,
+      Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "t-1" })
+    }]);
+
+    await Assert.That(envelope.GetCurrentPerspectiveScope()!.TenantId).IsEqualTo("t-1");
+  }
+
+  [Test]
+  public async Task CurrentScope_Unscoped_NullAsync() {
+    var envelope = _envelope([new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]);
+
+    await Assert.That(envelope.GetCurrentPerspectiveScope()).IsNull();
   }
 
   private static MessageEnvelope<JsonElement> _envelope(List<MessageHop> hops) => new() {

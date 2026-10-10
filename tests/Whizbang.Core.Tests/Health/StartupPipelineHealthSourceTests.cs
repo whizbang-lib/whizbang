@@ -102,6 +102,20 @@ public class StartupPipelineHealthSourceTests {
   }
 
   [Test]
+  public async Task CompositeReady_AllDone_ReportsProgressAsync() {
+    var state = await _drivenAsync(
+      new StartupRunPlan([_step(FrameworkStartupSteps.MIGRATE)]),
+      _completed(FrameworkStartupSteps.MIGRATE));
+    var signal = new StartupReadySignal();
+    signal.MarkReady();
+
+    var health = await new StartupPipelineHealthSource(state, signal).ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Ready);
+    await Assert.That(health.Detail).IsEqualTo("ready (1/1 steps complete)");
+  }
+
+  [Test]
   public async Task BlockingDrained_ButCompositeNotSignalled_ReportsStartingNotReadyAsync() {
     var state = await _drivenAsync(
       new StartupRunPlan([_step(FrameworkStartupSteps.MIGRATE)]),

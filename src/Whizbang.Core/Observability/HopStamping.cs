@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Diagnostics;
+using Whizbang.Core.Lenses;
 
 namespace Whizbang.Core.Observability;
 
@@ -48,4 +49,15 @@ internal static class HopStamping {
   /// <tests>tests/Whizbang.Core.Tests/Observability/HopStampingTests.cs:CopyHops_NoHopList_IsEmptyAsync</tests>
   internal static List<MessageHop> CopyHops(this IMessageEnvelope envelope) =>
     envelope.Hops?.ToList() ?? [];
+
+  /// <summary>
+  /// The scope the envelope's current hops carry, for the row a received or fanned-out message is
+  /// stored as; null when no current hop carries one.
+  /// </summary>
+  /// <param name="envelope">The envelope whose scope is read.</param>
+  /// <returns>The current scope, or null.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/HopStampingTests.cs:CurrentScope_Scoped_IsItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/HopStampingTests.cs:CurrentScope_Unscoped_NullAsync</tests>
+  internal static PerspectiveScope? GetCurrentPerspectiveScope(this IMessageEnvelope envelope) =>
+    envelope.GetCurrentScope()?.Scope;
 }
