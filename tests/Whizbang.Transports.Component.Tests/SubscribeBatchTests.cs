@@ -176,27 +176,33 @@ public class SubscribeBatchTests {
     var destination = new TransportDestination("test-topic");
     var batchOptions = new TransportBatchOptions { BatchSize = 1, SlideMs = 5000, MaxWaitMs = 10000 };
     var batchCount = 0;
+    var firstBatch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var subscription = await transport.SubscribeBatchAsync(
       (_, ct) => {
         Interlocked.Increment(ref batchCount);
+        firstBatch.TrySetResult();
         return Task.CompletedTask;
       },
       destination,
       batchOptions
     );
 
-    // Act — publish one message, then dispose, then publish another
+    // Act — publish one message and wait for its batch, then dispose, then publish another
     await transport.PublishAsync(_createTestEnvelope(), destination, "Type1");
-    await Task.Delay(100); // Let batch flush
+    await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(30)); // hang guard only: fails the test
     subscription.Dispose();
 
-    var countAfterDispose = batchCount;
+    // Dispose acts synchronously: the subscription stops being active, leaves the transport's
+    // handlers, and its collector is disposed, so a publish after it decides to enqueue nothing.
+    await Assert.That(subscription.IsActive).IsFalse()
+      .Because("a disposed subscription must stop receiving the moment Dispose returns");
+    var countAfterDispose = Volatile.Read(ref batchCount);
     await transport.PublishAsync(_createTestEnvelope(), destination, "Type2");
-    await Task.Delay(100);
 
     // Assert — no new batches after dispose
-    await Assert.That(batchCount).IsEqualTo(countAfterDispose)
+    await Assert.That(countAfterDispose).IsEqualTo(1);
+    await Assert.That(Volatile.Read(ref batchCount)).IsEqualTo(countAfterDispose)
       .Because("Disposed subscription should not receive more messages");
   }
 
