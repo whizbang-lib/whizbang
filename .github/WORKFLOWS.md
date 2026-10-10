@@ -14,6 +14,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | Release | `release.yml` | the release PR closing; dispatch for recovery | Promotes the tested packages as stable, tags `main`, syncs `develop` |
 | NuGet Publish | `nuget-publish.yml` | dispatch; called by the above | Pushes a packages artifact and creates the tag and GitHub release |
 | Git Flow Check | `git-flow-check.yml` | PRs | Refuses a branch direction the supported flows don't allow |
+| Dependabot lock files | `dependabot-lockfiles.yml` | Dependabot PRs into `develop` that change packages | Regenerates the NuGet lock files Dependabot leaves stale and pushes them to its branch (below) |
 | CodeQL | `codeql.yml` | pushes, PRs, schedule | Static security analysis |
 | Secret Scanning | `security-secrets.yml` | pushes, PRs, dispatch | Scans for committed secrets |
 | Supply Chain Security | `security-supply-chain.yml` | pushes, PRs, schedule, dispatch | Dependency vulnerability scanning |
@@ -52,3 +53,48 @@ Shared data: `.github/nuget-packages.txt` (the packages every full publish ships
 `.github/inert-paths.txt` (paths that cannot affect the build or tests, read through
 `.github/scripts/Test-InertDiff.ps1`). The rules of the one required check, `Gate · CI result`, are
 `.github/scripts/Test-CiResult.ps1`, with tests in `.github/scripts/tests/` run by `Test · Pipeline scripts`.
+
+## Dependabot lock files
+
+Dependabot's NuGet updater bumps `Directory.Packages.props` and the `packages.lock.json` of each
+project that references the package directly. A project that reaches the package through a project
+reference keeps the old version, and CI's locked-mode restore fails with NU1004 in Compile, Format and
+OSV Scanner. `dependabot-lockfiles.yml` fixes that on the pull request itself: it runs
+`dotnet restore --force-evaluate` over `Whizbang.slnx` and every project with a lock file outside it
+(today `benchmarks/Whizbang.Benchmarks.Postgres` and `tests/Whizbang.Soak.Tests`), and when a lock file
+changed it commits only `packages.lock.json` files, signed off, as the GitHub App's bot account, and
+pushes to the Dependabot branch. The logic is `.github/scripts/Update-DependabotLockFiles.ps1`, tested
+by `Test · Pipeline scripts`.
+
+- **Why a GitHub App.** A push made with `GITHUB_TOKEN` starts no workflow, so CI would never run on the
+  fixed head. A push made with an app installation token does.
+- **When it runs.** Only when both the pull request's author and the event's actor are
+  `dependabot[bot]`, so a person's push, or the app's own push, never triggers it. A run that finds the
+  lock files already current commits nothing. It is not part of CI and is not a required check; the
+  gate, `Gate · CI result`, reads only `ci.yml`'s jobs.
+- **Without the app.** If either secret is missing, the job ends green with a notice saying which one,
+  and the pull request fails at restore as before.
+
+**One-time setup (repository owner).**
+
+1. Create a GitHub App under the organization (Settings > Developer settings > GitHub Apps > New
+   GitHub App). Suggested name: `whizbang-lockfiles`. Homepage URL: the repository URL. Turn off
+   Webhook (no webhook is needed).
+2. Repository permissions: **Contents: Read and write**. Leave every other permission at "No access"
+   (Metadata: Read-only is added automatically). Organization and account permissions: none. Where can
+   this app be installed: Only on this account.
+3. Create the app, note its **App ID**, and generate a **private key** (a `.pem` file downloads).
+4. Install the app on the organization and choose **Only select repositories**: this repository only.
+5. In this repository, Settings > Secrets and variables > **Dependabot** (not Actions), add:
+   - `LOCKFILE_APP_ID`: the App ID (the Client ID works too);
+   - `LOCKFILE_APP_PRIVATE_KEY`: the entire contents of the `.pem` file.
+
+   They must be Dependabot secrets: a workflow Dependabot triggers sees no Actions secrets.
+6. Delete the downloaded `.pem` once it is stored.
+
+If a ruleset restricts who may push to `dependabot/**` branches, add the app to its bypass list.
+
+**Caveat: Dependabot stops rebasing.** Once a commit that is not Dependabot's lands on its branch,
+Dependabot no longer rebases or recreates that pull request on its own (for example when `develop`
+moves or a newer version comes out). Comment `@dependabot rebase` (or `@dependabot recreate`) to have it
+rebuild the branch; it drops the lock-file commit, and this workflow then regenerates it.

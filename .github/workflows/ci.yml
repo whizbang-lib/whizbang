@@ -880,11 +880,14 @@ jobs:
     # if any test job fails). actions:read is required for that polling.
     #
     # Dependabot PR runs are excluded: workflows triggered by dependabot receive only
-    # Dependabot-scope secrets (this repo defines none), so SONAR_TOKEN arrives empty
+    # Dependabot-scope secrets (this repo defines only the lock-file app's, never
+    # SONAR_TOKEN), so SONAR_TOKEN arrives empty
     # and the scanner hard-fails on auth — and a re-run keeps the original actor's
     # restricted context, so it can never recover. Skipping is safe because ci-result
     # accepts skipped jobs, and the merge queue re-runs quality with full secrets
-    # before anything lands on develop.
+    # before anything lands on develop. The run for the regenerated lock files that
+    # dependabot-lockfiles.yml pushes has the GitHub App as its actor, so it gets full
+    # secrets and runs quality like any other pull request.
     # release-pr is needed for its coverage-run-id only; quality is never skipped by it (see below).
     needs: [changes, queue-validated, ff-validated, release-pr]
     # !failure() && !cancelled() is REQUIRED here: queue-validated and ff-validated are each
