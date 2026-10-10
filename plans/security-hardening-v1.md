@@ -13,13 +13,13 @@ Record each item's outcome here (what was checked, what was found, the PR or iss
 
 - **The request scope's identity comes from the authenticated principal only.** The scope middleware no
   longer reads tenant, user, organization or customer ids from request headers unless the application names a
-  header (#1311, docs whizbang-lib.github.io#1075).
+  header (#1316, docs whizbang-lib.github.io#1077).
 
 ## Hunt list (highest risk first)
 
 | # | Question | Where to look | Outcome |
 |---|---|---|---|
-| 1 | Does every HTTP endpoint the framework generates (GraphQL lenses, REST lenses, SignalR) read through the caller's scope, with no path that bypasses it? | HotChocolate and FastEndpoints generators, `Whizbang.SignalR`, scoped lens factory | **Done 2026-10-10.** GraphQL and REST lenses read through the lens's default scope (`QueryScope.Tenant`), and a missing tenant throws rather than reading every tenant: fails closed. SignalR notifications did not: a tag with no group broadcast to every client, an unresolved placeholder was sent to a literal group, and a payload field could choose `{TenantId}`. Fixed in #1314 (docs whizbang-lib.github.io#1076). Group membership stays the application hub's, now documented. |
+| 1 | Does every HTTP endpoint the framework generates (GraphQL lenses, REST lenses, SignalR) read through the caller's scope, with no path that bypasses it? | HotChocolate and FastEndpoints generators, `Whizbang.SignalR`, scoped lens factory | **Done 2026-10-10.** GraphQL and REST lenses read through the lens's default scope (`QueryScope.Tenant`), and a missing tenant throws rather than reading every tenant: fails closed. SignalR notifications did not: a tag with no group broadcast to every client, an unresolved placeholder was sent to a literal group, and a payload field could choose `{TenantId}`. Fixed in #1316 (docs whizbang-lib.github.io#1077). Group membership stays the application hub's, now documented. |
 | 2 | Can a caller read a field its permissions hide, or run a query with no bound (depth, cost, page size)? | `FieldPermissionAttribute`, lens paging attributes, GraphQL production-hardening docs | |
 | 3 | Does any log line or exception message include a message payload, a credential or personal data? | `LoggerMessage` definitions and exception messages across `src/` | |
 | 4 | Are identifiers that come from configuration (schema, table names) safe where they reach SQL, and is configuration documented as trusted? | `Whizbang.Data.Postgres`, `CollectiveApplyHookPlan`, schema naming | |
