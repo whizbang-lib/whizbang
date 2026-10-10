@@ -276,7 +276,7 @@ public static class ServiceCollectionExtensions {
       var transport = sp.GetRequiredService<ITransport>();
       var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
       var logger = sp.GetRequiredService<ILogger<ServiceBusReadinessCheck>>();
-      return new ServiceBusReadinessCheck(transport, client, logger);
+      return new ServiceBusReadinessCheck(transport, client, logger, timeProvider: sp.GetService<TimeProvider>());
     });
 
     // Register message publish strategy

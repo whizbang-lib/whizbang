@@ -8,25 +8,28 @@ using Whizbang.Core.Transports;
 namespace Whizbang.Transports.AzureServiceBus;
 
 /// <summary>
-/// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_WithValidClient_ReturnsTrueAsync</tests>
-/// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_WithClosedClient_ReturnsFalseAsync</tests>
-/// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_RespectsCancellationTokenAsync</tests>
-/// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_CachesResult_ForSuccessfulChecksAsync</tests>
-/// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_CacheExpires_AfterDurationAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_WithValidClient_ReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_WithClosedClient_ReturnsFalseAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_RespectsCancellationTokenAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_CachesResult_ForSuccessfulChecksAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_CacheExpires_AfterDurationAsync</tests>
 /// Checks if Azure Service Bus is ready to accept messages.
 /// Leverages transport initialization state for accurate readiness tracking.
-/// Implements caching to avoid excessive health checks.
+/// Implements caching to avoid excessive health checks. The cache ages on <c>timeProvider</c>
+/// (the system clock when none is given), so a host or a test can supply the clock.
 /// </summary>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Simple health check logging - LoggerMessage delegates would be overkill for infrequent health checks")]
 public sealed class ServiceBusReadinessCheck(
   ITransport transport,
   ServiceBusClient client,
   ILogger<ServiceBusReadinessCheck> logger,
-  TimeSpan? cacheDuration = null) : ITransportReadinessCheck, IDisposable {
+  TimeSpan? cacheDuration = null,
+  TimeProvider? timeProvider = null) : ITransportReadinessCheck, IDisposable {
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly ServiceBusClient _client = client ?? throw new ArgumentNullException(nameof(client));
   private readonly ILogger<ServiceBusReadinessCheck> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly TimeSpan _cacheDuration = cacheDuration ?? TimeSpan.FromSeconds(30);
+  private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
   private DateTimeOffset? _lastSuccessfulCheck;
   private readonly SemaphoreSlim _lock = new(1, 1);
   private bool _disposed;
@@ -41,7 +44,7 @@ public sealed class ServiceBusReadinessCheck(
 
     // Check cache first (only for successful checks)
     if (_lastSuccessfulCheck.HasValue &&
-        DateTimeOffset.UtcNow - _lastSuccessfulCheck.Value < _cacheDuration) {
+        _timeProvider.GetUtcNow() - _lastSuccessfulCheck.Value < _cacheDuration) {
       _logger.LogDebug("Service Bus readiness check: Using cached result (ready)");
       return true;
     }
@@ -56,7 +59,7 @@ public sealed class ServiceBusReadinessCheck(
 
       // Double-check cache after acquiring lock
       if (_lastSuccessfulCheck.HasValue &&
-          DateTimeOffset.UtcNow - _lastSuccessfulCheck.Value < _cacheDuration) {
+          _timeProvider.GetUtcNow() - _lastSuccessfulCheck.Value < _cacheDuration) {
         _logger.LogDebug("Service Bus readiness check: Using cached result (ready)");
         return true;
       }
@@ -68,7 +71,7 @@ public sealed class ServiceBusReadinessCheck(
       }
 
       // Cache successful check
-      _lastSuccessfulCheck = DateTimeOffset.UtcNow;
+      _lastSuccessfulCheck = _timeProvider.GetUtcNow();
       _logger.LogDebug("Service Bus readiness check: Client is open and ready");
       return true;
 
