@@ -3,6 +3,7 @@
 
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -12,6 +13,7 @@ using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -123,14 +125,15 @@ public class MaintenanceWorkerBranchCoverageTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private static MaintenanceWorker _build(IServiceScopeFactory scopeFactory, MaintenanceMetrics? metrics = null) {
+  private static MaintenanceWorker _build(
+      IServiceScopeFactory scopeFactory, MaintenanceMetrics? metrics = null, ILogger<MaintenanceWorker>? logger = null) {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new MaintenanceWorker(
       scopeFactory,
       gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, StuckRowSentinelEnabled = false }),
-      NullLogger<MaintenanceWorker>.Instance,
+      logger ?? NullLogger<MaintenanceWorker>.Instance,
       metrics);
   }
 
@@ -156,6 +159,32 @@ public class MaintenanceWorkerBranchCoverageTests {
         NullLogger<MaintenanceWorker>.Instance))
       .Throws<ArgumentNullException>()
       .WithParameterName("options");
+  }
+
+  /// <summary>
+  /// Maintenance metrics are optional: a host that registers none still gets every task's outcome
+  /// reported, and the sweep is not cut short by the missing meter.
+  /// </summary>
+  [Test]
+  public async Task MaintenanceCycle_WithoutMetrics_StillReportsEveryTaskAsync() {
+    var logger = new CapturingLogger<MaintenanceWorker>();
+    var coord = new BranchCoordinator {
+      Results = [
+        new MaintenanceResult("purge_stale_instances", 3, 12.5, "ok"),
+        new MaintenanceResult("reap_expired_perspective_rows", 0, 4.0, "ok"),
+      ],
+    };
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    await using var sp = services.BuildServiceProvider();
+
+    await _build(sp.GetRequiredService<IServiceScopeFactory>(), metrics: null, logger: logger)
+      .RunMaintenanceOnceAsync(CancellationToken.None);
+
+    var reported = logger.Snapshot().Select(e => e.Message).ToList();
+    await Assert.That(reported).Contains("Maintenance task 'purge_stale_instances' affected 3 rows in 12.5ms");
+    await Assert.That(reported).Contains("Maintenance task 'reap_expired_perspective_rows' affected 0 rows in 4ms")
+      .Because("without a meter each task's outcome is still reported, and the loop reaches every result");
   }
 
   [Test]
