@@ -903,6 +903,10 @@ public sealed partial class ClaimWorker : BackgroundService {
     // Resolved from the claim's scope, as the coordinator is; a host without the assigner registered ranks every claim
     // itself, as before.
     var partitionAssignments = scope.ServiceProvider.GetService<IPartitionAssignmentSource>();
+    // #1286: whether this instance holds its alive-lock. A direct instance holding it beats on the slow cadence and is
+    // ranked by the lock, so the claim does not ask it to re-register between beats. Resolved from the claim's scope;
+    // a host without a lock source holds none, as before.
+    var aliveLockHeld = scope.ServiceProvider.GetService<IInstanceAliveLockSource>()?.IsAliveLockHeld ?? false;
     var assignment = partitionAssignments is null
       ? null
       : await partitionAssignments.ForClaimAsync(_instanceProvider.InstanceId, ct);
@@ -927,7 +931,8 @@ public sealed partial class ClaimWorker : BackgroundService {
       IdleSettled: idleSettled,
       MaxOutboxAcquireRows: maxOutboxRows,
       OutboxRunLength: Math.Max(1, _options.OutboxRunLength),
-      PartitionAssignment: assignment), ct);
+      PartitionAssignment: assignment,
+      AliveLockHeld: aliveLockHeld), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
 
     // #1226: the claim reads this instance's registration and never writes it, because a write inside

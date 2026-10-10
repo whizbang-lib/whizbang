@@ -86,8 +86,8 @@ public sealed partial class StandbyHandshake {
           continue;   // the deliberate fence: an evicted peer no longer counts, and the
                       // handshake completes without it
         }
-        if (now - peer.LastHeartbeatAt > _options.RequesterLivenessWindow) {
-          continue;   // a peer that stopped heartbeating stops counting
+        if (!peer.AliveLockHeld && now - peer.LastHeartbeatAt > _options.RequesterLivenessWindow) {
+          continue;   // a peer that stopped heartbeating stops counting; one holding its alive-lock is live (#1286)
         }
         if (!SemanticVersion.TryParse(peer.LibraryVersion, out var theirs) || theirs.CompareTo(mine) >= 0) {
           continue;   // same-or-newer peers (and unranked ones) are not asked to stand by

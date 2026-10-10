@@ -10,8 +10,8 @@ namespace Whizbang.Core.Workers;
 /// alive-lock while it holds it.
 /// </summary>
 /// <remarks>
-/// Separate from <see cref="IInstanceAliveLockSource"/>, which drives the heartbeat's adaptive cadence: reporting the
-/// mode must not change how often an instance beats.
+/// Separate from <see cref="IInstanceAliveLockSource"/>, which drives the heartbeat's adaptive cadence. The Postgres
+/// notifications register their shared connection as both (#1286).
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Partitioning.Tests/HeartbeatConnectionModeTests.cs:Beat_WithADirectConnection_RegistersDirectAsync</tests>
