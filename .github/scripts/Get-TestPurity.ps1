@@ -45,9 +45,10 @@
       - SQLite is not flagged: these projects use it in memory (Data Source=:memory:), an in-process
         engine with no I/O.
 
-    Report mode (the default) prints the report and fails only when $script:PurityEnforced is $true; phase 3
-    of #1264 sets it once every non-unit test has moved. With -Inventory it writes the CSV and regenerates the
-    part of the markdown below $script:GeneratedMarker, keeping the hand-written text above it.
+    Report mode (the default) prints the report and fails when any type in a Unit-type project is not a
+    unit test. $script:PurityEnforced turns that on; phase 3 of #1264 set it once every non-unit test had moved.
+    With -Inventory it writes the CSV and regenerates the part of the markdown below $script:GeneratedMarker,
+    keeping the hand-written text above it.
 
     .github/scripts/tests/Get-TestPurity.Tests.ps1 tests every function and runs this scan over the
     repository.
@@ -83,7 +84,7 @@ $ErrorActionPreference = 'Stop'
 
 # Report mode until every non-unit test has moved out of the Unit projects. Phase 3 of #1264 sets this to
 # $true, and the repository test in Get-TestPurity.Tests.ps1 then fails on any violation.
-$script:PurityEnforced = $false
+$script:PurityEnforced = $true
 
 $script:CategoryRank = @{ Unit = 0; Other = 1; Component = 2; Integration = 3 }
 $script:CategoryOrder = @('Unit', 'Component', 'Integration', 'Other')

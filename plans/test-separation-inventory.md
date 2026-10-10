@@ -103,6 +103,7 @@ of the whole class, since they move together; each part lists `partial <Class> (
    `Integration;Docker`. Every compiled test class in them is unit. Their only infrastructure code is three
    Postgres container helpers in `TestHelpers/` (`DatabaseTestHelper`, `EFCoreTestHelper`), used only by
    `*.cs.bak` files, which are not compiled. Nothing moves; the tags (and the dead helpers) are what is wrong.
+   Resolved in phase 2: both projects are tagged Unit, and the three dead helpers are deleted.
 4. **`samples/ECommerce/ECommerce.IntegrationTests`** is a Unit-type project whose name says integration; its
    one test class is unit by these rules.
 5. **Other splits into two kinds, which suggests one more category.**
@@ -176,8 +177,8 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 |---|---:|---:|---:|---:|---:|---:|
 | ECommerce.Contracts.Tests | 10 | 0 | 0 | 0 | 10 | 0 |
 | ECommerce.IntegrationTests | 1 | 0 | 0 | 0 | 1 | 0 |
-| ECommerce.BFF.API.Tests | 9 | 0 | 0 | 0 | 9 | 2 |
-| ECommerce.InventoryWorker.Tests | 5 | 0 | 0 | 0 | 5 | 1 |
+| ECommerce.BFF.API.Tests | 9 | 0 | 0 | 0 | 9 | 0 |
+| ECommerce.InventoryWorker.Tests | 5 | 0 | 0 | 0 | 5 | 0 |
 | ECommerce.NotificationWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.OrderService.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
 | ECommerce.PaymentWorker.Tests | 1 | 0 | 0 | 0 | 1 | 0 |
@@ -207,7 +208,7 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
 | Whizbang.Transports.RabbitMQ.Tests | 24 | 0 | 0 | 0 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
-| **Total** | 1798 | 0 | 0 | 0 | 1798 | 3 |
+| **Total** | 1798 | 0 | 0 | 0 | 1798 | 0 |
 
 ## Worklist: non-unit types by project
 
@@ -223,20 +224,11 @@ All 2 types are unit-pure.
 
 ### ECommerce.BFF.API.Tests
 
-2 of 20 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| DatabaseTestHelper | `samples/ECommerce/tests/ECommerce.BFF.API.Tests/TestHelpers/DatabaseTestHelper.cs` | 0 | Integration | Container, NetworkClient |  |  |
-| EFCoreTestHelper | `samples/ECommerce/tests/ECommerce.BFF.API.Tests/TestHelpers/EFCoreTestHelper.cs` | 0 | Integration | Container, NetworkClient |  |  |
+All 14 types are unit-pure.
 
 ### ECommerce.InventoryWorker.Tests
 
-1 of 9 types are not unit-pure.
-
-| Class | File | Tests | Category | Constructs | Via | Note |
-|---|---|---:|---|---|---|---|
-| DatabaseTestHelper | `samples/ECommerce/tests/ECommerce.InventoryWorker.Tests/TestHelpers/DatabaseTestHelper.cs` | 0 | Integration | Container, NetworkClient |  |  |
+All 8 types are unit-pure.
 
 ### ECommerce.NotificationWorker.Tests
 

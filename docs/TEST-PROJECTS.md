@@ -47,8 +47,8 @@ rule 5):
 - the record is `plans/test-separation-inventory.md` (with `plans/test-separation-inventory.csv`): every
   test class in every Unit project, classified with the construct that would make it non-unit. Every
   Unit project now shows zero non-unit classes;
-- the purity guard (`.github/scripts/Get-TestPurity.ps1`, run by "Test · Pipeline scripts") lists any
-  class that breaks this. It still reports only; making it fail the build is the next step.
+- the purity guard (`.github/scripts/Get-TestPurity.ps1`, run by "Test · Pipeline scripts") fails the
+  build on any class in a Unit project that breaks this, naming the class and the construct.
 
 ## Running tests
 
