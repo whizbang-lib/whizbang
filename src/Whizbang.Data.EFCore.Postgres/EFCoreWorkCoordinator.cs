@@ -125,6 +125,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <summary>
+  /// Resolves the schema the coordinator's SQL runs in from the schema the model maps
+  /// <paramref name="entityType"/> to, falling back to the default schema when the model does not map
+  /// that type or maps it without a schema.
+  /// </summary>
+  /// <remarks>
+  /// Every coordinator call resolves its schema through here, so the "entity not in the model" outcome
+  /// is decided, logged and tested once rather than at each of the call sites.
+  /// </remarks>
+  /// <param name="model">The model of the coordinator's <c>DbContext</c>.</param>
+  /// <param name="entityType">The Whizbang entity whose table the call targets.</param>
+  /// <param name="logger">Optional logger for the fallback warning.</param>
+  /// <returns>The mapped schema, or the default schema.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorSchemaTests.cs</tests>
+  internal static string ResolveSchema(
+    Microsoft.EntityFrameworkCore.Metadata.IModel model,
+    [DynamicallyAccessedMembers(EntityTypeTrimming.MEMBERS)] Type entityType,
+    ILogger<EFCoreWorkCoordinator<TDbContext>>? logger) {
+    ArgumentNullException.ThrowIfNull(model);
+    return GetSchemaWithFallback(model.FindEntityType(entityType)?.GetSchema(), DEFAULT_SCHEMA, logger);
+  }
+
+  private string _resolveSchema([DynamicallyAccessedMembers(EntityTypeTrimming.MEMBERS)] Type entityType) => ResolveSchema(_dbContext.Model, entityType, _logger);
+
+  /// <summary>
   /// Builds a schema-qualified identifier for SQL. Handles empty/public schema correctly.
   /// NEVER produces a leading dot - uses unqualified name for public schema.
   /// </summary>
@@ -173,10 +197,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </summary>
   /// <inheritdoc />
   public async Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) {
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "deregister_instance");
 
 #pragma warning disable S2077
@@ -189,10 +210,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public async ValueTask<OutstandingWork?> CountOutstandingWorkAsync(
       Guid instanceId, CancellationToken cancellationToken = default) {
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "count_outstanding_work");
 
     await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -233,10 +251,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <returns>A task that completes when the setting is stored.</returns>
   public async Task SyncDebugRetentionSettingAsync(
       bool debugMode, CancellationToken cancellationToken = default) {
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var settings = BuildSchemaQualifiedName(schema, SETTINGS_TABLE);
 
     await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -265,10 +280,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   public async ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) {
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     // 162: every column the backlog query reads (processed_at, scheduled_for, instance_id,
     // lease_expiry, received_at) is on wh_inbox_state, so it never touches the message row.
     var inbox = BuildSchemaQualifiedName(schema, "wh_inbox_state");
@@ -356,10 +368,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "record_heartbeat");
 
     var metadataJson = request.Metadata is { } meta
@@ -402,10 +411,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "notify_scheduled_retry_due");
 
 #pragma warning disable S2077
@@ -435,13 +441,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "complete_outbox_published");
 
-    var idArray = ids is Guid[] arr ? arr : [.. ids];
+    var idArray = AsArray(ids);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
@@ -468,12 +471,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "reclassify_events_ephemeral");
-    var names = eventTypeNames as string[] ?? [.. eventTypeNames];
+    var names = AsArray(eventTypeNames);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -499,13 +499,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var eventStore = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
     var normalizeFn = BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION);
-    var names = eventTypeNames as string[] ?? [.. eventTypeNames];
+    var names = AsArray(eventTypeNames);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -525,8 +522,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public async Task<IReadOnlyList<TypeDefinitionInfo>> GetTypeDefinitionsAsync(CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var table = BuildSchemaQualifiedName(schema, "wh_type_definitions");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -551,8 +547,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventTypeName);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "register_type_definition");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -578,8 +573,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     int fromDefinitionId, int toDefinitionId, DefinitionRelationship relationship, string? migrationRef,
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "record_definition_lineage");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -603,10 +597,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return [];
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var eventStore = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
-    var ids = streamIds as Guid[] ?? [.. streamIds];
+    var ids = AsArray(streamIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
@@ -631,8 +624,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     IReadOnlyList<EphemeralTypeGrace> graceOverrides, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(graceOverrides);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "sync_ephemeral_type_grace");
     var names = new string[graceOverrides.Count];
     var graces = new int[graceOverrides.Count];
@@ -658,8 +650,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return;
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "sync_perspective_retention");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -713,8 +704,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<IReadOnlyList<EphemeralSnapshotTarget>> GetEphemeralPairsNeedingSnapshotAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var body = BuildSchemaQualifiedName(schema, EVENT_BODY_TABLE);
     var store = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
     var grace = BuildSchemaQualifiedName(schema, "wh_ephemeral_type_grace");
@@ -807,8 +797,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       string fn, Action<Npgsql.NpgsqlCommand> bind, CancellationToken ct) {
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-      var schema = GetSchemaWithFallback(
-        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var schema = _resolveSchema(typeof(OutboxRecord));
       var qualified = BuildSchemaQualifiedName(schema, fn);
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), ct);
@@ -889,8 +878,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-      var schema = GetSchemaWithFallback(
-        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var schema = _resolveSchema(typeof(OutboxRecord));
       var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_stamp_repair_windows");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -920,8 +908,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-      var schema = GetSchemaWithFallback(
-        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var schema = _resolveSchema(typeof(OutboxRecord));
       var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_claim_repair_drain");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -970,8 +957,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       CancellationToken cancellationToken = default) {
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-      var schema = GetSchemaWithFallback(
-        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var schema = _resolveSchema(typeof(OutboxRecord));
       var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_mark_healed_batch");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1010,8 +996,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       int maxRepairAttempts, CancellationToken cancellationToken = default) {
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-      var schema = GetSchemaWithFallback(
-        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var schema = _resolveSchema(typeof(OutboxRecord));
       var fn = BuildSchemaQualifiedName(schema, "wh_integrity_ledger_summary");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1071,8 +1056,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       string fn, Action<Npgsql.NpgsqlCommand> bind, bool failOpen, CancellationToken ct) {
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-      var schema = GetSchemaWithFallback(
-        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var schema = _resolveSchema(typeof(OutboxRecord));
       var qualified = BuildSchemaQualifiedName(schema, fn);
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), ct);
@@ -1111,8 +1095,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<IReadOnlyList<TableRewriteCandidate>> GetTablesNeedingRewriteAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "wh_tables_needing_rewrite");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1147,8 +1130,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var qualified = BuildSchemaQualifiedName(schema, tableName);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1215,8 +1197,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task RequestTableRewriteAsync(string tableName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "wh_request_table_rewrite");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1235,8 +1216,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(lifecyclePhase);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "record_instance_state");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1275,8 +1255,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public async Task<StandbyRequest?> GetStandbyRequestAsync(CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var requests = BuildSchemaQualifiedName(schema, "wh_standby_requests");
     var instances = BuildSchemaQualifiedName(schema, "wh_service_instances");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -1307,8 +1286,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private async Task<T?> _scalarFunctionAsync<T>(
       string functionName, CancellationToken cancellationToken, params (string Name, object Value)[] args) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, functionName);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1327,8 +1305,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "wh_clear_table_rewrite");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1345,8 +1322,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<EphemeralPointerPruneResult> PruneAncientEphemeralPointersAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "prune_ancient_ephemeral_pointers");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1364,8 +1340,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<int> CloseDigestEpochsAsync(
     int settleSeconds, int maxEpochs, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "close_digest_epochs");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1536,12 +1511,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         "SELECT tenant, event_type, digest_lo, digest_hi, event_count " +
         $"FROM {BuildSchemaQualifiedName(schema, "compute_type_digests_epoch_window")}(@p_origin, @p_types, @p_since, @p_until, NOW(), @p_settle)";
 #pragma warning restore S2077
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) {
-        Value = (object?)originServiceId ?? DBNull.Value
-      });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
-        Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
-      });
+      AddDigestFilterParams(cmd, originServiceId, eventTypes);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)settleWindow.TotalSeconds));
@@ -1614,12 +1584,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         GROUP BY 1, 2, 3
         ORDER BY 3, 1, 2
         """;
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) {
-        Value = (object?)originServiceId ?? DBNull.Value
-      });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
-        Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
-      });
+      AddDigestFilterParams(cmd, originServiceId, eventTypes);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_since", sinceSequence));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_until", through.Value));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_resume", NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -1665,8 +1630,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<StreamCloseResult> CloseStreamAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var fn = BuildSchemaQualifiedName(schema, "close_stream");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1696,8 +1660,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<IReadOnlyList<ArchivedEvent>> GetArchivedEventsAsync(
     Guid streamId, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var archive = BuildSchemaQualifiedName(schema, "wh_event_archive");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1727,8 +1690,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<IReadOnlyList<string>> GetConsumingPerspectiveNamesAsync(
     Guid streamId, long throughVersion, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var store = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
     var assoc = BuildSchemaQualifiedName(schema, "wh_message_associations");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -1760,8 +1722,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public async Task<long?> GetEventVersionAsync(Guid eventId, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var store = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1782,8 +1743,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var body = BuildSchemaQualifiedName(schema, EVENT_BODY_TABLE);
     var store = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
     var grace = BuildSchemaQualifiedName(schema, "wh_ephemeral_type_grace");
@@ -1833,10 +1793,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return;
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var holdTable = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
-    var ids = eventIds as Guid[] ?? [.. eventIds];
+    var ids = AsArray(eventIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
@@ -1862,11 +1821,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return 0;
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var holdTable = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
     var bodyTable = BuildSchemaQualifiedName(schema, EVENT_BODY_TABLE);
-    var ids = eventIds as Guid[] ?? [.. eventIds];
+    var ids = AsArray(eventIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
@@ -1919,10 +1877,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (_instanceProvider is null) {
       return;
     }
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var tableName = BuildSchemaQualifiedName(schema, "wh_service_instances");
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"UPDATE {tableName} SET last_heartbeat_at = NOW() WHERE instance_id = @p_id AND last_heartbeat_at < NOW() - make_interval(secs => @p_freshness)";
@@ -1944,14 +1899,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "complete_perspective");
 
     var cursorsJson = _serializePerspectiveCompletions([.. cursors]);
-    var idArray = eventWorkIds is Guid[] arr ? arr : [.. eventWorkIds];
+    var idArray = AsArray(eventWorkIds);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1973,10 +1925,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "flush_completions");
 
     Guid[] outboxIds = request.OutboxIds switch { null or { Count: 0 } => [], Guid[] arr => arr, var ids => [.. ids] };
@@ -2027,13 +1976,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "resolve_sync_inquiries");
 
-    var inquiriesJson = _buildInquiriesJson(inquiries);
+    var inquiriesJson = BuildInquiriesJson(inquiries);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -2063,10 +2009,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentNullException.ThrowIfNull(inquiry);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "wh_perspective_applied_status");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -2085,8 +2028,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await reader.IsDBNullAsync(0, cancellationToken) ? null : reader.GetGuid(0));
   }
 
+  /// <summary>
+  /// Writes the sync inquiries as the JSON array the batch status function reads.
+  /// </summary>
+  /// <param name="inquiries">The inquiries to send.</param>
+  /// <returns>The JSON array.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InquiriesJsonTests.cs</tests>
+#pragma warning disable RCS1158 // Static helper shared by every generic instantiation; it does not depend on TDbContext.
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Writes the inquiry array by hand, and a hand-written JSON array needs a separator decision at every element of every nested array. The loops and their index tests are the format.")]
-  private static string _buildInquiriesJson(IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries) {
+  internal static string BuildInquiriesJson(IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries) {
     var sb = new System.Text.StringBuilder("[");
     for (var i = 0; i < inquiries.Count; i++) {
       if (i > 0) {
@@ -2096,9 +2046,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       sb.Append("{\"InquiryId\":\"").Append(inq.InquiryId).Append("\",")
         .Append("\"StreamId\":\"").Append(inq.StreamId).Append("\",")
         .Append("\"PerspectiveName\":\"").Append(_jsonEscape(inq.PerspectiveName)).Append("\",")
-        .Append("\"DiscoverPendingFromOutbox\":").Append(inq.DiscoverPendingFromOutbox ? JSON_TRUE : JSON_FALSE).Append(',')
-        .Append("\"IncludePendingEventIds\":").Append(inq.IncludePendingEventIds ? JSON_TRUE : JSON_FALSE).Append(',')
-        .Append("\"IncludeProcessedEventIds\":").Append(inq.IncludeProcessedEventIds ? JSON_TRUE : JSON_FALSE);
+        .Append("\"DiscoverPendingFromOutbox\":").Append(_jsonBool(inq.DiscoverPendingFromOutbox)).Append(',')
+        .Append("\"IncludePendingEventIds\":").Append(_jsonBool(inq.IncludePendingEventIds)).Append(',')
+        .Append("\"IncludeProcessedEventIds\":").Append(_jsonBool(inq.IncludeProcessedEventIds));
       if (inq.EventIds is { Length: > 0 } eids) {
         sb.Append(",\"EventIds\":[");
         for (var j = 0; j < eids.Length; j++) {
@@ -2124,6 +2074,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     sb.Append(']');
     return sb.ToString();
   }
+#pragma warning restore RCS1158
 
   /// <inheritdoc />
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reads the claim's result set column by column into a work batch and then, when outstanding counts were requested, the second result set as well. The column reads dominate the count.")]
@@ -2132,10 +2083,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "claim_work");
     var outstandingFn = BuildSchemaQualifiedName(schema, "count_outstanding_work");
 
@@ -2281,10 +2229,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "commit_handler_result");
 
     var payload = _buildHandlerCommitPayload(request);
@@ -2311,10 +2256,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "commit_handler_batch");
 
     var sb = new System.Text.StringBuilder("[");
@@ -2376,7 +2318,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     sb.Append(",\"host_name\":\"").Append(_jsonEscape(request.HostName)).Append('"');
     sb.Append(",\"process_id\":").Append(request.ProcessId);
     sb.Append(",\"partition_count\":").Append(request.PartitionCount);
-    sb.Append(",\"debug_mode\":").Append(request.DebugMode ? JSON_TRUE : JSON_FALSE);
+    sb.Append(",\"debug_mode\":").Append(_jsonBool(request.DebugMode));
     sb.Append(",\"inbox_completion\":{")
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
@@ -2388,6 +2330,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
     sb.Append('}');
     return sb.ToString();
   }
+
+  /// <summary>
+  /// The array a Postgres array parameter binds: the caller's own array when it passed one, otherwise
+  /// a copy. Every id and name list the coordinator sends goes through here.
+  /// </summary>
+  /// <typeparam name="T">The element type.</typeparam>
+  /// <param name="items">The caller's collection.</param>
+  /// <returns>An array holding <paramref name="items"/>.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorParameterBindingTests.cs</tests>
+#pragma warning disable RCS1158 // Static helper shared by every generic instantiation; it does not depend on TDbContext.
+  internal static T[] AsArray<T>(IEnumerable<T> items) => items as T[] ?? [.. items];
+#pragma warning restore RCS1158
+
+  // One JSON literal per bool, so every hand-written payload spells its flags the same way and the
+  // choice is made (and tested) once.
+  private static string _jsonBool(bool value) => value ? JSON_TRUE : JSON_FALSE;
 
   private static string _jsonEscape(string s) =>
     s.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
@@ -2403,10 +2361,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "report_failures");
 
     var failuresJson = _serializeFailures([.. failures]);
@@ -2433,13 +2388,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "renew_leases");
 
-    var idArray = ids is Guid[] arr ? arr : [.. ids];
+    var idArray = AsArray(ids);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -2469,13 +2421,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "release_unprocessed_inbox");
 
-    var idArray = messageIds is Guid[] arr ? arr : [.. messageIds];
+    var idArray = AsArray(messageIds);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -2506,14 +2455,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "release_unstarted_leases");
 
-    Guid[] inboxArray = inboxStreamIds is Guid[] ia ? ia : [.. inboxStreamIds];
-    Guid[] perspectiveArray = perspectiveStreamIds is Guid[] pa ? pa : [.. perspectiveStreamIds];
+    Guid[] inboxArray = AsArray(inboxStreamIds);
+    Guid[] perspectiveArray = AsArray(perspectiveStreamIds);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -2545,10 +2491,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
 
     var sql = $"""
       SELECT es.event_id, es.stream_id, es.version::bigint, es.commit_sequence,
@@ -3113,10 +3056,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       CancellationToken cancellationToken) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var settings = BuildSchemaQualifiedName(schema, SETTINGS_TABLE);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -3145,10 +3085,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     const string WATERMARK_KEY = "integrity_checkpoint_watermark";
     var settings = BuildSchemaQualifiedName(schema, SETTINGS_TABLE);
 
@@ -3257,10 +3194,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -3302,8 +3236,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Func<System.Data.Common.DbCommand, string, Task<T>> operation,
       CancellationToken cancellationToken) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -3404,12 +3337,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         "SELECT tenant, event_type, digest_lo, digest_hi, event_count " +
         $"FROM {BuildSchemaQualifiedName(schema, "compute_type_digests_epoch")}(@p_origin, @p_types, NOW(), @p_settle)";
 #pragma warning restore S2077
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) {
-        Value = (object?)originServiceId ?? DBNull.Value
-      });
-      cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_TYPES, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
-        Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
-      });
+      AddDigestFilterParams(cmd, originServiceId, eventTypes);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, (int)settleWindow.TotalSeconds));
 
       var results = new List<StreamDigest>();
@@ -3458,7 +3386,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         GROUP BY 1, 2, 3
         ORDER BY 1, 2, 3
         """;
-      _addDigestFilterParams(cmd, originServiceId, eventTypes);
+      AddDigestFilterParams(cmd, originServiceId, eventTypes);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
 
       return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken)
@@ -3543,7 +3471,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           AND ((@p_types::text[]) IS NULL OR event_type IN (SELECT {normalizeFn}(t) FROM unnest(@p_types::text[]) AS t))
         ORDER BY 1, 2, 3
         """;
-      _addDigestFilterParams(cmd, originServiceId, eventTypes);
+      AddDigestFilterParams(cmd, originServiceId, eventTypes);
 
       return await _readStreamDigestsAsync(cmd, hasUpdatedAt: true, typeLevel: false, cancellationToken)
         .ConfigureAwait(false);
@@ -3568,7 +3496,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         GROUP BY 1, 2
         ORDER BY 1, 2
         """;
-      _addDigestFilterParams(cmd, originServiceId, eventTypes);
+      AddDigestFilterParams(cmd, originServiceId, eventTypes);
 
       return await _readStreamDigestsAsync(cmd, hasUpdatedAt: true, typeLevel: true, cancellationToken)
         .ConfigureAwait(false);
@@ -3677,7 +3605,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
   }
 
-  private static void _addDigestFilterParams(
+  /// <summary>
+  /// Binds the digest queries' shared filter: the origin service and the event types, each null when
+  /// the caller does not filter on it, which the SQL reads as "every origin" and "every type".
+  /// </summary>
+  /// <param name="cmd">The command the parameters are added to.</param>
+  /// <param name="originServiceId">The origin to filter on, or null for every origin.</param>
+  /// <param name="eventTypes">The event types to filter on, or null for every type.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorParameterBindingTests.cs</tests>
+#pragma warning disable RCS1158 // Static helper shared by every generic instantiation; it does not depend on TDbContext.
+  internal static void AddDigestFilterParams(
       System.Data.Common.DbCommand cmd, Guid? originServiceId, IReadOnlyList<string>? eventTypes) {
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = (object?)originServiceId ?? DBNull.Value
@@ -3686,13 +3623,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
     });
   }
+#pragma warning restore RCS1158
 
   /// <inheritdoc />
   public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
 
     var sql = $"""
       SELECT
@@ -3720,10 +3655,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(
     int partitionCount,
     CancellationToken cancellationToken = default) {
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "recompute_partition_numbers");
 
     long inbox = 0;
@@ -3772,10 +3704,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var json = _serializeNewInboxMessages(messages);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "store_inbox_messages");
 
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
@@ -3817,10 +3746,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var json = _serializeNewInboxMessages(messages);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "store_inbox_messages");
 
     // The store runs exactly as StoreInboxMessagesAsync runs it — same function, same parameters,
@@ -3875,10 +3801,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var json = _serializeNewOutboxMessages(messages);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "store_outbox_messages");
 
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
@@ -3943,10 +3866,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public async Task<IReadOnlyList<Whizbang.Core.Messaging.CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(
     CancellationToken cancellationToken = default) {
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -3982,10 +3902,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(group);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -4059,10 +3976,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var json = _serializeNewOutboxMessages(compositeMessages);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "store_outbox_messages");
     var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
 
@@ -4071,7 +3985,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var completeSql = $"UPDATE {tableName} SET processed_at = NOW() WHERE message_id = ANY({{0}}) AND processed_at IS NULL";
 #pragma warning restore S2077
 
-    var foldedIdArray = foldedIds is Guid[] arr ? arr : [.. foldedIds];
+    var foldedIdArray = AsArray(foldedIds);
 
     // ONE transaction: the composite row(s) appear and the folded singles complete together —
     // a single is either still pending (floor intact) or folded (composite exists), never both,
@@ -4098,10 +4012,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(group);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
 
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
@@ -4138,10 +4049,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private async Task<IReadOnlyList<Whizbang.Core.Messaging.StuckRow>> _findStuckRowsAsync(
       string functionShortName, int maxAttempts, int limit, CancellationToken ct) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, functionShortName);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -4175,10 +4083,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "cleanup_completed_streams");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -4239,10 +4144,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     try {
-      var schema = GetSchemaWithFallback(
-        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-        DEFAULT_SCHEMA,
-        _logger);
+      var schema = _resolveSchema(typeof(OutboxRecord));
       var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_cursor_work");
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant; parameters use EF Core positional placeholders ({0}..{5})
       var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}::jsonb, {{4}}, {{5}}::text)";
@@ -4301,10 +4203,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private async Task _logCheckpointDiagnosticAsync(
     Guid streamId, string perspectiveName,
     CancellationToken cancellationToken) {
-    var diagnosticSchema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var diagnosticSchema = _resolveSchema(typeof(OutboxRecord));
     var diagnosticTable = BuildSchemaQualifiedName(diagnosticSchema, PERSPECTIVE_CURSORS_TABLE);
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
     var diagnosticSql = $"SELECT stream_id, perspective_name, status, last_event_id, error FROM {diagnosticTable} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
@@ -4371,10 +4270,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
 
     // Get schema from OutboxRecord entity (all Whizbang tables share the same schema)
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var tableName = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
     var eventStoreTable = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
 #pragma warning disable S2077 // Schema-qualified table names built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
@@ -4415,10 +4311,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return [];
     }
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var tableName = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -4466,10 +4359,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     Guid eventId,
     CancellationToken cancellationToken = default) {
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var tableName = BuildSchemaQualifiedName(schema, "wh_lifecycle_completions");
 
     // Idempotent: ON CONFLICT DO NOTHING handles duplicate event IDs
@@ -4494,10 +4384,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return [];
     }
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var eventStoreTable = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
     var bodyTable = BuildSchemaQualifiedName(schema, EVENT_BODY_TABLE);
     var cursorsTable = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
@@ -4589,10 +4476,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     TimeSpan retentionPeriod,
     CancellationToken cancellationToken = default) {
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var tableName = BuildSchemaQualifiedName(schema, "wh_lifecycle_completions");
     var cutoff = DateTimeOffset.UtcNow - retentionPeriod;
 
@@ -4616,9 +4500,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // The concrete event type is resolved downstream by the lifecycle coordinator/receptors.
     JsonElement payload;
     try {
-      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement));
-      payload = (JsonElement)(System.Text.Json.JsonSerializer.Deserialize(row.EventData, typeInfo)
-        ?? throw new InvalidOperationException($"Failed to deserialize event {row.EventId} as JsonElement."));
+      // GetTypeInfo answers for exactly the type asked or throws (caught below), so this is the
+      // JsonElement contract, and a JsonElement cannot deserialize to null: JSON null is a Null element.
+      var typeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<JsonElement>)_jsonOptions.GetTypeInfo(typeof(JsonElement));
+      payload = System.Text.Json.JsonSerializer.Deserialize(row.EventData, typeInfo);
     } catch (NotSupportedException) {
       // Fallback: deserializing an interface/abstract type is not supported.
       // The chained type resolver may return polymorphic IEvent type info.
@@ -4701,8 +4586,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ArgumentNullException.ThrowIfNull(import);
     try {
       using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-      var schema = GetSchemaWithFallback(
-        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var schema = _resolveSchema(typeof(OutboxRecord));
       var qualified = BuildSchemaQualifiedName(schema, "wh_import_dead_letter");
       await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -4762,10 +4646,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
   public async Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(
       CancellationToken cancellationToken = default) {
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var cursorsTable = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
 
     var sql = $@"
@@ -4806,10 +4687,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return 0;
     }
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_events");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -4845,10 +4723,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return 0;
     }
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "reap_exhausted_orphaned_perspective_rows");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -4861,7 +4736,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
 #pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
-      Value = streamIds is Guid[] arr ? arr : [.. streamIds]
+      Value = AsArray(streamIds)
     });
 #pragma warning restore RCS1130
     cmd.Parameters.Add(new NpgsqlParameter(P_MAX_ATTEMPTS, maxAttempts));
@@ -4878,10 +4753,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return [];
     }
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "get_stream_events");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -4979,10 +4851,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // Schema-qualified like every other query here (issue #630): wh_service_config is created in
     // the DbContext's schema, and a bare name resolves through search_path — 42P01 on a non-public
     // schema, or another schema's row when public happens to have one.
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var table = BuildSchemaQualifiedName(schema, "wh_service_config");
     await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // schema comes from the EF model, not user input — same pattern as every neighbor
@@ -5017,13 +4886,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return [];
     }
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "fetch_outbox_batch");
 
-    var streamArr = streamIds is Guid[] arr ? arr : [.. streamIds];
+    var streamArr = AsArray(streamIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
@@ -5111,10 +4977,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return [];
     }
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "wh_continue_outbox_streams");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -5193,13 +5056,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return [];
     }
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "fetch_inbox_batch");
 
-    var streamArr = streamIds is Guid[] arr ? arr : [.. streamIds];
+    var streamArr = AsArray(streamIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
@@ -5265,10 +5125,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(perspectiveName);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "fetch_pending_perspective_events");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -5300,10 +5157,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(perspectiveName);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "claim_and_fetch_pending_perspective_events");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -5336,10 +5190,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueAsync(
     Guid streamId,
     CancellationToken cancellationToken = default) {
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "wh_collective_sink_queue");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -5369,13 +5220,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return [];
     }
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "fetch_events_by_ids");
 
-    var idArr = eventIds is Guid[] arr ? arr : [.. eventIds];
+    var idArr = AsArray(eventIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
@@ -5401,9 +5249,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -5431,9 +5277,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(handledTypeNames);
 
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(InboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(InboxRecord));
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -5444,7 +5288,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var param = command.CreateParameter();
     param.ParameterName = "handled_types";
     param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
-    param.Value = handledTypeNames is string[] arr ? arr : [.. handledTypeNames];
+    param.Value = AsArray(handledTypeNames);
     command.Parameters.Add(param);
 
     await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -5474,7 +5318,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         $"DELETE FROM \"{schema}\".wh_inbox r USING \"{schema}\".wh_inbox_state s "
         + "WHERE s.message_id = r.message_id AND s.processed_at IS NULL AND s.instance_id IS NULL "
         + "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)",
-      _dbContext.Model.FindEntityType(typeof(InboxRecord))?.GetSchema(), messageTypeNames, cancellationToken);
+      typeof(InboxRecord), messageTypeNames, cancellationToken);
 
   /// <inheritdoc />
   public Task<long> DiscardPendingOutboxMessagesAsync(
@@ -5485,15 +5329,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
         $"DELETE FROM \"{schema}\".{OUTBOX_TABLE} r "
         + "WHERE r.processed_at IS NULL AND r.instance_id IS NULL "
         + "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)",
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), messageTypeNames, cancellationToken);
+      typeof(OutboxRecord), messageTypeNames, cancellationToken);
 
   /// <inheritdoc />
   public async Task<IReadOnlySet<Guid>?> GetStreamsWithPendingMessagesAsync(
       IReadOnlyList<Guid> streamIds,
       IReadOnlyList<string> messageTypeNames,
       CancellationToken cancellationToken = default) {
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(typeof(OutboxRecord));
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var command = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
@@ -5511,14 +5354,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// Renders the statement for the resolved schema. The two tables no longer share a predicate, so
   /// the caller supplies the whole statement rather than a table name substituted into one shape.
   /// </param>
+  /// <param name="entityType">The entity whose mapped schema the statement runs in.</param>
   private async Task<long> _discardPendingAsync(
-      Func<string, string> buildSql, string? entitySchema, IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken) {
+      Func<string, string> buildSql, [DynamicallyAccessedMembers(EntityTypeTrimming.MEMBERS)] Type entityType, IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(buildSql);
     ArgumentNullException.ThrowIfNull(messageTypeNames);
     if (messageTypeNames.Count == 0) {
       return 0;
     }
-    var schema = GetSchemaWithFallback(entitySchema, DEFAULT_SCHEMA, _logger);
+    var schema = _resolveSchema(entityType);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var connection = __scope.Connection;

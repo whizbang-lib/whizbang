@@ -160,6 +160,40 @@ public class PhysicalFieldHydratorInitOnlyTests {
     }
     """;
 
+  private const string COMPUTED_VECTOR_SOURCE = """
+    #nullable enable
+    using System;
+    using Microsoft.EntityFrameworkCore;
+    using Whizbang.Core;
+    using Whizbang.Core.Perspectives;
+    using Whizbang.Data.EFCore.Custom;
+
+    namespace TestApp;
+
+    public record TicketEvent : IEvent;
+
+    [PerspectiveStorage(FieldStorageMode.Extracted)]
+    public class TicketModel {
+      [StreamId]
+      public Guid Id { get; set; }
+
+      [PhysicalField]
+      public int? Size { get; set; }
+
+      [VectorField(3)]
+      public float[]? Embedding => null;
+    }
+
+    public class TicketPerspective : IPerspectiveFor<TicketModel, TicketEvent> {
+      public TicketModel Apply(TicketModel currentData, TicketEvent @event) => currentData;
+    }
+
+    [WhizbangDbContext]
+    public class TestDbContext : DbContext {
+      public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+    }
+    """;
+
   private static async Task<string> _registrationAsync(string source) {
     var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
     var file = result.GeneratedSources.FirstOrDefault(s => s.HintName == REGISTRATION_FILE);
@@ -243,5 +277,21 @@ public class PhysicalFieldHydratorInitOnlyTests {
     await Assert.That(lines.Count(l => l == "row.Data.Size = _size ?? row.Data.Size;")).IsEqualTo(2)
       .Because("the runner reports the model (WHIZ808); the hydrators still compile, assigning what a class can");
     await Assert.That(lines).DoesNotContain("row.Data = new global::TestApp.UncopyableModel {");
+  }
+
+  /// <summary>
+  /// A vector field with no setter is computed, like any other property without one: the hydrators
+  /// never copy its column into the model, while a settable field beside it is still copied.
+  /// </summary>
+  [Test]
+  public async Task Class_WithAComputedVectorField_NeverCopiesItsColumnIntoTheModelAsync() {
+    var generated = await _registrationAsync(COMPUTED_VECTOR_SOURCE);
+    var lines = _lines(generated);
+
+    await Assert.That(lines.Count(l => l == "row.Data.Size = _size ?? row.Data.Size;")).IsEqualTo(2)
+      .Because("the settable field beside it is copied by both hydrators");
+    await Assert.That(generated).DoesNotContain("var _embedding =")
+      .Because("a vector property with no setter is computed, not stored, so there is nothing to copy into it");
+    await Assert.That(generated).DoesNotContain("row.Data.Embedding =");
   }
 }

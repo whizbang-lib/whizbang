@@ -74,6 +74,38 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task FetchPendingCoalesce_WhenStoredMetadataIsJsonNull_SynthesizesMinimalMetadataAsync() {
+    // A JSON null is a stored value, not a missing column: it deserializes to no metadata at all.
+    // The fold only needs the payload, so the row ships with minimal metadata instead of stranding.
+    await using var dbContext = CreateDbContext();
+    var coordinator = _coordinator(dbContext);
+    var connection = await _openAsync(dbContext);
+    var messageId = await _seedPendingAsync(connection, "group-null-meta", createdAgoSeconds: 10, metadataJson: "null");
+
+    var fetched = await coordinator.FetchPendingCoalesceAsync("group-null-meta", limit: 10);
+
+    await Assert.That(fetched.Count).IsEqualTo(1);
+    await Assert.That(fetched[0].Metadata.MessageId.Value).IsEqualTo(messageId);
+    await Assert.That(fetched[0].Metadata.Hops).IsEmpty();
+    await Assert.That(fetched[0].Envelope.Payload.GetProperty("record").GetString()).IsEqualTo("data");
+  }
+
+  [Test]
+  public async Task FetchPendingCoalesce_WhenStoredEnvelopeIsJsonNull_ThrowsNamingTheMessageAsync() {
+    // Without an envelope there is nothing to fold, and a composite built from nothing would ship an
+    // empty message under the singles' identities, so the fetch refuses and names the row.
+    await using var dbContext = CreateDbContext();
+    var coordinator = _coordinator(dbContext);
+    var connection = await _openAsync(dbContext);
+    var messageId = await _seedPendingAsync(connection, "group-null-envelope", createdAgoSeconds: 10, eventDataJson: "null");
+
+    var thrown = await Assert.That(async () => { await coordinator.FetchPendingCoalesceAsync("group-null-envelope", limit: 10); })
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(thrown!.Message).Contains(messageId.ToString());
+  }
+
+  [Test]
   public async Task CompleteCoalesceFold_InsertsCompositeAndCompletesSinglesAtomicallyAsync() {
     // End to end through the REAL pieces: singles minted through the real store seam
     // (resolver-stamped, StoreOutboxMessagesAsync), then the real CoalesceShipWorker fold
@@ -235,7 +267,9 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
       NpgsqlConnection connection,
       string group,
       int createdAgoSeconds,
-      string? scheduledForSql = null) {
+      string? scheduledForSql = null,
+      string? eventDataJson = null,
+      string metadataJson = "{}") {
     var messageId = (Guid)TrackedGuid.New();
     await using var ins = connection.CreateCommand();
     ins.CommandText = $$"""
@@ -244,14 +278,16 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
         (message_id, destination, message_type, event_data, metadata, status, attempts,
          created_at, stream_id, partition_number, coalesce_group, scheduled_for)
       VALUES (@msg, 'test-topic', 'TestEvent',
-        '{"id":"{{messageId}}","p":{"record":"data"},"h":[]}',
-        '{}', 0, 0,
+        @data::jsonb,
+        @meta::jsonb, 0, 0,
         NOW() - INTERVAL '{{createdAgoSeconds}} seconds', @stream, 0, @grp,
         {{scheduledForSql ?? "NOW() + INTERVAL '60 seconds'"}})
 """;
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", Guid.NewGuid());
     ins.Parameters.AddWithValue("grp", group);
+    ins.Parameters.AddWithValue("data", eventDataJson ?? $"{{\"id\":\"{messageId}\",\"p\":{{\"record\":\"data\"}},\"h\":[]}}");
+    ins.Parameters.AddWithValue("meta", metadataJson);
     await ins.ExecuteNonQueryAsync();
     return messageId;
   }

@@ -177,6 +177,47 @@ public class IntegrityCheckpointReceptorCoverageTests {
                "wire — exactly the operator trap this guard's log line exists to explain.");
   }
 
+  /// <summary>
+  /// A host with housekeeping arbitration must see the checkpoint hold the integrity slot for the
+  /// whole handler and give it back afterwards. If the hold were skipped, the cleanup sweep would walk
+  /// the same tables concurrently; if it leaked, the sweep would be disabled for the life of the
+  /// process.
+  /// </summary>
+  [Test]
+  public async Task HousekeepingRegistered_HoldsTheIntegritySlotDuringTheCheckpointAndReleasesItAfterAsync() {
+    var housekeeping = new HousekeepingCoordinator();
+    HousekeepingCoordinator.Decision? cleanupDuringCheckpoint = null;
+    var coordinator = new FakeCoordinator();
+    // Mid-handler, after the hold is taken: ask for the cleanup slot the way the sweep would.
+    coordinator.OnCountServiceBacklog = () =>
+      cleanupDuringCheckpoint = housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, backlog: null);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IDispatcher>(new FakeDispatcher());
+    services.AddSingleton(new IntegrityGapTracker());
+    services.AddSingleton(new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
+    services.AddSingleton<IntegrityRepairLedger>();
+    services.AddSingleton(housekeeping);
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions()));
+    var sp = services.BuildServiceProvider();
+    var receptor = new IntegrityCheckpointReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityCheckpointReceptor>.Instance);
+
+    await receptor.HandleAsync(_checkpoint(Guid.NewGuid(), "origin-svc", from: 0, to: 5, count: 0, emptyBuckets: true));
+
+    await Assert.That(cleanupDuringCheckpoint).IsNotNull()
+      .Because("the handler must have reached the backlog count, where the probe runs");
+    await Assert.That(cleanupDuringCheckpoint!.Value.Granted).IsFalse();
+    await Assert.That(cleanupDuringCheckpoint.Value.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.HigherPriorityRunning)
+      .Because("while the checkpoint runs it holds the integrity slot, which outranks cleanup");
+
+    var afterwards = housekeeping.TryBegin(HousekeepingCoordinator.Activity.Integrity, backlog: null);
+    await Assert.That(afterwards.Granted).IsTrue()
+      .Because("the hold is released when the handler returns; a leaked slot would refuse this as AlreadyRunning");
+    housekeeping.End(HousekeepingCoordinator.Activity.Integrity);
+  }
+
   // ── fixture helpers ────────────────────────────────────────────────────
 
   private static IntegrityCheckpoint _checkpoint(

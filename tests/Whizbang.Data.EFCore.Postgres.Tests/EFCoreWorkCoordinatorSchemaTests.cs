@@ -1,10 +1,12 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -14,7 +16,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// - Valid non-empty schema returns that schema
 /// - Null schema logs warning and returns default
 /// - Empty schema logs warning and returns default
+/// And ResolveSchema, through which every coordinator call resolves its schema from the model.
 /// </summary>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Shard2")]
 public class EFCoreWorkCoordinatorSchemaTests {
   private const string DEFAULT_SCHEMA = "public";
@@ -109,6 +113,46 @@ public class EFCoreWorkCoordinatorSchemaTests {
   }
 
   // ============================================================
+  // ResolveSchema tests - the model decides the schema, once for every call site
+  // ============================================================
+
+  [Test]
+  public async Task ResolveSchema_WhenModelMapsEntityToSchema_ReturnsThatSchemaAsync() {
+    using var context = SchemaProbeDbContext.Create();
+    var logger = new CapturingLogger();
+
+    var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.ResolveSchema(
+      context.Model, typeof(SchemaProbeRow), logger);
+
+    await Assert.That(result).IsEqualTo(SchemaProbeDbContext.PROBE_SCHEMA);
+    await Assert.That(logger.WarningCount).IsEqualTo(0)
+      .Because("a mapped schema is used as-is, with nothing to warn about");
+  }
+
+  [Test]
+  public async Task ResolveSchema_WhenModelDoesNotMapEntity_LogsWarningAndReturnsDefaultAsync() {
+    // The probe model maps no OutboxRecord, which is the "entity not in the model" outcome every
+    // coordinator call shares: the SQL then runs in the default schema rather than failing.
+    using var context = SchemaProbeDbContext.Create();
+    var logger = new CapturingLogger();
+
+    var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.ResolveSchema(
+      context.Model, typeof(OutboxRecord), logger);
+
+    await Assert.That(context.Model.FindEntityType(typeof(OutboxRecord))).IsNull();
+    await Assert.That(result).IsEqualTo(DEFAULT_SCHEMA);
+    await Assert.That(logger.WarningCount).IsEqualTo(1);
+    await Assert.That(logger.LastWarningMessage).Contains("falling back");
+  }
+
+  [Test]
+  public async Task ResolveSchema_WhenModelIsNull_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => EFCoreWorkCoordinator<WorkCoordinationDbContext>.ResolveSchema(
+        null!, typeof(OutboxRecord), logger: null))
+      .Throws<ArgumentNullException>();
+  }
+
+  // ============================================================
   // BuildSchemaQualifiedName tests - CRITICAL: Never produce leading dot
   // ============================================================
 
@@ -171,6 +215,22 @@ public class EFCoreWorkCoordinatorSchemaTests {
     // Assert - Should have quoted schema to handle reserved word
     await Assert.That(result).IsEqualTo("\"user\".complete_perspective_cursor_work");
     await Assert.That(result).DoesNotStartWith(".");
+  }
+
+  public sealed class SchemaProbeRow {
+    public int Id { get; set; }
+  }
+
+  /// <summary>A model with one entity in a custom schema and no Whizbang entities.</summary>
+  private sealed class SchemaProbeDbContext(DbContextOptions<SchemaProbeDbContext> options) : DbContext(options) {
+    public const string PROBE_SCHEMA = "inventory";
+
+    // Building the model needs a provider, not a server: nothing here opens a connection.
+    public static SchemaProbeDbContext Create() => new(new DbContextOptionsBuilder<SchemaProbeDbContext>()
+      .UseNpgsql("Host=localhost;Database=probe;Username=u;Password=p").Options);
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+      modelBuilder.Entity<SchemaProbeRow>().ToTable("schema_probe", PROBE_SCHEMA);
   }
 
   /// <summary>
