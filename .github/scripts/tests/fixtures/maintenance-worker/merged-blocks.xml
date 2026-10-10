@@ -1,0 +1,868 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<results>
+  <modules>
+    <module id="D72B650FC0710040A901FCFB3E965A7CD5A7CEDA" name="Whizbang.Core.dll" path="Whizbang.Core.dll" block_coverage="83.95" line_coverage="78.73" blocks_covered="75493" blocks_not_covered="14433" lines_covered="47358" lines_partially_covered="864" lines_not_covered="11929">
+      <functions>
+        <function id="115608" token="0x60005cf" name="MaintenanceWorker(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory, Whizbang.Core.Workers.ISchemaReadyGate, Microsoft.Extensions.Options.IOptions&lt;Whizbang.Core.Workers.MaintenanceWorkerOptions&gt;, Microsoft.Extensions.Logging.ILogger&lt;Whizbang.Core.Workers.MaintenanceWorker&gt;, Whizbang.Core.Observability.MaintenanceMetrics, Whizbang.Core.Workers.HousekeepingCoordinator)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker" block_coverage="100.00" line_coverage="100.00" blocks_covered="11" blocks_not_covered="0" lines_covered="12" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="32" end_line="32" start_column="3" end_column="93" covered="yes" />
+            <range source_id="91" start_line="33" end_line="33" start_column="3" end_column="95" covered="yes" />
+            <range source_id="91" start_line="34" end_line="34" start_column="3" end_column="123" covered="yes" />
+            <range source_id="91" start_line="35" end_line="35" start_column="3" end_column="87" covered="yes" />
+            <range source_id="91" start_line="39" end_line="39" start_column="3" end_column="74" covered="yes" />
+            <range source_id="91" start_line="25" end_line="31" start_column="29" end_column="48" covered="yes" />
+          </ranges>
+        </function>
+        <function id="115879" token="0x60005d2" name="_shortTypeNames(System.Collections.Generic.IReadOnlyList&lt;string&gt;)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker" block_coverage="100.00" line_coverage="100.00" blocks_covered="6" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="129" end_line="129" start_column="8" end_column="86" covered="yes" />
+          </ranges>
+        </function>
+        <function id="116028" token="0x60005d4" name="_recordIntegrityDiscard(Whizbang.Core.Observability.StreamIntegrityMetrics, long, string, System.Collections.Generic.IReadOnlyList&lt;string&gt;)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker" block_coverage="100.00" line_coverage="100.00" blocks_covered="12" blocks_not_covered="0" lines_covered="8" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="164" end_line="164" start_column="5" end_column="24" covered="yes" />
+            <range source_id="91" start_line="165" end_line="165" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="167" end_line="167" start_column="5" end_column="49" covered="yes" />
+            <range source_id="91" start_line="168" end_line="168" start_column="7" end_column="46" covered="yes" />
+            <range source_id="91" start_line="169" end_line="169" start_column="7" end_column="71" covered="yes" />
+            <range source_id="91" start_line="171" end_line="172" start_column="5" end_column="122" covered="yes" />
+            <range source_id="91" start_line="173" end_line="173" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="117119" token="0x60005e0" name="_destructionContext(System.Collections.Generic.IReadOnlyList&lt;Whizbang.Core.Messaging.EphemeralDestructionTarget&gt;)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker" block_coverage="100.00" line_coverage="100.00" blocks_covered="5" blocks_not_covered="0" lines_covered="5" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="852" end_line="856" start_column="5" end_column="6" covered="yes" />
+          </ranges>
+        </function>
+        <function id="117231" token="0x60005e2" name="_coordinatorDebugMode(System.IServiceProvider)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker" block_coverage="100.00" line_coverage="100.00" blocks_covered="6" blocks_not_covered="0" lines_covered="2" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="872" end_line="873" start_column="5" end_column="33" covered="yes" />
+          </ranges>
+        </function>
+        <function id="119990" token="0x600060e" name="get_Enabled()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1049" end_line="1049" start_column="25" end_column="29" covered="yes" />
+          </ranges>
+        </function>
+        <function id="119998" token="0x600060f" name="set_Enabled(bool)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1049" end_line="1049" start_column="30" end_column="34" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120007" token="0x6000610" name="get_AllowTableRewrite()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1061" end_line="1061" start_column="35" end_column="39" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120015" token="0x6000611" name="set_AllowTableRewrite(bool)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1061" end_line="1061" start_column="40" end_column="44" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120024" token="0x6000612" name="get_IntervalMinutes()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1074" end_line="1074" start_column="32" end_column="36" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120032" token="0x6000613" name="set_IntervalMinutes(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1074" end_line="1074" start_column="37" end_column="41" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120041" token="0x6000614" name="get_StuckRowSentinelEnabled()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1087" end_line="1087" start_column="41" end_column="45" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120049" token="0x6000615" name="set_StuckRowSentinelEnabled(bool)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1087" end_line="1087" start_column="46" end_column="50" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120058" token="0x6000616" name="get_StuckRowSentinelMaxAttempts()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1099" end_line="1099" start_column="44" end_column="48" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120066" token="0x6000617" name="set_StuckRowSentinelMaxAttempts(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1099" end_line="1099" start_column="49" end_column="53" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120075" token="0x6000618" name="get_StuckRowSentinelLimit()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1110" end_line="1110" start_column="38" end_column="42" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120083" token="0x6000619" name="set_StuckRowSentinelLimit(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1110" end_line="1110" start_column="43" end_column="47" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120092" token="0x600061a" name="get_DestructionRetryBackoffSeconds()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1117" end_line="1117" start_column="47" end_column="51" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120100" token="0x600061b" name="set_DestructionRetryBackoffSeconds(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="0.00" line_coverage="0.00" blocks_covered="0" blocks_not_covered="1" lines_covered="0" lines_partially_covered="0" lines_not_covered="1">
+          <ranges>
+            <range source_id="91" start_line="1117" end_line="1117" start_column="52" end_column="56" covered="no" />
+          </ranges>
+        </function>
+        <function id="120109" token="0x600061c" name="get_MaxDestructionRetries()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1124" end_line="1124" start_column="38" end_column="42" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120117" token="0x600061d" name="set_MaxDestructionRetries(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="0.00" line_coverage="0.00" blocks_covered="0" blocks_not_covered="1" lines_covered="0" lines_partially_covered="0" lines_not_covered="1">
+          <ranges>
+            <range source_id="91" start_line="1124" end_line="1124" start_column="43" end_column="47" covered="no" />
+          </ranges>
+        </function>
+        <function id="120126" token="0x600061e" name="get_OnDestroyFailure()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1132" end_line="1132" start_column="56" end_column="60" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120134" token="0x600061f" name="set_OnDestroyFailure(Whizbang.Core.Lifecycle.OnDestroyFailure)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1132" end_line="1132" start_column="61" end_column="65" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120143" token="0x6000620" name="get_RowReapBatchSize()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1138" end_line="1138" start_column="33" end_column="37" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120151" token="0x6000621" name="set_RowReapBatchSize(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1138" end_line="1138" start_column="38" end_column="42" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120160" token="0x6000622" name="get_LifecycleCompletionRetentionDays()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1150" end_line="1150" start_column="49" end_column="53" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120168" token="0x6000623" name="set_LifecycleCompletionRetentionDays(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1150" end_line="1150" start_column="54" end_column="58" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120177" token="0x6000624" name="get_RowCapSweepClaimWindowMinutes()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1157" end_line="1157" start_column="46" end_column="50" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120185" token="0x6000625" name="set_RowCapSweepClaimWindowMinutes(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="0.00" line_coverage="0.00" blocks_covered="0" blocks_not_covered="1" lines_covered="0" lines_partially_covered="0" lines_not_covered="1">
+          <ranges>
+            <range source_id="91" start_line="1157" end_line="1157" start_column="51" end_column="55" covered="no" />
+          </ranges>
+        </function>
+        <function id="120194" token="0x6000626" name="get_RowGuardCollectLimit()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1163" end_line="1163" start_column="37" end_column="41" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120202" token="0x6000627" name="set_RowGuardCollectLimit(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="0.00" line_coverage="0.00" blocks_covered="0" blocks_not_covered="1" lines_covered="0" lines_partially_covered="0" lines_not_covered="1">
+          <ranges>
+            <range source_id="91" start_line="1163" end_line="1163" start_column="42" end_column="46" covered="no" />
+          </ranges>
+        </function>
+        <function id="120211" token="0x6000628" name="get_RowCascadeDrainLimit()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1169" end_line="1169" start_column="37" end_column="41" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120219" token="0x6000629" name="set_RowCascadeDrainLimit(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="0.00" line_coverage="0.00" blocks_covered="0" blocks_not_covered="1" lines_covered="0" lines_partially_covered="0" lines_not_covered="1">
+          <ranges>
+            <range source_id="91" start_line="1169" end_line="1169" start_column="42" end_column="46" covered="no" />
+          </ranges>
+        </function>
+        <function id="120228" token="0x600062a" name="get_SettledFoldIdleDays()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1172" end_line="1172" start_column="36" end_column="40" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120236" token="0x600062b" name="set_SettledFoldIdleDays(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1172" end_line="1172" start_column="41" end_column="45" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120245" token="0x600062c" name="get_SettledFoldBatchSize()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1175" end_line="1175" start_column="37" end_column="41" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120253" token="0x600062d" name="set_SettledFoldBatchSize(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1175" end_line="1175" start_column="42" end_column="46" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120262" token="0x600062e" name="get_SettledFoldClaimWindowHours()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1178" end_line="1178" start_column="44" end_column="48" covered="yes" />
+          </ranges>
+        </function>
+        <function id="120270" token="0x600062f" name="set_SettledFoldClaimWindowHours(int)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="0.00" line_coverage="0.00" blocks_covered="0" blocks_not_covered="1" lines_covered="0" lines_partially_covered="0" lines_not_covered="1">
+          <ranges>
+            <range source_id="91" start_line="1178" end_line="1178" start_column="49" end_column="53" covered="no" />
+          </ranges>
+        </function>
+        <function id="120280" token="0x6000630" name="MaintenanceWorkerOptions()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorkerOptions" block_coverage="100.00" line_coverage="100.00" blocks_covered="2" blocks_not_covered="0" lines_covered="15" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="1049" end_line="1049" start_column="39" end_column="43" covered="yes" />
+            <range source_id="91" start_line="1074" end_line="1074" start_column="46" end_column="48" covered="yes" />
+            <range source_id="91" start_line="1087" end_line="1087" start_column="55" end_column="59" covered="yes" />
+            <range source_id="91" start_line="1099" end_line="1099" start_column="58" end_column="60" covered="yes" />
+            <range source_id="91" start_line="1110" end_line="1110" start_column="52" end_column="54" covered="yes" />
+            <range source_id="91" start_line="1117" end_line="1117" start_column="61" end_column="64" covered="yes" />
+            <range source_id="91" start_line="1124" end_line="1124" start_column="52" end_column="53" covered="yes" />
+            <range source_id="91" start_line="1138" end_line="1138" start_column="47" end_column="51" covered="yes" />
+            <range source_id="91" start_line="1150" end_line="1150" start_column="63" end_column="64" covered="yes" />
+            <range source_id="91" start_line="1157" end_line="1157" start_column="60" end_column="62" covered="yes" />
+            <range source_id="91" start_line="1163" end_line="1163" start_column="51" end_column="54" covered="yes" />
+            <range source_id="91" start_line="1169" end_line="1169" start_column="51" end_column="55" covered="yes" />
+            <range source_id="91" start_line="1172" end_line="1172" start_column="50" end_column="52" covered="yes" />
+            <range source_id="91" start_line="1175" end_line="1175" start_column="51" end_column="55" covered="yes" />
+            <range source_id="91" start_line="1178" end_line="1178" start_column="58" end_column="60" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100066" token="0x600478d" name="&lt;_shortTypeNames&gt;b__9_0(string)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c" block_coverage="100.00" line_coverage="100.00" blocks_covered="3" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="129" end_line="129" start_column="54" end_column="84" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100093" token="0x600478e" name="&lt;_sweepExpiredOffloadClaimsAsync&gt;b__14_0(Whizbang.Core.Messaging.OffloadClaimRecord)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c" block_coverage="100.00" line_coverage="100.00" blocks_covered="2" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="381" end_line="381" start_column="52" end_column="66" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100101" token="0x600478f" name="&lt;_offerRowsToGuardsAsync&gt;b__17_1(Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c" block_coverage="100.00" line_coverage="100.00" blocks_covered="4" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="573" end_line="573" start_column="42" end_column="109" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100120" token="0x6004790" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__18_0(System.Type)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c" block_coverage="100.00" line_coverage="100.00" blocks_covered="2" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="606" end_line="606" start_column="41" end_column="89" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100141" token="0x6004791" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__18_1(System.Type)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c" block_coverage="100.00" line_coverage="100.00" blocks_covered="2" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="606" end_line="606" start_column="109" end_column="147" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100149" token="0x6004792" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__18_2(System.Type)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="606" end_line="606" start_column="154" end_column="155" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100152" token="0x6004793" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__18_5(System.Type)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="624" end_line="624" start_column="50" end_column="51" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100155" token="0x6004794" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__18_6(System.Collections.Generic.KeyValuePair&lt;System.Type, System.Collections.Generic.IReadOnlyList&lt;Whizbang.Core.Perspectives.StreamGroupMembership&gt;&gt;)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c" block_coverage="100.00" line_coverage="100.00" blocks_covered="2" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="626" end_line="626" start_column="47" end_column="53" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100164" token="0x6004795" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__18_7(System.Collections.Generic.KeyValuePair&lt;System.Type, System.Collections.Generic.IReadOnlyList&lt;Whizbang.Core.Perspectives.StreamGroupMembership&gt;&gt;)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c" block_coverage="100.00" line_coverage="100.00" blocks_covered="2" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="626" end_line="626" start_column="61" end_column="69" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100173" token="0x6004796" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__18_8(System.ValueTuple&lt;System.Type, System.Guid&gt;)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="641" end_line="641" start_column="50" end_column="57" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100181" token="0x6004797" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__18_9(System.ValueTuple&lt;System.Type, System.Guid&gt;)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c" block_coverage="100.00" line_coverage="100.00" blocks_covered="1" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="645" end_line="645" start_column="40" end_column="47" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100197" token="0x6004799" name="&lt;_offerRowsToGuardsAsync&gt;b__0(Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c__DisplayClass17_0" block_coverage="100.00" line_coverage="100.00" blocks_covered="3" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="526" end_line="526" start_column="48" end_column="75" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100224" token="0x600479b" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__3(Whizbang.Core.Lifecycle.PerspectiveRowRef)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c__DisplayClass18_0" block_coverage="100.00" line_coverage="100.00" blocks_covered="3" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="617" end_line="617" start_column="21" end_column="57" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100244" token="0x600479c" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__4(Whizbang.Core.Lifecycle.PerspectiveRowRef)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c__DisplayClass18_0" block_coverage="100.00" line_coverage="100.00" blocks_covered="5" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="618" end_line="618" start_column="22" end_column="57" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100276" token="0x600479d" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__11(System.ValueTuple&lt;System.Type, System.Guid&gt;)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c__DisplayClass18_0" block_coverage="100.00" line_coverage="100.00" blocks_covered="2" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="702" end_line="702" start_column="23" end_column="55" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100295" token="0x600479e" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__12(System.ValueTuple&lt;System.Type, System.Guid&gt;)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c__DisplayClass18_0" block_coverage="100.00" line_coverage="100.00" blocks_covered="3" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="703" end_line="703" start_column="24" end_column="100" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100333" token="0x60047a0" name="&lt;_cascadeStreamGroupEvictionsAsync&gt;b__10(System.Guid)" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;&gt;c__DisplayClass18_1" block_coverage="100.00" line_coverage="100.00" blocks_covered="2" blocks_not_covered="0" lines_covered="1" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="687" end_line="687" start_column="48" end_column="104" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1100348" token="0x60047a1" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;ExecuteAsync&gt;d__7" block_coverage="97.14" line_coverage="95.00" blocks_covered="34" blocks_not_covered="1" lines_covered="19" lines_partially_covered="1" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="43" end_line="43" start_column="5" end_column="51" covered="yes" />
+            <range source_id="91" start_line="45" end_line="45" start_column="5" end_column="27" covered="yes" />
+            <range source_id="91" start_line="46" end_line="46" start_column="7" end_column="28" covered="yes" />
+            <range source_id="91" start_line="47" end_line="47" start_column="13" end_column="63" covered="yes" />
+            <range source_id="91" start_line="47" end_line="47" start_column="64" end_column="65" covered="no" />
+            <range source_id="91" start_line="47" end_line="47" start_column="66" end_column="100" covered="yes" />
+            <range source_id="91" start_line="47" end_line="47" start_column="153" end_column="154" covered="yes" />
+            <range source_id="91" start_line="48" end_line="48" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="52" end_line="52" start_column="7" end_column="63" covered="yes" />
+            <range source_id="91" start_line="53" end_line="53" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="53" end_line="53" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="54" end_line="54" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="59" end_line="59" start_column="9" end_column="54" covered="yes" />
+            <range source_id="91" start_line="60" end_line="60" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="60" end_line="60" start_column="9" end_column="43" covered="yes" />
+            <range source_id="91" start_line="61" end_line="61" start_column="9" end_column="15" covered="yes" />
+            <range source_id="91" start_line="62" end_line="62" start_column="9" end_column="29" covered="yes" />
+            <range source_id="91" start_line="63" end_line="63" start_column="9" end_column="31" covered="yes" />
+            <range source_id="91" start_line="64" end_line="64" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="67" end_line="67" start_column="9" end_column="89" covered="yes" />
+            <range source_id="91" start_line="68" end_line="68" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="68" end_line="68" start_column="9" end_column="43" covered="yes" />
+            <range source_id="91" start_line="69" end_line="69" start_column="9" end_column="15" covered="yes" />
+            <range source_id="91" start_line="57" end_line="57" start_column="5" end_column="51" covered="yes" />
+            <range source_id="91" start_line="73" end_line="73" start_column="5" end_column="25" covered="yes" />
+            <range source_id="91" start_line="74" end_line="74" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1101156" token="0x60047a3" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;RunMaintenanceOnceAsync&gt;d__8" block_coverage="86.21" line_coverage="75.00" blocks_covered="50" blocks_not_covered="8" lines_covered="21" lines_partially_covered="7" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="77" end_line="77" start_column="5" end_column="51" covered="yes" />
+            <range source_id="91" start_line="78" end_line="78" start_column="5" end_column="36" covered="yes" />
+            <range source_id="91" start_line="79" end_line="79" start_column="5" end_column="65" covered="yes" />
+            <range source_id="91" start_line="81" end_line="81" start_column="5" end_column="31" covered="yes" />
+            <range source_id="91" start_line="82" end_line="82" start_column="7" end_column="82" covered="yes" />
+            <range source_id="91" start_line="83" end_line="83" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="91" end_line="91" start_column="7" end_column="86" covered="yes" />
+            <range source_id="91" start_line="92" end_line="92" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="92" end_line="92" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="93" end_line="93" start_column="7" end_column="13" covered="yes" />
+            <range source_id="91" start_line="94" end_line="94" start_column="7" end_column="27" covered="yes" />
+            <range source_id="91" start_line="97" end_line="97" start_column="7" end_column="46" covered="yes" />
+            <range source_id="91" start_line="98" end_line="98" start_column="7" end_column="22" covered="yes" />
+            <range source_id="91" start_line="99" end_line="99" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="101" end_line="101" start_column="5" end_column="98" covered="yes" />
+            <range source_id="91" start_line="102" end_line="102" start_column="5" end_column="27" covered="yes" />
+            <range source_id="91" start_line="103" end_line="106" start_column="7" end_column="82" covered="partial" />
+            <range source_id="91" start_line="107" end_line="107" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="110" end_line="110" start_column="5" end_column="81" covered="yes" />
+            <range source_id="91" start_line="113" end_line="115" start_column="7" end_column="82" covered="partial" />
+            <range source_id="91" start_line="119" end_line="119" start_column="7" end_column="82" covered="yes" />
+            <range source_id="91" start_line="120" end_line="120" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="123" end_line="123" start_column="7" end_column="71" covered="yes" />
+            <range source_id="91" start_line="125" end_line="125" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1102112" token="0x60047a5" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_adoptDeclaredRetentionAsync&gt;d__15" block_coverage="100.00" line_coverage="100.00" blocks_covered="28" blocks_not_covered="0" lines_covered="8" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="432" end_line="432" start_column="5" end_column="114" covered="yes" />
+            <range source_id="91" start_line="433" end_line="433" start_column="5" end_column="49" covered="yes" />
+            <range source_id="91" start_line="434" end_line="434" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="436" end_line="436" start_column="5" end_column="102" covered="yes" />
+            <range source_id="91" start_line="437" end_line="437" start_column="30" end_column="37" covered="yes" />
+            <range source_id="91" start_line="437" end_line="437" start_column="14" end_column="26" covered="yes" />
+            <range source_id="91" start_line="438" end_line="438" start_column="7" end_column="103" covered="yes" />
+            <range source_id="91" start_line="439" end_line="439" start_column="7" end_column="79" covered="yes" />
+            <range source_id="91" start_line="437" end_line="437" start_column="27" end_column="29" covered="yes" />
+            <range source_id="91" start_line="441" end_line="441" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1102520" token="0x60047a7" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_cascadeStreamGroupEvictionsAsync&gt;d__18" block_coverage="99.12" line_coverage="96.70" blocks_covered="225" blocks_not_covered="2" lines_covered="88" lines_partially_covered="3" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="591" end_line="591" start_column="5" end_column="153" covered="yes" />
+            <range source_id="91" start_line="593" end_line="593" start_column="7" end_column="97" covered="yes" />
+            <range source_id="91" start_line="594" end_line="594" start_column="7" end_column="29" covered="yes" />
+            <range source_id="91" start_line="595" end_line="595" start_column="9" end_column="25" covered="yes" />
+            <range source_id="91" start_line="598" end_line="598" start_column="7" end_column="125" covered="yes" />
+            <range source_id="91" start_line="599" end_line="599" start_column="7" end_column="30" covered="yes" />
+            <range source_id="91" start_line="600" end_line="600" start_column="9" end_column="25" covered="yes" />
+            <range source_id="91" start_line="604" end_line="604" start_column="7" end_column="72" covered="yes" />
+            <range source_id="91" start_line="605" end_line="605" start_column="7" end_column="108" covered="yes" />
+            <range source_id="91" start_line="606" end_line="606" start_column="7" end_column="181" covered="yes" />
+            <range source_id="91" start_line="607" end_line="607" start_column="7" end_column="78" covered="yes" />
+            <range source_id="91" start_line="608" end_line="608" start_column="7" end_column="56" covered="yes" />
+            <range source_id="91" start_line="609" end_line="609" start_column="29" end_column="39" covered="yes" />
+            <range source_id="91" start_line="609" end_line="609" start_column="16" end_column="25" covered="yes" />
+            <range source_id="91" start_line="610" end_line="610" start_column="9" end_column="68" covered="yes" />
+            <range source_id="91" start_line="611" end_line="611" start_column="11" end_column="47" covered="yes" />
+            <range source_id="91" start_line="612" end_line="612" start_column="11" end_column="47" covered="yes" />
+            <range source_id="91" start_line="609" end_line="609" start_column="26" end_column="28" covered="yes" />
+            <range source_id="91" start_line="616" end_line="619" start_column="7" end_column="19" covered="yes" />
+            <range source_id="91" start_line="620" end_line="620" start_column="7" end_column="28" covered="yes" />
+            <range source_id="91" start_line="621" end_line="621" start_column="9" end_column="25" covered="yes" />
+            <range source_id="91" start_line="624" end_line="624" start_column="7" end_column="120" covered="yes" />
+            <range source_id="91" start_line="625" end_line="626" start_column="7" end_column="72" covered="yes" />
+            <range source_id="91" start_line="627" end_line="627" start_column="7" end_column="30" covered="yes" />
+            <range source_id="91" start_line="628" end_line="628" start_column="9" end_column="25" covered="yes" />
+            <range source_id="91" start_line="631" end_line="631" start_column="7" end_column="112" covered="yes" />
+            <range source_id="91" start_line="632" end_line="632" start_column="7" end_column="105" covered="yes" />
+            <range source_id="91" start_line="633" end_line="633" start_column="29" end_column="35" covered="yes" />
+            <range source_id="91" start_line="633" end_line="633" start_column="16" end_column="25" covered="yes" />
+            <range source_id="91" start_line="634" end_line="634" start_column="33" end_column="52" covered="yes" />
+            <range source_id="91" start_line="634" end_line="634" start_column="18" end_column="29" covered="yes" />
+            <range source_id="91" start_line="635" end_line="635" start_column="11" end_column="40" covered="yes" />
+            <range source_id="91" start_line="634" end_line="634" start_column="30" end_column="32" covered="yes" />
+            <range source_id="91" start_line="633" end_line="633" start_column="26" end_column="28" covered="yes" />
+            <range source_id="91" start_line="639" end_line="639" start_column="7" end_column="31" covered="yes" />
+            <range source_id="91" start_line="640" end_line="640" start_column="7" end_column="23" covered="yes" />
+            <range source_id="91" start_line="641" end_line="641" start_column="29" end_column="58" covered="yes" />
+            <range source_id="91" start_line="641" end_line="641" start_column="16" end_column="25" covered="yes" />
+            <range source_id="91" start_line="642" end_line="642" start_column="9" end_column="64" covered="yes" />
+            <range source_id="91" start_line="645" end_line="645" start_column="9" end_column="58" covered="yes" />
+            <range source_id="91" start_line="647" end_line="647" start_column="9" end_column="136" covered="yes" />
+            <range source_id="91" start_line="650" end_line="650" start_column="11" end_column="125" covered="yes" />
+            <range source_id="91" start_line="652" end_line="652" start_column="13" end_column="94" covered="yes" />
+            <range source_id="91" start_line="653" end_line="653" start_column="13" end_column="47" covered="yes" />
+            <range source_id="91" start_line="654" end_line="654" start_column="13" end_column="102" covered="yes" />
+            <range source_id="91" start_line="655" end_line="655" start_column="13" end_column="78" covered="yes" />
+            <range source_id="91" start_line="656" end_line="656" start_column="13" end_column="106" covered="yes" />
+            <range source_id="91" start_line="657" end_line="657" start_column="36" end_column="43" covered="yes" />
+            <range source_id="91" start_line="657" end_line="657" start_column="22" end_column="32" covered="yes" />
+            <range source_id="91" start_line="658" end_line="660" start_column="15" end_column="86" covered="partial" />
+            <range source_id="91" start_line="661" end_line="661" start_column="15" end_column="37" covered="yes" />
+            <range source_id="91" start_line="663" end_line="663" start_column="19" end_column="48" covered="yes" />
+            <range source_id="91" start_line="664" end_line="664" start_column="19" end_column="46" covered="yes" />
+            <range source_id="91" start_line="665" end_line="665" start_column="19" end_column="25" covered="yes" />
+            <range source_id="91" start_line="667" end_line="668" start_column="19" end_column="142" covered="yes" />
+            <range source_id="91" start_line="669" end_line="669" start_column="19" end_column="25" covered="yes" />
+            <range source_id="91" start_line="671" end_line="671" start_column="19" end_column="96" covered="yes" />
+            <range source_id="91" start_line="672" end_line="674" start_column="19" end_column="84" covered="yes" />
+            <range source_id="91" start_line="675" end_line="675" start_column="19" end_column="38" covered="yes" />
+            <range source_id="91" start_line="657" end_line="657" start_column="33" end_column="35" covered="yes" />
+            <range source_id="91" start_line="679" end_line="679" start_column="13" end_column="38" covered="yes" />
+            <range source_id="91" start_line="680" end_line="680" start_column="15" end_column="123" covered="yes" />
+            <range source_id="91" start_line="681" end_line="681" start_column="15" end_column="53" covered="yes" />
+            <range source_id="91" start_line="683" end_line="683" start_column="11" end_column="12" covered="yes" />
+            <range source_id="91" start_line="683" end_line="683" start_column="48" end_column="81" covered="yes" />
+            <range source_id="91" start_line="684" end_line="684" start_column="13" end_column="19" covered="yes" />
+            <range source_id="91" start_line="685" end_line="685" start_column="13" end_column="33" covered="yes" />
+            <range source_id="91" start_line="686" end_line="686" start_column="13" end_column="32" covered="yes" />
+            <range source_id="91" start_line="687" end_line="687" start_column="13" end_column="106" covered="yes" />
+            <range source_id="91" start_line="688" end_line="690" start_column="13" end_column="100" covered="yes" />
+            <range source_id="91" start_line="691" end_line="691" start_column="13" end_column="99" covered="yes" />
+            <range source_id="91" start_line="692" end_line="692" start_column="11" end_column="12" covered="yes" />
+            <range source_id="91" start_line="693" end_line="693" start_column="9" end_column="10" covered="yes" />
+            <range source_id="91" start_line="694" end_line="694" start_column="11" end_column="115" covered="yes" />
+            <range source_id="91" start_line="696" end_line="696" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="641" end_line="641" start_column="26" end_column="28" covered="yes" />
+            <range source_id="91" start_line="700" end_line="700" start_column="7" end_column="23" covered="yes" />
+            <range source_id="91" start_line="701" end_line="704" start_column="9" end_column="21" covered="yes" />
+            <range source_id="91" start_line="705" end_line="705" start_column="9" end_column="86" covered="yes" />
+            <range source_id="91" start_line="708" end_line="708" start_column="7" end_column="23" covered="yes" />
+            <range source_id="91" start_line="709" end_line="709" start_column="9" end_column="77" covered="yes" />
+            <range source_id="91" start_line="711" end_line="711" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="711" end_line="711" start_column="42" end_column="75" covered="yes" />
+            <range source_id="91" start_line="712" end_line="712" start_column="7" end_column="13" covered="yes" />
+            <range source_id="91" start_line="713" end_line="713" start_column="7" end_column="27" covered="yes" />
+            <range source_id="91" start_line="714" end_line="714" start_column="7" end_column="48" covered="yes" />
+            <range source_id="91" start_line="715" end_line="715" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="716" end_line="716" start_column="5" end_column="21" covered="yes" />
+            <range source_id="91" start_line="717" end_line="717" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1106284" token="0x60047a9" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_firePostDestructionHooksAsync&gt;d__22" block_coverage="100.00" line_coverage="100.00" blocks_covered="17" blocks_not_covered="0" lines_covered="12" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="834" end_line="834" start_column="5" end_column="28" covered="yes" />
+            <range source_id="91" start_line="835" end_line="835" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="837" end_line="837" start_column="5" end_column="74" covered="yes" />
+            <range source_id="91" start_line="838" end_line="838" start_column="5" end_column="22" covered="yes" />
+            <range source_id="91" start_line="839" end_line="839" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="842" end_line="842" start_column="7" end_column="98" covered="yes" />
+            <range source_id="91" start_line="843" end_line="843" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="843" end_line="843" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="844" end_line="844" start_column="7" end_column="13" covered="yes" />
+            <range source_id="91" start_line="845" end_line="845" start_column="7" end_column="27" covered="yes" />
+            <range source_id="91" start_line="846" end_line="846" start_column="7" end_column="60" covered="yes" />
+            <range source_id="91" start_line="847" end_line="847" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="848" end_line="848" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1106612" token="0x60047ab" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_offerRowsToGuardsAsync&gt;d__17" block_coverage="100.00" line_coverage="100.00" blocks_covered="143" blocks_not_covered="0" lines_covered="56" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="510" end_line="510" start_column="5" end_column="160" covered="yes" />
+            <range source_id="91" start_line="511" end_line="511" start_column="5" end_column="110" covered="yes" />
+            <range source_id="91" start_line="512" end_line="512" start_column="5" end_column="128" covered="yes" />
+            <range source_id="91" start_line="513" end_line="513" start_column="27" end_column="33" covered="yes" />
+            <range source_id="91" start_line="513" end_line="513" start_column="14" end_column="23" covered="yes" />
+            <range source_id="91" start_line="514" end_line="514" start_column="29" end_column="48" covered="yes" />
+            <range source_id="91" start_line="514" end_line="514" start_column="16" end_column="25" covered="yes" />
+            <range source_id="91" start_line="515" end_line="515" start_column="9" end_column="73" covered="yes" />
+            <range source_id="91" start_line="516" end_line="516" start_column="11" end_column="38" covered="yes" />
+            <range source_id="91" start_line="514" end_line="514" start_column="26" end_column="28" covered="yes" />
+            <range source_id="91" start_line="513" end_line="513" start_column="24" end_column="26" covered="yes" />
+            <range source_id="91" start_line="520" end_line="520" start_column="5" end_column="33" covered="yes" />
+            <range source_id="91" start_line="521" end_line="521" start_column="7" end_column="30" covered="yes" />
+            <range source_id="91" start_line="524" end_line="525" start_column="5" end_column="88" covered="yes" />
+            <range source_id="91" start_line="526" end_line="526" start_column="27" end_column="76" covered="yes" />
+            <range source_id="91" start_line="526" end_line="526" start_column="14" end_column="23" covered="yes" />
+            <range source_id="91" start_line="527" end_line="527" start_column="7" end_column="29" covered="yes" />
+            <range source_id="91" start_line="528" end_line="528" start_column="7" end_column="34" covered="yes" />
+            <range source_id="91" start_line="530" end_line="530" start_column="9" end_column="88" covered="yes" />
+            <range source_id="91" start_line="531" end_line="531" start_column="9" end_column="77" covered="yes" />
+            <range source_id="91" start_line="532" end_line="532" start_column="9" end_column="98" covered="yes" />
+            <range source_id="91" start_line="533" end_line="533" start_column="9" end_column="78" covered="yes" />
+            <range source_id="91" start_line="534" end_line="534" start_column="9" end_column="106" covered="yes" />
+            <range source_id="91" start_line="535" end_line="535" start_column="9" end_column="102" covered="yes" />
+            <range source_id="91" start_line="536" end_line="536" start_column="32" end_column="37" covered="yes" />
+            <range source_id="91" start_line="536" end_line="536" start_column="18" end_column="28" covered="yes" />
+            <range source_id="91" start_line="537" end_line="537" start_column="11" end_column="102" covered="yes" />
+            <range source_id="91" start_line="538" end_line="540" start_column="11" end_column="82" covered="yes" />
+            <range source_id="91" start_line="541" end_line="541" start_column="11" end_column="33" covered="yes" />
+            <range source_id="91" start_line="543" end_line="543" start_column="15" end_column="35" covered="yes" />
+            <range source_id="91" start_line="544" end_line="544" start_column="15" end_column="42" covered="yes" />
+            <range source_id="91" start_line="545" end_line="545" start_column="15" end_column="21" covered="yes" />
+            <range source_id="91" start_line="547" end_line="547" start_column="15" end_column="36" covered="yes" />
+            <range source_id="91" start_line="548" end_line="548" start_column="15" end_column="21" covered="yes" />
+            <range source_id="91" start_line="550" end_line="550" start_column="15" end_column="63" covered="yes" />
+            <range source_id="91" start_line="551" end_line="551" start_column="15" end_column="62" covered="yes" />
+            <range source_id="91" start_line="552" end_line="552" start_column="17" end_column="45" covered="yes" />
+            <range source_id="91" start_line="554" end_line="554" start_column="15" end_column="32" covered="yes" />
+            <range source_id="91" start_line="536" end_line="536" start_column="29" end_column="31" covered="yes" />
+            <range source_id="91" start_line="558" end_line="558" start_column="9" end_column="31" covered="yes" />
+            <range source_id="91" start_line="559" end_line="559" start_column="11" end_column="96" covered="yes" />
+            <range source_id="91" start_line="560" end_line="560" start_column="11" end_column="56" covered="yes" />
+            <range source_id="91" start_line="562" end_line="562" start_column="39" end_column="47" covered="yes" />
+            <range source_id="91" start_line="562" end_line="562" start_column="18" end_column="35" covered="yes" />
+            <range source_id="91" start_line="563" end_line="563" start_column="11" end_column="103" covered="yes" />
+            <range source_id="91" start_line="562" end_line="562" start_column="36" end_column="38" covered="yes" />
+            <range source_id="91" start_line="565" end_line="565" start_column="9" end_column="32" covered="yes" />
+            <range source_id="91" start_line="566" end_line="566" start_column="11" end_column="125" covered="yes" />
+            <range source_id="91" start_line="568" end_line="569" start_column="9" end_column="73" covered="yes" />
+            <range source_id="91" start_line="570" end_line="570" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="570" end_line="570" start_column="44" end_column="77" covered="yes" />
+            <range source_id="91" start_line="571" end_line="571" start_column="9" end_column="15" covered="yes" />
+            <range source_id="91" start_line="572" end_line="572" start_column="9" end_column="29" covered="yes" />
+            <range source_id="91" start_line="573" end_line="573" start_column="9" end_column="111" covered="yes" />
+            <range source_id="91" start_line="574" end_line="576" start_column="9" end_column="96" covered="yes" />
+            <range source_id="91" start_line="577" end_line="577" start_column="9" end_column="94" covered="yes" />
+            <range source_id="91" start_line="578" end_line="578" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="579" end_line="579" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="526" end_line="526" start_column="24" end_column="26" covered="yes" />
+            <range source_id="91" start_line="580" end_line="580" start_column="5" end_column="28" covered="yes" />
+            <range source_id="91" start_line="581" end_line="581" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1108936" token="0x60047ad" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_reapDrivenEphemeralSnapshotAsync&gt;d__20" block_coverage="100.00" line_coverage="100.00" blocks_covered="32" blocks_not_covered="0" lines_covered="15" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="750" end_line="750" start_column="5" end_column="91" covered="yes" />
+            <range source_id="91" start_line="751" end_line="751" start_column="5" end_column="26" covered="yes" />
+            <range source_id="91" start_line="752" end_line="752" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="754" end_line="754" start_column="5" end_column="79" covered="yes" />
+            <range source_id="91" start_line="755" end_line="755" start_column="28" end_column="35" covered="yes" />
+            <range source_id="91" start_line="755" end_line="755" start_column="14" end_column="24" covered="yes" />
+            <range source_id="91" start_line="756" end_line="756" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="757" end_line="757" start_column="7" end_column="67" covered="yes" />
+            <range source_id="91" start_line="758" end_line="758" start_column="7" end_column="26" covered="yes" />
+            <range source_id="91" start_line="762" end_line="762" start_column="9" end_column="110" covered="yes" />
+            <range source_id="91" start_line="763" end_line="763" start_column="9" end_column="81" covered="yes" />
+            <range source_id="91" start_line="764" end_line="764" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="764" end_line="764" start_column="9" end_column="29" covered="yes" />
+            <range source_id="91" start_line="765" end_line="765" start_column="9" end_column="91" covered="yes" />
+            <range source_id="91" start_line="766" end_line="766" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="767" end_line="767" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="755" end_line="755" start_column="25" end_column="27" covered="yes" />
+            <range source_id="91" start_line="768" end_line="768" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1109616" token="0x60047af" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_rewriteBloatedTablesAsync&gt;d__19" block_coverage="100.00" line_coverage="100.00" blocks_covered="32" blocks_not_covered="0" lines_covered="19" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="722" end_line="722" start_column="7" end_column="71" covered="yes" />
+            <range source_id="91" start_line="723" end_line="723" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="723" end_line="723" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="724" end_line="724" start_column="7" end_column="13" covered="yes" />
+            <range source_id="91" start_line="725" end_line="725" start_column="7" end_column="27" covered="yes" />
+            <range source_id="91" start_line="726" end_line="726" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="727" end_line="727" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="730" end_line="730" start_column="23" end_column="33" covered="yes" />
+            <range source_id="91" start_line="730" end_line="730" start_column="14" end_column="19" covered="yes" />
+            <range source_id="91" start_line="731" end_line="731" start_column="7" end_column="38" covered="yes" />
+            <range source_id="91" start_line="732" end_line="732" start_column="9" end_column="16" covered="yes" />
+            <range source_id="91" start_line="735" end_line="735" start_column="7" end_column="60" covered="yes" />
+            <range source_id="91" start_line="736" end_line="736" start_column="7" end_column="23" covered="yes" />
+            <range source_id="91" start_line="740" end_line="740" start_column="9" end_column="69" covered="yes" />
+            <range source_id="91" start_line="741" end_line="741" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="741" end_line="741" start_column="9" end_column="43" covered="yes" />
+            <range source_id="91" start_line="742" end_line="742" start_column="9" end_column="15" covered="yes" />
+            <range source_id="91" start_line="743" end_line="743" start_column="9" end_column="29" covered="yes" />
+            <range source_id="91" start_line="744" end_line="744" start_column="9" end_column="52" covered="yes" />
+            <range source_id="91" start_line="745" end_line="745" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="746" end_line="746" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="730" end_line="730" start_column="20" end_column="22" covered="yes" />
+            <range source_id="91" start_line="747" end_line="747" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1110316" token="0x60047b1" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_runMaintenanceCycleAsync&gt;d__12" block_coverage="99.18" line_coverage="96.83" blocks_covered="121" blocks_not_covered="1" lines_covered="61" lines_partially_covered="2" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="184" end_line="184" start_column="7" end_column="109" covered="yes" />
+            <range source_id="91" start_line="185" end_line="185" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="185" end_line="185" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="186" end_line="186" start_column="7" end_column="13" covered="yes" />
+            <range source_id="91" start_line="187" end_line="187" start_column="7" end_column="27" covered="yes" />
+            <range source_id="91" start_line="189" end_line="189" start_column="7" end_column="48" covered="yes" />
+            <range source_id="91" start_line="190" end_line="190" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="195" end_line="195" start_column="5" end_column="66" covered="yes" />
+            <range source_id="91" start_line="201" end_line="201" start_column="5" end_column="86" covered="yes" />
+            <range source_id="91" start_line="209" end_line="209" start_column="5" end_column="131" covered="yes" />
+            <range source_id="91" start_line="211" end_line="211" start_column="7" end_column="98" covered="yes" />
+            <range source_id="91" start_line="212" end_line="212" start_column="7" end_column="65" covered="yes" />
+            <range source_id="91" start_line="213" end_line="214" start_column="9" end_column="103" covered="yes" />
+            <range source_id="91" start_line="216" end_line="216" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="216" end_line="216" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="217" end_line="217" start_column="7" end_column="13" covered="yes" />
+            <range source_id="91" start_line="218" end_line="218" start_column="7" end_column="27" covered="yes" />
+            <range source_id="91" start_line="219" end_line="219" start_column="7" end_column="48" covered="yes" />
+            <range source_id="91" start_line="220" end_line="220" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="227" end_line="227" start_column="5" end_column="52" covered="yes" />
+            <range source_id="91" start_line="229" end_line="230" start_column="9" end_column="103" covered="yes" />
+            <range source_id="91" start_line="231" end_line="231" start_column="9" end_column="24" covered="yes" />
+            <range source_id="91" start_line="232" end_line="232" start_column="11" end_column="44" covered="yes" />
+            <range source_id="91" start_line="234" end_line="234" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="234" end_line="234" start_column="9" end_column="43" covered="yes" />
+            <range source_id="91" start_line="235" end_line="235" start_column="9" end_column="15" covered="yes" />
+            <range source_id="91" start_line="236" end_line="236" start_column="9" end_column="29" covered="yes" />
+            <range source_id="91" start_line="237" end_line="237" start_column="9" end_column="44" covered="yes" />
+            <range source_id="91" start_line="238" end_line="238" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="241" end_line="241" start_column="5" end_column="93" covered="yes" />
+            <range source_id="91" start_line="242" end_line="242" start_column="5" end_column="65" covered="yes" />
+            <range source_id="91" start_line="243" end_line="243" start_column="5" end_column="24" covered="yes" />
+            <range source_id="91" start_line="244" end_line="244" start_column="23" end_column="30" covered="yes" />
+            <range source_id="91" start_line="244" end_line="244" start_column="14" end_column="19" covered="yes" />
+            <range source_id="91" start_line="245" end_line="245" start_column="7" end_column="48" covered="yes" />
+            <range source_id="91" start_line="246" end_line="246" start_column="7" end_column="79" covered="yes" />
+            <range source_id="91" start_line="249" end_line="249" start_column="7" end_column="65" covered="yes" />
+            <range source_id="91" start_line="244" end_line="244" start_column="20" end_column="22" covered="yes" />
+            <range source_id="91" start_line="252" end_line="253" start_column="5" end_column="78" covered="partial" />
+            <range source_id="91" start_line="256" end_line="256" start_column="5" end_column="70" covered="yes" />
+            <range source_id="91" start_line="263" end_line="263" start_column="5" end_column="55" covered="yes" />
+            <range source_id="91" start_line="265" end_line="265" start_column="9" end_column="86" covered="yes" />
+            <range source_id="91" start_line="266" end_line="266" start_column="9" end_column="89" covered="yes" />
+            <range source_id="91" start_line="267" end_line="267" start_column="9" end_column="25" covered="yes" />
+            <range source_id="91" start_line="268" end_line="268" start_column="11" end_column="102" covered="yes" />
+            <range source_id="91" start_line="270" end_line="270" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="270" end_line="270" start_column="9" end_column="43" covered="yes" />
+            <range source_id="91" start_line="271" end_line="271" start_column="9" end_column="15" covered="yes" />
+            <range source_id="91" start_line="272" end_line="272" start_column="9" end_column="29" covered="yes" />
+            <range source_id="91" start_line="273" end_line="273" start_column="9" end_column="99" covered="yes" />
+            <range source_id="91" start_line="274" end_line="274" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="281" end_line="281" start_column="7" end_column="76" covered="yes" />
+            <range source_id="91" start_line="282" end_line="282" start_column="7" end_column="32" covered="yes" />
+            <range source_id="91" start_line="283" end_line="283" start_column="9" end_column="52" covered="yes" />
+            <range source_id="91" start_line="285" end_line="285" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="285" end_line="285" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="286" end_line="286" start_column="7" end_column="13" covered="yes" />
+            <range source_id="91" start_line="287" end_line="287" start_column="7" end_column="27" covered="yes" />
+            <range source_id="91" start_line="288" end_line="288" start_column="7" end_column="42" covered="yes" />
+            <range source_id="91" start_line="289" end_line="289" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="295" end_line="295" start_column="5" end_column="64" covered="yes" />
+            <range source_id="91" start_line="301" end_line="301" start_column="5" end_column="59" covered="yes" />
+            <range source_id="91" start_line="307" end_line="307" start_column="5" end_column="55" covered="yes" />
+            <range source_id="91" start_line="313" end_line="313" start_column="5" end_column="42" covered="yes" />
+            <range source_id="91" start_line="314" end_line="314" start_column="7" end_column="56" covered="yes" />
+            <range source_id="91" start_line="319" end_line="319" start_column="5" end_column="67" covered="yes" />
+            <range source_id="91" start_line="320" end_line="320" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1113052" token="0x60047b3" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_runMaintenanceStepsAsync&gt;d__13" block_coverage="100.00" line_coverage="100.00" blocks_covered="19" blocks_not_covered="0" lines_covered="9" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="327" end_line="327" start_column="26" end_column="60" covered="yes" />
+            <range source_id="91" start_line="327" end_line="327" start_column="14" end_column="22" covered="yes" />
+            <range source_id="91" start_line="329" end_line="329" start_column="9" end_column="59" covered="yes" />
+            <range source_id="91" start_line="330" end_line="330" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="330" end_line="330" start_column="9" end_column="43" covered="yes" />
+            <range source_id="91" start_line="331" end_line="331" start_column="9" end_column="15" covered="yes" />
+            <range source_id="91" start_line="332" end_line="332" start_column="9" end_column="29" covered="yes" />
+            <range source_id="91" start_line="333" end_line="333" start_column="9" end_column="58" covered="yes" />
+            <range source_id="91" start_line="334" end_line="334" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="335" end_line="335" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="327" end_line="327" start_column="23" end_column="25" covered="yes" />
+            <range source_id="91" start_line="336" end_line="336" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1113504" token="0x60047b5" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_runPreDestructionHooksAsync&gt;d__21" block_coverage="100.00" line_coverage="100.00" blocks_covered="82" blocks_not_covered="0" lines_covered="35" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="777" end_line="777" start_column="5" end_column="74" covered="yes" />
+            <range source_id="91" start_line="778" end_line="778" start_column="5" end_column="22" covered="yes" />
+            <range source_id="91" start_line="779" end_line="779" start_column="7" end_column="17" covered="yes" />
+            <range source_id="91" start_line="781" end_line="781" start_column="5" end_column="76" covered="yes" />
+            <range source_id="91" start_line="782" end_line="782" start_column="5" end_column="28" covered="yes" />
+            <range source_id="91" start_line="783" end_line="783" start_column="7" end_column="22" covered="yes" />
+            <range source_id="91" start_line="787" end_line="787" start_column="7" end_column="112" covered="yes" />
+            <range source_id="91" start_line="788" end_line="788" start_column="7" end_column="92" covered="yes" />
+            <range source_id="91" start_line="789" end_line="789" start_column="7" end_column="55" covered="yes" />
+            <range source_id="91" start_line="792" end_line="792" start_column="9" end_column="54" covered="yes" />
+            <range source_id="91" start_line="793" end_line="793" start_column="27" end_column="34" covered="yes" />
+            <range source_id="91" start_line="793" end_line="793" start_column="18" end_column="23" covered="yes" />
+            <range source_id="91" start_line="794" end_line="794" start_column="11" end_column="35" covered="yes" />
+            <range source_id="91" start_line="793" end_line="793" start_column="24" end_column="26" covered="yes" />
+            <range source_id="91" start_line="796" end_line="796" start_column="9" end_column="66" covered="yes" />
+            <range source_id="91" start_line="797" end_line="797" start_column="9" end_column="100" covered="yes" />
+            <range source_id="91" start_line="798" end_line="798" start_column="9" end_column="19" covered="yes" />
+            <range source_id="91" start_line="801" end_line="801" start_column="7" end_column="22" covered="yes" />
+            <range source_id="91" start_line="802" end_line="802" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="803" end_line="803" start_column="7" end_column="13" covered="yes" />
+            <range source_id="91" start_line="810" end_line="810" start_column="7" end_column="52" covered="yes" />
+            <range source_id="91" start_line="811" end_line="811" start_column="25" end_column="32" covered="yes" />
+            <range source_id="91" start_line="811" end_line="811" start_column="16" end_column="21" covered="yes" />
+            <range source_id="91" start_line="812" end_line="812" start_column="9" end_column="33" covered="yes" />
+            <range source_id="91" start_line="811" end_line="811" start_column="22" end_column="24" covered="yes" />
+            <range source_id="91" start_line="814" end_line="814" start_column="7" end_column="98" covered="yes" />
+            <range source_id="91" start_line="815" end_line="815" start_column="7" end_column="46" covered="yes" />
+            <range source_id="91" start_line="816" end_line="817" start_column="7" end_column="97" covered="yes" />
+            <range source_id="91" start_line="818" end_line="818" start_column="7" end_column="64" covered="yes" />
+            <range source_id="91" start_line="819" end_line="824" start_column="7" end_column="9" covered="yes" />
+            <range source_id="91" start_line="820" end_line="820" start_column="62" end_column="109" covered="yes" />
+            <range source_id="91" start_line="821" end_line="821" start_column="50" end_column="64" covered="yes" />
+            <range source_id="91" start_line="821" end_line="821" start_column="68" end_column="116" covered="yes" />
+            <range source_id="91" start_line="822" end_line="822" start_column="11" end_column="25" covered="yes" />
+            <range source_id="91" start_line="822" end_line="822" start_column="29" end_column="64" covered="yes" />
+            <range source_id="91" start_line="823" end_line="823" start_column="14" end_column="30" covered="yes" />
+            <range source_id="91" start_line="825" end_line="825" start_column="7" end_column="109" covered="yes" />
+            <range source_id="91" start_line="826" end_line="826" start_column="7" end_column="17" covered="yes" />
+            <range source_id="91" start_line="828" end_line="828" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1114840" token="0x60047b7" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_runStuckRowSentinelAsync&gt;d__24" block_coverage="100.00" line_coverage="100.00" blocks_covered="33" blocks_not_covered="0" lines_covered="9" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="859" end_line="859" start_column="5" end_column="52" covered="yes" />
+            <range source_id="91" start_line="860" end_line="860" start_column="5" end_column="48" covered="yes" />
+            <range source_id="91" start_line="861" end_line="861" start_column="5" end_column="82" covered="yes" />
+            <range source_id="91" start_line="862" end_line="862" start_column="25" end_column="36" covered="yes" />
+            <range source_id="91" start_line="862" end_line="862" start_column="14" end_column="21" covered="yes" />
+            <range source_id="91" start_line="863" end_line="863" start_column="7" end_column="112" covered="yes" />
+            <range source_id="91" start_line="862" end_line="862" start_column="22" end_column="24" covered="yes" />
+            <range source_id="91" start_line="865" end_line="865" start_column="5" end_column="80" covered="yes" />
+            <range source_id="91" start_line="866" end_line="866" start_column="25" end_column="35" covered="yes" />
+            <range source_id="91" start_line="866" end_line="866" start_column="14" end_column="21" covered="yes" />
+            <range source_id="91" start_line="867" end_line="867" start_column="7" end_column="111" covered="yes" />
+            <range source_id="91" start_line="866" end_line="866" start_column="22" end_column="24" covered="yes" />
+            <range source_id="91" start_line="869" end_line="869" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1115452" token="0x60047b9" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_sweepExpiredOffloadClaimsAsync&gt;d__14" block_coverage="100.00" line_coverage="100.00" blocks_covered="85" blocks_not_covered="0" lines_covered="40" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="366" end_line="366" start_column="5" end_column="142" covered="yes" />
+            <range source_id="91" start_line="367" end_line="367" start_column="5" end_column="38" covered="yes" />
+            <range source_id="91" start_line="368" end_line="368" start_column="5" end_column="24" covered="yes" />
+            <range source_id="91" start_line="369" end_line="369" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="372" end_line="372" start_column="7" end_column="91" covered="yes" />
+            <range source_id="91" start_line="373" end_line="373" start_column="9" end_column="16" covered="yes" />
+            <range source_id="91" start_line="375" end_line="375" start_column="12" end_column="25" covered="yes" />
+            <range source_id="91" start_line="376" end_line="376" start_column="9" end_column="116" covered="yes" />
+            <range source_id="91" start_line="377" end_line="377" start_column="9" end_column="32" covered="yes" />
+            <range source_id="91" start_line="380" end_line="380" start_column="9" end_column="55" covered="yes" />
+            <range source_id="91" start_line="381" end_line="381" start_column="31" end_column="67" covered="yes" />
+            <range source_id="91" start_line="381" end_line="381" start_column="18" end_column="27" covered="yes" />
+            <range source_id="91" start_line="382" end_line="382" start_column="11" end_column="95" covered="yes" />
+            <range source_id="91" start_line="383" end_line="383" start_column="11" end_column="29" covered="yes" />
+            <range source_id="91" start_line="384" end_line="384" start_column="13" end_column="79" covered="yes" />
+            <range source_id="91" start_line="385" end_line="385" start_column="13" end_column="22" covered="yes" />
+            <range source_id="91" start_line="387" end_line="387" start_column="33" end_column="38" covered="yes" />
+            <range source_id="91" start_line="387" end_line="387" start_column="20" end_column="29" covered="yes" />
+            <range source_id="91" start_line="388" end_line="388" start_column="13" end_column="47" covered="yes" />
+            <range source_id="91" start_line="392" end_line="395" start_column="15" end_column="36" covered="yes" />
+            <range source_id="91" start_line="396" end_line="396" start_column="15" end_column="45" covered="yes" />
+            <range source_id="91" start_line="397" end_line="397" start_column="13" end_column="14" covered="yes" />
+            <range source_id="91" start_line="397" end_line="397" start_column="15" end_column="49" covered="yes" />
+            <range source_id="91" start_line="398" end_line="398" start_column="15" end_column="21" covered="yes" />
+            <range source_id="91" start_line="399" end_line="399" start_column="15" end_column="35" covered="yes" />
+            <range source_id="91" start_line="400" end_line="400" start_column="15" end_column="93" covered="yes" />
+            <range source_id="91" start_line="401" end_line="401" start_column="13" end_column="14" covered="yes" />
+            <range source_id="91" start_line="402" end_line="402" start_column="11" end_column="12" covered="yes" />
+            <range source_id="91" start_line="387" end_line="387" start_column="30" end_column="32" covered="yes" />
+            <range source_id="91" start_line="403" end_line="403" start_column="9" end_column="10" covered="yes" />
+            <range source_id="91" start_line="381" end_line="381" start_column="28" end_column="30" covered="yes" />
+            <range source_id="91" start_line="404" end_line="404" start_column="9" end_column="31" covered="yes" />
+            <range source_id="91" start_line="405" end_line="405" start_column="11" end_column="67" covered="yes" />
+            <range source_id="91" start_line="406" end_line="406" start_column="11" end_column="87" covered="yes" />
+            <range source_id="91" start_line="408" end_line="408" start_column="9" end_column="56" covered="yes" />
+            <range source_id="91" start_line="411" end_line="411" start_column="7" end_column="8" covered="yes" />
+            <range source_id="91" start_line="375" end_line="375" start_column="72" end_column="79" covered="yes" />
+            <range source_id="91" start_line="375" end_line="375" start_column="27" end_column="70" covered="yes" />
+            <range source_id="91" start_line="412" end_line="412" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="412" end_line="412" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="413" end_line="413" start_column="7" end_column="13" covered="yes" />
+            <range source_id="91" start_line="414" end_line="414" start_column="7" end_column="27" covered="yes" />
+            <range source_id="91" start_line="415" end_line="415" start_column="7" end_column="42" covered="yes" />
+            <range source_id="91" start_line="416" end_line="416" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="417" end_line="417" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1116944" token="0x60047bb" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_sweepIntegrityTrafficAsync&gt;d__10" block_coverage="96.55" line_coverage="88.24" blocks_covered="28" blocks_not_covered="1" lines_covered="15" lines_partially_covered="2" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="142" end_line="142" start_column="5" end_column="70" covered="yes" />
+            <range source_id="91" start_line="143" end_line="143" start_column="5" end_column="72" covered="yes" />
+            <range source_id="91" start_line="144" end_line="144" start_column="5" end_column="57" covered="yes" />
+            <range source_id="91" start_line="145" end_line="145" start_column="7" end_column="14" covered="yes" />
+            <range source_id="91" start_line="148" end_line="149" start_column="7" end_column="100" covered="yes" />
+            <range source_id="91" start_line="150" end_line="151" start_column="7" end_column="102" covered="partial" />
+            <range source_id="91" start_line="152" end_line="152" start_column="7" end_column="94" covered="yes" />
+            <range source_id="91" start_line="153" end_line="153" start_column="7" end_column="82" covered="yes" />
+            <range source_id="91" start_line="154" end_line="154" start_column="7" end_column="85" covered="yes" />
+            <range source_id="91" start_line="155" end_line="155" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="155" end_line="155" start_column="7" end_column="41" covered="yes" />
+            <range source_id="91" start_line="156" end_line="156" start_column="7" end_column="13" covered="yes" />
+            <range source_id="91" start_line="157" end_line="157" start_column="7" end_column="27" covered="yes" />
+            <range source_id="91" start_line="158" end_line="158" start_column="7" end_column="44" covered="yes" />
+            <range source_id="91" start_line="159" end_line="159" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="160" end_line="160" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+        <function id="1117592" token="0x60047bd" name="MoveNext()" namespace="Whizbang.Core.Workers" type_name="MaintenanceWorker.&lt;_sweepPerspectiveRowsAsync&gt;d__16" block_coverage="100.00" line_coverage="100.00" blocks_covered="85" blocks_not_covered="0" lines_covered="31" lines_partially_covered="0" lines_not_covered="0">
+          <ranges>
+            <range source_id="91" start_line="454" end_line="454" start_column="7" end_column="80" covered="yes" />
+            <range source_id="91" start_line="456" end_line="456" start_column="7" end_column="85" covered="yes" />
+            <range source_id="91" start_line="457" end_line="458" start_column="7" end_column="32" covered="yes" />
+            <range source_id="91" start_line="459" end_line="459" start_column="7" end_column="74" covered="yes" />
+            <range source_id="91" start_line="460" end_line="461" start_column="7" end_column="101" covered="yes" />
+            <range source_id="91" start_line="462" end_line="462" start_column="9" end_column="120" covered="yes" />
+            <range source_id="91" start_line="464" end_line="464" start_column="7" end_column="76" covered="yes" />
+            <range source_id="91" start_line="465" end_line="466" start_column="9" end_column="77" covered="yes" />
+            <range source_id="91" start_line="472" end_line="472" start_column="7" end_column="116" covered="yes" />
+            <range source_id="91" start_line="476" end_line="477" start_column="7" end_column="97" covered="yes" />
+            <range source_id="91" start_line="478" end_line="479" start_column="9" end_column="117" covered="yes" />
+            <range source_id="91" start_line="480" end_line="480" start_column="9" end_column="24" covered="yes" />
+            <range source_id="91" start_line="481" end_line="481" start_column="11" end_column="43" covered="yes" />
+            <range source_id="91" start_line="487" end_line="487" start_column="40" end_column="55" covered="yes" />
+            <range source_id="91" start_line="487" end_line="487" start_column="16" end_column="36" covered="yes" />
+            <range source_id="91" start_line="489" end_line="489" start_column="11" end_column="75" covered="yes" />
+            <range source_id="91" start_line="490" end_line="490" start_column="9" end_column="10" covered="yes" />
+            <range source_id="91" start_line="490" end_line="490" start_column="46" end_column="79" covered="yes" />
+            <range source_id="91" start_line="491" end_line="491" start_column="11" end_column="17" covered="yes" />
+            <range source_id="91" start_line="492" end_line="492" start_column="11" end_column="31" covered="yes" />
+            <range source_id="91" start_line="493" end_line="493" start_column="11" end_column="47" covered="yes" />
+            <range source_id="91" start_line="494" end_line="494" start_column="9" end_column="10" covered="yes" />
+            <range source_id="91" start_line="487" end_line="487" start_column="37" end_column="39" covered="yes" />
+            <range source_id="91" start_line="496" end_line="496" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="496" end_line="496" start_column="42" end_column="75" covered="yes" />
+            <range source_id="91" start_line="497" end_line="497" start_column="7" end_column="13" covered="yes" />
+            <range source_id="91" start_line="498" end_line="498" start_column="7" end_column="27" covered="yes" />
+            <range source_id="91" start_line="499" end_line="499" start_column="7" end_column="38" covered="yes" />
+            <range source_id="91" start_line="500" end_line="500" start_column="5" end_column="6" covered="yes" />
+            <range source_id="91" start_line="501" end_line="501" start_column="3" end_column="4" covered="yes" />
+          </ranges>
+        </function>
+      </functions>
+      <source_files>
+        <source_file id="91" path="/home/runner/work/whizbang/whizbang/src/Whizbang.Core/Workers/MaintenanceWorker.cs" checksum_type="SHA256" checksum="67FDC09C1972BF3AACCFAB6EFEACCCE8B8787D1F04AEB8BC0E15112D02D41145" />
+      </source_files>
+    </module>
+  </modules>
+</results>
