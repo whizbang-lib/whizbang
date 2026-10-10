@@ -182,7 +182,7 @@ public class MaintenanceWorkerBranchCoverageTests {
     await _build(sp.GetRequiredService<IServiceScopeFactory>(), metrics: null, logger: logger)
       .RunMaintenanceOnceAsync(CancellationToken.None);
 
-    var reported = logger.Snapshot().Select(e => e.Message).ToList();
+    var reported = logger.Snapshot().ConvertAll(e => e.Message);
     await Assert.That(reported).Contains("Maintenance task 'purge_stale_instances' affected 3 rows in 12.5ms");
     await Assert.That(reported).Contains("Maintenance task 'reap_expired_perspective_rows' affected 0 rows in 4ms")
       .Because("without a meter each task's outcome is still reported, and the loop reaches every result");
