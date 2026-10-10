@@ -153,6 +153,57 @@ public class ScopeMiddlewareExtensionsTests {
     await Assert.That(configureApplied).IsTrue();
   }
 
+  [Test]
+  public async Task UseWhizbangScope_DefaultPipeline_AnonymousRequestCannotNameItsOwnIdentityAsync() {
+    // Arrange: the turnkey pipeline, an endpoint that reads the scope the way a resolver would
+    var services = new ServiceCollection();
+    services.AddWhizbangScope();
+    await using var provider = services.BuildServiceProvider();
+    var app = new ApplicationBuilder(provider);
+    app.UseWhizbangScope();
+    IScopeContext? seen = null;
+    app.Run(ctx => { seen = ctx.RequestServices.GetRequiredService<IScopeContextAccessor>().Current; return Task.CompletedTask; });
+    var pipeline = app.Build();
+
+    var context = new DefaultHttpContext { RequestServices = provider };
+    context.Request.Headers["X-Tenant-Id"] = "victim-tenant";
+    context.Request.Headers["X-User-Id"] = "victim-user";
+    context.Request.Headers["X-Organization-Id"] = "victim-org";
+    context.Request.Headers["X-Customer-Id"] = "victim-customer";
+
+    // Act
+    await pipeline(context);
+
+    // Assert: what reaches the endpoint carries no identity the caller wrote
+    await Assert.That(seen).IsNotNull();
+    await Assert.That(seen!.Scope.TenantId).IsNull();
+    await Assert.That(seen.Scope.UserId).IsNull();
+    await Assert.That(seen.Scope.OrganizationId).IsNull();
+    await Assert.That(seen.Scope.CustomerId).IsNull();
+  }
+
+  [Test]
+  public async Task UseWhizbangScope_HeaderOptedIn_ReadsThatHeaderAsync() {
+    // Arrange: the same pipeline, with a gateway-set header named explicitly
+    var services = new ServiceCollection();
+    services.AddWhizbangScope();
+    await using var provider = services.BuildServiceProvider();
+    var app = new ApplicationBuilder(provider);
+    app.UseWhizbangScope(options => options.TenantIdHeaderName = "X-Gateway-Tenant");
+    IScopeContext? seen = null;
+    app.Run(ctx => { seen = ctx.RequestServices.GetRequiredService<IScopeContextAccessor>().Current; return Task.CompletedTask; });
+    var pipeline = app.Build();
+
+    var context = new DefaultHttpContext { RequestServices = provider };
+    context.Request.Headers["X-Gateway-Tenant"] = "gateway-tenant";
+
+    // Act
+    await pipeline(context);
+
+    // Assert
+    await Assert.That(seen!.Scope.TenantId).IsEqualTo("gateway-tenant");
+  }
+
   #endregion
 
   #region ScopeContextAccessor

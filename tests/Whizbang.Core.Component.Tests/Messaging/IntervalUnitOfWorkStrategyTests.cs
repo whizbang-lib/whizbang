@@ -220,6 +220,33 @@ public class IntervalUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests 
   }
 
   [Test]
+  public async Task DisposeAsync_DuringAFlush_EndsTheLoopWhenTheFlushReturns_WithoutFlushingTheUnitAgainAsync() {
+    // The flush callback is running when disposal cancels the loop, and it returns normally rather than
+    // throwing. The loop sees the cancellation at its next check and ends there: no further wait, and the
+    // unit it just flushed is not flushed a second time by disposal.
+    var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(1));
+    var flushEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var flushedUnitIds = new List<Guid>();
+
+    strategy.OnFlushRequested += async (unitId, ct) => {
+      flushedUnitIds.Add(unitId);
+      var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      await using (ct.Register(() => cancelled.TrySetResult())) {
+        flushEntered.TrySetResult();
+        await cancelled.Task;
+      }
+    };
+
+    var unitId = await strategy.QueueMessageAsync(new TestMessage { Value = "test" });
+    await flushEntered.Task;
+
+    await strategy.DisposeAsync();
+
+    Guid[] expected = [unitId];
+    await Assert.That(flushedUnitIds).IsEquivalentTo(expected);
+  }
+
+  [Test]
   public async Task DisposeAsync_WithNoMessages_DoesNotTriggerCallbackAsync() {
     // Arrange
     var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(100));

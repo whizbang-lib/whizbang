@@ -7,8 +7,22 @@ namespace Whizbang.Core.Security.Attributes;
 /// Restricts field visibility based on caller permissions.
 /// When the caller lacks the required permission, the field value is masked.
 /// </summary>
+/// <remarks>
+/// <para>
+/// The GraphQL and REST lens transports enforce it on every response: a caller whose scope does not hold
+/// <see cref="Permission"/> sees the value <see cref="FieldPermissionMasking"/> produces for
+/// <see cref="Masking"/>, and a caller with no scope is never permitted. A protected member cannot be used
+/// to filter or sort a lens query, since a filter or an ordering would reveal the value it hides.
+/// </para>
+/// <para>
+/// The placeholders apply to string members; a member of any other type is hidden under every strategy.
+/// Code that reads a lens directly gets the stored values and applies <see cref="FieldPermissionMasking"/>
+/// itself.
+/// </para>
+/// </remarks>
 /// <docs>fundamentals/security/security#column-level-security</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/FieldPermissionMaskingTests.cs</tests>
 /// <example>
 /// public class Customer {
 ///   public string Name { get; init; }
@@ -36,6 +50,10 @@ public sealed class FieldPermissionAttribute(string permission, MaskingStrategy 
 /// <summary>
 /// Strategy for masking restricted fields when permission is not granted.
 /// </summary>
+/// <remarks>
+/// The placeholders apply to string members. A member of any other type is hidden under every strategy,
+/// because a placeholder string cannot stand in for its value. See <see cref="FieldPermissionMasking"/>.
+/// </remarks>
 /// <docs>fundamentals/security/security#masking-strategies</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:MaskingStrategy_AllValues_AreDistinctAsync</tests>
@@ -54,6 +72,7 @@ public enum MaskingStrategy {
 
   /// <summary>
   /// Return partial value like "****1234" (last 4 characters visible).
+  /// A value of four characters or fewer is fully masked ("****").
   /// </summary>
   Partial = 2,
 

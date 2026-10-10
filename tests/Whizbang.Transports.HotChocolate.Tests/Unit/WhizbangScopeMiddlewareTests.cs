@@ -184,8 +184,8 @@ public class WhizbangScopeMiddlewareTests {
   }
 
   [Test]
-  public async Task InvokeAsync_WithNullOptions_ShouldUseDefaultsAsync() {
-    // Arrange
+  public async Task InvokeAsync_WithNullOptions_UsesDefaults_WhichIgnoreIdentityHeadersAsync() {
+    // Arrange: no options at all, an unauthenticated request naming a tenant in a header
     var accessor = new TestScopeContextAccessor();
     var middleware = new WhizbangScopeMiddleware(_ => Task.CompletedTask, null);
     var context = new DefaultHttpContext();
@@ -194,8 +194,8 @@ public class WhizbangScopeMiddlewareTests {
     // Act
     await middleware.InvokeAsync(context, accessor);
 
-    // Assert
-    await Assert.That(accessor.Current!.Scope.TenantId).IsEqualTo("default-tenant");
+    // Assert: a request header is not an identity; only the authenticated principal is
+    await Assert.That(accessor.Current!.Scope.TenantId).IsNull();
   }
 
   #endregion
@@ -379,10 +379,50 @@ public class WhizbangScopeMiddlewareTests {
 
   #region Scope Extraction - Headers
 
+  // Identity comes from the authenticated principal. A request header is something the caller wrote, so by
+  // default it is never read as a tenant, user, organization or customer; an application opts in to a header
+  // only behind a trusted gateway that authenticates the caller and sets it.
+
   [Test]
-  public async Task InvokeAsync_WithTenantIdHeader_ShouldExtractTenantIdAsync() {
+  public async Task InvokeAsync_DefaultOptions_AnonymousRequest_IgnoresEveryIdentityHeaderAsync() {
     // Arrange
     var (middleware, accessor) = _createMiddleware();
+    var context = new DefaultHttpContext();
+    context.Request.Headers["X-Tenant-Id"] = "header-tenant";
+    context.Request.Headers["X-User-Id"] = "header-user";
+    context.Request.Headers["X-Organization-Id"] = "header-org";
+    context.Request.Headers["X-Customer-Id"] = "header-customer";
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    var scope = accessor.Current!.Scope;
+    await Assert.That(scope.TenantId).IsNull();
+    await Assert.That(scope.UserId).IsNull();
+    await Assert.That(scope.OrganizationId).IsNull();
+    await Assert.That(scope.CustomerId).IsNull();
+  }
+
+  [Test]
+  public async Task InvokeAsync_DefaultOptions_TokenWithoutTheClaim_DoesNotTakeTheHeaderAsync() {
+    // Arrange: an authenticated caller whose token carries a user but no tenant claim
+    var (middleware, accessor) = _createMiddleware();
+    var context = _createContextWithClaims(("sub", "user-1"));
+    context.Request.Headers["X-Tenant-Id"] = "someone-elses-tenant";
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert: the missing claim stays missing; the header cannot fill it
+    await Assert.That(accessor.Current!.Scope.TenantId).IsNull();
+    await Assert.That(accessor.Current!.Scope.UserId).IsEqualTo("user-1");
+  }
+
+  [Test]
+  public async Task InvokeAsync_WithTenantIdHeaderOptedIn_ShouldExtractTenantIdAsync() {
+    // Arrange
+    var (middleware, accessor) = _createMiddleware(new WhizbangScopeOptions { TenantIdHeaderName = "X-Tenant-Id" });
     var context = new DefaultHttpContext();
     context.Request.Headers["X-Tenant-Id"] = "header-tenant";
 
@@ -394,9 +434,9 @@ public class WhizbangScopeMiddlewareTests {
   }
 
   [Test]
-  public async Task InvokeAsync_WithUserIdHeader_ShouldExtractUserIdAsync() {
+  public async Task InvokeAsync_WithUserIdHeaderOptedIn_ShouldExtractUserIdAsync() {
     // Arrange
-    var (middleware, accessor) = _createMiddleware();
+    var (middleware, accessor) = _createMiddleware(new WhizbangScopeOptions { UserIdHeaderName = "X-User-Id" });
     var context = new DefaultHttpContext();
     context.Request.Headers["X-User-Id"] = "header-user";
 
@@ -408,9 +448,9 @@ public class WhizbangScopeMiddlewareTests {
   }
 
   [Test]
-  public async Task InvokeAsync_WithOrganizationIdHeader_ShouldExtractOrgIdAsync() {
+  public async Task InvokeAsync_WithOrganizationIdHeaderOptedIn_ShouldExtractOrgIdAsync() {
     // Arrange
-    var (middleware, accessor) = _createMiddleware();
+    var (middleware, accessor) = _createMiddleware(new WhizbangScopeOptions { OrganizationIdHeaderName = "X-Organization-Id" });
     var context = new DefaultHttpContext();
     context.Request.Headers["X-Organization-Id"] = "header-org";
 
@@ -422,9 +462,9 @@ public class WhizbangScopeMiddlewareTests {
   }
 
   [Test]
-  public async Task InvokeAsync_WithCustomerIdHeader_ShouldExtractCustomerIdAsync() {
+  public async Task InvokeAsync_WithCustomerIdHeaderOptedIn_ShouldExtractCustomerIdAsync() {
     // Arrange
-    var (middleware, accessor) = _createMiddleware();
+    var (middleware, accessor) = _createMiddleware(new WhizbangScopeOptions { CustomerIdHeaderName = "X-Customer-Id" });
     var context = new DefaultHttpContext();
     context.Request.Headers["X-Customer-Id"] = "header-customer";
 
@@ -436,16 +476,16 @@ public class WhizbangScopeMiddlewareTests {
   }
 
   [Test]
-  public async Task InvokeAsync_ClaimsHavePriorityOverHeaders_ForSameFieldAsync() {
+  public async Task InvokeAsync_HeaderOptedIn_ClaimsStillHavePriorityAsync() {
     // Arrange
-    var (middleware, accessor) = _createMiddleware();
+    var (middleware, accessor) = _createMiddleware(new WhizbangScopeOptions { TenantIdHeaderName = "X-Tenant-Id" });
     var context = _createContextWithClaims(("tenant_id", "claim-tenant"));
     context.Request.Headers["X-Tenant-Id"] = "header-tenant";
 
     // Act
     await middleware.InvokeAsync(context, accessor);
 
-    // Assert - claim should take priority
+    // Assert - the claim wins even where a header is allowed
     await Assert.That(accessor.Current!.Scope.TenantId).IsEqualTo("claim-tenant");
   }
 
@@ -1027,9 +1067,12 @@ public class WhizbangScopeMiddlewareTests {
   }
 
   [Test]
-  public async Task Options_DefaultTenantIdHeaderName_ShouldBeXTenantIdAsync() {
+  public async Task Options_DefaultIdentityHeaderNames_AreNull_SoNoHeaderIsReadAsync() {
     var options = new WhizbangScopeOptions();
-    await Assert.That(options.TenantIdHeaderName).IsEqualTo("X-Tenant-Id");
+    await Assert.That(options.TenantIdHeaderName).IsNull();
+    await Assert.That(options.UserIdHeaderName).IsNull();
+    await Assert.That(options.OrganizationIdHeaderName).IsNull();
+    await Assert.That(options.CustomerIdHeaderName).IsNull();
   }
 
   [Test]
