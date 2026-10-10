@@ -719,7 +719,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// terminated via the legacy mark-Published completion.
   /// </summary>
   /// <docs>fundamentals/messaging/composite-events#transactional-expansion</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs</tests>
   private async Task _fanoutCompositeAsync(
       InboxWork work, ICompositeEvent composite, IMessageEnvelope typedEnvelope,
       IServiceProvider scopeProvider, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
@@ -1401,8 +1401,8 @@ public sealed class InboxDispatchWorkerOptions {
   /// motivated this safeguard.
   /// </remarks>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/SecurityContextTimeoutTests.cs:InboxDispatchWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/SecurityContextTimeoutTests.cs:OutboxDrainWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerGapTests.cs:OutboxDrainWorkerOptions_Defaults_MatchDocumentedValuesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SecurityContextTimeoutTests.cs:InboxDispatchWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SecurityContextTimeoutTests.cs:OutboxDrainWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerGapTests.cs:OutboxDrainWorkerOptions_Defaults_MatchDocumentedValuesAsync</tests>
   public int SecurityContextTimeoutSeconds { get; set; } = 10;
 }

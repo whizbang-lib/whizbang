@@ -178,7 +178,7 @@ public class DispatcherSyncTests : DiagnosticTestBase {
 
   public class AsyncOrderReceptor : IReceptor<DispatcherSyncCreateOrderCommand, DispatcherSyncOrderCreatedResult> {
     public async ValueTask<DispatcherSyncOrderCreatedResult> HandleAsync(DispatcherSyncCreateOrderCommand message, CancellationToken cancellationToken = default) {
-      await Task.Delay(10, cancellationToken); // Ensure async
+      await Task.Yield(); // Ensure async
       return new DispatcherSyncOrderCreatedResult(Guid.NewGuid());
     }
   }

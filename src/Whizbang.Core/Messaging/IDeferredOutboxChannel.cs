@@ -14,10 +14,10 @@ namespace Whizbang.Core.Messaging;
 /// <para>Thread-safe for concurrent writes from multiple threads.</para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/message-cascade#deferred-event-channel</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:QueueAsync_AddsMessageToPending_SuccessfullyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_ReturnsAllQueuedMessages_AndClearsChannelAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_MultipleCalls_OnlyReturnsMessagesOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs:QueueAsync_AddsMessageToPending_SuccessfullyAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_ReturnsAllQueuedMessages_AndClearsChannelAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_MultipleCalls_OnlyReturnsMessagesOnceAsync</tests>
 public interface IDeferredOutboxChannel {
   /// <summary>
   /// Queues a message for deferred outbox write in the next lifecycle loop.
@@ -25,9 +25,9 @@ public interface IDeferredOutboxChannel {
   /// <param name="message">The outbox message to queue for deferred processing.</param>
   /// <param name="ct">Cancellation token.</param>
   /// <returns>A ValueTask that completes when the message has been queued.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:QueueAsync_AddsMessageToPending_SuccessfullyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:QueueAsync_MultipleMessages_AllPendingAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:QueueAsync_IsThreadSafe_MultipleConcurrentWritesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs:QueueAsync_AddsMessageToPending_SuccessfullyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs:QueueAsync_MultipleMessages_AllPendingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs:QueueAsync_IsThreadSafe_MultipleConcurrentWritesAsync</tests>
   ValueTask QueueAsync(OutboxMessage message, CancellationToken ct = default);
 
   /// <summary>
@@ -35,15 +35,15 @@ public interface IDeferredOutboxChannel {
   /// Called by the work coordinator at the start of each lifecycle loop.
   /// </summary>
   /// <returns>A list of all queued messages. The channel is cleared after draining.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_ReturnsAllQueuedMessages_AndClearsChannelAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_WhenEmpty_ReturnsEmptyListAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_MultipleCalls_OnlyReturnsMessagesOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_ReturnsAllQueuedMessages_AndClearsChannelAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_WhenEmpty_ReturnsEmptyListAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs:DrainAll_MultipleCalls_OnlyReturnsMessagesOnceAsync</tests>
   IReadOnlyList<OutboxMessage> DrainAll();
 
   /// <summary>
   /// Gets whether there are pending messages in the channel.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:Constructor_CreatesEmptyChannel_SuccessfullyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs:QueueAsync_AddsMessageToPending_SuccessfullyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs:Constructor_CreatesEmptyChannel_SuccessfullyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DeferredOutboxChannelTests.cs:QueueAsync_AddsMessageToPending_SuccessfullyAsync</tests>
   bool HasPending { get; }
 }

@@ -17,14 +17,6 @@ using Whizbang.Transports.Tests.Generated;
 namespace Whizbang.Transports.Tests;
 
 /// <summary>
-/// Test message for JSON serializer tests.
-/// </summary>
-public record TestMessage : ICommand {
-  public required string Content { get; init; }
-  public required int Value { get; init; }
-}
-
-/// <summary>
 /// Tests for JsonMessageSerializer and its internal converters.
 /// Covers edge cases and error paths to achieve 100% coverage.
 /// </summary>

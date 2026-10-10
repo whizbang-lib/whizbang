@@ -1097,7 +1097,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// channel; past it the claim cycle carries them on as before.
   /// </para>
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:ALongStream_IsContinuedFromItsCursorWithoutAClaimCycleAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:ALongStream_IsContinuedFromItsCursorWithoutAClaimCycleAsync</tests>
   private async Task _continueStreamsAsync(CancellationToken ct) {
     if (!_options.ContinueStreamRuns) {
       return;
@@ -1153,10 +1153,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// before, and the claim loop carries the streams on.
   /// </para>
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:ADeadlockedContinuation_IsRetriedAtOnce_NotLeftToTheClaimBackstopAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:AContinuationThatKeepsDeadlocking_GivesUpAfterItsRetriesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:AContinuationFailureThatIsNotTransient_IsNotRetriedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:AContinuationThatLostItsConnection_IsNotRetriedAtOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:ADeadlockedContinuation_IsRetriedAtOnce_NotLeftToTheClaimBackstopAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:AContinuationThatKeepsDeadlocking_GivesUpAfterItsRetriesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:AContinuationFailureThatIsNotTransient_IsNotRetriedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerStreamRunTests.cs:AContinuationThatLostItsConnection_IsNotRetriedAtOnceAsync</tests>
   private async Task<IReadOnlyList<OutboxBatchRow>> _continueRoundAsync(List<OutboxStreamCursor> cursors, CancellationToken ct) {
     var attempt = 1;
     while (true) {
@@ -1426,10 +1426,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// cancellation surfaces here as a logged failure too: the batch drain that follows observes the same
   /// token and stops the loop, so nothing is lost by not rethrowing.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupFailsOnceAtStartup_ResolvesBeforeTheNextBatchAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdResolvedAtStartup_DoesNotLookItUpAgainAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdEmptyAtStartup_WarnsAndRetriesBeforeEachBatchAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupKeepsFailing_RecordsEachRetryAtDebugAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupFailsOnceAtStartup_ResolvesBeforeTheNextBatchAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdResolvedAtStartup_DoesNotLookItUpAgainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdEmptyAtStartup_WarnsAndRetriesBeforeEachBatchAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupKeepsFailing_RecordsEachRetryAtDebugAsync</tests>
   private async Task _ensureLocalServiceIdAsync(CancellationToken ct) {
     if (_localServiceId != Guid.Empty) {
       return;
@@ -1462,7 +1462,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
 
   /// <summary>Issue #630: the lookup is best-effort, but its failure must not be silent.</summary>
   /// <docs>messaging/work-coordinator#local-service-identity</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupFails_LogsTheConsequenceAndKeepsDrainingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupFails_LogsTheConsequenceAndKeepsDrainingAsync</tests>
   [LoggerMessage(EventId = 49, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker: local service identity lookup failed; publishing continues, but every " +
               "envelope this instance publishes will carry an empty SourceServiceId, so downstream consumers " +
@@ -1779,9 +1779,9 @@ public sealed class OutboxDrainWorkerOptions {
   /// </para>
   /// </remarks>
   /// <docs>operations/dead-letter-queue/internal-dlq</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PublishTimeoutTests.cs:OutboxDrainWorker_PublishBatchHangs_TimesOutAndEnqueuesFailurePerRowAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PublishTimeoutTests.cs:OutboxDrainWorker_PublishSingularHangs_TimesOutAndEnqueuesFailureAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PublishTimeoutTests.cs:OutboxDrainWorker_PublishStrategyIgnoresCt_StillTimesOutAndEnqueuesFailureAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerGapTests.cs:OutboxDrainWorker_PublishTimeoutZero_SingularPath_PublishesAndCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PublishTimeoutTests.cs:OutboxDrainWorker_PublishBatchHangs_TimesOutAndEnqueuesFailurePerRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PublishTimeoutTests.cs:OutboxDrainWorker_PublishSingularHangs_TimesOutAndEnqueuesFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PublishTimeoutTests.cs:OutboxDrainWorker_PublishStrategyIgnoresCt_StillTimesOutAndEnqueuesFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerGapTests.cs:OutboxDrainWorker_PublishTimeoutZero_SingularPath_PublishesAndCompletesAsync</tests>
   public int PublishTimeoutSeconds { get; set; } = 60;
 }

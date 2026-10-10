@@ -23,7 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// publish even when the window is empty — absence is the alarm, so silence must be abnormal.
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
 [PinnedId("7d2a9c4e-5b83-4f1a-9e67-0c8d3b2a1f54")]
 [Ephemeral]
 [SystemControlTag(Tag = Tags.SystemTags.CONTROL, Properties = [])]

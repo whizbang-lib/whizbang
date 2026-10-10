@@ -6,18 +6,18 @@ using System.Collections.Concurrent;
 namespace Whizbang.Core.Sequencing;
 
 /// <summary>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_VariousTaskCounts_ShouldMaintainConsistencyAsync</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:MixedOperations_GetNextAndReset_ShouldBeThreadSafeAsync</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_MultipleStreams_ShouldMaintainSeparateCountersAsync</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:LargeSequenceNumbers_VariousLargeValues_ShouldHandleCorrectlyAsync</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:MultipleStreams_ManyKeys_ShouldMaintainSeparatelyAsync</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ResetDuringConcurrentAccess_ShouldNotCorruptAsync</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:NegativeResetValue_ShouldWorkCorrectlyAsync</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:SequentialAccess_VariousCallCounts_ShouldCompleteQuicklyAsync</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_ManyStreams_ShouldDistributeEvenlyAsync</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:UnusedStreams_ShouldReturnMinusOneAsync</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:GetCurrent_AfterMultipleCalls_ShouldReturnLatestAsync</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Canceled_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_VariousTaskCounts_ShouldMaintainConsistencyAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:MixedOperations_GetNextAndReset_ShouldBeThreadSafeAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_MultipleStreams_ShouldMaintainSeparateCountersAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:LargeSequenceNumbers_VariousLargeValues_ShouldHandleCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:MultipleStreams_ManyKeys_ShouldMaintainSeparatelyAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:ResetDuringConcurrentAccess_ShouldNotCorruptAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:NegativeResetValue_ShouldWorkCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:SequentialAccess_VariousCallCounts_ShouldCompleteQuicklyAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_ManyStreams_ShouldDistributeEvenlyAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:UnusedStreams_ShouldReturnMinusOneAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:GetCurrent_AfterMultipleCalls_ShouldReturnLatestAsync</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Canceled_ShouldThrowAsync</tests>
 /// In-memory implementation of ISequenceProvider using ConcurrentDictionary and Interlocked operations.
 /// Provides thread-safe, monotonically increasing sequence numbers per stream.
 /// Suitable for single-process scenarios or testing. For distributed systems, use a database or Redis provider.
@@ -34,16 +34,16 @@ public class InMemorySequenceProvider : ISequenceProvider {
   private readonly ConcurrentDictionary<string, SequenceCounter> _sequences = new();
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_VariousTaskCounts_ShouldMaintainConsistencyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:MixedOperations_GetNextAndReset_ShouldBeThreadSafeAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_MultipleStreams_ShouldMaintainSeparateCountersAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:LargeSequenceNumbers_VariousLargeValues_ShouldHandleCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:MultipleStreams_ManyKeys_ShouldMaintainSeparatelyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ResetDuringConcurrentAccess_ShouldNotCorruptAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:NegativeResetValue_ShouldWorkCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:SequentialAccess_VariousCallCounts_ShouldCompleteQuicklyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_ManyStreams_ShouldDistributeEvenlyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Canceled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_VariousTaskCounts_ShouldMaintainConsistencyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:MixedOperations_GetNextAndReset_ShouldBeThreadSafeAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_MultipleStreams_ShouldMaintainSeparateCountersAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:LargeSequenceNumbers_VariousLargeValues_ShouldHandleCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:MultipleStreams_ManyKeys_ShouldMaintainSeparatelyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:ResetDuringConcurrentAccess_ShouldNotCorruptAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:NegativeResetValue_ShouldWorkCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:SequentialAccess_VariousCallCounts_ShouldCompleteQuicklyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_ManyStreams_ShouldDistributeEvenlyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Canceled_ShouldThrowAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_DifferentStreamIds_ShouldMaintainSeparateSequencesAsync</tests>
@@ -65,13 +65,13 @@ public class InMemorySequenceProvider : ISequenceProvider {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:LargeSequenceNumbers_VariousLargeValues_ShouldHandleCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:SequentialAccess_VariousCallCounts_ShouldCompleteQuicklyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_ManyStreams_ShouldDistributeEvenlyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:UnusedStreams_ShouldReturnMinusOneAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:GetCurrent_AfterMultipleCalls_ShouldReturnLatestAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ResetDuringConcurrentAccess_ShouldNotCorruptAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Canceled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:LargeSequenceNumbers_VariousLargeValues_ShouldHandleCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:SequentialAccess_VariousCallCounts_ShouldCompleteQuicklyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_ManyStreams_ShouldDistributeEvenlyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:UnusedStreams_ShouldReturnMinusOneAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:GetCurrent_AfterMultipleCalls_ShouldReturnLatestAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:ResetDuringConcurrentAccess_ShouldNotCorruptAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Canceled_ShouldThrowAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
@@ -90,11 +90,11 @@ public class InMemorySequenceProvider : ISequenceProvider {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:MixedOperations_GetNextAndReset_ShouldBeThreadSafeAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:LargeSequenceNumbers_VariousLargeValues_ShouldHandleCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ResetDuringConcurrentAccess_ShouldNotCorruptAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:NegativeResetValue_ShouldWorkCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Canceled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:MixedOperations_GetNextAndReset_ShouldBeThreadSafeAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:LargeSequenceNumbers_VariousLargeValues_ShouldHandleCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:ResetDuringConcurrentAccess_ShouldNotCorruptAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:NegativeResetValue_ShouldWorkCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Canceled_ShouldThrowAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>

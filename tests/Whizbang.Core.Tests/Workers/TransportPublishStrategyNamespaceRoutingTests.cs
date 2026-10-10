@@ -147,7 +147,7 @@ public class TransportPublishStrategyNamespaceRoutingTests {
     var options = new TagOptions();
     options.RouteNamespace("bulk-import", "bulk");
     return new TransportNamespaceResolver(
-      options, () => [CoalesceGroupResolverTests.TagRegistration(typeof(BulkClassEvent), "bulk-import")]);
+      options, () => [CoalesceTestTags.TagRegistration(typeof(BulkClassEvent), "bulk-import")]);
   }
 
   // ========================================

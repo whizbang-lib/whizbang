@@ -263,6 +263,65 @@ public class RabbitMQSubscriptionTests {
     await Assert.That(subscription.IsActive).IsFalse();
   }
 
+  /// <summary>
+  /// A channel whose consumer cancel parks until the test releases it, so the test holds the
+  /// dispose cleanup at a known point. Re-implementing <see cref="IChannel"/> routes the
+  /// subscription's interface call to this cancel instead of the base fake's.
+  /// </summary>
+  private sealed class GatedCancelChannel : FakeChannel, IChannel {
+    public TaskCompletionSource CancelEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource ReleaseCancel { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public bool CancelCompleted { get; private set; }
+
+    public new async Task BasicCancelAsync(string consumerTag, bool noWait = false, CancellationToken cancellationToken = default) {
+      CancelEntered.TrySetResult();
+      await ReleaseCancel.Task;
+      CancelCompleted = true;
+    }
+  }
+
+  // Graceful shutdown awaits DisposalCompletion to learn the broker resources are released. If it
+  // completed before Dispose() was ever called, a shutdown would report the consumer gone while it
+  // was still receiving.
+  [Test]
+  [Timeout(30000)]
+  public async Task DisposalCompletion_BeforeDispose_IsPendingAsync(CancellationToken ct) {
+    var channel = new FakeChannel();
+    var subscription = new RabbitMQSubscription(channel, QUEUE_NAME, CONSUMER_TAG);
+
+    await Assert.That(subscription.DisposalCompletion.IsCompleted).IsFalse()
+      .Because("nothing has been released until the subscription is disposed");
+
+    subscription.Dispose();
+    await subscription.DisposalCompletion.WaitAsync(ct);
+  }
+
+  // The signal must mark the exact transition: consumer cancelled AND channel disposed. The cancel
+  // is held open here, so a signal that fired early (when the cleanup started, or when Dispose()
+  // returned) would be observed as completed while the cancel is still in flight.
+  // [Timeout] is only a hang guard: the waits below are on the transition's own signal, and the
+  // token turns a regression that never signals into a failure instead of a hung suite.
+  [Test]
+  [Timeout(30000)]
+  public async Task DisposalCompletion_AfterDispose_CompletesOnceConsumerCancelledAndChannelDisposedAsync(CancellationToken ct) {
+    var channel = new GatedCancelChannel();
+    var subscription = new RabbitMQSubscription(channel, QUEUE_NAME, CONSUMER_TAG);
+
+    subscription.Dispose();
+    await channel.CancelEntered.Task.WaitAsync(ct);
+
+    await Assert.That(subscription.DisposalCompletion.IsCompleted).IsFalse()
+      .Because("the consumer cancel is still in flight, so the channel is not released yet");
+    await Assert.That(channel.IsDisposed).IsFalse();
+
+    channel.ReleaseCancel.SetResult();
+    await subscription.DisposalCompletion.WaitAsync(ct);
+
+    await Assert.That(channel.CancelCompleted).IsTrue();
+    await Assert.That(channel.IsDisposed).IsTrue();
+    await Assert.That(subscription.DisposalCompletion.IsCompletedSuccessfully).IsTrue();
+  }
+
   [Test]
   public async Task IsActive_AfterDispose_IsFalseAsync() {
     var channel = new FakeChannel();

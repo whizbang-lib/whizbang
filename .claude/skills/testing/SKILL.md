@@ -79,8 +79,10 @@ clock moves to Component, and its pull request says why.
 ## Guards that enforce this
 
 - **Build:** a test project with an unknown type, or none, fails to build (WHZ0002, WHZ0003).
-- **Purity guard:** `.github/scripts/Get-TestPurity.ps1` finds unit-project classes that use a
-  construct that makes a test non-unit. `-Inventory` rewrites `plans/test-separation-inventory.{md,csv}`.
+- **Purity guard:** `.github/scripts/Get-TestPurity.ps1`, run by "Test · Pipeline scripts", fails the
+  build on any class in a Unit project that uses a construct that makes a test non-unit. Classify the
+  test with the table above and move or fix it. `-Inventory` rewrites
+  `plans/test-separation-inventory.{md,csv}`.
 - **Link guard:** every `<tests>` tag resolves to a real test.
 - **Runner:** `Run-Tests.ps1 -NoBuild` fails when a selected project wasn't built, so a CI slice that
   misses a project fails instead of skipping it.

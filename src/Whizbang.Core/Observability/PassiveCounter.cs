@@ -31,7 +31,7 @@ namespace Whizbang.Core.Observability;
 /// </remarks>
 /// <typeparam name="T">The count's numeric type.</typeparam>
 /// <docs>operations/observability/metrics</docs>
-/// <tests>tests/Whizbang.Core.Tests/Observability/PassiveCounterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/PassiveCounterTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Observability/PassiveCounterDriftLockTests.cs</tests>
 public sealed class PassiveCounter<T> where T : struct, INumberBase<T> {
   private readonly Cell _untagged = new();

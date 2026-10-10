@@ -23,7 +23,7 @@ namespace Whizbang.Core.Workers;
 /// usually still a <see cref="JsonElement"/> here.
 /// </remarks>
 /// <docs>messaging/inbox-pattern#source-identity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerSourceIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerSourceIdentityTests.cs</tests>
 internal static class ReceivedInboxMessageBuilder {
   /// <summary>
   /// The stream a received message belongs to: the first hop's <c>AggregateId</c> (the key is historical),
@@ -46,7 +46,7 @@ internal static class ReceivedInboxMessageBuilder {
   /// (priority step 1); without a chain the declared number's effective value is used, so a row is never stored
   /// as zero.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Priority/ConsumerPriorityClassificationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Priority/ConsumerPriorityClassificationTests.cs</tests>
   internal static int Classify(IServiceProvider scope, IMessageEnvelope envelope, string messageTypeName) {
     var chain = scope.GetService<Whizbang.Core.Priority.PriorityHookChain>();
     return chain is null

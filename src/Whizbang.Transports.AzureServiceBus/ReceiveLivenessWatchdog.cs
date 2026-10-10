@@ -29,7 +29,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </para>
 /// </remarks>
 /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
-/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ReceiveLivenessWatchdogTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/ReceiveLivenessWatchdogTests.cs</tests>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportLivenessWiringTests.cs</tests>
 internal sealed partial class ReceiveLivenessWatchdog : IAsyncDisposable {
   private readonly AzureServiceBusOptions _options;

@@ -45,10 +45,10 @@ namespace Whizbang.Core.Diagnostics;
 /// </list>
 /// </remarks>
 /// <docs>extending/features/debugger-aware-clock</docs>
-/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:IDebuggerAwareClock_Mode_ReturnsConfiguredModeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:IDebuggerAwareClock_OnPauseStateChanged_ReturnsDisposableAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:IDebuggerAwareClock_ImplementsIDisposableAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs:IDebuggerAwareClock_Mode_ReturnsConfiguredModeAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs:IDebuggerAwareClock_OnPauseStateChanged_ReturnsDisposableAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs:IDebuggerAwareClock_ImplementsIDisposableAsync</tests>
 public interface IDebuggerAwareClock : IDisposable {
   /// <summary>
   /// Gets the current detection mode.

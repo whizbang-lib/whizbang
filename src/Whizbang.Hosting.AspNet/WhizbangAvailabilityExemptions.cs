@@ -17,7 +17,7 @@ namespace Whizbang.Hosting.AspNet;
 /// snapshot-array swap keeps the read path allocation-free and lock-free.
 /// </remarks>
 /// <docs>resilience/database-availability-middleware</docs>
-/// <tests>tests/Whizbang.Hosting.AspNet.Tests/StartupStatusEndpointsTests.cs</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Component.Tests/StartupStatusEndpointsTests.cs</tests>
 public sealed class WhizbangAvailabilityExemptions {
   private readonly Lock _lock = new();
   private volatile PathString[] _paths = [];

@@ -23,8 +23,8 @@ namespace Whizbang.Core.Workers;
 /// just the worker pipeline (e.g., to host workers in a separate process).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupWiringAuditTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupWiringAuditTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupPipelineWiringTests.cs</tests>
 public static class WorkerPipelineExtensions {
   /// <summary>
   /// The ONE construction recipe for the turnkey <see cref="HousekeepingCoordinator"/> and its
@@ -35,7 +35,7 @@ public static class WorkerPipelineExtensions {
   /// existed in code and never once reached telemetry, fleet-wide.
   /// </summary>
   /// <docs>operations/workers/housekeeping-arbitration</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RecoveryLifecycleHardeningTests.cs:TurnkeyBootstrap_CoordinatorRecordsDecisions_OnTheHousekeepingMeterAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs:TurnkeyBootstrap_CoordinatorRecordsDecisions_OnTheHousekeepingMeterAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
   internal static void AddHousekeepingCoordinatorCore(IServiceCollection services) {
     services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>

@@ -66,7 +66,7 @@ public class PerspectiveRewindOptions {
 /// <docs>fundamentals/perspectives/rewind#startup-modes</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindOptionsTests.cs:RewindStartupMode_HasExpectedValuesAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindOptionsTests.cs:Properties_CanBeSetAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
 public enum RewindStartupMode {
   /// <summary>
   /// Rewinds complete before the worker starts polling for new work.

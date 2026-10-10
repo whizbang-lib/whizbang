@@ -45,10 +45,10 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#coalescing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_GroupQuiet_FoldsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_ContinuousArrivalsPastMaxDelay_FoldsAnywayAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_PendingLargerThanMaxBatch_FoldsInChunksAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:ExecuteAsync_NoEnabledBindings_ParksWithoutTouchingTheCoordinatorAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_GroupQuiet_FoldsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_ContinuousArrivalsPastMaxDelay_FoldsAnywayAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_PendingLargerThanMaxBatch_FoldsInChunksAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:ExecuteAsync_NoEnabledBindings_ParksWithoutTouchingTheCoordinatorAsync</tests>
 public sealed partial class CoalesceShipWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
@@ -276,9 +276,9 @@ public sealed partial class CoalesceShipWorker(
   /// they were produced, so the fold is a function of their numbers and consults no hook of its own.
   /// </summary>
   /// <docs>fundamentals/messaging/message-priority#composites</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_DefaultFold_CompositeCarriesTheMostUrgentMemberAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_LeastUrgentFold_CompositeCarriesTheLeastUrgentMemberAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_ManualFold_CompositeCarriesTheBindingsNumberAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_DefaultFold_CompositeCarriesTheMostUrgentMemberAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_LeastUrgentFold_CompositeCarriesTheLeastUrgentMemberAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_ManualFold_CompositeCarriesTheBindingsNumberAsync</tests>
   internal static int FoldPriority(CoalescePolicyOptions binding, CoalesceFoldBatch batch) {
     ArgumentNullException.ThrowIfNull(binding);
     ArgumentNullException.ThrowIfNull(batch);

@@ -1136,7 +1136,7 @@ gauge; the rebuild scoping scan; and the handful of one-shot startup reconcilers
 inventory. Everything else is denied by default. A test that resolves a host and asserts that
 allow-list exactly, failing on any addition the list does not name, is the same shape as the existing
 wiring audits
-(for example `tests/Whizbang.Core.Tests/Startup/StartupWiringAuditTests.cs`,
+(for example `tests/Whizbang.Core.Component.Tests/Startup/StartupWiringAuditTests.cs`,
 `tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensions_TurnkeyResolverWiringTests.cs`).
 It fails on the change rather than on the deployment, which is the whole point.
 

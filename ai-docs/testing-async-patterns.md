@@ -286,8 +286,9 @@ Test projects are classified by the `<WhizbangTestType>` property in their `.csp
 - **Integration** - Tests requiring external resources (databases, message queues, containers)
 - **Benchmark** and **Soak** - never run by `Run-Tests.ps1` (BenchmarkDotNet; `scripts/Run-Soak.ps1`)
 
-Unit projects still hold component tests today; #1264 moves them, and its purity guard
-(`.github/scripts/Get-TestPurity.ps1`) lists them per project until then.
+Unit projects hold only unit tests: #1264 moved the rest, and its purity guard
+(`.github/scripts/Get-TestPurity.ps1`, run by "Test · Pipeline scripts") fails the build on any class in a
+Unit project that starts a worker, sleeps, reads the real clock or does real I/O.
 
 Run tests by type:
 

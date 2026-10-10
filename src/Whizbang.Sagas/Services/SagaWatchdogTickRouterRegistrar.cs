@@ -40,12 +40,12 @@ namespace Whizbang.Sagas.Services;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/sagas/completion-orchestration#hand-written-sagas</docs>
-/// <tests>tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs:Registrar_RegistersTheRouterOnTheReceivingSideOnlyAsync</tests>
-/// <tests>tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs:Registrar_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync</tests>
-/// <tests>tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs:Registrar_WithNoRegistry_StartsWithoutThrowingAsync</tests>
-/// <tests>tests/Whizbang.Sagas.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:AddSagaServiceOnly_SubscribesToTheTicksTopic_AndAPublishedTickReachesTheSagaAsync</tests>
-/// <tests>tests/Whizbang.Sagas.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:SweepTickPublishedByTheSagasOwnService_IsReceivedKeptAndReachesTheSagaAsync</tests>
-/// <tests>tests/Whizbang.Sagas.Tests/SagaWatchdogTickDeliveryIntegrationTests.cs:HandWrittenSagaTick_AfterTheInboxCommit_DoesNotReachTheSagaAgainAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Component.Tests/Services/SagaWatchdogTickRoutingTests.cs:Registrar_RegistersTheRouterOnTheReceivingSideOnlyAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Component.Tests/Services/SagaWatchdogTickRoutingTests.cs:Registrar_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Component.Tests/Services/SagaWatchdogTickRoutingTests.cs:Registrar_WithNoRegistry_StartsWithoutThrowingAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Component.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:AddSagaServiceOnly_SubscribesToTheTicksTopic_AndAPublishedTickReachesTheSagaAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Component.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:SweepTickPublishedByTheSagasOwnService_IsReceivedKeptAndReachesTheSagaAsync</tests>
+/// <tests>tests/Whizbang.Sagas.Component.Tests/SagaWatchdogTickDeliveryIntegrationTests.cs:HandWrittenSagaTick_AfterTheInboxCommit_DoesNotReachTheSagaAgainAsync</tests>
 public sealed class SagaWatchdogTickRouterRegistrar(
     IServiceProvider services,
     IServiceScopeFactory scopeFactory) : IHostedService {

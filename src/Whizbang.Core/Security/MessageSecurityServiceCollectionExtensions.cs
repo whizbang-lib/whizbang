@@ -92,7 +92,7 @@ public static class MessageSecurityServiceCollectionExtensions {
       var extractors = sp.GetServices<ISecurityContextExtractor>();
       var callbacks = sp.GetServices<ISecurityContextCallback>();
       var opts = sp.GetRequiredService<MessageSecurityOptions>();
-      return new DefaultMessageSecurityContextProvider(extractors, callbacks, opts);
+      return new DefaultMessageSecurityContextProvider(extractors, callbacks, opts, timeProvider: sp.GetService<TimeProvider>());
     });
 
     return services;

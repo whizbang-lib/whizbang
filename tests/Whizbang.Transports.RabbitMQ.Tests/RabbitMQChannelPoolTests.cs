@@ -1,0 +1,178 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using RabbitMQ.Client;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Transports.RabbitMQ;
+
+#pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
+
+namespace Whizbang.Transports.RabbitMQ.Tests;
+
+/// <summary>
+/// Tests for RabbitMQChannelPool thread-safe channel pooling.
+/// RabbitMQ channels are NOT thread-safe, so pooling is required.
+/// </summary>
+public class RabbitMQChannelPoolTests {
+  [Test]
+  public async Task RentAsync_ReturnsChannel_FromPoolAsync() {
+    // Arrange - Create test doubles
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+
+    // Act
+    using var pooledChannel = await pool.RentAsync(CancellationToken.None);
+
+    // Assert
+    await Assert.That(pooledChannel.Channel).IsNotNull();
+  }
+
+  [Test]
+  public async Task Return_AddsChannelBackToPool_ForReuseAsync() {
+    // Arrange - Create test doubles
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+
+    // Act - Rent and return a channel
+    IChannel? firstChannel;
+    using (var pooledChannel = await pool.RentAsync(CancellationToken.None)) {
+      firstChannel = pooledChannel.Channel;
+    } // Dispose returns to pool
+
+    // Rent again
+    using var pooledChannel2 = await pool.RentAsync(CancellationToken.None);
+
+    // Assert - Should get the same channel back
+    await Assert.That(pooledChannel2.Channel).IsEqualTo(firstChannel);
+  }
+
+  [Test]
+  public async Task RentAsync_BlocksWhenPoolExhausted_UntilReturnAsync() {
+    // Arrange - Create test doubles (connection will create new channels on demand)
+    var channelCount = 0;
+    var fakeConnection = new FakeConnection(() => {
+      channelCount++;
+      return Task.FromResult<IChannel>(new FakeChannel());
+    });
+
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 2);
+
+    // Act - Rent all channels (no using - we need manual disposal control)
+    var pooled1 = await pool.RentAsync(CancellationToken.None);
+    var pooled2 = await pool.RentAsync(CancellationToken.None);
+
+    // Try to rent a third (should block). Both permits are held and only a return releases one, so
+    // the rent cannot complete before pooled1.Dispose() below: no delay is needed to observe that.
+    var rentTask = pool.RentAsync(CancellationToken.None).AsTask();
+    await Assert.That(rentTask.IsCompleted).IsFalse();
+
+    // Return one channel
+    var returnedChannel = pooled1.Channel;
+    pooled1.Dispose();
+
+    // Now the rent completes, and it is served by the returned channel. A pool that did not block
+    // would have created a third channel instead, so this proves the rent waited for the return.
+    var pooled3 = await rentTask;
+    await Assert.That(pooled3.Channel).IsSameReferenceAs(returnedChannel);
+    await Assert.That(channelCount).IsEqualTo(2);
+
+    // Cleanup
+    pooled2.Dispose();
+    pooled3.Dispose();
+    pool.Dispose();
+  }
+
+  [Test]
+  public async Task Dispose_DisposesAllChannels_InPoolAsync() {
+    // Arrange - Create test doubles that track disposal
+    var channel1 = new FakeChannel();
+    var channel2 = new FakeChannel();
+    var channels = new[] { channel1, channel2 };
+    var channelIndex = 0;
+
+    var fakeConnection = new FakeConnection(() => {
+      var channel = channels[channelIndex];
+      channelIndex++;
+      return Task.FromResult<IChannel>(channel);
+    });
+
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+
+    // Rent both channels at once (so both are created), then return them
+    var pooled1 = await pool.RentAsync(CancellationToken.None);
+    var pooled2 = await pool.RentAsync(CancellationToken.None);
+    pooled1.Dispose(); // Return to pool
+    pooled2.Dispose(); // Return to pool
+
+    // Act - Dispose pool
+    pool.Dispose();
+
+    // Assert - All channels should be disposed
+    await Assert.That(channel1.IsDisposed).IsTrue();
+    await Assert.That(channel2.IsDisposed).IsTrue();
+  }
+
+  // ========================================
+  // Reset: clear stale channels after connection recovery
+  // ========================================
+
+  [Test]
+  public async Task Reset_DisposesAllPooledChannelsAsync() {
+    var channel1 = new FakeChannel();
+    var channel2 = new FakeChannel();
+    var channelIndex = 0;
+    FakeChannel[] channels = [channel1, channel2];
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(channels[channelIndex++]));
+
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+
+    // Rent two channels simultaneously (forces creation of both)
+    var rented1 = await pool.RentAsync(CancellationToken.None);
+    var rented2 = await pool.RentAsync(CancellationToken.None);
+    rented1.Dispose(); // return to pool
+    rented2.Dispose(); // return to pool
+
+    // Act — reset the pool (simulates connection recovery)
+    pool.Reset();
+
+    // Assert — both pooled channels should be disposed
+    await Assert.That(channel1.IsDisposed).IsTrue()
+      .Because("Reset must dispose all stale channels from the pool");
+    await Assert.That(channel2.IsDisposed).IsTrue()
+      .Because("Reset must dispose all stale channels from the pool");
+  }
+
+  [Test]
+  public async Task Reset_NextRent_CreatesNewChannelAsync() {
+    var staleChannel = new FakeChannel();
+    var freshChannel = new FakeChannel();
+    var callCount = 0;
+    var fakeConnection = new FakeConnection(() => {
+      callCount++;
+      return Task.FromResult<IChannel>(callCount == 1 ? staleChannel : freshChannel);
+    });
+
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+
+    // Rent, return — stale channel in pool
+    var rented = await pool.RentAsync(CancellationToken.None);
+    rented.Dispose();
+
+    // Reset — clears stale channel
+    pool.Reset();
+
+    // Rent again — should get a NEW channel (freshChannel), not the stale one
+    var rentedAfterReset = await pool.RentAsync(CancellationToken.None);
+
+    await Assert.That(rentedAfterReset.Channel).IsNotEqualTo(staleChannel)
+      .Because("After reset, pool must create new channels, not serve stale ones");
+    await Assert.That(staleChannel.IsDisposed).IsTrue()
+      .Because("Stale channel must be disposed on reset");
+  }
+}

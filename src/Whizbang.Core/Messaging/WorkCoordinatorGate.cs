@@ -49,7 +49,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   /// half of a two-permit gate is a haircut, not a share); never the whole gate.
   /// </summary>
   /// <docs>fundamentals/messaging/message-priority#bulkheads</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGateInteractiveReserveTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/WorkCoordinatorGateInteractiveReserveTests.cs</tests>
   public int InteractiveReserve { get; }
 
   /// <summary>The reserve for <paramref name="maxConcurrent"/> permits: the configured value, else one tenth rounded down, capped so at least one shared permit remains.</summary>

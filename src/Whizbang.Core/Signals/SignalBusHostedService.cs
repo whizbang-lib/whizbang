@@ -29,11 +29,11 @@ namespace Whizbang.Core.Signals;
 /// The verdict feeds the health component only; it does not change how the work pumps run.
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusHostingTests.cs:AddWhizbangSignalBus_HostStartAlone_StartsRegisteredTransportsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeTests.cs:HostedStart_ProbeVerifiesWireRoute_ViaInMemoryAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeTests.cs:HostedStart_DeadTransport_ProbeMarksWireRouteFailedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeBackoffTests.cs:TransientFirstProbeFailure_ReturnsToOperationalWithinTheBackoffAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeBackoffTests.cs:DeadTransport_StaysDegraded_BacksOffThenReturnsToTheNormalIntervalAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusHostingTests.cs:AddWhizbangSignalBus_HostStartAlone_StartsRegisteredTransportsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusProbeTests.cs:HostedStart_ProbeVerifiesWireRoute_ViaInMemoryAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusProbeTests.cs:HostedStart_DeadTransport_ProbeMarksWireRouteFailedAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusProbeBackoffTests.cs:TransientFirstProbeFailure_ReturnsToOperationalWithinTheBackoffAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusProbeBackoffTests.cs:DeadTransport_StaysDegraded_BacksOffThenReturnsToTheNormalIntervalAsync</tests>
 public sealed partial class SignalBusHostedService(
   SignalBus bus,
   SignalBusLivenessState liveness,

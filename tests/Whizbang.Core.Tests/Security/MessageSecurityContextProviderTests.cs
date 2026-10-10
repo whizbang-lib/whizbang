@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
@@ -290,11 +291,13 @@ public class MessageSecurityContextProviderTests {
 
   [Test]
   public async Task EstablishContextAsync_ExtractorExceedsTimeout_ThrowsTimeoutExceptionAsync() {
-    // Arrange
+    // Arrange - the extractor never finishes on its own; the timeout runs on a fake clock the test
+    // advances past it, so the timeout fires by construction rather than after real time.
+    var clock = new FakeTimeProvider();
     var extractor = new TestExtractor(
       priority: 100,
       extraction: null,
-      onExtractAsync: async ct => await Task.Delay(TimeSpan.FromSeconds(10), ct)
+      onExtractAsync: ct => new TaskCompletionSource().Task.WaitAsync(ct)
     );
 
     var options = new MessageSecurityOptions {
@@ -304,14 +307,17 @@ public class MessageSecurityContextProviderTests {
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [extractor],
       callbacks: [],
-      options: options
+      options: options,
+      timeProvider: clock
     );
     var envelope = _createTestEnvelope(new TestMessage("test"));
 
-    // Act & Assert
-    await Assert.That(async () =>
-      await provider.EstablishContextAsync(envelope, _createServiceProvider(), CancellationToken.None)
-    ).Throws<TimeoutException>();
+    // Act
+    var establishing = provider.EstablishContextAsync(envelope, _createServiceProvider(), CancellationToken.None).AsTask();
+    clock.Advance(options.Timeout);
+
+    // Assert
+    await Assert.That(async () => await establishing).Throws<TimeoutException>();
   }
 
   // === ImmutableScopeContext Tests ===
@@ -357,7 +363,7 @@ public class MessageSecurityContextProviderTests {
     var extractor = new TestExtractor(
       priority: 100,
       extraction: null,
-      onExtractAsync: async ct => await Task.Delay(TimeSpan.FromSeconds(10), ct)
+      onExtractAsync: ct => new TaskCompletionSource().Task.WaitAsync(ct)
     );
 
     var options = new MessageSecurityOptions { AllowAnonymous = false };

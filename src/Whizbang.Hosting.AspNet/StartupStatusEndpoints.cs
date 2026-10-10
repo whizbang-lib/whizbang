@@ -56,7 +56,7 @@ internal partial class StartupStatusJsonContext : JsonSerializerContext;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-status</docs>
-/// <tests>tests/Whizbang.Hosting.AspNet.Tests/StartupStatusEndpointsTests.cs</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Component.Tests/StartupStatusEndpointsTests.cs</tests>
 public static class StartupStatusEndpoints {
 
   /// <summary>

@@ -12,7 +12,7 @@ namespace Whizbang.Core.Messaging;
 /// Creates an unbounded channel for perspective work distribution.
 /// Thread-safe for concurrent writers and readers.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/PerspectiveChannelWriterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/PerspectiveChannelWriterTests.cs</tests>
 public class PerspectiveChannelWriter : IPerspectiveChannelWriter {
   private readonly Channel<PerspectiveWork> _channel;
 
@@ -20,7 +20,7 @@ public class PerspectiveChannelWriter : IPerspectiveChannelWriter {
   /// Initializes a new instance of PerspectiveChannelWriter with an unbounded channel.
   /// Configured for multiple concurrent readers and writers.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/PerspectiveChannelWriterTests.cs:Constructor_CreatesUnboundedChannel_SuccessfullyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/PerspectiveChannelWriterTests.cs:Constructor_CreatesUnboundedChannel_SuccessfullyAsync</tests>
   public PerspectiveChannelWriter() {
     _channel = Channel.CreateUnbounded<PerspectiveWork>(new UnboundedChannelOptions {
       SingleReader = false,  // Multiple perspective workers may read concurrently

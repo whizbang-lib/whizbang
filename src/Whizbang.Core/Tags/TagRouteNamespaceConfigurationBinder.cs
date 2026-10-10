@@ -16,8 +16,8 @@ namespace Whizbang.Core.Tags;
 /// and <see cref="TagPolicyStartupValidator"/>) apply it, whichever runs first.
 /// </summary>
 /// <docs>fundamentals/messages/message-tags#transport-namespace-routing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TransportNamespaceRoutingRegistrationTests.cs:Resolver_ConfigurationBinding_AddsRouteBindingAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TransportNamespaceRoutingRegistrationTests.cs:Resolver_ConfigurationOverridesCodeBindingAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TransportNamespaceRoutingRegistrationTests.cs:Resolver_ConfigurationBinding_AddsRouteBindingAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TransportNamespaceRoutingRegistrationTests.cs:Resolver_ConfigurationOverridesCodeBindingAsync</tests>
 internal static class TagRouteNamespaceConfigurationBinder {
   /// <summary>Configuration section the routing bindings bind from.</summary>
   internal const string CONFIGURATION_SECTION = "Whizbang:Tags:RouteNamespace";

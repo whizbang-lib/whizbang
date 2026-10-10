@@ -49,7 +49,6 @@ public class CorrelationIdTests {
   [Test]
   public async Task RelationalOperators_TimeOrderedSequenceAsync() {
     var a = CorrelationId.New();
-    await Task.Delay(2);
     var b = CorrelationId.New();
     await Assert.That(a < b).IsTrue();
     await Assert.That(a <= b).IsTrue();

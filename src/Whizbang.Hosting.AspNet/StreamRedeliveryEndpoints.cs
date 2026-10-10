@@ -41,7 +41,7 @@ internal partial class StreamRedeliveryJsonContext : JsonSerializerContext;
 /// </para>
 /// </remarks>
 /// <docs>resilience/stream-integrity#operator-redelivery</docs>
-/// <tests>tests/Whizbang.Hosting.AspNet.Tests/StreamRedeliveryEndpointsTests.cs</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Component.Tests/StreamRedeliveryEndpointsTests.cs</tests>
 public static class StreamRedeliveryEndpoints {
   private const string JSON_CONTENT_TYPE = "application/json";
 

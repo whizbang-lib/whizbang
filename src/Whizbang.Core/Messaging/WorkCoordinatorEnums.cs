@@ -8,10 +8,10 @@ namespace Whizbang.Core.Messaging;
 /// Multiple flags can be combined using bitwise OR.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/OrderedStreamProcessorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs</tests>
 [Flags]
 public enum WorkBatchOptions {
@@ -77,7 +77,7 @@ public enum WorkBatchOptions {
 /// Multiple flags can be combined using bitwise OR to track partial completion.
 /// This enables retrying only failed stages instead of the entire pipeline.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/OrderedStreamProcessorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs</tests>
 [Flags]
 public enum MessageProcessingStatus {
