@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Attributes;
 using Whizbang.Transports.HotChocolate.Middleware;
+using Whizbang.Transports.HotChocolate.Tests.Fixtures;
 
 namespace Whizbang.Transports.HotChocolate.Tests.Unit;
 
@@ -180,7 +181,7 @@ public class RequirePermissionMiddlewareTests {
   private static ServiceProvider _buildGuardedServer(IScopeContext? scope) {
     var services = new ServiceCollection();
     if (scope is not null) {
-      services.AddSingleton(scope);
+      services.AddSingleton<IScopeContextAccessor>(new TestScopeContextAccessor { Current = scope });
     }
     services
       .AddGraphQLServer()
@@ -192,7 +193,7 @@ public class RequirePermissionMiddlewareTests {
   private static ServiceProvider _buildClassGuardedServer(IScopeContext? scope) {
     var services = new ServiceCollection();
     if (scope is not null) {
-      services.AddSingleton(scope);
+      services.AddSingleton<IScopeContextAccessor>(new TestScopeContextAccessor { Current = scope });
     }
     services
       .AddGraphQLServer()
@@ -228,7 +229,7 @@ public class RequirePermissionMiddlewareTests {
 
   [Test]
   public async Task FieldMiddleware_NoScopeContextRegistered_FailsClosedAsync() {
-    // No IScopeContext in DI at all: ctx.Services.GetService returns null and the
+    // No scope accessor in DI at all: there is no request scope and the
     // middleware must fail closed, exactly like a scope with no permissions.
     await using var provider = _buildGuardedServer(scope: null);
     var executor = await provider.GetRequestExecutorAsync();
@@ -237,6 +238,63 @@ public class RequirePermissionMiddlewareTests {
 
     var json = result.ToJson();
     await Assert.That(json).Contains("AUTH_NOT_AUTHORIZED");
+  }
+
+  // ===== Where the request's scope comes from =====
+  //
+  // The scope middleware publishes the request's scope through IScopeContextAccessor.Current. These
+  // tests wire the services the way a host does, rather than registering an IScopeContext directly.
+
+  [Test]
+  public async Task FieldMiddleware_ScopeFromTheAccessor_WithOnlyTheScopeServices_IsHonoredAsync() {
+    // AddWhizbangScope registers the accessor and nothing else; the scope middleware sets Current.
+    var services = new ServiceCollection();
+    services.AddWhizbangScope();
+    services.AddSingleton<IScopeContextAccessor>(new TestScopeContextAccessor { Current = _scopeWith("doc:read") });
+    services.AddGraphQLServer().AddQueryType<GuardedQuery>();
+    await using var provider = services.BuildServiceProvider();
+    var executor = await provider.GetRequestExecutorAsync();
+
+    var result = await executor.ExecuteAsync("{ guardedValue }");
+
+    var json = result.ToJson();
+    await Assert.That(json).DoesNotContain("errors")
+      .Because("a caller whose request scope holds the permission is authorized, whichever services the host registered");
+    await Assert.That(json).Contains("guarded-value");
+  }
+
+  [Test]
+  public async Task FieldMiddleware_NoScopeOnTheRequest_WithMessageSecurityServices_IsNotAuthorizedAsync() {
+    // The message-security registration resolves IScopeContext from the accessor and throws when there is
+    // none. A request without a scope is an unauthorized caller, not an execution failure.
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity();
+    services.AddSingleton<IScopeContextAccessor>(new TestScopeContextAccessor());
+    services.AddGraphQLServer().AddQueryType<GuardedQuery>();
+    await using var provider = services.BuildServiceProvider();
+    var executor = await provider.GetRequestExecutorAsync();
+
+    var result = await executor.ExecuteAsync("{ guardedValue }");
+
+    var json = result.ToJson();
+    await Assert.That(json).Contains("AUTH_NOT_AUTHORIZED");
+    await Assert.That(json).DoesNotContain("guarded-value");
+  }
+
+  [Test]
+  public async Task FieldMiddleware_ScopeFromTheAccessor_WithMessageSecurityServices_IsHonoredAsync() {
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity();
+    services.AddSingleton<IScopeContextAccessor>(new TestScopeContextAccessor { Current = _scopeWith("doc:read") });
+    services.AddGraphQLServer().AddQueryType<GuardedQuery>();
+    await using var provider = services.BuildServiceProvider();
+    var executor = await provider.GetRequestExecutorAsync();
+
+    var result = await executor.ExecuteAsync("{ guardedValue }");
+
+    var json = result.ToJson();
+    await Assert.That(json).DoesNotContain("errors");
+    await Assert.That(json).Contains("guarded-value");
   }
 
   [Test]
