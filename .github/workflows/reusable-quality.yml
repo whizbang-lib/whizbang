@@ -324,9 +324,9 @@ jobs:
       # outcome of it was never taken. Compiler-generated branches (await state machines, initializers)
       # are excluded; the rule is in ai-docs/coverage-exclusions.md. The lists are posted on the PR in
       # one comment, and only the last step fails the job when either is not empty. The whole-library
-      # row is gated too: the job fails while any hand-written decision outcome anywhere in the library
-      # is untested (members excluded by ai-docs/coverage-exclusions.md are absent from the reports and
-      # are not counted).
+      # row is gated on both halves: the job fails while any line anywhere in the library is never run,
+      # or any hand-written decision outcome anywhere in the library is untested (members excluded by
+      # ai-docs/coverage-exclusions.md are absent from the reports and are not counted).
       - name: Merge Coverage Across Test Processes
         id: uncovered
         shell: pwsh
@@ -344,6 +344,7 @@ jobs:
           $whole = Get-Content coverage-merged/whole-library.json -Raw | ConvertFrom-Json
           "whole=$($whole.Text)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "wholeUntested=$($whole.Untested)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "wholeUncoveredLines=$($whole.UncoveredLines)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           if ($env:EVENT_NAME -eq 'pull_request') {
             $count = @(Get-Content coverage/uncovered-new-lines.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
             $branches = @(Get-Content coverage/uncovered-new-branches.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
@@ -459,6 +460,7 @@ jobs:
           FINDINGS: ${{ steps.sonar-findings.outputs.count }}
           WHOLE_LIBRARY: ${{ steps.uncovered.outputs.whole }}
           WHOLE_UNTESTED: ${{ steps.uncovered.outputs.wholeUntested }}
+          WHOLE_UNCOVERED_LINES: ${{ steps.uncovered.outputs.wholeUncoveredLines }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -474,7 +476,7 @@ jobs:
           | Coverage of new lines | $([ "${UNCOVERED}" = "0" ] && echo "100%, every added library line is executed by a test" || echo "**${UNCOVERED} line(s) not executed by any test**") |
           | Coverage of new branches | $([ "${UNCOVERED_BRANCHES}" = "0" ] && echo "100%, every outcome of every added hand-written decision is taken by a test" || echo "**${UNCOVERED_BRANCHES} line(s) with a decision outcome no test takes**") |
           | Sonar findings on new code | $([ "${FINDINGS:-?}" = "0" ] && echo "none" || echo "**${FINDINGS:-?} open finding(s)**") |
-          | Whole library (gated) | $([ "${WHOLE_UNTESTED}" = "0" ] && echo "${WHOLE_LIBRARY:-unknown}" || echo "**${WHOLE_LIBRARY:-unknown}**") |
+          | Whole library (gated) | $([ "${WHOLE_UNTESTED}" = "0" ] && [ "${WHOLE_UNCOVERED_LINES}" = "0" ] && echo "${WHOLE_LIBRARY:-unknown}" || echo "**${WHOLE_LIBRARY:-unknown}**") |
           "
           if [ "${UNCOVERED}" != "0" ]; then
             BODY="${BODY}
@@ -518,7 +520,7 @@ jobs:
           done
 
       - name: Fail on PR Gate Violations
-        if: github.event_name == 'pull_request' && (steps.uncovered.outputs.count != '0' || steps.uncovered.outputs.branches != '0' || steps.sonar-findings.outputs.count != '0' || steps.uncovered.outputs.wholeUntested != '0')
+        if: github.event_name == 'pull_request' && (steps.uncovered.outputs.count != '0' || steps.uncovered.outputs.branches != '0' || steps.sonar-findings.outputs.count != '0' || steps.uncovered.outputs.wholeUntested != '0' || steps.uncovered.outputs.wholeUncoveredLines != '0')
         run: |
-          echo "::error::PR quality gate: ${{ steps.uncovered.outputs.count }} uncovered new line(s), ${{ steps.uncovered.outputs.branches }} uncovered new branch(es), ${{ steps.sonar-findings.outputs.count }} open Sonar finding(s), ${{ steps.uncovered.outputs.wholeUntested }} untested hand-written outcome(s) in the whole library. All must be zero (see the pr-quality-gate artifact, its library-gap.txt, and the PR comment)."
+          echo "::error::PR quality gate: ${{ steps.uncovered.outputs.count }} uncovered new line(s), ${{ steps.uncovered.outputs.branches }} uncovered new branch(es), ${{ steps.sonar-findings.outputs.count }} open Sonar finding(s), ${{ steps.uncovered.outputs.wholeUncoveredLines }} never-run line(s) and ${{ steps.uncovered.outputs.wholeUntested }} untested hand-written outcome(s) in the whole library. All must be zero (see the pr-quality-gate artifact, its library-gap.txt, and the PR comment)."
           exit 1

@@ -694,9 +694,10 @@ Describe 'Get-WholeLibraryCoverage' {
 
 Describe 'Format-WholeLibraryLine' {
   It 'shows <expected>' -ForEach @(
-      @{ l = 999; tl = 1000; o = 20988; to = 21500; u = $true; expected = 'Whole library: lines 99.9%, hand-written branches 97.6% (512 outcomes untested)' },
-      @{ l = 9996; tl = 10000; o = 9; to = 10; u = $true; expected = 'Whole library: lines 99.9%, hand-written branches 90% (1 outcome untested)' },
-      @{ l = 50; tl = 50; o = 7; to = 7; u = $true; expected = 'Whole library: lines 100%, hand-written branches 100%, every hand-written decision in the library is covered' },
+      @{ l = 999; tl = 1000; o = 20988; to = 21500; u = $true; expected = 'Whole library: lines 99.9% (1 line never run), hand-written branches 97.6% (512 outcomes untested)' },
+      @{ l = 9996; tl = 10000; o = 9; to = 10; u = $true; expected = 'Whole library: lines 99.9% (4 lines never run), hand-written branches 90% (1 outcome untested)' },
+      @{ l = 50; tl = 50; o = 7; to = 7; u = $true; expected = 'Whole library: lines 100%, hand-written branches 100%, every line and every hand-written decision in the library is covered' },
+      @{ l = 49; tl = 50; o = 7; to = 7; u = $true; expected = 'Whole library: lines 98% (1 line never run), hand-written branches 100%' },
       @{ l = 50; tl = 50; o = 6; to = 7; u = $false; expected = 'Whole library: lines 100%, hand-written branches 85.7% (1 outcome untested; no block data to union outcomes across test processes, so the gap may be overstated)' }) {
     $summary = [pscustomobject]@{ Lines = $tl; CoveredLines = $l; Outcomes = $to; CoveredOutcomes = $o; BlockUnion = $u }
 
@@ -706,19 +707,49 @@ Describe 'Format-WholeLibraryLine' {
   It 'never rounds a gap up to 100%' {
     $summary = [pscustomobject]@{ Lines = 100000; CoveredLines = 99999; Outcomes = 100000; CoveredOutcomes = 99999; BlockUnion = $true }
 
-    Format-WholeLibraryLine $summary | Should -Be 'Whole library: lines 99.9%, hand-written branches 99.9% (1 outcome untested)'
+    Format-WholeLibraryLine $summary | Should -Be 'Whole library: lines 99.9% (1 line never run), hand-written branches 99.9% (1 outcome untested)'
+  }
+
+  It 'counts the uncovered lines, because the truncated percentage cannot tell one gap from eighty' {
+    $one = [pscustomobject]@{ Lines = 81305; CoveredLines = 81304; Outcomes = 10; CoveredOutcomes = 10; BlockUnion = $true }
+    $many = [pscustomobject]@{ Lines = 81305; CoveredLines = 81225; Outcomes = 10; CoveredOutcomes = 10; BlockUnion = $true }
+
+    Format-WholeLibraryLine $one | Should -Be 'Whole library: lines 99.9% (1 line never run), hand-written branches 100%'
+    Format-WholeLibraryLine $many | Should -Be 'Whole library: lines 99.9% (80 lines never run), hand-written branches 100%'
   }
 }
 
 Describe 'Get-WholeLibraryGateResult' {
-  # The whole-library gate: every hand-written decision in the library is covered, or the job fails.
-  It 'passes when no hand-written outcome is untested' {
-    $summary = [pscustomobject]@{ Lines = 50; CoveredLines = 49; Outcomes = 7; CoveredOutcomes = 7; BlockUnion = $true }
+  # The whole-library gate: every line and every hand-written decision in the library is covered, or the
+  # job fails.
+  It 'passes when every line is run and no hand-written outcome is untested' {
+    $summary = [pscustomobject]@{ Lines = 50; CoveredLines = 50; Outcomes = 7; CoveredOutcomes = 7; BlockUnion = $true }
 
     $gate = Get-WholeLibraryGateResult $summary
 
     $gate.Passed | Should -BeTrue
     $gate.Untested | Should -Be 0
+    $gate.UncoveredLines | Should -Be 0
+  }
+
+  It 'fails on a line no test runs, even when every hand-written outcome is taken' {
+    $summary = [pscustomobject]@{ Lines = 50; CoveredLines = 49; Outcomes = 7; CoveredOutcomes = 7; BlockUnion = $true }
+
+    $gate = Get-WholeLibraryGateResult $summary
+
+    $gate.Passed | Should -BeFalse
+    $gate.UncoveredLines | Should -Be 1
+    $gate.Untested | Should -Be 0
+    $gate.Message | Should -Match '1 library line no test runs'
+  }
+
+  It 'names both counts when lines and outcomes are both short' {
+    $summary = [pscustomobject]@{ Lines = 50; CoveredLines = 48; Outcomes = 7; CoveredOutcomes = 6; BlockUnion = $true }
+
+    $gate = Get-WholeLibraryGateResult $summary
+
+    $gate.Passed | Should -BeFalse
+    $gate.Message | Should -Match '2 library lines no test runs, and 1 hand-written decision outcome no test takes'
   }
 
   It 'fails on a single untested hand-written outcome, and says how many' {
@@ -771,8 +802,9 @@ Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
     $summary.Outcomes | Should -Be 6
     $summary.CoveredOutcomes | Should -Be 5
     $summary.BlockUnion | Should -BeTrue
-    $summary.Text | Should -Be 'Whole library: lines 87.5%, hand-written branches 83.3% (1 outcome untested)'
+    $summary.Text | Should -Be 'Whole library: lines 87.5% (1 line never run), hand-written branches 83.3% (1 outcome untested)'
     $summary.Untested | Should -Be 1
+    $summary.UncoveredLines | Should -Be 1
     (Read-CoberturaCoverage @($merged))[$script:FixturePath].Conditions[5] | Should -Be @(2, 2)
   }
 

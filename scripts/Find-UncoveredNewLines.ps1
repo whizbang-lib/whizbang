@@ -39,10 +39,10 @@
 
     The whole library: every run also prints, and with -SummaryOutFile saves, the coverage of all
     hand-written library code: lines, and outcomes of hand-written decisions by the same classifier.
-    It is gated at 100%: with -FailOnWholeLibrary the script exits 1 while any hand-written decision
-    outcome in the library is untested (CI fails the quality job on the same count). A member excluded
-    with [ExcludeFromCodeCoverage] is absent from the reports and so is never counted. -FailOnAny
-    considers new code only.
+    Both are gated at 100%: with -FailOnWholeLibrary the script exits 1 while any library line is never
+    run, or any hand-written decision outcome in the library is untested (CI fails the quality job on the
+    same two counts). A member excluded with [ExcludeFromCodeCoverage] is absent from the reports and so
+    is never counted. -FailOnAny considers new code only.
 
     Standard practice: every new line and hand-written branch is covered before a PR opens. Run this
     against the CI artifacts (`gh run download <run> -n coverage-unit -D coverage/unit`, and the same for
@@ -64,7 +64,7 @@
 
 .PARAMETER SummaryOutFile
     Optional path; the whole-library summary is written there as JSON (Lines, CoveredLines, Outcomes,
-    CoveredOutcomes, Untested, BlockUnion, Text).
+    CoveredOutcomes, Untested, UncoveredLines, BlockUnion, Text).
 
 .PARAMETER LibraryGapOutFile
     Optional path; the whole library's gap is written there, one per line: every library line no test
@@ -82,8 +82,9 @@
     Exit with code 1 when any uncovered line or branch is found.
 
 .PARAMETER FailOnWholeLibrary
-    Exit with code 1 when any hand-written decision outcome anywhere in the library is untested: the
-    whole-library gate, which holds the library at 100% once it is there.
+    Exit with code 1 when any line anywhere in the library is never run, or any hand-written decision
+    outcome anywhere in the library is untested: the whole-library gate, which holds the library at 100%
+    of both once it is there.
 
 .PARAMETER DownloadFromRun
     A GitHub Actions run id. Every coverage-* artifact of that run is downloaded into -CoverageRoot
@@ -535,17 +536,33 @@ function Format-Percent([long]$Covered, [long]$Total) {
 }
 
 <#
-  Whether the whole library passes its gate: every hand-written decision outcome is taken by some test.
-  Counts only what the reports measured, so a member excluded with [ExcludeFromCodeCoverage] (absent from
-  the reports) is never counted; an exclusion is the documented decision, not an untested outcome.
+  Whether the whole library passes its gate: every line is run by some test, and every hand-written
+  decision outcome is taken by some test. Counts only what the reports measured, so a member excluded with
+  [ExcludeFromCodeCoverage] (absent from the reports) is never counted; an exclusion is the documented
+  decision, not a gap.
+
+  Both halves gate. A line carrying no decision still states something a caller relies on (a documented
+  default, a value a record carries, the body of a default interface method), and an uncovered one is the
+  same question as an untested outcome: a missing test until someone writes down why not.
 #>
 function Get-WholeLibraryGateResult($Summary) {
   $untested = [long]($Summary.Outcomes - $Summary.CoveredOutcomes)
-  $noun = if ($untested -eq 1) { 'outcome' } else { 'outcomes' }
-  $message = if ($untested -eq 0) { '' } else {
-    "Whole-library gate: $untested hand-written decision $noun in the library no test takes. Every hand-written decision in the library is covered (cover it, remove it with a behavior-neutral refactor, or exclude it by ai-docs/coverage-exclusions.md); the list is in library-gap.txt."
+  $uncoveredLines = [long]($Summary.Lines - $Summary.CoveredLines)
+  $parts = [System.Collections.Generic.List[string]]::new()
+  if ($uncoveredLines -gt 0) {
+    $lineNoun = if ($uncoveredLines -eq 1) { 'line' } else { 'lines' }
+    $parts.Add("$uncoveredLines library $lineNoun no test runs")
   }
-  return [pscustomobject]@{ Untested = $untested; Passed = ($untested -eq 0); Message = $message }
+  if ($untested -gt 0) {
+    $outcomeNoun = if ($untested -eq 1) { 'outcome' } else { 'outcomes' }
+    $parts.Add("$untested hand-written decision $outcomeNoun no test takes")
+  }
+  $message = if ($parts.Count -eq 0) { '' } else {
+    "Whole-library gate: $($parts -join ', and '). Every line and every hand-written decision in the library is covered (cover it, remove it with a behavior-neutral refactor, or exclude it by ai-docs/coverage-exclusions.md); the list is in library-gap.txt."
+  }
+  return [pscustomobject]@{
+    Untested = $untested; UncoveredLines = $uncoveredLines; Passed = ($parts.Count -eq 0); Message = $message
+  }
 }
 
 <#
@@ -553,9 +570,20 @@ function Get-WholeLibraryGateResult($Summary) {
   Get-WholeLibraryGateResult.
 #>
 function Format-WholeLibraryLine($Summary) {
-  $text = "Whole library: lines $(Format-Percent $Summary.CoveredLines $Summary.Lines), hand-written branches $(Format-Percent $Summary.CoveredOutcomes $Summary.Outcomes)"
+  # The percentage alone cannot tell 17 uncovered lines from 80, because it is truncated to a tenth and
+  # a library this size floors both to the same figure. The count is what an operator acts on.
+  $uncoveredLines = [long]($Summary.Lines - $Summary.CoveredLines)
+  $linesText = Format-Percent $Summary.CoveredLines $Summary.Lines
+  if ($uncoveredLines -gt 0) {
+    $lineNoun = if ($uncoveredLines -eq 1) { 'line' } else { 'lines' }
+    $linesText = "$linesText ($uncoveredLines $lineNoun never run)"
+  }
+  $text = "Whole library: lines $linesText, hand-written branches $(Format-Percent $Summary.CoveredOutcomes $Summary.Outcomes)"
   $untested = $Summary.Outcomes - $Summary.CoveredOutcomes
-  if ($untested -eq 0) { return "$text, every hand-written decision in the library is covered" }
+  if ($untested -eq 0) {
+    if ($uncoveredLines -eq 0) { return "$text, every line and every hand-written decision in the library is covered" }
+    return $text
+  }
   $noun = if ($untested -eq 1) { 'outcome' } else { 'outcomes' }
   $caveat = if ($Summary.BlockUnion) { '' } else { '; no block data to union outcomes across test processes, so the gap may be overstated' }
   return "$text ($untested $noun untested$caveat)"
@@ -849,11 +877,12 @@ $whole | Add-Member -NotePropertyName BlockUnion -NotePropertyValue $blockUnion
 $whole | Add-Member -NotePropertyName Text -NotePropertyValue (Format-WholeLibraryLine $whole)
 $wholeGate = Get-WholeLibraryGateResult $whole
 $whole | Add-Member -NotePropertyName Untested -NotePropertyValue $wholeGate.Untested
+$whole | Add-Member -NotePropertyName UncoveredLines -NotePropertyValue $wholeGate.UncoveredLines
 Write-Host $whole.Text
 if ($SummaryOutFile) {
   $dir = Split-Path -Parent $SummaryOutFile
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-  $fields = $whole | Select-Object Lines, CoveredLines, Outcomes, CoveredOutcomes, Untested, BlockUnion, Text
+  $fields = $whole | Select-Object Lines, CoveredLines, Outcomes, CoveredOutcomes, Untested, UncoveredLines, BlockUnion, Text
   [System.IO.File]::WriteAllText($SummaryOutFile, ($fields | ConvertTo-Json))
 }
 if ($LibraryGapOutFile) {
