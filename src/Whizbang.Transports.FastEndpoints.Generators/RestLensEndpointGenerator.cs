@@ -193,9 +193,20 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
   /// the response serializer masks them wherever they appear. Rendered at discovery time, like the filter and
   /// sort cases, to keep the lens record's value equality.
   /// </summary>
-  private static string _renderFieldPermissionRegistrations(ITypeSymbol model) {
-    var lines = new List<string>();
-    var seenLines = new HashSet<string>(StringComparer.Ordinal);
+  private static string _renderFieldPermissionRegistrations(ITypeSymbol model) =>
+    string.Concat(_typesReachedFrom(model)
+      .Where(_hasModelMembers)
+      .SelectMany(_serializedPropertiesOf)
+      .Select(property => _fieldPermissionOf(property) is { } attribute ? _renderRegistration(property, attribute) : null)
+      .OfType<string>()
+      .Distinct(StringComparer.Ordinal));
+
+  /// <summary>
+  /// The model and every type a response can carry inside it, each once: property types, array element types
+  /// and generic arguments, followed transitively.
+  /// </summary>
+  private static List<ITypeSymbol> _typesReachedFrom(ITypeSymbol model) {
+    var reached = new List<ITypeSymbol>();
     var visited = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
     var pending = new Queue<ITypeSymbol>();
     pending.Enqueue(model);
@@ -206,33 +217,26 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
         continue;
       }
 
-      foreach (var nested in _typesWithin(type)) {
+      reached.Add(type);
+      var next = _hasModelMembers(type)
+        ? _typesWithin(type).Concat(_serializedPropertiesOf(type).Select(p => p.Type))
+        : _typesWithin(type);
+      foreach (var nested in next) {
         pending.Enqueue(nested);
-      }
-
-      if (!_hasModelMembers(type)) {
-        continue;
-      }
-
-      for (var declaring = type; declaring is not null; declaring = declaring.BaseType) {
-        foreach (var property in declaring.GetMembers().OfType<IPropertySymbol>()) {
-          if (property.IsStatic || property.IsIndexer || property.GetMethod is null
-              || property.DeclaredAccessibility != Accessibility.Public) {
-            continue;
-          }
-
-          pending.Enqueue(property.Type);
-          if (_fieldPermissionOf(property) is { } attribute) {
-            var line = _renderRegistration(property, attribute);
-            if (seenLines.Add(line)) {
-              lines.Add(line);
-            }
-          }
-        }
       }
     }
 
-    return string.Concat(lines);
+    return reached;
+  }
+
+  /// <summary>The public, readable, instance properties a serializer writes for the type, base classes' included.</summary>
+  private static IEnumerable<IPropertySymbol> _serializedPropertiesOf(ITypeSymbol type) {
+    for (var declaring = type; declaring is not null; declaring = declaring.BaseType) {
+      foreach (var property in declaring.GetMembers().OfType<IPropertySymbol>().Where(p =>
+          !p.IsStatic && !p.IsIndexer && p.GetMethod is not null && p.DeclaredAccessibility == Accessibility.Public)) {
+        yield return property;
+      }
+    }
   }
 
   /// <summary>The element type of an array, and the type arguments of a generic type.</summary>
