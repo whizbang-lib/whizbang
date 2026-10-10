@@ -774,18 +774,6 @@ public partial class DapperWorkCoordinator(
 
   [LoggerMessage(
     Level = LogLevel.Debug,
-    Message = "First outbox message JSON: {Json}"
-  )]
-  static partial void LogOutboxMessageJson(ILogger logger, string json);
-
-  [LoggerMessage(
-    Level = LogLevel.Debug,
-    Message = "Deserializing envelope: Type={EnvelopeType}, JSON={EnvelopeJson}"
-  )]
-  static partial void LogDeserializingEnvelope(ILogger logger, string envelopeType, string envelopeJson);
-
-  [LoggerMessage(
-    Level = LogLevel.Debug,
     Message = "Deserialized envelope: MessageId={MessageId}, Hops={HopsCount}"
   )]
   static partial void LogDeserializedEnvelope(ILogger logger, Guid messageId, int hopsCount);
