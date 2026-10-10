@@ -969,14 +969,10 @@ public sealed class PostgresSchemaInitializer {
         @"(CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+\s*\(.*?\)\s*;)",
         RegexOptions.Singleline | RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
 
-    // DDL this cannot split comes back whole with nothing after it. That arm shares the statement
-    // rather than owning a line of its own: the only caller is the ColumnCopy strategy, and
-    // _parseColumnsFromDdl selects that strategy with the same "CREATE TABLE … );" match, so a DDL
-    // reaching here has already matched.
-    return createTableMatch.Success
-      ? (ddlSql[..createTableMatch.Index].Trim(), createTableMatch.Groups[1].Value,
-        ddlSql[(createTableMatch.Index + createTableMatch.Length)..].Trim())
-      : (string.Empty, ddlSql, string.Empty);
+    // The only caller is the ColumnCopy strategy, which _parseColumnsFromDdl selects with this same
+    // "CREATE TABLE … );" match, so the DDL reaching here always matches; there is no unsplittable arm to handle.
+    return (ddlSql[..createTableMatch.Index].Trim(), createTableMatch.Groups[1].Value,
+      ddlSql[(createTableMatch.Index + createTableMatch.Length)..].Trim());
   }
 
   private static async Task _executeSqlAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string sql, CancellationToken ct) {

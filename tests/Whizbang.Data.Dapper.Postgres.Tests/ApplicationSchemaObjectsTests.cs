@@ -174,4 +174,29 @@ public class ApplicationSchemaObjectsTests : IAsyncDisposable {
       .Because("the second start has to recognize what the first one applied, or every start would "
              + "re-run every object an application owns");
   }
+
+  /// <summary>
+  /// An object whose SQL changed is applied again on the next start, and the ledger says it was a re-apply rather
+  /// than a first apply, so a reader can tell a new object from a changed one.
+  /// </summary>
+  [Test]
+  [Timeout(180000)]
+  public async Task AnObjectWhoseSqlChanged_IsReappliedAndRecordedAsAChangeAsync(CancellationToken cancellationToken) {
+    static ApplicationSchemaObject answer(int value) => new("answer", $"""
+      CREATE OR REPLACE FUNCTION answer() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT {value} $$;
+      """);
+    await new PostgresSchemaInitializer(_connectionString, [], null, null, new Objects([answer(1)], []))
+      .InitializeSchemaAsync(cancellationToken);
+
+    await new PostgresSchemaInitializer(_connectionString, [], null, null, new Objects([answer(2)], []))
+      .InitializeSchemaAsync(cancellationToken);
+
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    await Assert.That(await db.ExecuteScalarAsync<int>("SELECT answer()")).IsEqualTo(2);
+    var record = await db.QuerySingleAsync<(short Status, string Description)>(
+      "SELECT status, status_description FROM wh_schema_migrations WHERE file_name = 'app:before:answer'");
+    await Assert.That(record.Status).IsEqualTo((short)2);
+    await Assert.That(record.Description).IsEqualTo("Re-applied after change");
+  }
 }

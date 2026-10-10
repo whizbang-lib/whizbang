@@ -201,6 +201,30 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// A perspective whose DDL changed without changing its columns (an index added) re-runs its DDL in place: the
+  /// strategy is a direct apply, not a table swap.
+  /// </summary>
+  [Test]
+  public async Task Initialize_ChangedPerspectiveWithTheSameColumns_AppliesDirectlyAsync() {
+    const string table = "CREATE TABLE IF NOT EXISTS wh_per_same (id UUID PRIMARY KEY, label TEXT);";
+    await new PostgresSchemaInitializer(_testConnectionString,
+      [new KeyValuePair<string, string>("SamePerspective", table)]).InitializeSchemaAsync();
+
+    await new PostgresSchemaInitializer(_testConnectionString,
+      [new KeyValuePair<string, string>("SamePerspective", table + " CREATE INDEX IF NOT EXISTS ix_wh_per_same_label ON wh_per_same (label);")])
+      .InitializeSchemaAsync();
+
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    await connection.OpenAsync();
+    var record = await connection.QuerySingleAsync<dynamic>(
+      "SELECT status, status_description FROM wh_schema_migrations WHERE file_name = 'perspective:SamePerspective'");
+    await Assert.That((int)record.status).IsEqualTo(2);
+    await Assert.That((string)record.status_description).Contains("DirectDdl");
+    await Assert.That(await connection.ExecuteScalarAsync<long>(
+      "SELECT count(*) FROM pg_indexes WHERE indexname = 'ix_wh_per_same_label'")).IsEqualTo(1L);
+  }
+
+  /// <summary>
   /// Removing a column is destructive: the preview must plan BlueGreenEventReplay with the removed
   /// column listed, and execution must record status 4 (MigratingInBackground) instead of swapping.
   /// The DDL also uses a table-level CONSTRAINT so the parser's constraint-skip arm is exercised.
