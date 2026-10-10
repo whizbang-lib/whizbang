@@ -830,7 +830,7 @@ public partial class DapperWorkCoordinator(
     // Migration 147: phase, version and the writer's stale threshold ride along; nulls keep the
     // SQL defaults.
     return await connection.ExecuteScalarAsync<bool>(
-      "SELECT record_heartbeat(@InstanceId, @ServiceName, @HostName, @ProcessId, @Metadata::jsonb, @LifecyclePhase, @LibraryVersion, @StaleThresholdSeconds)",
+      "SELECT record_heartbeat(@InstanceId, @ServiceName, @HostName, @ProcessId, @Metadata::jsonb, @LifecyclePhase, @LibraryVersion, @StaleThresholdSeconds, @ConnectionMode)",
       new {
         request.InstanceId,
         request.ServiceName,
@@ -839,7 +839,9 @@ public partial class DapperWorkCoordinator(
         Metadata = metadataJson,
         request.LifecyclePhase,
         request.LibraryVersion,
-        request.StaleThresholdSeconds
+        request.StaleThresholdSeconds,
+        // 203 (#1254): how this instance reaches the database; null keeps the recorded mode.
+        ConnectionMode = request.ConnectionMode is { } mode ? Whizbang.Core.Workers.InstanceConnectionModes.ToDatabaseValue(mode) : null
       },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
@@ -1052,15 +1054,20 @@ public partial class DapperWorkCoordinator(
     // 196 (#1226): the claim no longer writes this instance's registration row; it raises a notice
     // when the row is missing or stale, and the caller registers after the claim.
     var registrationStale = false;
-    void OnClaimNotice(object? sender, NpgsqlNoticeEventArgs e) =>
+    // 203 (#1254): the cached partition assignment was superseded or expired; the claim ranked itself.
+    var assignmentStale = false;
+    void OnClaimNotice(object? sender, NpgsqlNoticeEventArgs e) {
       registrationStale |= string.Equals(e.Notice.MessageText, REGISTRATION_STALE_NOTICE, StringComparison.Ordinal);
+      assignmentStale |= string.Equals(e.Notice.MessageText, PARTITION_ASSIGNMENT_STALE_NOTICE, StringComparison.Ordinal);
+    }
     connection.Notice += OnClaimNotice;
     IEnumerable<ClaimWorkRow> rows;
     try {
       // Phase C lands the full envelope-deserializing path. For now Dapper backend
       // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
       rows = await connection.QueryAsync<ClaimWorkRow>(
-        "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp)",
+        "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp, "
+        + "p_assignment_epoch => @AssignmentEpoch, p_assignment_revision => @AssignmentRevision)",
         new {
           Id = request.InstanceId,
           Svc = request.ServiceName,
@@ -1073,7 +1080,10 @@ public partial class DapperWorkCoordinator(
           // 145: acquisition row bound (null = bounded by the stream count) and the steal flag.
           Rows = request.MaxAcquireRows,
           Steal = request.AllowSteal,
-          Persp = request.MaxPerspectiveStreams
+          Persp = request.MaxPerspectiveStreams,
+          // 203 (#1254): the cached partition assignment's version, fenced in the claim. Null ranks as before.
+          AssignmentEpoch = request.PartitionAssignment?.Epoch,
+          AssignmentRevision = request.PartitionAssignment?.Revision
         },
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
     } finally {
@@ -1102,12 +1112,16 @@ public partial class DapperWorkCoordinator(
       InboxWork = [],
       PerspectiveWork = [],
       PerspectiveStreamIds = perspectiveStreamIds,
-      InstanceRegistrationStale = registrationStale
+      InstanceRegistrationStale = registrationStale,
+      PartitionAssignmentStale = assignmentStale
     };
   }
 
   /// <summary>Raised by <c>claim_work</c> when the calling instance's registration is missing or stale (196).</summary>
   internal const string REGISTRATION_STALE_NOTICE = "whizbang.instance_registration_stale=true";
+
+  /// <summary>Raised by <c>claim_work</c> when the partition assignment version it was handed is no longer current (203).</summary>
+  internal const string PARTITION_ASSIGNMENT_STALE_NOTICE = "whizbang.partition_assignment_stale=true";
 
   // --- helpers shared by the new methods ---
 

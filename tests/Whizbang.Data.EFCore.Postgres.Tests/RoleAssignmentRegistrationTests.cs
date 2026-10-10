@@ -102,6 +102,8 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     await migrator.Grant.DisposeAsync();
     var stamper = await elector.TryAcquireAsync(Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE, cancellationToken);
     await Assert.That(stamper.Grant!.Epoch).IsEqualTo(1L).Because("the stamper's leadership is a role");
+    var assigner = await elector.TryAcquireAsync(Whizbang.Core.Workers.PartitionAssignerOptions.ROLE, cancellationToken);
+    await Assert.That(assigner.Grant!.Epoch).IsEqualTo(1L).Because("the partition assigner is a role too (#1254)");
     var unmanaged = await elector.TryAcquireAsync("host-duty", cancellationToken);
     await Assert.That(unmanaged.Grant!.Epoch).IsNull().Because("a duty that is not a role stays on the session-lock elector");
     await unmanaged.Grant.DisposeAsync();
@@ -115,8 +117,9 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
         && d.ImplementationFactory?.Method.ReturnType == typeof(Whizbang.Core.Health.RoleAssignmentHealthSource))).IsEqualTo(1);
     var health = ActivatorUtilities.CreateInstance<Whizbang.Core.Health.RoleAssignmentHealthSource>(provider);
     await Assert.That((await health.ReportAsync(cancellationToken)).State).IsEqualTo(Whizbang.Core.Health.ComponentState.Operational)
-      .Because("this instance holds the maintainer and stamper roles right now, and the migrator is idle between migrations");
+      .Because("this instance holds the maintainer, stamper and assigner roles right now, and the migrator is idle between migrations");
     await stamper.Grant.DisposeAsync();
+    await assigner.Grant.DisposeAsync();
     var holder = provider.GetRequiredService<DutyHolderWorker>();
     await Assert.That(holder.Roles).IsEquivalentTo([StartupDuties.MAINTAINER])
       .Because("a duty-bound startup step becomes owed work for its role; an every-instance step does not");

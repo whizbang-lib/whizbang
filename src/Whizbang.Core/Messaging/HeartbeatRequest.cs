@@ -26,6 +26,10 @@ namespace Whizbang.Core.Messaging;
 /// as dead. Derived from the writer's cadence (see <c>HeartbeatLivenessThreshold</c>); null keeps
 /// the SQL default.
 /// </param>
+/// <param name="ConnectionMode">
+/// How the instance reaches the database, recorded at registration so the partition assigner judges its liveness by
+/// the right signal (#1254); null leaves the recorded mode alone.
+/// </param>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public sealed record HeartbeatRequest(
   Guid InstanceId,
@@ -35,4 +39,5 @@ public sealed record HeartbeatRequest(
   JsonElement? Metadata = null,
   string? LifecyclePhase = null,
   string? LibraryVersion = null,
-  int? StaleThresholdSeconds = null);
+  int? StaleThresholdSeconds = null,
+  Whizbang.Core.Workers.InstanceConnectionMode? ConnectionMode = null);

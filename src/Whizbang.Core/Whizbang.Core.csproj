@@ -74,6 +74,7 @@ internal static class WhizbangVersionInfo
     <!-- Testing support: test assemblies that access internal members. The strong-name
          public key is attached by the ItemDefinitionGroup in Directory.Build.props. -->
     <InternalsVisibleTo Include="Whizbang.Core.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Partitioning.Tests" />
     <InternalsVisibleTo Include="Whizbang.Testing" />
     <InternalsVisibleTo Include="Whizbang.Observability.Tests" />
     <InternalsVisibleTo Include="Whizbang.Transports.Tests" />
