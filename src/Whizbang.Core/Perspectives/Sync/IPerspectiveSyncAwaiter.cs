@@ -23,10 +23,10 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs:PerspectiveSyncAwaiter_WaitAsync_CompletesWhenDatabaseReturnsSyncedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs:PerspectiveSyncAwaiter_IsCaughtUpAsync_WithUnprocessedEvents_ReturnsFalseAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs:WaitForStreamAsync_CrossScope_WithPendingEvents_WaitsUntilProcessedAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs:PerspectiveSyncAwaiter_WaitAsync_CompletesWhenDatabaseReturnsSyncedAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs:PerspectiveSyncAwaiter_IsCaughtUpAsync_WithUnprocessedEvents_ReturnsFalseAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs:WaitForStreamAsync_CrossScope_WithPendingEvents_WaitsUntilProcessedAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_RegistersPerspectiveSyncAwaiter_AsScopedAsync</tests>
 public interface IPerspectiveSyncAwaiter : IAwaiterIdentity {
   /// <summary>
@@ -129,7 +129,7 @@ public interface IPerspectiveSyncAwaiter : IAwaiterIdentity {
   /// perspective has nothing to apply for the event, or <see cref="SyncOutcome.TimedOut"/>.
   /// </returns>
   /// <docs>fundamentals/perspectives/perspective-sync#cross-service</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterAppliedTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/PerspectiveSyncAwaiterAppliedTests.cs</tests>
   Task<SyncResult> WaitForAppliedAsync(
       Type perspectiveType,
       Guid eventId,
@@ -150,7 +150,7 @@ public interface IPerspectiveSyncAwaiter : IAwaiterIdentity {
   /// <param name="ct">Cancels the wait; a canceled wait throws rather than reporting a timeout.</param>
   /// <returns>As <see cref="WaitForAppliedAsync(Type, Guid, TimeSpan, CancellationToken)"/>.</returns>
   /// <docs>fundamentals/perspectives/perspective-sync#cross-service</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterAppliedTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/PerspectiveSyncAwaiterAppliedTests.cs</tests>
   Task<SyncResult> WaitForAppliedAsync(
       Type perspectiveType,
       Guid streamId,

@@ -18,7 +18,7 @@ namespace Whizbang.Core.Transports;
 /// <param name="Envelope">The deserialized message envelope.</param>
 /// <param name="EnvelopeType">The assembly-qualified envelope type name, or null if not available.</param>
 /// <docs>messaging/transports/transports#transport-message</docs>
-/// <tests>tests/Whizbang.Transports.Tests/SubscribeBatchTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.Component.Tests/SubscribeBatchTests.cs</tests>
 public readonly record struct TransportMessage(
   IMessageEnvelope Envelope,
   string? EnvelopeType
@@ -64,7 +64,7 @@ public interface ITransport {
   /// Gets the capabilities of this transport.
   /// Describes what patterns and semantics this transport supports.
   /// </summary>
-  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_Capabilities_ReturnsTransportCapabilitiesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/ITransportTests.cs:ITransport_Capabilities_ReturnsTransportCapabilitiesAsync</tests>
   TransportCapabilities Capabilities { get; }
 
   /// <summary>
@@ -81,9 +81,9 @@ public interface ITransport {
   /// pattern). Offload thresholds are set BELOW this value to leave room for
   /// envelope headers and broker metadata.
   /// </remarks>
-  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_MaxMessageSizeBytes_InProcessTransport_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/ITransportTests.cs:ITransport_MaxMessageSizeBytes_InProcessTransport_ReturnsNullAsync</tests>
   /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportTests.cs:MaxMessageSizeBytes_ReturnsNull_NoEnforcedLimitAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
   /// <docs>messaging/transports/transports#max-message-size</docs>
   long? MaxMessageSizeBytes => null;
 
@@ -97,8 +97,8 @@ public interface ITransport {
   /// <param name="preSerializedBytes">Optional pre-serialized envelope bytes. When set, wire transports MUST use these bytes on the wire and SKIP their internal serialization. Set by upstream callers (e.g., <c>TransportPublishStrategy</c>) that already serialized once for size measurement / post-serialize hook chain. In-process transports may ignore this hint since they don't touch bytes.</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the message is published</returns>
-  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithValidMessage_CompletesSuccessfullyAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithCancellation_ThrowsOperationCanceledAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/ITransportTests.cs:ITransport_PublishAsync_WithValidMessage_CompletesSuccessfullyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/ITransportTests.cs:ITransport_PublishAsync_WithCancellation_ThrowsOperationCanceledAsync</tests>
   /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
   /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
   Task PublishAsync(
@@ -119,7 +119,7 @@ public interface ITransport {
   /// <param name="batchOptions">Configuration for batch size, sliding window, and hard max timers</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>A subscription that can be used to control or cancel the subscription</returns>
-  /// <tests>tests/Whizbang.Transports.Tests/SubscribeBatchTests.cs</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/SubscribeBatchTests.cs</tests>
   /// <docs>messaging/transports/transports#batch-subscribe</docs>
   Task<ISubscription> SubscribeBatchAsync(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
@@ -161,7 +161,7 @@ public interface ITransport {
   /// <param name="destination">The destination to send the request to</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The response message envelope</returns>
-  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_SendAsync_WithTimeout_ThrowsTimeoutExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/ITransportTests.cs:ITransport_SendAsync_WithTimeout_ThrowsTimeoutExceptionAsync</tests>
   Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
     IMessageEnvelope requestEnvelope,
     TransportDestination destination,
@@ -179,7 +179,7 @@ public interface ITransport {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Per-item results indicating success or failure</returns>
   /// <exception cref="NotSupportedException">Thrown when the transport does not support bulk publishing</exception>
-  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishBatchAsync_WithoutBulkPublishCapability_ThrowsNotSupportedExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/ITransportTests.cs:ITransport_PublishBatchAsync_WithoutBulkPublishCapability_ThrowsNotSupportedExceptionAsync</tests>
   Task<IReadOnlyList<BulkPublishItemResult>> PublishBatchAsync(
     IReadOnlyList<BulkPublishItem> items,
     TransportDestination destination,

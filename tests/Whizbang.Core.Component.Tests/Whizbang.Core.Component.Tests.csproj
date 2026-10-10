@@ -6,8 +6,12 @@
     <WhizbangTestTags>Component</WhizbangTestTags>
     <!-- Component: real workers and threads in one process, no external infrastructure. Every
          interleaving is fixed by the test through signals, and every asynchronous assertion waits on
-         the signal for the exact transition it asserts (docs/TEST-PROJECTS.md). -->
+         the signal for the exact transition it asserts (docs/TEST-PROJECTS.md). Receives the
+         component tests moved out of Whizbang.Core.Tests. -->
     <WhizbangTestType>Component</WhizbangTestType>
+    <!-- Enable viewing generated files -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
     <!-- Don't capture test output so Console.WriteLine appears in terminal -->
     <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
     <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
@@ -15,9 +19,41 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
+    <!-- Source Generator reference -->
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="TUnit" />
+    <PackageReference Include="Rocks" />
+    <PackageReference Include="Bogus" />
+    <PackageReference Include="FsCheck" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+  </ItemGroup>
+  <!-- Test helpers shared with Whizbang.Core.Tests: one source, compiled into both test assemblies, so
+       the two copies cannot drift. -->
+  <ItemGroup>
+    <Compile Include="../Whizbang.Core.Tests/Helpers/*.cs" Link="Shared/Helpers/%(Filename)%(Extension)" />
+    <Compile Include="../Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs" Link="Shared/Messaging/IUnitOfWorkStrategyContractTests.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Observability/MetricAssertionHelper.cs" Link="Shared/Observability/MetricAssertionHelper.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Workers/NoOpWorkCoordinator.cs" Link="Shared/Workers/NoOpWorkCoordinator.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Workers/FakeDispatcher.cs" Link="Shared/Workers/FakeDispatcher.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Workers/WorkerTestEvents.cs" Link="Shared/Workers/WorkerTestEvents.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Workers/CheckpointTopicProbeEvents.cs" Link="Shared/Workers/CheckpointTopicProbeEvents.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Workers/FakeDbException.cs" Link="Shared/Workers/FakeDbException.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Workers/FakeClockPump.cs" Link="Shared/Workers/FakeClockPump.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Workers/HeartbeatTestDependencies.cs" Link="Shared/Workers/HeartbeatTestDependencies.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs" Link="Shared/Workers/ServiceBusConsumerWorkerTests.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Perspectives/Sync/WorkCoordinatorMocks.cs" Link="Shared/Perspectives/Sync/WorkCoordinatorMocks.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Perspectives/StoredFormTestHolder.cs" Link="Shared/Perspectives/StoredFormTestHolder.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Observability/ProbeMeterReader.cs" Link="Shared/Observability/ProbeMeterReader.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Lifecycle/LifecycleTrackingTestExtensions.cs" Link="Shared/Lifecycle/LifecycleTrackingTestExtensions.cs" />
+    <Compile Include="../Whizbang.Core.Tests/Tags/CoalesceTestTags.cs" Link="Shared/Tags/CoalesceTestTags.cs" />
   </ItemGroup>
 </Project>

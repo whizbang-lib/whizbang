@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// <see cref="StreamIntegrityOptions.CheckpointsEnabled"/>.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
 public sealed partial class IntegrityCheckpointWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,

@@ -27,7 +27,7 @@ namespace Whizbang.Core.Lifecycle;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
 public sealed partial class LifecycleCoordinator(
     ILogger<LifecycleCoordinator> logger,
     LifecycleCoordinatorMetrics? metrics = null) : ILifecycleCoordinator {

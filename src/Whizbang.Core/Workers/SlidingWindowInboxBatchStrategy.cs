@@ -46,7 +46,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>extending/internals/event-ordering-invariant</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/SlidingWindowInboxBatchStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxBatchStrategyTests.cs</tests>
 public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
   private static readonly Guid _defaultStreamKey = Guid.Empty;
 

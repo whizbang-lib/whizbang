@@ -4,6 +4,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -46,7 +47,7 @@ public class PgWorkAvailablePollSourceAdaptiveIntervalTests {
     var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     var instance = new ServiceInstanceProvider(Guid.NewGuid(), "utest-svc", "utest-host", processId: 1);
     return new PgOutboxWorkAvailablePollSource(
-      TimeProvider.System, Options.Create(opts), cfg, instance,
+      new FakeTimeProvider(), Options.Create(opts), cfg, instance,
       NullLogger<PgOutboxWorkAvailablePollSource>.Instance,
       connectionStringFallback: null,
       signalingGate: gate);
@@ -94,7 +95,7 @@ public class PgWorkAvailablePollSourceAdaptiveIntervalTests {
     var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     var instance = new ServiceInstanceProvider(Guid.NewGuid(), "utest-svc", "utest-host", processId: 1);
     var source = new PgOutboxWorkAvailablePollSource(
-      TimeProvider.System, Options.Create(opts), cfg, instance,
+      new FakeTimeProvider(), Options.Create(opts), cfg, instance,
       NullLogger<PgOutboxWorkAvailablePollSource>.Instance);
 
     await Assert.That(source.Interval).IsEqualTo(TimeSpan.FromMilliseconds(5_000));

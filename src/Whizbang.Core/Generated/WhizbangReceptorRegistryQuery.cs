@@ -36,33 +36,30 @@ namespace Whizbang.Core.Generated;
 /// </remarks>
 /// <docs>internals/receptor-registry-query</docs>
 public static class WhizbangReceptorRegistryQuery {
-  // Cached aggregated views, invalidated on Register-via-AssemblyRegistry.
-  // Note: AssemblyRegistry<T> doesn't notify on register, so we cache by contribution
-  // count — when count changes we rebuild. Simple, allocation-light, and correct for
-  // the load-time-then-query-many access pattern.
-  private static readonly Lock _lock = new();
-  private static int _cachedContributionCount = -1;
-  private static HashSet<string>? _cachedAnyConsumer;
-  private static HashSet<string>? _cachedInboxHandler;
-  private static Dictionary<LifecycleStage, HashSet<string>>? _cachedStageTypes;
-  private static IReadOnlyList<HandledMessageInfo>? _cachedHandledMessages;
+  // Cached aggregated views live in ONE immutable snapshot published through a single
+  // reference. AssemblyRegistry<T> doesn't notify on register, so the snapshot records the
+  // contribution count it was built from; when the registry's count differs, the next query
+  // builds a fresh snapshot and publishes it.
+  //
+  // No lock: the build is a pure function of the registry, so two threads that race each
+  // build an equal snapshot and the last write wins harmlessly. Publishing every view through
+  // one reference also means a reader can never observe views from two different builds.
+  private static Snapshot? _snapshot;
 
   /// <summary>True if any receptor is registered for the given lifecycle stage + message type.</summary>
   public static bool HasReceptors(LifecycleStage stage, string messageType) {
-    var stageTypes = _ensureStageTypesCached();
+    var stageTypes = _currentSnapshot().StageTypes;
     return stageTypes.TryGetValue(stage, out var set) && set.Contains(_normalizeTypeName(messageType));
   }
 
   /// <summary>True if any inbox handler (IReceptor without lifecycle FireAt) is registered for the type.</summary>
   public static bool HasInboxHandler(string messageType) {
-    var inboxHandlers = _ensureInboxHandlerCached();
-    return inboxHandlers.Contains(_normalizeTypeName(messageType));
+    return _currentSnapshot().InboxHandler.Contains(_normalizeTypeName(messageType));
   }
 
   /// <summary>True if any consumer (handler / lifecycle receptor / perspective / tag-attribute) cares about this message type.</summary>
   public static bool HasAnyConsumer(string messageType) {
-    var anyConsumer = _ensureAnyConsumerCached();
-    return anyConsumer.Contains(_normalizeTypeName(messageType));
+    return _currentSnapshot().AnyConsumer.Contains(_normalizeTypeName(messageType));
   }
 
   /// <summary>
@@ -77,14 +74,7 @@ public static class WhizbangReceptorRegistryQuery {
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryAggregationTests.cs:TwoContributions_GetHandledMessages_UnionsAndDeduplicatesAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryAggregationTests.cs:GetHandledMessages_DeterministicOrder_SortedByTypeNameAsync</tests>
   public static IReadOnlyList<HandledMessageInfo> GetHandledMessages() {
-    var current = AssemblyRegistry<ReceptorRegistryContribution>.Count;
-    if (_cachedHandledMessages is not null && _cachedContributionCount == current) {
-      return _cachedHandledMessages;
-    }
-    lock (_lock) {
-      _rebuildIfStale(current);
-      return _cachedHandledMessages!;
-    }
+    return _currentSnapshot().HandledMessages;
   }
 
   /// <summary>
@@ -102,45 +92,27 @@ public static class WhizbangReceptorRegistryQuery {
     return nameOnly.Contains('+') ? nameOnly.Replace('+', '.') : nameOnly;
   }
 
-  // ===== Cache (re)building =====
+  // ===== Snapshot (re)building =====
 
-  private static HashSet<string> _ensureAnyConsumerCached() {
-    var current = AssemblyRegistry<ReceptorRegistryContribution>.Count;
-    if (_cachedAnyConsumer is not null && _cachedContributionCount == current) {
-      return _cachedAnyConsumer;
+  /// <summary>
+  /// Returns the snapshot for the registry's current contribution count: the published one
+  /// when it is current, otherwise a freshly built one that is then published.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQuerySnapshotTests.cs:FirstQuery_OnAnEmptyCache_BuildsTheSnapshotAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQuerySnapshotTests.cs:RepeatedQuery_WithUnchangedCount_ReusesTheSnapshotAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQuerySnapshotTests.cs:ContributionRegisteredAfterFirstQuery_RebuildsTheSnapshotAsync</tests>
+  private static Snapshot _currentSnapshot() {
+    var currentCount = AssemblyRegistry<ReceptorRegistryContribution>.Count;
+    var snapshot = Volatile.Read(ref _snapshot);
+    if (snapshot is not null && snapshot.ContributionCount == currentCount) {
+      return snapshot;
     }
-    lock (_lock) {
-      _rebuildIfStale(current);
-      return _cachedAnyConsumer!;
-    }
+    snapshot = _buildSnapshot(currentCount);
+    Volatile.Write(ref _snapshot, snapshot);
+    return snapshot;
   }
 
-  private static HashSet<string> _ensureInboxHandlerCached() {
-    var current = AssemblyRegistry<ReceptorRegistryContribution>.Count;
-    if (_cachedInboxHandler is not null && _cachedContributionCount == current) {
-      return _cachedInboxHandler;
-    }
-    lock (_lock) {
-      _rebuildIfStale(current);
-      return _cachedInboxHandler!;
-    }
-  }
-
-  private static Dictionary<LifecycleStage, HashSet<string>> _ensureStageTypesCached() {
-    var current = AssemblyRegistry<ReceptorRegistryContribution>.Count;
-    if (_cachedStageTypes is not null && _cachedContributionCount == current) {
-      return _cachedStageTypes;
-    }
-    lock (_lock) {
-      _rebuildIfStale(current);
-      return _cachedStageTypes!;
-    }
-  }
-
-  private static void _rebuildIfStale(int currentCount) {
-    if (_cachedAnyConsumer is not null && _cachedContributionCount == currentCount) {
-      return;
-    }
+  private static Snapshot _buildSnapshot(int contributionCount) {
     var any = new HashSet<string>(System.StringComparer.Ordinal);
     var inbox = new HashSet<string>(System.StringComparer.Ordinal);
     var stages = new Dictionary<LifecycleStage, HashSet<string>>();
@@ -169,27 +141,18 @@ public static class WhizbangReceptorRegistryQuery {
     }
     var handledList = new List<HandledMessageInfo>(handledByName.Values);
     handledList.Sort(static (a, b) => string.CompareOrdinal(a.MessageTypeName, b.MessageTypeName));
-    _cachedAnyConsumer = any;
-    _cachedInboxHandler = inbox;
-    _cachedStageTypes = stages;
-    _cachedHandledMessages = handledList;
-    _cachedContributionCount = currentCount;
+    return new Snapshot(contributionCount, any, inbox, stages, handledList);
   }
 
   /// <summary>
-  /// Test-only: invalidates the local caches so the next query rebuilds from the
+  /// Test-only: drops the published snapshot so the next query rebuilds from the
   /// current <see cref="AssemblyRegistry{T}"/> state. Use this AFTER calling
   /// <c>AssemblyRegistry&lt;ReceptorRegistryContribution&gt;.ClearForTesting()</c> to
   /// keep test isolation tight.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQuerySnapshotTests.cs:ClearCacheForTesting_DropsThePublishedSnapshotAsync</tests>
   internal static void ClearCacheForTesting() {
-    lock (_lock) {
-      _cachedAnyConsumer = null;
-      _cachedInboxHandler = null;
-      _cachedStageTypes = null;
-      _cachedHandledMessages = null;
-      _cachedContributionCount = -1;
-    }
+    Volatile.Write(ref _snapshot, null);
   }
 
   /// <summary>
@@ -200,17 +163,32 @@ public static class WhizbangReceptorRegistryQuery {
   /// <returns>Tuple of (contribution count, distinct any-consumer types, distinct inbox-handler types,
   /// distinct lifecycle-stage receptor types across all stages).</returns>
   public static (int Contributions, int AnyConsumerTypes, int InboxHandlerTypes, int StageTypeCount) GetDiagnosticSnapshot() {
-    var any = _ensureAnyConsumerCached();
-    var inbox = _ensureInboxHandlerCached();
-    var stages = _ensureStageTypesCached();
+    var snapshot = _currentSnapshot();
     var stageCount = 0;
-    foreach (var (_, set) in stages) {
+    foreach (var (_, set) in snapshot.StageTypes) {
       stageCount += set.Count;
     }
     return (
       Contributions: AssemblyRegistry<ReceptorRegistryContribution>.Count,
-      AnyConsumerTypes: any.Count,
-      InboxHandlerTypes: inbox.Count,
+      AnyConsumerTypes: snapshot.AnyConsumer.Count,
+      InboxHandlerTypes: snapshot.InboxHandler.Count,
       StageTypeCount: stageCount);
+  }
+
+  /// <summary>
+  /// One immutable build of every aggregated view, tagged with the contribution count it
+  /// was built from. Never mutated after construction, so it is safe to share across threads.
+  /// </summary>
+  private sealed class Snapshot(
+      int contributionCount,
+      HashSet<string> anyConsumer,
+      HashSet<string> inboxHandler,
+      Dictionary<LifecycleStage, HashSet<string>> stageTypes,
+      IReadOnlyList<HandledMessageInfo> handledMessages) {
+    public int ContributionCount { get; } = contributionCount;
+    public HashSet<string> AnyConsumer { get; } = anyConsumer;
+    public HashSet<string> InboxHandler { get; } = inboxHandler;
+    public Dictionary<LifecycleStage, HashSet<string>> StageTypes { get; } = stageTypes;
+    public IReadOnlyList<HandledMessageInfo> HandledMessages { get; } = handledMessages;
   }
 }

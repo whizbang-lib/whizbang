@@ -16,7 +16,7 @@ namespace Whizbang.Core.Signals;
 /// <see cref="Reschedule"/>. Without one the interval is fixed, as it always was.
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-/// <tests>tests/Whizbang.Core.Tests/Signals/PollSignalSourceIdleBackoffTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/PollSignalSourceIdleBackoffTests.cs</tests>
 public abstract class BasePollSignalSource<TSignal>(
   TimeProvider clock,
   TimeSpan interval,

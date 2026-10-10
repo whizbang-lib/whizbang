@@ -27,7 +27,7 @@ namespace Whizbang.Core.Workers;
 /// but the top-level stage body and receptor invocation chain stay on the dedicated thread).
 /// </para>
 /// </remarks>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BackgroundStageDispatchTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/BackgroundStageDispatchTests.cs</tests>
 public static class BackgroundStageDispatch {
   /// <summary>
   /// Schedules <paramref name="body"/> on a dedicated OS thread and pumps its continuations on that same

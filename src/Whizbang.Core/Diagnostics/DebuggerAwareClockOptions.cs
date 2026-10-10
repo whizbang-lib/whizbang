@@ -19,10 +19,10 @@ namespace Whizbang.Core.Diagnostics;
 /// </code>
 /// </remarks>
 /// <docs>extending/features/debugger-aware-clock</docs>
-/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:DebuggerAwareClockOptions_CanSetFrozenThresholdAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:DebuggerAwareClock_FrozenThreshold_CanBeConfiguredAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:DebuggerAwareClock_IsPaused_InAutoMode_WhenNoDebuggerAttachedAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs:DebuggerAwareClockOptions_CanSetFrozenThresholdAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs:DebuggerAwareClock_FrozenThreshold_CanBeConfiguredAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs:DebuggerAwareClock_IsPaused_InAutoMode_WhenNoDebuggerAttachedAsync</tests>
 public sealed class DebuggerAwareClockOptions {
   /// <summary>
   /// Gets or sets the detection mode for identifying paused states.

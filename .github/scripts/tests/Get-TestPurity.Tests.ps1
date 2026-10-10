@@ -513,10 +513,15 @@ Describe 'Export-TestPurityInventory' {
 }
 
 Describe 'running the script' {
-  It 'prints the report for a repository' {
-    $repo = New-FakeRepo -Projects @($script:MixedProject)
+  It 'prints the report for a repository whose Unit projects hold only unit tests' {
+    $repo = New-FakeRepo -Projects @(@{ Dir = 'tests/Clean.Tests'; Type = 'Unit'; Files = @{ 'CleanTests.cs' = 'namespace C; public class CleanTests { [Test] public void T() { } }' } })
     $out = @(& $script:ScriptPath -Root $repo)
-    $out[0] | Should -Be 'Test purity: 1 Unit-type projects, 2 types (2 test classes); 1 not unit-pure.'
+    $out[0] | Should -Be 'Test purity: 1 Unit-type projects, 1 types (1 test classes); 0 not unit-pure.'
+  }
+
+  It 'fails, naming the class, when a Unit project holds a test that is not a unit test (enforced since #1264 phase 3)' {
+    $repo = New-FakeRepo -Projects @($script:MixedProject)
+    { & $script:ScriptPath -Root $repo } | Should -Throw -ExpectedMessage '*1 type(s) in Unit-type projects are not unit tests*WorkerTests*'
   }
 
   It 'writes the inventory to plans/ by default, or to the paths given' {
@@ -535,7 +540,7 @@ Describe 'running the script' {
 }
 
 Describe 'the Unit-type projects in this repository' {
-  It 'are all scanned and reported; the report fails only once phase 3 of #1264 sets $PurityEnforced' {
+  It 'are all scanned and all unit tests: the guard fails on any type that is not (#1264, phase 3)' {
     $inventory = Get-TestPurityInventory -Root $script:RepoRoot
     $directories = @($inventory.Projects.Directory)
     $directories.Count | Should -BeGreaterThan 30 -Because 'the scan must find the Unit projects for this check to mean anything'

@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -98,14 +99,15 @@ public class CircuitBreakerTests {
     var options = _defaultOptions();
     options.FailureThreshold = 1;
     options.InitialCooldownSeconds = 1;
-    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
+    var clock = new FakeTimeProvider();
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance, timeProvider: clock);
 
     // Trip the circuit
     await cb.ExecuteAsync(_ => throw new InvalidOperationException("fail"), fallbackValue: false, CancellationToken.None);
     await Assert.That(cb.State).IsEqualTo(CircuitBreakerState.Open);
 
-    // Wait for cooldown
-    await Task.Delay(1100);
+    // Pass the cooldown on the fake clock
+    clock.Advance(TimeSpan.FromMilliseconds(1100));
 
     // Next call should try (half-open) — succeed
     var result = await cb.ExecuteAsync(_ => Task.FromResult(true), fallbackValue: false, CancellationToken.None);
@@ -122,11 +124,12 @@ public class CircuitBreakerTests {
     var options = _defaultOptions();
     options.FailureThreshold = 1;
     options.InitialCooldownSeconds = 1;
-    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
+    var clock = new FakeTimeProvider();
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance, timeProvider: clock);
 
     // Trip, wait, succeed
     await cb.ExecuteAsync(_ => throw new InvalidOperationException("fail"), fallbackValue: false, CancellationToken.None);
-    await Task.Delay(1100);
+    clock.Advance(TimeSpan.FromMilliseconds(1100));
     await cb.ExecuteAsync(_ => Task.FromResult(true), fallbackValue: false, CancellationToken.None);
 
     await Assert.That(cb.State).IsEqualTo(CircuitBreakerState.Closed);
@@ -143,11 +146,12 @@ public class CircuitBreakerTests {
     options.FailureThreshold = 1;
     options.InitialCooldownSeconds = 1;
     options.CooldownBackoffMultiplier = 2.0;
-    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
+    var clock = new FakeTimeProvider();
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance, timeProvider: clock);
 
     // First trip: 1s cooldown
     await cb.ExecuteAsync(_ => throw new InvalidOperationException("fail"), fallbackValue: false, CancellationToken.None);
-    await Task.Delay(1100);
+    clock.Advance(TimeSpan.FromMilliseconds(1100));
 
     // Half-open attempt fails: cooldown escalates to 2s
     await cb.ExecuteAsync(_ => throw new InvalidOperationException("still failing"), fallbackValue: false, CancellationToken.None);
@@ -198,11 +202,12 @@ public class CircuitBreakerTests {
   public async Task ExecuteAsync_CacheExpired_ReexecutesAsync() {
     var options = _defaultOptions();
     options.SuccessCacheDurationSeconds = 1;
-    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
+    var clock = new FakeTimeProvider();
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance, timeProvider: clock);
 
     var callCount = 0;
     await cb.ExecuteAsync(_ => { callCount++; return Task.FromResult(true); }, fallbackValue: false, CancellationToken.None);
-    await Task.Delay(1100);
+    clock.Advance(TimeSpan.FromMilliseconds(1100));
     await cb.ExecuteAsync(_ => { callCount++; return Task.FromResult(true); }, fallbackValue: false, CancellationToken.None);
 
     await Assert.That(callCount).IsEqualTo(2)

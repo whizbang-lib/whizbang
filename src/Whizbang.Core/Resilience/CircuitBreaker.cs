@@ -26,13 +26,16 @@ namespace Whizbang.Core.Resilience;
 /// </remarks>
 /// <docs>resilience/circuit-breaker</docs>
 /// <remarks>
-/// Creates a new circuit breaker with the specified options.
+/// Creates a new circuit breaker with the specified options. Cooldowns and the success cache are
+/// measured on <c>timeProvider</c>, the system clock when none is given, so a host or a test can
+/// supply the clock.
 /// </remarks>
 #pragma warning disable CA1001 // CircuitBreaker is long-lived (app lifetime); disposing the semaphore is unnecessary
-public sealed partial class CircuitBreaker<TResult>(CircuitBreakerOptions options, ILogger logger) {
+public sealed partial class CircuitBreaker<TResult>(CircuitBreakerOptions options, ILogger logger, TimeProvider? timeProvider = null) {
 #pragma warning restore CA1001
   private readonly CircuitBreakerOptions _options = ArgumentGuard.NotNull(options);
   private readonly ILogger _logger = logger;
+  private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
   private readonly SemaphoreSlim _lock = new(1, 1);
 
   private CircuitBreakerState _state = CircuitBreakerState.Closed;
@@ -69,7 +72,7 @@ public sealed partial class CircuitBreaker<TResult>(CircuitBreakerOptions option
 
     // Fast path: check cached success
     if (_state == CircuitBreakerState.Closed && _options.SuccessCacheDurationSeconds > 0 && _lastSuccessAt.HasValue) {
-      var elapsed = DateTimeOffset.UtcNow - _lastSuccessAt.Value;
+      var elapsed = _timeProvider.GetUtcNow() - _lastSuccessAt.Value;
       if (elapsed.TotalSeconds < _options.SuccessCacheDurationSeconds) {
         return _cachedResult!;
       }
@@ -88,7 +91,7 @@ public sealed partial class CircuitBreaker<TResult>(CircuitBreakerOptions option
     TResult fallbackValue,
     CancellationToken cancellationToken) {
 
-    var now = DateTimeOffset.UtcNow;
+    var now = _timeProvider.GetUtcNow();
 
     // Re-check cache inside lock
     if (_state == CircuitBreakerState.Closed && _options.SuccessCacheDurationSeconds > 0 && _lastSuccessAt.HasValue) {
@@ -145,7 +148,7 @@ public sealed partial class CircuitBreaker<TResult>(CircuitBreakerOptions option
     _consecutiveFailures = 0;
     _consecutiveOpens = 0;
     _currentCooldownSeconds = _options.InitialCooldownSeconds;
-    _lastSuccessAt = DateTimeOffset.UtcNow;
+    _lastSuccessAt = _timeProvider.GetUtcNow();
     _cachedResult = result;
   }
 
@@ -161,14 +164,14 @@ public sealed partial class CircuitBreaker<TResult>(CircuitBreakerOptions option
         _options.InitialCooldownSeconds * Math.Pow(_options.CooldownBackoffMultiplier, _consecutiveOpens),
         _options.MaxCooldownSeconds);
       _state = CircuitBreakerState.Open;
-      _circuitOpenedAt = DateTimeOffset.UtcNow;
+      _circuitOpenedAt = _timeProvider.GetUtcNow();
       LogCooldownEscalated(_logger, _currentCooldownSeconds, _consecutiveOpens);
       return;
     }
 
     if (_consecutiveFailures >= _options.FailureThreshold) {
       _state = CircuitBreakerState.Open;
-      _circuitOpenedAt = DateTimeOffset.UtcNow;
+      _circuitOpenedAt = _timeProvider.GetUtcNow();
       LogCircuitOpened(_logger, _consecutiveFailures, _currentCooldownSeconds);
     }
   }

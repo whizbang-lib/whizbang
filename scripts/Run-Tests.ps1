@@ -496,6 +496,10 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
         $whizbangContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
     }
 
+    # Docker Hub images come from the CI mirror when TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX is set, and from
+    # Docker Hub otherwise (local runs). Same rule as Testcontainers and the C# fixtures (CiImages.cs).
+    Import-Module (Join-Path $PSScriptRoot 'lib' 'CiImages.psm1') -Force
+
     # Ensure shared RabbitMQ container is running (required for RabbitMQ integration tests)
     $sharedRabbitState = docker inspect --format="{{.State.Status}}" whizbang-test-rabbitmq 2>$null
     if (-not $sharedRabbitState) {
@@ -509,7 +513,7 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
             --publish 0:5672 `
             --publish 0:15672 `
             --restart no `
-            rabbitmq:3.13-management-alpine 2>&1 | Out-Null
+            (Resolve-CiImage -Image 'rabbitmq:3.13-management-alpine') 2>&1 | Out-Null
         # Wait for RabbitMQ to be ready
         Start-Sleep -Seconds 10
     } elseif ($sharedRabbitState -ne "running") {
@@ -560,7 +564,7 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
             -e POSTGRES_DB=whizbang_test `
             --publish 0:5432 `
             --restart no `
-            pgvector/pgvector:pg17 `
+            (Resolve-CiImage -Image 'pgvector/pgvector:pg17') `
             -c max_connections=500 `
             -c shared_preload_libraries=pg_stat_statements 2>&1 | Out-Null
         Start-Sleep -Seconds 5

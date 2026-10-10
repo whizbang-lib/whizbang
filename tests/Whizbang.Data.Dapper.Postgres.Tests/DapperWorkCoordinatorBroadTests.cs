@@ -110,6 +110,30 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task ClaimWorkAsync_PresentingAVersionThatIsNotPublished_ReportsTheAssignmentStaleAsync() {
+    // #1254: the claim's fence runs only when there is work, so one perspective event is pending; no assignment has
+    // been published, so any version presented is stale and the claim ranks itself.
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.New();
+    await c.RecordHeartbeatAsync(new HeartbeatRequest(
+      instanceId, "svc-c", "host-c", 1, ConnectionMode: Whizbang.Core.Workers.InstanceConnectionMode.Direct));
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync();
+      await conn.ExecuteAsync(@"
+        INSERT INTO wh_perspective_events
+          (event_work_id, stream_id, perspective_name, event_id, instance_id, lease_expiry, partition_number, status, attempts, created_at)
+        VALUES (gen_random_uuid(), gen_random_uuid(), 'TestPerspective', gen_random_uuid(), NULL, NULL, 0, 0, 0, NOW())");
+    }
+
+    var batch = await c.ClaimWorkAsync(new ClaimWorkRequest(
+      instanceId, "svc-c", "host-c", 1, MaxStreams: 50, PartitionCount: 100, LeaseSeconds: 300,
+      PartitionAssignment: new Whizbang.Core.Workers.PartitionAssignmentVersion(1, 1)));
+
+    await Assert.That(batch.PartitionAssignmentStale).IsTrue();
+    await Assert.That(batch.InstanceRegistrationStale).IsFalse();
+  }
+
+  [Test]
   public async Task FetchOutboxBatchAsync_NoRows_ReturnsEmptyAsync() {
     var c = _build();
     var instanceId = (Guid)TrackedGuid.New();

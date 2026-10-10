@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Component</WhizbangTestTags>
+    <!-- Component: real workers and threads in one process, no external infrastructure (no broker,
+         no Docker). The unit tests of the Azure Service Bus transport stay in
+         Whizbang.Transports.AzureServiceBus.Tests (docs/TEST-PROJECTS.md). -->
+    <WhizbangTestType>Component</WhizbangTestType>
+    <!-- Suppress TUnit0015: Missing CancellationToken parameter (tests use class-level Timeout) -->
+    <!-- Suppress TUnit0023: Method should be async (some test patterns are synchronous) -->
+    <!-- Suppress CA1707: Test method names use underscores for readability -->
+    <NoWarn>$(NoWarn);TUnit0015;TUnit0023;CA1707</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="TUnit.Assertions" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Azure.Messaging.ServiceBus" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- The transport test doubles, the readiness-check doubles and the test message JSON context are
+       shared with the unit project: one source, compiled into both test assemblies, so the two copies
+       cannot drift. -->
+  <ItemGroup>
+    <Compile Include="../Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportTestDoubles.cs" Link="Shared/AzureServiceBusTransportTestDoubles.cs" />
+    <Compile Include="../Whizbang.Transports.AzureServiceBus.Tests/ReadinessCheckTestDoubles.cs" Link="Shared/ReadinessCheckTestDoubles.cs" />
+    <Compile Include="../Whizbang.Transports.AzureServiceBus.Tests/TestJsonContext.cs" Link="Shared/TestJsonContext.cs" />
+  </ItemGroup>
+
+</Project>

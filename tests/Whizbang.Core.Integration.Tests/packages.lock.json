@@ -437,6 +437,17 @@
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.12, )"
         }
       },
+      "SoftwareExtravaganza.Whizbang.Data.Postgres": {
+        "type": "Project",
+        "dependencies": {
+          "Npgsql": "[10.0.1, )",
+          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
+          "SoftwareExtravaganza.Whizbang.Data.Schema": "[0.100.0-local.111, )"
+        }
+      },
+      "SoftwareExtravaganza.Whizbang.Data.Schema": {
+        "type": "Project"
+      },
       "SoftwareExtravaganza.Whizbang.Testing": {
         "type": "Project",
         "dependencies": {

@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// the ledger's do.
 /// </summary>
 /// <docs>resilience/stream-integrity#operator-redelivery</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RepairDrainWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamRedeliveryRequesterTests.cs</tests>
 internal static class RedeliveryRequestDispatch {
   /// <summary>

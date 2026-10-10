@@ -277,7 +277,11 @@ public partial class HeartbeatWorker(
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    var accepted = await coordinator.RecordHeartbeatAsync(BuildRequest(), ct);
+    // #1254: the registration records how this instance reaches the database, resolved from the beat's scope as the
+    // coordinator is. A host whose driver does not say registers pooled.
+    var connectionMode = scope.ServiceProvider.GetService<IInstanceConnectionModeSource>()?.ConnectionMode
+      ?? InstanceConnectionMode.Pooled;
+    var accepted = await coordinator.RecordHeartbeatAsync(BuildRequest() with { ConnectionMode = connectionMode }, ct);
     if (!accepted) {
       return false;
     }

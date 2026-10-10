@@ -11,10 +11,10 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:WaitForResponseAsync_WhenRequestNotFound_ShouldReturnNullAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithExpiredRecords_ShouldRemoveThemAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithNonExpiredRecords_ShouldKeepThemAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ThenSaveRequest_ShouldGetResponseAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:WaitForResponseAsync_WhenRequestNotFound_ShouldReturnNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithExpiredRecords_ShouldRemoveThemAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithNonExpiredRecords_ShouldKeepThemAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ThenSaveRequest_ShouldGetResponseAsync</tests>
 /// In-memory implementation of IRequestResponseStore for testing and single-process scenarios.
 /// Thread-safe using ConcurrentDictionary and TaskCompletionSource.
 /// NOT suitable for production use across multiple processes.
@@ -46,8 +46,8 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:WaitForResponseAsync_WhenRequestNotFound_ShouldReturnNullAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreCancellationTests.cs:WaitForResponseAsync_OneWaiterCanceled_TheOtherStillReceivesTheResponseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:WaitForResponseAsync_WhenRequestNotFound_ShouldReturnNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreCancellationTests.cs:WaitForResponseAsync_OneWaiterCanceled_TheOtherStillReceivesTheResponseAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public async Task<IMessageEnvelope?> WaitForResponseAsync(CorrelationId correlationId, CancellationToken cancellationToken = default) {
 
@@ -67,13 +67,13 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreCancellationTests.cs:WaitForResponseAsyncGeneric_OneWaiterCanceled_TheOtherStillReceivesTheResponseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreCancellationTests.cs:WaitForResponseAsyncGeneric_OneWaiterCanceled_TheOtherStillReceivesTheResponseAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public async Task<MessageEnvelope<TMessage>?> WaitForResponseAsync<TMessage>(CorrelationId correlationId, CancellationToken cancellationToken = default)
     => await WaitForResponseAsync(correlationId, cancellationToken) as MessageEnvelope<TMessage>;
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ThenSaveRequest_ShouldGetResponseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ThenSaveRequest_ShouldGetResponseAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope response, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(response);
@@ -96,8 +96,8 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithExpiredRecords_ShouldRemoveThemAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithNonExpiredRecords_ShouldKeepThemAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithExpiredRecords_ShouldRemoveThemAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithNonExpiredRecords_ShouldKeepThemAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public Task CleanupExpiredAsync(CancellationToken cancellationToken = default) {
     var now = DateTimeOffset.UtcNow;

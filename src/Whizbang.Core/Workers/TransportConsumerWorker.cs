@@ -44,10 +44,10 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs</tests>
 public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
@@ -485,9 +485,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// Processing (Process, PostInbox, completion) deferred to WorkCoordinatorPublisherWorker.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchOf100SubscribedMessages_StoredViaSingleBulkInsertAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:MixedBatch_DroppedTypesFilteredBeforeBulkInsertAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchProcessing_CreatesExactlyOneScopePerBatchAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchOf100SubscribedMessages_StoredViaSingleBulkInsertAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:MixedBatch_DroppedTypesFilteredBeforeBulkInsertAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchProcessing_CreatesExactlyOneScopePerBatchAsync</tests>
   /// <summary>
   /// Runs the batch handler so that a failed batch costs one batch, never the process, and is
   /// reported to the transport as failed (<see cref="TransportBatchFailedException"/>) so it is
@@ -498,7 +498,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// own — the guard is the part that must be proven, and proving it should not require standing up
   /// a whole worker with a transport and a database behind it.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBatchFailureTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerBatchFailureTests.cs</tests>
   private Task _handleBatchWithoutKillingTheHostAsync(
       IReadOnlyList<TransportMessage> messages,
       TransportDestination destination,
@@ -695,8 +695,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// </summary>
   /// <returns>True when the message is in custody (created now or already held); false when custody
   /// could not be given, in which case the caller must not let the transport treat it as handled.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_MessageDeadLetteredWithBody_NeighborsStillStoredAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:CustodyUnavailable_BatchFailsAfterStoringNeighborsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_MessageDeadLetteredWithBody_NeighborsStillStoredAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:CustodyUnavailable_BatchFailsAfterStoringNeighborsAsync</tests>
   private async Task<bool> _giveDeadLetterCustodyAsync(
       IWorkCoordinator workCoordinator, UnstorableMessage message, TransportDestination destination,
       CancellationToken cancellationToken) {
@@ -730,7 +730,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// assembly whose contexts registered after this service's own options were built. When even that
   /// cannot serialize it, a minimal descriptor keeps the record identifiable (id, type, reason).
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_PayloadNoContextKnows_DeadLetteredWithDescriptorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_PayloadNoContextKnows_DeadLetteredWithDescriptorAsync</tests>
   private static string _custodyBody(IMessageEnvelope envelope, string? envelopeType, string? description) {
     try {
       var options = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
@@ -759,7 +759,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// and dead-lettering would resurrect the durable control backlog the path removes. The next
   /// cadence re-derives the signal and the comparison simply runs again on fresher data.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerControlClassReceiveTests.cs:ControlMessage_ComparisonThrows_DropsWithoutDeadLetteringAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerControlClassReceiveTests.cs:ControlMessage_ComparisonThrows_DropsWithoutDeadLetteringAsync</tests>
   private async Task _compareAndDiscardControlMessageAsync(
       TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
     try {
@@ -824,7 +824,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// metric are recorded here either way.
   /// </summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
   private async Task<(InboxMessage? InboxMessage, Whizbang.Core.Offloads.MessageBodyClaim? PendingCleanupClaim, UnstorableMessage? Unstorable)>
       _tryBuildInboxMessageFromTransportAsync(
       TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
@@ -1002,7 +1002,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// conflict skip, while a wrong discard could starve the legitimate target.
   /// </summary>
   /// <docs>fundamentals/messaging/directed-messages</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs</tests>
   private bool _shouldDiscardForeignTarget(
       IMessageEnvelope envelope,
       string messageType,
@@ -1329,7 +1329,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
   /// <summary>Logs that an owned event was discarded (owned events arriving from transport are always echo).</summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
   [LoggerMessage(
     Level = LogLevel.Debug,
     Message = "Owned event echo discarded: {MessageType} (owned events never arrive from external services)"
@@ -1338,7 +1338,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
   /// <summary>Logs that a self-echo command was discarded (owned command from this service arriving back via transport).</summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
   [LoggerMessage(
     Level = LogLevel.Debug,
     Message = "Self-echo discarded: {MessageType} from {ServiceName}"
@@ -1347,7 +1347,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
   /// <summary>Logs that a directed message targeted at a different service was discarded at the receive seam.</summary>
   /// <docs>fundamentals/messaging/directed-messages</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs</tests>
   [LoggerMessage(
     Level = LogLevel.Debug,
     Message = "Directed message discarded: {MessageType} targeted at {Target} — this service is {ServiceName}"
@@ -1356,7 +1356,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
   /// <summary>Logs that a message which could not become an inbox row was given dead-letter custody.</summary>
   /// <docs>operations/dead-letter-queue/transport-recovery</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_MessageDeadLetteredWithBody_NeighborsStillStoredAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:SerializationFails_MessageDeadLetteredWithBody_NeighborsStillStoredAsync</tests>
   [LoggerMessage(
     Level = LogLevel.Error,
     Message = "Message {MessageId} ({EnvelopeType}) could not be stored in the inbox and was dead-lettered with its body from {Destination}: {Reason} — {Description}. It can be replayed through dead-letter recovery once the cause is fixed."
@@ -1366,7 +1366,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
   /// <summary>Logs that an unstorable message could not be given dead-letter custody either, so its batch fails.</summary>
   /// <docs>operations/dead-letter-queue/transport-recovery</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:CustodyUnavailable_BatchFailsAfterStoringNeighborsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:CustodyUnavailable_BatchFailsAfterStoringNeighborsAsync</tests>
   [LoggerMessage(
     Level = LogLevel.Critical,
     Message = "Message {MessageId} ({EnvelopeType}) could not be stored in the inbox ({Reason}) and dead-letter custody failed too; its batch is failed so the message is not reported handled."
@@ -1433,7 +1433,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// Falls back to allowing through if the set is empty (no provider registered).
   /// </summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
   private bool _isKnownEventType(string envelopeType) {
     if (_knownEventTypeNames is null || _knownEventTypeNames.Count == 0) {
       return false;  // No provider → can't determine, treat as non-event (safe: falls through to hop check)

@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// group. Inert without a drain-capable coordinator, a transport, or learned origins.
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RepairDrainWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs</tests>
 public sealed partial class RepairDrainWorker(
     IServiceScopeFactory scopeFactory,
     ISchemaReadyGate schemaReadyGate,

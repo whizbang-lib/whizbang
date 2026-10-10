@@ -25,9 +25,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#event-tracking</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerTests.cs:TrackEvent_AddsToTrackedListAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerTests.cs:GetPendingEvents_FiltersByStreamIdAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTrackerTests.cs:Constructor_AcceptsOnlySyncEventTrackerAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/SyncEventTrackerTests.cs:TrackEvent_AddsToTrackedListAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/SyncEventTrackerTests.cs:GetPendingEvents_FiltersByStreamIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTrackerTests.cs:Constructor_AcceptsOnlySyncEventTrackerAsync</tests>
 public interface ISyncEventTracker {
   /// <summary>
   /// Track an event that needs to be awaited for perspective sync.

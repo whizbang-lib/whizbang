@@ -80,11 +80,3 @@ public class SagaContinuationGeneratorTests {
     await Assert.That(SagaContinuationRegistry.For("GeneratorTestDefault")).IsEmpty();
   }
 }
-
-// ── Saga declarations the generator will pick up ───────────────────────
-
-/// <summary>A saga followed by enrichment over what it wrote, and by cleanup if it was abandoned.</summary>
-[Saga("GeneratorTestChained")]
-[ContinuesWith("GeneratorTestFollowOn")]
-[ContinuesWith("GeneratorTestCleanup", SagaContinuationTriggers.Failed)]
-public partial class GeneratorTestChainedSaga;

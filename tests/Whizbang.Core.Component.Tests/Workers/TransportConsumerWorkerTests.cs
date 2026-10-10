@@ -1,0 +1,533 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
+using Whizbang.Core.Security;
+using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
+
+#pragma warning disable CS0067 // Event is never used (test doubles)
+#pragma warning disable CA1822 // Member does not access instance data (test doubles)
+#pragma warning disable CA1052 // Type can be sealed (test doubles)
+#pragma warning disable CA1852 // Type can be sealed (test doubles)
+
+namespace Whizbang.Core.Tests.Workers;
+
+/// <summary>
+/// Tests for TransportConsumerWorker - verifies generic consumer worker lifecycle.
+/// </summary>
+public class TransportConsumerWorkerTests {
+  [Test]
+  public async Task ExecuteAsync_SubscribesToAllDestinations_FromOptionsAsync() {
+    // Arrange
+    var transport = new FakeTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("topic1", "routing1"));
+    options.Destinations.Add(new TransportDestination("topic2", "routing2"));
+
+    var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
+    serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
+    var serviceProvider = serviceCollection.BuildServiceProvider();
+    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+    var jsonOptions = new JsonSerializerOptions();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
+
+    var worker = new TransportConsumerWorker(
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
+
+    using var cts = new CancellationTokenSource();
+
+    // Act
+    _ = worker.StartAsync(cts.Token);
+    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+
+    // Assert
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(2)
+      .Because("Worker should subscribe to all destinations in options");
+  }
+
+  [Test]
+  public async Task ExecuteAsync_WaitsForReadinessCheck_BeforeSubscribingAsync() {
+    // Arrange - use a gate-controlled readiness check instead of delay-based timing
+    var readinessCheck = new GatedReadinessCheck();
+    var transport = new FakeTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("topic1"));
+
+    var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
+    serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
+    serviceCollection.AddSingleton<ITransportReadinessCheck>(readinessCheck);
+    var serviceProvider = serviceCollection.BuildServiceProvider();
+    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+    var jsonOptions = new JsonSerializerOptions();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
+
+    var worker = new TransportConsumerWorker(
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
+
+    using var cts = new CancellationTokenSource();
+
+    // Act
+    _ = worker.StartAsync(cts.Token);
+
+    // Wait until the readiness check is actually being called (blocked on our gate)
+    await readinessCheck.WaitForCheckCalledAsync(TimeSpan.FromSeconds(5));
+
+    // Assert - should not have subscribed yet (readiness check is still blocked)
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(0)
+      .Because("Worker should wait for readiness check before subscribing");
+
+    // Release the readiness gate
+    readinessCheck.AllowReady();
+
+    // Wait for subscription to happen
+    await transport.WaitForSubscriptionsAsync(1, TimeSpan.FromSeconds(5));
+
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
+      .Because("Worker should subscribe after readiness check completes");
+
+    await cts.CancelAsync();
+  }
+
+  [Test]
+  public async Task PauseAllSubscriptionsAsync_PausesAllActiveSubscriptionsAsync() {
+    // Arrange
+    var transport = new FakeTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("topic1"));
+    options.Destinations.Add(new TransportDestination("topic2"));
+
+    var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
+    serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
+    var serviceProvider = serviceCollection.BuildServiceProvider();
+    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+    var jsonOptions = new JsonSerializerOptions();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
+
+    var worker = new TransportConsumerWorker(
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
+
+    using var cts = new CancellationTokenSource();
+
+    // Act
+    _ = worker.StartAsync(cts.Token);
+    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
+
+    await worker.PauseAllSubscriptionsAsync();
+
+    // Assert
+    await Assert.That(transport.Subscriptions).Count().IsEqualTo(2)
+      .Because("Two subscriptions should be created");
+
+    foreach (var subscription in transport.Subscriptions) {
+      await Assert.That(subscription.PauseCallCount).IsEqualTo(1)
+        .Because("Each subscription should be paused once");
+    }
+
+    await cts.CancelAsync();
+  }
+
+  [Test]
+  public async Task ResumeAllSubscriptionsAsync_ResumesAllPausedSubscriptionsAsync() {
+    // Arrange
+    var transport = new FakeTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("topic1"));
+    options.Destinations.Add(new TransportDestination("topic2"));
+
+    var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
+    serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
+    var serviceProvider = serviceCollection.BuildServiceProvider();
+    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+    var jsonOptions = new JsonSerializerOptions();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
+
+    var worker = new TransportConsumerWorker(
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
+
+    using var cts = new CancellationTokenSource();
+
+    // Act
+    _ = worker.StartAsync(cts.Token);
+    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
+
+    await worker.PauseAllSubscriptionsAsync();
+    await worker.ResumeAllSubscriptionsAsync();
+
+    // Assert
+    await Assert.That(transport.Subscriptions).Count().IsEqualTo(2)
+      .Because("Two subscriptions should be created");
+
+    foreach (var subscription in transport.Subscriptions) {
+      await Assert.That(subscription.ResumeCallCount).IsEqualTo(1)
+        .Because("Each subscription should be resumed once");
+    }
+
+    await cts.CancelAsync();
+  }
+
+  [Test]
+  public async Task StopAsync_DisposesAllSubscriptions_GracefullyAsync() {
+    // Arrange
+    var transport = new FakeTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("topic1"));
+    options.Destinations.Add(new TransportDestination("topic2"));
+
+    var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
+    serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
+    var serviceProvider = serviceCollection.BuildServiceProvider();
+    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+    var jsonOptions = new JsonSerializerOptions();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
+
+    var worker = new TransportConsumerWorker(
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
+
+    using var cts = new CancellationTokenSource();
+
+    // Act
+    _ = worker.StartAsync(cts.Token);
+    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
+
+    await worker.StopAsync(CancellationToken.None);
+
+    // Assert
+    await Assert.That(transport.Subscriptions).Count().IsEqualTo(2)
+      .Because("Two subscriptions should be created");
+
+    foreach (var subscription in transport.Subscriptions) {
+      await Assert.That(subscription.IsDisposed).IsTrue()
+        .Because("Each subscription should be disposed on stop");
+    }
+  }
+
+  /// <summary>
+  /// Host teardown stops the worker through more than one path (Host.StopAsync AND
+  /// WebApplicationFactory/host disposal). The second StopAsync must be a no-op — cancelling the
+  /// already-disposed linked CTS throws ObjectDisposedException and nondeterministically fails
+  /// whatever test happens to tear the host down.
+  /// </summary>
+  [Test]
+  public async Task StopAsync_CalledTwice_IsIdempotentAsync() {
+    var transport = new FakeTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("topic1"));
+
+    var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
+    serviceCollection.AddSingleton<IDispatcher>(sp => new FakeDispatcher());
+    var serviceProvider = serviceCollection.BuildServiceProvider();
+    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+    var jsonOptions = new JsonSerializerOptions();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
+
+    var worker = new TransportConsumerWorker(
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
+
+    using var cts = new CancellationTokenSource();
+    _ = worker.StartAsync(cts.Token);
+    await transport.WaitForSubscriptionsAsync(1, TimeSpan.FromSeconds(5));
+
+    await worker.StopAsync(CancellationToken.None);
+    await worker.StopAsync(CancellationToken.None); // must not throw ObjectDisposedException
+
+    // Idempotent means the second pass did nothing, not merely that it survived: the subscription
+    // is torn down once, and nothing is resubscribed on the way out.
+    await Assert.That(transport.Subscriptions).Count().IsEqualTo(1);
+    await Assert.That(transport.Subscriptions[0].DisposeCallCount).IsEqualTo(1)
+      .Because("a second teardown pass would dispose the transport's subscription twice, which real "
+             + "transports report as a protocol error rather than ignoring");
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
+      .Because("stopping must never re-enter the subscribe loop");
+  }
+}
+
+// ===== Test Doubles =====
+
+internal sealed class FakeTransport : ITransport, IDisposable {
+  private readonly List<FakeSubscription> _subscriptions = [];
+  private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
+  private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
+
+  public int SubscribeCallCount { get; private set; }
+  public bool IsInitialized => true;
+  public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
+  public IReadOnlyList<FakeSubscription> Subscriptions => _subscriptions;
+
+  public void Dispose() => _subscribeSignal.Dispose();
+
+  /// <summary>
+  /// Waits until the specified number of subscriptions have been created.
+  /// </summary>
+  public async Task WaitForSubscriptionsAsync(int count, TimeSpan timeout) {
+    for (var i = 0; i < count; i++) {
+      if (!await _subscribeSignal.WaitAsync(timeout)) {
+        throw new TimeoutException($"Expected {count} subscriptions but only got {SubscribeCallCount} within {timeout}");
+      }
+    }
+  }
+
+  public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  public Task PublishAsync(
+    IMessageEnvelope envelope,
+    TransportDestination destination,
+    string? envelopeType = null,
+    ReadOnlyMemory<byte>? preSerializedBytes = null,
+    CancellationToken cancellationToken = default
+  ) => Task.CompletedTask;
+
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default
+  ) {
+    SubscribeCallCount++;
+    _batchHandler = batchHandler;
+    var subscription = new FakeSubscription();
+    _subscriptions.Add(subscription);
+    _subscribeSignal.Release();
+    return Task.FromResult<ISubscription>(subscription);
+  }
+
+  public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
+    IMessageEnvelope requestEnvelope,
+    TransportDestination destination,
+    CancellationToken cancellationToken = default
+  ) where TRequest : notnull where TResponse : notnull {
+    throw new NotSupportedException();
+  }
+
+  public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
+    if (_batchHandler != null) {
+      await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
+    }
+  }
+}
+
+internal sealed class FakeSubscription : ISubscription {
+  public bool IsActive { get; private set; } = true;
+  public bool IsDisposed { get; private set; }
+  public int DisposeCallCount { get; private set; }
+  public int PauseCallCount { get; private set; }
+  public int ResumeCallCount { get; private set; }
+
+#pragma warning disable CS0067 // Event is required by interface but not used in test
+  public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+#pragma warning restore CS0067
+
+  public Task PauseAsync() {
+    PauseCallCount++;
+    IsActive = false;
+    return Task.CompletedTask;
+  }
+
+  public Task ResumeAsync() {
+    ResumeCallCount++;
+    IsActive = true;
+    return Task.CompletedTask;
+  }
+
+  public void Dispose() {
+    IsDisposed = true;
+    DisposeCallCount++;
+  }
+}
+
+/// <summary>
+/// Gate-controlled readiness check that blocks until explicitly released.
+/// Deterministic alternative to delay-based readiness simulation.
+/// </summary>
+internal class GatedReadinessCheck : ITransportReadinessCheck {
+  private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  private readonly TaskCompletionSource _checkCalled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  /// <summary>
+  /// Waits until IsReadyAsync has been called by the worker.
+  /// </summary>
+  public async Task WaitForCheckCalledAsync(TimeSpan timeout) {
+    using var cts = new CancellationTokenSource(timeout);
+    try {
+      await _checkCalled.Task.WaitAsync(cts.Token);
+    } catch (OperationCanceledException) {
+      throw new TimeoutException("IsReadyAsync was not called within timeout");
+    }
+  }
+
+  /// <summary>
+  /// Releases the readiness gate, allowing IsReadyAsync to return true.
+  /// </summary>
+  public void AllowReady() => _gate.TrySetResult();
+
+  public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+    _checkCalled.TrySetResult();
+    await _gate.Task.WaitAsync(cancellationToken);
+    return true;
+  }
+}
+
+internal class FakeWorkCoordinatorStrategy : Whizbang.Core.Messaging.IWorkCoordinatorStrategy {
+  public void QueueInboxMessage(Whizbang.Core.Messaging.InboxMessage message) {
+    // No-op for tests
+  }
+
+  public void QueueInboxCompletion(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus) {
+    // No-op for tests
+  }
+
+  public void QueueInboxFailure(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus, string errorMessage) {
+    // No-op for tests
+  }
+
+  public void QueueOutboxMessage(Whizbang.Core.Messaging.OutboxMessage message) {
+    // No-op for tests
+  }
+
+  public void QueueOutboxCompletion(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus) {
+    // No-op for tests
+  }
+
+  public void QueueOutboxFailure(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus, string errorMessage) {
+    // No-op for tests
+  }
+
+  public Task FlushAsync(Whizbang.Core.Messaging.WorkBatchOptions flags, CancellationToken ct = default) {
+    return FlushAndGetBatchAsync(flags, ct);
+  }
+
+  public Task<Whizbang.Core.Messaging.WorkBatch> FlushAndGetBatchAsync(Whizbang.Core.Messaging.WorkBatchOptions flags, CancellationToken ct = default) {
+    // Return an empty WorkBatch - unit tests don't need actual work processing
+    var workBatch = new Whizbang.Core.Messaging.WorkBatch {
+      InboxWork = [],
+      OutboxWork = [],
+      PerspectiveWork = []
+    };
+
+    return Task.FromResult(workBatch);
+  }
+}

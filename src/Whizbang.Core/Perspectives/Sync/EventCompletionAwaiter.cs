@@ -21,7 +21,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/event-completion</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/EventCompletionAwaiterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/EventCompletionAwaiterTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of the <see cref="EventCompletionAwaiter"/> class.
 /// </remarks>

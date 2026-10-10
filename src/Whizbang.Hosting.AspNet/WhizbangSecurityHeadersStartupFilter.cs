@@ -18,7 +18,7 @@ namespace Whizbang.Hosting.AspNet;
 /// <see cref="WhizbangSecurityHeadersOptions.Enabled"/> = <c>false</c>.
 /// </para>
 /// </summary>
-/// <tests>tests/Whizbang.Hosting.AspNet.Tests/WhizbangSecurityHeadersStartupFilterTests.cs</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Component.Tests/WhizbangSecurityHeadersStartupFilterTests.cs</tests>
 internal sealed class WhizbangSecurityHeadersStartupFilter : IStartupFilter {
   public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) {
     return app => {

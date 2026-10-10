@@ -37,15 +37,18 @@ Tags follow the type: `Unit` for unit projects, `Component` for component projec
 integration projects the suite tag (`Postgres`, `RabbitMQ`, `AzureServiceBus`, `AzureBlob`,
 `InMemory`, or the plain `Integration` for in-process hosts) plus `Docker` when it starts containers.
 
-### Unit projects still hold non-unit tests
+### Unit projects are unit-pure
 
-The Unit projects predate the Component type and still hold tests that start real workers, use the
-real clock, or do real I/O. #1264 moves them, one source project per pull request:
+The Unit projects predate the Component type and once held tests that started real workers, used the
+real clock, or did real I/O. #1264 moved each one to the project its type calls for, and refactored the
+tests that only slept or read the clock onto a fake clock instead (`.claude/skills/testing/SKILL.md`,
+rule 5):
 
-- the worklist is `plans/test-separation-inventory.md` (with `plans/test-separation-inventory.csv`):
-  every test class in every Unit project, classified with the construct that makes it non-unit;
-- the purity guard (`.github/scripts/Get-TestPurity.ps1`, run by "Test · Pipeline scripts") lists
-  those classes per project. It reports only, and is switched to failing once the moves are done.
+- the record is `plans/test-separation-inventory.md` (with `plans/test-separation-inventory.csv`): every
+  test class in every Unit project, classified with the construct that would make it non-unit. Every
+  Unit project now shows zero non-unit classes;
+- the purity guard (`.github/scripts/Get-TestPurity.ps1`, run by "Test · Pipeline scripts") fails the
+  build on any class in a Unit project that breaks this, naming the class and the construct.
 
 ## Running tests
 
@@ -120,26 +123,40 @@ the tags that were already broken, each with a reason.
 `Whizbang.Generators.Tests`, `Whizbang.Hosting.AspNet.Tests`, `Whizbang.Hosting.Azure.ServiceBus.Tests`,
 `Whizbang.Hosting.RabbitMQ.Tests`, `Whizbang.LanguageServer.Tests`, `Whizbang.Migrate.Tests`,
 `Whizbang.Observability.Tests`, `Whizbang.Offloads.AzureBlob.Tests`, `Whizbang.Offloads.InMemory.Tests`,
-`Whizbang.Partitioning.Tests`, `Whizbang.Policies.Tests`, `Whizbang.Sagas.Tests`,
-`Whizbang.Sequencing.Tests`, `Whizbang.SignalR.Tests`, `Whizbang.Testing.Tests`,
+`Whizbang.Partitioning.Tests`, `Whizbang.Policies.Tests`, `Whizbang.Sagas.Tests`, `Whizbang.SignalR.Tests`, `Whizbang.Testing.Tests`,
 `Whizbang.Transports.AzureServiceBus.Tests`, `Whizbang.Transports.FastEndpoints.Tests`,
 `Whizbang.Transports.HotChocolate.Tests`, `Whizbang.Transports.Mutations.Tests`,
 `Whizbang.Transports.RabbitMQ.Tests`, `Whizbang.Transports.Tests`.
 
-`samples/ECommerce/`: `ECommerce.Contracts.Tests`, `ECommerce.IntegrationTests` (in-memory checks;
-despite the name, a unit project), `ECommerce.BFF.API.Tests`, `ECommerce.InventoryWorker.Tests`,
-`ECommerce.NotificationWorker.Tests`, `ECommerce.OrderService.Tests`, `ECommerce.PaymentWorker.Tests`,
-`ECommerce.ShippingWorker.Tests`. `ECommerce.BFF.API.Tests` and `ECommerce.InventoryWorker.Tests` carry
-`Integration;Docker` tags while declaring Unit; the inventory classifies their classes.
+`samples/ECommerce/`: `ECommerce.BFF.API.Tests`, `ECommerce.Contracts.Tests`,
+`ECommerce.IntegrationTests` (in-memory checks;
+despite the name, a unit project),
+`ECommerce.InventoryWorker.Tests`, `ECommerce.NotificationWorker.Tests`, `ECommerce.OrderService.Tests`,
+`ECommerce.PaymentWorker.Tests`, `ECommerce.ShippingWorker.Tests`.
 
-### Component (2)
+### Component (17)
 
 | Project | Purpose |
 |---------|---------|
-| `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core`; receives the component tests moved out of `Whizbang.Core.Tests` |
+| `Whizbang.CLI.Component.Tests` | Component tests of the CLI audit that read and write the real file system (a temporary audit workspace and its fixtures), moved out of `Whizbang.CLI.Tests` |
+| `Whizbang.Core.Component.Tests` | Component tests of `Whizbang.Core` (workers, dispatcher, lifecycle and perspective pipelines on real threads and hosted workers, and the tests that read files or measure the real clock), moved out of `Whizbang.Core.Tests` |
+| `Whizbang.Documentation.Component.Tests` | Component tests of the documentation contracts that start hosted services and read files (the configuration-key manifest), moved out of `Whizbang.Documentation.Tests` |
+| `Whizbang.Execution.Component.Tests` | Component tests of the executors (serial and parallel executors and pooled task sources on real worker loops and threads), moved out of `Whizbang.Execution.Tests` |
+| `Whizbang.Generators.Component.Tests` | Component tests of the source generators that read and write the real file system (temporary docs folders and code-docs maps), moved out of `Whizbang.Generators.Tests` |
+| `Whizbang.Hosting.AspNet.Component.Tests` | Component tests of the ASP.NET Core hosting (real hosts, test servers, endpoints and middleware pipelines), moved out of `Whizbang.Hosting.AspNet.Tests` |
+| `Whizbang.Hosting.Azure.ServiceBus.Component.Tests` | Component tests of the Azure Service Bus hosting readiness check that drive it from a second thread, moved out of `Whizbang.Hosting.Azure.ServiceBus.Tests` |
+| `Whizbang.Migrate.Component.Tests` | Tests of the migration tool that read and write the real file system (temporary folders and files), moved out of `Whizbang.Migrate.Tests`; tests that start `git` moved to `Whizbang.Migrate.Integration.Tests` |
+| `Whizbang.Observability.Component.Tests` | Component tests of observability that drive shared state from several threads at once, moved out of `Whizbang.Observability.Tests` |
+| `Whizbang.Partitioning.Component.Tests` | Tests of the partition router, moved out of `Whizbang.Partitioning.Tests`: the router class runs a concurrency check on several threads, so it is Component; the partition assigner's unit tests stay in `Whizbang.Partitioning.Tests` |
+| `Whizbang.Sagas.Component.Tests` | Component tests of sagas that run watchdog delivery and routing through real hosted workers, moved out of `Whizbang.Sagas.Tests` |
+| `Whizbang.Sequencing.Component.Tests` | Tests of the in-memory sequence provider, formerly the Unit project `Whizbang.Sequencing.Tests`: its one test class checks thread safety with concurrent callers, so the class, and with it the whole project, is Component |
+| `Whizbang.Testing.Component.Tests` | Component tests of the testing library (awaiters, harnesses and in-memory transports on real threads and hosted workers, and trace assertions that read and write baseline snapshot files), moved out of `Whizbang.Testing.Tests` |
+| `Whizbang.Transports.AzureServiceBus.Component.Tests` | Component tests of the Azure Service Bus transport (real receive loops, batch pipelines, throttles and liveness watchdogs against in-process client doubles), moved out of `Whizbang.Transports.AzureServiceBus.Tests` |
+| `Whizbang.Transports.Component.Tests` | Component tests of the transport abstractions (in-process transport, transport manager and dispatcher bridge on real subscriptions and threads), moved out of `Whizbang.Transports.Tests` |
+| `Whizbang.Transports.HotChocolate.Component.Tests` | Component tests of the HotChocolate transport that run a second async flow, moved out of `Whizbang.Transports.HotChocolate.Tests` |
 | `Whizbang.Transports.RabbitMQ.Component.Tests` | Component tests of the RabbitMQ transport (real consumer threads, flush loops and drainers against in-process channel doubles), moved out of `Whizbang.Transports.RabbitMQ.Tests` |
 
-### Integration (13)
+### Integration (14)
 
 | Project | Tags | Suite |
 |---------|------|-------|
@@ -156,6 +173,7 @@ despite the name, a unit project), `ECommerce.BFF.API.Tests`, `ECommerce.Invento
 | `Whizbang.Migrate.Integration.Tests` | Integration | Integration (general) |
 | `Whizbang.Transports.FastEndpoints.Integration.Tests` | Integration | Integration (general) |
 | `Whizbang.Transports.HotChocolate.Integration.Tests` | Integration | Integration (general) |
+| `Whizbang.Testing.Integration.Tests` | Integration | Integration (general) |
 
 Every integration project must carry a tag some suite selects: `.github/scripts/tests/Get-TestSlice.Tests.ps1`
 fails otherwise.
