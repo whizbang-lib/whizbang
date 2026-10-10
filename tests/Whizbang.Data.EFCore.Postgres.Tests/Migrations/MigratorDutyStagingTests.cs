@@ -212,9 +212,9 @@ public class MigratorDutyStagingTests {
       null, _registers(() => registered = true), SCHEMA, logger);
 
     await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Unstaged);
-    await Assert.That(registered).IsFalse()
-      .Because("there is nothing to register for; the registry is maintained by the heartbeat "
-        + "worker once the service is up");
+    await Assert.That(registered).IsTrue()
+      .Because("the instance joins the registry at start on both drivers, elector or not: an instance "
+        + "that starts after it reads its managed-object declarations only while it is registered");
     await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning)).IsFalse()
       .Because("a deployment without notification services is supported, not broken");
   }
