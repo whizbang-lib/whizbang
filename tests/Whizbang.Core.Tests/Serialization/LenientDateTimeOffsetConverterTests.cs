@@ -133,6 +133,24 @@ public class LenientDateTimeOffsetConverterTests {
   }
 
   [Test]
+  public async Task Read_InvalidFormat_ExceptionDoesNotEchoTheValueAsync() {
+    // Arrange - the unparseable value is caller-supplied text; it must not travel into exception
+    // messages, where it would reach logs and error responses.
+    const string secret = "not-a-date-but-a-secret";
+    var json = $"\"{secret}\"";
+
+    // Act
+    var ex = await Assert.ThrowsAsync<JsonException>(async () => {
+      JsonSerializer.Deserialize<DateTimeOffset>(json, _options);
+      await Task.CompletedTask;
+    });
+
+    // Assert
+    await Assert.That(ex!.Message).DoesNotContain(secret);
+    await Assert.That(ex.Message).Contains("DateTimeOffset");
+  }
+
+  [Test]
   public async Task Read_NumberToken_ThrowsJsonExceptionAsync() {
     // Arrange - JSON number instead of string
     const string json = "123456789";
