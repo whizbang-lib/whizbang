@@ -17,6 +17,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.Workers;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core;
 
@@ -172,7 +173,7 @@ public static class ServiceCollectionExtensions {
       var tagOptions = sp.GetRequiredService<TagOptions>();
       SystemEvents.SystemEventCoalesceDefaults.Apply(
         tagOptions,
-        sp.GetService<IOptions<SystemEvents.SystemEventOptions>>()?.Value);
+        sp.GetOptionsValue<SystemEvents.SystemEventOptions>());
       // Whizbang:Tags:Coalesce:<tag> overrides the code policies (#1012).
       TagCoalesceConfigurationBinder.Apply(tagOptions, sp.GetService<IConfiguration>());
       return new CoalesceGroupResolver(tagOptions, sp.GetService<TimeProvider>());

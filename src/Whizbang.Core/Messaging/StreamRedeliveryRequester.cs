@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Messaging;
 
@@ -136,8 +137,7 @@ public sealed partial class StreamRedeliveryRequester(
       throw new InvalidOperationException("This service has no service name, so the origin cannot address the redelivery to it.");
     }
     var replyTopic = request.ReplyTopic
-      ?? services.GetService<IOptions<StreamIntegrityOptions>>()?.Value.RepairTopic
-      ?? services.GetService<TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address
+      ?? RepairTopicResolver.Resolve(services.GetOptionsValue<StreamIntegrityOptions>()?.RepairTopic, services)
       ?? throw new InvalidOperationException("This service consumes no topic to receive the redelivery on; name one as the reply topic.");
     var requestTopic = request.OriginRequestTopic
       ?? services.GetService<IntegrityGapTracker>()?.GetOrigins()

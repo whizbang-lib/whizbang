@@ -95,7 +95,7 @@ public sealed class AuditingEventStoreDecorator(
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id,
+          TraceParent = HopStamping.AmbientTraceParent,
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
@@ -205,7 +205,7 @@ public sealed class AuditingEventStoreDecorator(
           ServiceInstance = _instanceProvider.ToInfo(),
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id,
+          TraceParent = HopStamping.AmbientTraceParent,
           // The audited TENANT plus the system marker. Not the acting user: scope is an
           // access-control key, so writing the actor here would hand the SUBJECT of an audit
           // record a key to their own audit trail.
@@ -233,7 +233,7 @@ public sealed class AuditingEventStoreDecorator(
       Envelope = jsonEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
-        Hops = envelope.Hops?.ToList() ?? []
+        Hops = envelope.CopyHops()
       },
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
       StreamId = auditEvent.Id,

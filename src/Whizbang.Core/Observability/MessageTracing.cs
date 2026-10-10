@@ -122,7 +122,7 @@ public static class MessageTracing {
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
       Duration = context.Duration ?? TimeSpan.Zero,
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
   }
 }

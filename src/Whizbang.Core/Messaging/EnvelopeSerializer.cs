@@ -64,7 +64,7 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = envelope.MessageId,
       Payload = payloadJson,
-      Hops = envelope.Hops?.ToList() ?? [],
+      Hops = envelope.CopyHops(),
       ReceptorInvocations = envelope.ReceptorInvocations?.ToList(),
       DispatchContext = envelope.DispatchContext,
       // A directed envelope stays directed through the conversion — dropping Target here would

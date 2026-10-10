@@ -18,6 +18,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Workers;
 
@@ -787,7 +788,7 @@ public partial class PerspectiveWorker(
     await _loopRecovery.RecoverAsync(
       exception,
       (transient, cause) => LogTransientBatchFailure(
-        _logger, transient.Reason, transient.SqlState ?? "none", streamIds.Count, streams, cause),
+        _logger, transient.Reason, transient.SqlStateOrNone, streamIds.Count, streams, cause),
       cause => LogUnexpectedBatchFailure(_logger, streamIds.Count, streams, cause),
       cancellationToken).ConfigureAwait(false);
   }
@@ -4734,8 +4735,7 @@ public partial class PerspectiveWorker(
         // fresh scope (the work scope is already disposed here) and record it via the source-generated
         // LoggerMessage so a failed detached stage is always diagnosable.
         using var logScope = scopeFactory.CreateScope();
-        ILogger detachedLogger = logScope.ServiceProvider.GetService<ILogger<PerspectiveWorker>>()
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
+        ILogger detachedLogger = logScope.ServiceProvider.GetLoggerOrNullLogger<PerspectiveWorker>();
         LogDetachedStageError(detachedLogger, ex, stage, envelope.MessageId.Value);
       }
     });

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Workers;
 
@@ -429,7 +430,7 @@ public sealed partial class MaintenanceWorker(
   /// </summary>
   private async Task _adoptDeclaredRetentionAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
-    var retention = sp.GetService<IOptions<Whizbang.Core.Configuration.PerspectiveRowRetentionOptions>>()?.Value;
+    var retention = sp.GetOptionsValue<Whizbang.Core.Configuration.PerspectiveRowRetentionOptions>();
     if (retention is { AutoAcknowledge: false }) {
       return;
     }

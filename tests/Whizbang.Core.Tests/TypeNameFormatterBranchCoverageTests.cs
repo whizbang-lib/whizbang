@@ -93,4 +93,33 @@ public class TypeNameFormatterBranchCoverageTests {
     await Assert.That(TypeNameFormatter.AssemblyDisplayName(assembly)).IsEqualTo(string.Empty)
       .Because("display text is never null, even for an assembly that has no name at all");
   }
+
+  [Test]
+  public async Task AssemblyQualifiedName_OpenParameter_ThrowsAsync() {
+    var genericParameter = typeof(List<>).GetGenericArguments()[0];
+
+    await Assert.That(() => TypeNameFormatter.AssemblyQualifiedName(genericParameter))
+      .ThrowsExactly<InvalidOperationException>().WithMessageContaining("assembly-qualified");
+  }
+
+  [Test]
+  public async Task Format_OpenParameter_ThrowsAsync() {
+    var genericParameter = typeof(List<>).GetGenericArguments()[0];
+
+    await Assert.That(() => TypeNameFormatter.Format(genericParameter))
+      .ThrowsExactly<InvalidOperationException>().WithMessageContaining("FullName");
+  }
+
+  [Test]
+  public async Task Format_NamelessAssembly_ThrowsAsync() {
+    var type = new InAssembly(typeof(string), new NamelessAssembly(new AssemblyName()));
+
+    await Assert.That(() => TypeNameFormatter.Format(type))
+      .ThrowsExactly<InvalidOperationException>().WithMessageContaining("Assembly.GetName().Name");
+  }
+
+  /// <summary>A real type reported as living in another assembly.</summary>
+  private sealed class InAssembly(Type type, Assembly assembly) : TypeDelegator(type) {
+    public override Assembly Assembly => assembly;
+  }
 }

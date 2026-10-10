@@ -193,10 +193,10 @@ public sealed class SystemEventEmitter(
           // Names the instance that wrote the record. Unknown is not a safe default here: it is
           // indistinguishable from an instance that genuinely could not be identified, so a
           // divergence between instances cannot be attributed to either of them.
-          ServiceInstance = _instanceProvider.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider.ToInfoOrUnknown(),
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id,
+          TraceParent = HopStamping.AmbientTraceParent,
           Scope = AuditRecordScope.For(systemEvent switch {
               EventAudited e => e.TenantId,
               CommandAudited c => c.TenantId,

@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -13,6 +12,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Routing;
 using Whizbang.Core.RunControl;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Workers;
 
@@ -279,9 +279,7 @@ public static class WorkerPipelineExtensions {
     // informational version unless a driver registered the package version first.
     services.TryAddSingleton<Whizbang.Core.Observability.ILibraryVersionProvider>(static _ =>
       new Whizbang.Core.Observability.LibraryVersionProvider(
-        typeof(HeartbeatWorker).Assembly.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? typeof(HeartbeatWorker).Assembly.GetName().Version?.ToString()
-        ?? "unknown"));
+        Whizbang.Core.Observability.AssemblyVersionText.Of(typeof(HeartbeatWorker).Assembly)));
     services.TryAddSingleton<HeartbeatWorker>();
     // The claim window's churn signal lives here: the claim returns stream ids and never sees a
     // row's attempt count, so the inbox drain reports what it fetched. Idempotent with the
@@ -608,7 +606,7 @@ public static class WorkerPipelineExtensions {
     // #1029: the receive path warns when integrity is on but received events carry no origin.
     services.TryAddSingleton(sp => new ReceivedOriginStampMonitor(
         sp.GetRequiredService<IOptions<StreamIntegrityOptions>>(),
-        sp.GetService<ILogger<ReceivedOriginStampMonitor>>() ?? NullLogger<ReceivedOriginStampMonitor>.Instance,
+        sp.GetLoggerOrNullLogger<ReceivedOriginStampMonitor>(),
         sp.GetService<TimeProvider>()));
 
     // #646: every options class the turnkey pipeline registers is BOUND, concretely, so the

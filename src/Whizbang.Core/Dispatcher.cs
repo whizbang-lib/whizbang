@@ -14,6 +14,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Configuration;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Lifecycle;
@@ -330,7 +331,7 @@ public abstract partial class Dispatcher(
   // pre-authentication event, a health check). Stamped so those stay distinguishable from an event
   // that simply LOST its scope — without it, the missing-scope invariant flags them as defects.
   private readonly IReadOnlySet<Type>? _declaredUnscopedTypes =
-    serviceProvider.GetService<Microsoft.Extensions.Options.IOptions<Security.MessageSecurityOptions>>()?.Value?.ExemptMessageTypes;
+    serviceProvider.GetOptionsValue<Security.MessageSecurityOptions>()?.ExemptMessageTypes;
 #pragma warning restore S4487, S1144
   // Core options for tag processing configuration
   private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
@@ -2567,7 +2568,7 @@ public abstract partial class Dispatcher(
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
       Scope = _getScopeDeltaForHop(context, typeof(TMessage)),
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
 
     // Populate SentAt-phase properties directly on the message record
@@ -2623,7 +2624,7 @@ public abstract partial class Dispatcher(
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
       Scope = _getScopeDeltaForHop(context, messageType),
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
 
     // Populate SentAt-phase properties directly on the message record
@@ -3983,7 +3984,7 @@ public abstract partial class Dispatcher(
       Scope = finalScope,
       CorrelationId = correlation,
       CausationId = causation,
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
 
     // Populate SentAt-phase properties (SentAt, CorrelationId, identifiers) onto the event object so a PUBLISHED
@@ -4211,7 +4212,7 @@ public abstract partial class Dispatcher(
       Scope = Security.OutboxHopScope.Resolve(sourceEnvelope, payloadType, _declaredUnscopedTypes),
       CorrelationId = correlation,
       CausationId = causation,
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
     jsonEnvelope.AddHop(hop);
   }
@@ -4259,7 +4260,7 @@ public abstract partial class Dispatcher(
       Envelope = jsonEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = jsonEnvelope.MessageId,
-        Hops = jsonEnvelope.Hops?.ToList() ?? [],
+        Hops = jsonEnvelope.CopyHops(),
         EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(eventData, ephemeralModeResolver)
       },
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
@@ -5321,7 +5322,7 @@ public abstract partial class Dispatcher(
       Scope = finalScope3,
       CorrelationId = correlation3,
       CausationId = causation3,
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
 
     // 4. Populate SentAt-phase properties onto the event object (parity with _createEnvelope) so a deferred
@@ -5417,7 +5418,7 @@ public abstract partial class Dispatcher(
       Envelope = serialized.JsonEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
-        Hops = envelope.Hops?.ToList() ?? [],
+        Hops = envelope.CopyHops(),
         EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, _ephemeralModeResolver)
       },
       EnvelopeType = serialized.EnvelopeType,

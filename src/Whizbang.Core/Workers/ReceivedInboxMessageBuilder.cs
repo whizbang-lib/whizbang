@@ -98,7 +98,7 @@ internal static class ReceivedInboxMessageBuilder {
       Scope = envelope.GetCurrentScope()?.Scope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
-        Hops = envelope.Hops?.ToList() ?? [],
+        Hops = envelope.CopyHops(),
         DispatchContext = envelope.DispatchContext,
         EphemeralTtlSeconds = EphemeralTtlDeriver.Derive(payload, messageTypeName, ephemeralModeResolver)
       },

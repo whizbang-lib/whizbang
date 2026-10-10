@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Routing;
 
@@ -247,7 +248,7 @@ public static class TransportSubscriptionBuilderExtensions {
     Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions
       .TryAddSingleton(services, sp => {
         var serviceName = serviceNameResolver(sp);
-        var routingOptions = sp.GetService<IOptions<RoutingOptions>>()?.Value;
+        var routingOptions = sp.GetOptionsValue<RoutingOptions>();
         var inboxStrategy = sp.GetService<IInboxRoutingStrategy>() ?? routingOptions?.InboxStrategy;
         var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>() ?? routingOptions?.OutboxStrategy;
         if (routingOptions is null || inboxStrategy is null || outboxStrategy is null) {

@@ -126,7 +126,7 @@ public sealed partial class InboxDrainWorker(
           // a deadlock that will pass and a defect that will not read differently in a log.
           WorkerLoopRecovery.Report(ex,
             (transient, cause) => LogTransientBatchDrainFailed(
-              _logger, transient.Reason, transient.SqlState ?? "none", cause),
+              _logger, transient.Reason, transient.SqlStateOrNone, cause),
             cause => LogBatchDrainFailed(_logger, cause));
         } finally {
           _setIdleState(active: false);
