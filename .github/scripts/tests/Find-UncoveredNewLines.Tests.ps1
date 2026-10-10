@@ -164,8 +164,15 @@ Describe 'Get-StatementCode' {
       '  if (ready) { Go(); }',
       '}, other ?? fallback);')
 
-    (Get-StatementCode $source 1) | Should -Be @('var count = items', '  .Where(i )', '  .Select((i, n) )', '  .Count();')
+    (Get-StatementCode $source 1) | Should -Be @('var count = items', '  .Where(i  )', '  .Select((i, n)  )', '  .Count();')
     (Get-StatementCode $source 5) | Should -Be @('Run(() => {', '', ', other ?? fallback);')
+  }
+
+  It 'ends a lambda expression body that starts on a continuation line at the , or ; after it' {
+    $source = @('Configure(', '  selector: x => x.Select(y => y.A),', '  other ?? fallback);', 'Func<int, int> f =', '  x => x ?? 0;')
+
+    (Get-StatementCode $source 1) | Should -Be @('Configure(', '  selector: x  ,', '  other ?? fallback);')
+    (Get-StatementCode $source 4) | Should -Be @('Func<int, int> f =', '  x  ;')
   }
 
   It 'keeps a lambda that starts on the first line, body and all' {
@@ -220,6 +227,7 @@ Describe 'Test-HandWrittenStatement' {
       @{ name = 'a ?. split at the line break'; source = @('var parent = envelope.Hops?', '  .LastOrDefault();') },
       @{ name = 'a ?[ split at the line break'; source = @('var first = items?', '  [0];') },
       @{ name = 'a conditional split across lines'; source = @('var size = count > 0', '  ? count', '  : 1;') },
+      @{ name = 'a conditional whose ? ends a line'; source = @('var size = count > 0 ?', '  count', '  : 1;') },
       @{ name = 'a decision in an interpolation hole on a continuation line'; source = @('throw new TimeoutException(', '  $"after {timeout ?? fallback}");') },
       @{ name = 'a switch expression inside an initializer'; source = @('var hop = new Hop {', '  Scope = For(record switch {', '    A a => a.Id,', '    _ => null,', '  }),', '};') }) {
     Test-HandWrittenStatement $source 1 | Should -BeTrue
@@ -231,6 +239,10 @@ Describe 'Test-HandWrittenStatement' {
       @{ name = 'a multi-line initializer with no decision'; source = @('var sink = new Sink {', '  Total = 3,', '};'); line = 1 },
       @{ name = 'a line closing a block, followed by a decision'; source = @('}', 'Do(a ?? b);'); line = 1 },
       @{ name = 'a statement lambda whose body holds the decisions'; source = @('Run(() => {', '  if (ready) { Go(); }', '});'); line = 1 },
+      @{ name = 'a whole statement on one line, before another with a decision'; source = @('Do(x);', 'Do(a ?? b);'); line = 1 },
+      @{ name = 'an initializer closed on its own line'; source = @('var sink = new Sink { };', 'Do(a ?? b);'); line = 1 },
+      @{ name = 'the end of an argument list begun on an earlier line'; source = @('  x);', 'Do(a ?? b);'); line = 1 },
+      @{ name = 'a lambda assigned on a continuation line, whose decision is its own'; source = @('Func<int, int> f =', '  x => x ?? 0;'); line = 1 },
       @{ name = 'a raw SQL string whose text reads like decisions'; source = @('await using var cmd = new Command(', '  """', '  SELECT CASE WHEN a IS NULL OR b THEN 1 END', '  """, conn);'); line = 1 },
       @{ name = 'a line past the end of the source'; source = @('Do();'); line = 2 }) {
     $text = if ($null -eq $source) { $script:ShapesSource } else { [string[]]$source }
@@ -515,18 +527,19 @@ Describe 'Merge-BlockCoverage, a line proven by its own blocks' {
   }
 
   It 'claims nothing for a line whose conditions are the compiler''s, such as one that only closes a block' {
-    $report = New-Report $TestDrive 'close.cobertura.xml' 'src/P/A.cs' @(@{ n = 2; hits = 1; cov = '1/2' }, @{ n = 3; hits = 1; cov = '1/2' })
+    $report = New-Report $TestDrive 'close.cobertura.xml' 'src/P/A.cs' @(@{ n = 2; hits = 1; cov = '1/2' }, @{ n = 3; hits = 1; cov = '1/2' }, @{ n = 4; hits = 1; cov = '1/2' })
     $coverage = Read-CoberturaCoverage @($report)
-    $lines = { param([int[]]$n) [System.Collections.Generic.HashSet[int]]::new($n) }
+    $lines = { param([int[]]$n) , [System.Collections.Generic.HashSet[int]]::new($n) }
     $blocks = @{ 'src/P/A.cs' = @{
-        Complete = (& $lines @()); Incomplete = (& $lines @(2, 3)); NotRun = (& $lines @(9))
+        Complete = (& $lines @()); Incomplete = (& $lines @(2, 3, 4)); NotRun = (& $lines @(9))
         Starts = (& $lines @(2, 3)); Unreached = (& $lines @()) } }
-    $source = @('void M() {', '  }', '  x?.Go();')
+    $source = @('void M() {', '  }', '  x?.Go();', '  y?.Go(); // no statement starts here in the block data')
 
     Merge-BlockCoverage -Coverage $coverage -Blocks $blocks -ReadSource { param($p) $source } | Should -Be 1
 
     $coverage['src/P/A.cs'].Conditions[2] | Should -Be @(1, 2)
     $coverage['src/P/A.cs'].Conditions[3] | Should -Be @(2, 2)
+    $coverage['src/P/A.cs'].Conditions[4] | Should -Be @(1, 2)
   }
 }
 

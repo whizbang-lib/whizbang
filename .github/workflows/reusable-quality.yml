@@ -313,9 +313,10 @@ jobs:
       # decision whose outcomes ran in different processes (a unit suite and an integration shard) as
       # half covered. The suites also upload the binary report beside each Cobertura one; its block
       # hits merge exactly, and Find-UncoveredNewLines.ps1 uses them to count such a decision as covered
-      # when every block of its function ran (Merge-BlockCoverage explains why that is exact). The
-      # merged report it writes is what ReportGenerator turns into Sonar's coverage, so Sonar, the
-      # new-code gate and the whole-library row count the same outcomes.
+      # when every block of its function ran, or every block of its own statement ran and the
+      # statement only branches within itself, as a ?. or ?? does (Merge-BlockCoverage explains why
+      # both are exact). The merged report it writes is what ReportGenerator turns into Sonar's
+      # coverage, so Sonar, the new-code gate and the whole-library row count the same outcomes.
       #
       # On a pull request the same run lists the uncovered new lines and new hand-written branches:
       # a new line counts as uncovered when no test ran it; a new hand-written decision (if, ?:, ??, ?.,
