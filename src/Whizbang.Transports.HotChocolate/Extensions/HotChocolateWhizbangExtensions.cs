@@ -35,7 +35,8 @@ public static class HotChocolateWhizbangExtensions {
 
   /// <summary>
   /// Adds Whizbang Lens support to HotChocolate with custom options.
-  /// Registers filter, sort, and projection conventions for <see cref="Whizbang.Core.Lenses.PerspectiveRow{TModel}"/> types.
+  /// Registers filter, sort, and projection conventions for <see cref="Whizbang.Core.Lenses.PerspectiveRow{TModel}"/> types,
+  /// and the <see cref="FieldPermissionTypeInterceptor"/> that enforces <c>[FieldPermission]</c>.
   /// </summary>
   /// <param name="builder">The HotChocolate request executor builder.</param>
   /// <param name="configure">Action to configure <see cref="WhizbangGraphQLOptions"/>.</param>
@@ -55,6 +56,10 @@ public static class HotChocolateWhizbangExtensions {
         .AddFiltering<WhizbangFilterConvention>()
         .AddSorting<WhizbangSortConvention>()
         .AddProjections();
+
+    // [FieldPermission] is enforced wherever a lens type is built: protected fields are masked for a caller
+    // without the permission and are not offered for filtering or sorting.
+    builder.TryAddTypeInterceptor<FieldPermissionTypeInterceptor>();
 
     return builder;
   }
