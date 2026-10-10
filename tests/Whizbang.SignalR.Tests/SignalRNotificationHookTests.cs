@@ -3,10 +3,13 @@
 
 using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.SignalR.Hooks;
 
@@ -49,7 +52,7 @@ public class SignalRNotificationHookTests {
 
   private sealed record Payload(Guid OrderId, int Attempt, bool Urgent, string Region);
 
-  private static async Task<List<Sent>> _dispatchAsync(string? groupTemplate, string payloadJson) {
+  private static async Task<List<Sent>> _dispatchAsync(string? groupTemplate, string payloadJson, PerspectiveScope? scope = null) {
     var sent = new List<Sent>();
     var hook = new SignalRNotificationHook<TestHub>(new CapturingHubContext(sent));
     using var doc = JsonDocument.Parse(payloadJson);
@@ -58,16 +61,62 @@ public class SignalRNotificationHookTests {
       Attribute = new SignalTagAttribute { Tag = "orders", Group = groupTemplate },
       Message = new object(),
       MessageType = typeof(Payload),
-      Payload = doc.RootElement
+      Payload = doc.RootElement,
+      Scope = scope is null ? null : new ScopeContext {
+        Scope = scope,
+        Roles = new HashSet<string>(),
+        Permissions = new HashSet<Permission>(),
+        SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+        Claims = new Dictionary<string, string>()
+      }
     };
 
     await hook.OnTaggedMessageAsync(context, CancellationToken.None);
     return sent;
   }
 
+  private sealed class CapturingLogger : ILogger<SignalRNotificationHook<TestHub>> {
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+      Entries.Add((logLevel, formatter(state, exception)));
+  }
+
   [Test]
-  public async Task NoGroupTemplate_BroadcastsToAllAsync() {
+  [Arguments(null, "has no Group")]
+  [Arguments("region-{Missing}", "has a placeholder with no value")]
+  public async Task NotificationNotSent_IsLoggedAsAWarning_NamingTheTagAsync(string? groupTemplate, string reason) {
+    var logger = new CapturingLogger();
+    var sent = new List<Sent>();
+    var hook = new SignalRNotificationHook<TestHub>(new CapturingHubContext(sent), logger);
+    using var doc = JsonDocument.Parse("""{"Region":"emea"}""");
+
+    await hook.OnTaggedMessageAsync(new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "orders", Group = groupTemplate },
+      Message = new object(),
+      MessageType = typeof(Payload),
+      Payload = doc.RootElement
+    }, CancellationToken.None);
+
+    await Assert.That(sent).IsEmpty();
+    await Assert.That(logger.Entries).Count().IsEqualTo(1);
+    await Assert.That(logger.Entries[0].Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(logger.Entries[0].Message).Contains("orders");
+    await Assert.That(logger.Entries[0].Message).Contains(reason);
+  }
+
+  [Test]
+  public async Task NoGroupTemplate_SendsNothingAsync() {
+    // A tag without a group is not a broadcast: reaching every connected client, of every tenant, is opt-in.
     var sent = await _dispatchAsync(null, """{"Region":"emea"}""");
+
+    await Assert.That(sent).IsEmpty();
+  }
+
+  [Test]
+  public async Task AllGroup_BroadcastsToEveryClientAsync() {
+    var sent = await _dispatchAsync("all", """{"Region":"emea"}""");
 
     await Assert.That(sent).Count().IsEqualTo(1);
     await Assert.That(sent[0].Group).IsNull();
@@ -127,16 +176,55 @@ public class SignalRNotificationHookTests {
   }
 
   [Test]
-  public async Task PlaceholderWithNoMatchingProperty_IsLeftIntactAsync() {
+  public async Task PlaceholderWithNoMatchingProperty_SendsNothingAsync() {
+    // An unresolved placeholder must not become a literal group every such message shares.
     var sent = await _dispatchAsync("region-{Missing}", """{"Region":"emea"}""");
 
-    await Assert.That(sent[0].Group).IsEqualTo("region-{Missing}");
+    await Assert.That(sent).IsEmpty();
   }
 
   [Test]
-  public async Task NonObjectPayload_LeavesTheTemplateIntactAsync() {
+  public async Task NonObjectPayload_WithAPlaceholder_SendsNothingAsync() {
     var sent = await _dispatchAsync("region-{Region}", "\"just-a-string\"");
 
-    await Assert.That(sent[0].Group).IsEqualTo("region-{Region}");
+    await Assert.That(sent).IsEmpty();
+  }
+
+  [Test]
+  public async Task NonObjectPayload_FixedGroup_StillSendsAsync() {
+    var sent = await _dispatchAsync("operators", "\"just-a-string\"");
+
+    await Assert.That(sent).Count().IsEqualTo(1);
+    await Assert.That(sent[0].Group).IsEqualTo("operators");
+  }
+
+  [Test]
+  public async Task TenantPlaceholder_ComesFromTheScope_NotAPayloadFieldOfTheSameNameAsync() {
+    // A message's payload must never choose which tenant hears about it.
+    var sent = await _dispatchAsync("tenant-{TenantId}", """{"TenantId":"payload-tenant"}""", new PerspectiveScope { TenantId = "scope-tenant" });
+
+    await Assert.That(sent).Count().IsEqualTo(1);
+    await Assert.That(sent[0].Group).IsEqualTo("tenant-scope-tenant");
+  }
+
+  [Test]
+  [Arguments("UserId", "user-{UserId}")]
+  [Arguments("OrganizationId", "org-{OrganizationId}")]
+  [Arguments("CustomerId", "customer-{CustomerId}")]
+  public async Task OtherIdentityPlaceholders_PreferThePayload_ThenTheScopeAsync(string field, string template) {
+    // Notifying the customer an order belongs to, or the user it was assigned to, is a payload value.
+    var scope = new PerspectiveScope { UserId = "scope-u", OrganizationId = "scope-o", CustomerId = "scope-c" };
+    var fromPayload = await _dispatchAsync(template, $$"""{"{{field}}":"payload-value"}""", scope);
+    var fromScope = await _dispatchAsync(template, """{"Region":"emea"}""", scope);
+
+    await Assert.That(fromPayload[0].Group).EndsWith("payload-value");
+    await Assert.That(fromScope[0].Group).Contains("scope-");
+  }
+
+  [Test]
+  public async Task TenantPlaceholder_WithNoScopeValue_SendsNothing_EvenIfThePayloadHasOneAsync() {
+    var sent = await _dispatchAsync("tenant-{TenantId}", """{"TenantId":"payload-tenant"}""", new PerspectiveScope());
+
+    await Assert.That(sent).IsEmpty();
   }
 }
