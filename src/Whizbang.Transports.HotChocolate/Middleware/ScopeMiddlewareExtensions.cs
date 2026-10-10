@@ -24,7 +24,6 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// // Or with custom options
 /// app.UseWhizbangScope(options => {
 ///     options.TenantIdClaimType = "tenant_id";
-///     options.TenantIdHeaderName = "X-Tenant-Id";
 /// });
 /// </example>
 public static class ScopeMiddlewareExtensions {
