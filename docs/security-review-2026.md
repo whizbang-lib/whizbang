@@ -29,12 +29,12 @@ suggestions: confirm, reject or reword them. Every cited file was checked to exi
 
 | Source | Result | Evidence (what was checked) | Decision |
 |---|---|---|---|
-| CodeQL (C#) | 0 open alerts; one sample-app false positive dismissed with a reason | `.github/workflows/codeql.yml`: push and pull request to `main` and `develop` (markdown-only pull requests skipped), and weekly on Sunday; runs on 2026-10-10 green. Code-scanning alerts from CodeQL: 0 open, 1 dismissed (#16, `cs/exposure-of-sensitive-information` in `samples/ECommerce/ECommerce.NotificationWorker/Receptors/SendNotificationReceptor.cs`, false positive) | |
-| SonarCloud | 0 vulnerabilities, 0 security hotspots to review, 0 bugs, 0 code smells; line coverage 100%, branch coverage 98.6% (every hand-written branch outcome covered, enforced on every pull request) | SonarCloud measures and hotspot search for `whizbang-lib_whizbang`; the hand-written figure is the pull-request quality gate's whole-library row (a hard gate since #1190). Sonar's branch figure also counts compiler-generated branches | |
-| Dependabot and the weekly OSV scan | 0 open Dependabot alerts; 1 open OSV alert, `braces` (stack exhaustion) in the sample UI, which is not shipped; no patched release exists (3.0.3 is the latest) | Dependabot alerts: 0 open. Code-scanning alert #347 (osv-scanner, `samples/ECommerce/ECommerce.UI/pnpm-lock.yaml`). `.github/workflows/security-supply-chain.yml`: push, pull request, and weekly on Tuesday | |
-| Secret scanning (GitHub and TruffleHog) | 0 alerts | GitHub secret-scanning alerts: 0 open. `.github/workflows/security-secrets.yml` (TruffleHog) on every push and pull request; runs on 2026-10-10 green | |
-| OpenSSF Scorecard | 8.4 of 10 (run of 2026-10-04). Below 10: Code-Review 0 and Branch-Protection 3 (one active maintainer, a recorded decision), CII-Best-Practices 5, Vulnerabilities 7 (the sample UI's npm advisories), Contributors 6 | `https://api.securityscorecards.dev/projects/github.com/whizbang-lib/whizbang`; `.github/workflows/security-scorecard.yml` runs weekly on `develop`. Code-scanning alert #90 (Scorecard, Vulnerabilities) open | |
-| Property-based and mutation testing | Property tests run on every pull request; mutation testing on demand | FsCheck properties in the unit suite (for example `tests/Whizbang.Core.Tests/ValueObjects/TrackedGuidPropertyTests.cs`); `.github/workflows/mutation.yml` is manual dispatch only | |
+| CodeQL (C#) | 0 open alerts; one sample-app false positive dismissed with a reason | `.github/workflows/codeql.yml`: push and pull request to `main` and `develop` (markdown-only pull requests skipped), and weekly on Sunday; runs on 2026-10-10 green. Code-scanning alerts from CodeQL: 0 open, 1 dismissed (#16, `cs/exposure-of-sensitive-information` in `samples/ECommerce/ECommerce.NotificationWorker/Receptors/SendNotificationReceptor.cs`, false positive) || Confirmed |
+| SonarCloud | 0 vulnerabilities, 0 security hotspots to review, 0 bugs, 0 code smells; line coverage 100%, branch coverage 98.6% (every hand-written branch outcome covered, enforced on every pull request) | SonarCloud measures and hotspot search for `whizbang-lib_whizbang`; the hand-written figure is the pull-request quality gate's whole-library row (a hard gate since #1190). Sonar's branch figure also counts compiler-generated branches || Confirmed |
+| Dependabot and the weekly OSV scan | 0 open Dependabot alerts; 1 open OSV alert, `braces` (stack exhaustion) in the sample UI, which is not shipped; no patched release exists (3.0.3 is the latest) | Dependabot alerts: 0 open. Code-scanning alert #347 (osv-scanner, `samples/ECommerce/ECommerce.UI/pnpm-lock.yaml`). `.github/workflows/security-supply-chain.yml`: push, pull request, and weekly on Tuesday || Finding 1 |
+| Secret scanning (GitHub and TruffleHog) | 0 alerts | GitHub secret-scanning alerts: 0 open. `.github/workflows/security-secrets.yml` (TruffleHog) on every push and pull request; runs on 2026-10-10 green || Confirmed |
+| OpenSSF Scorecard | 8.4 of 10 (run of 2026-10-04). Below 10: Code-Review 0 and Branch-Protection 3 (one active maintainer, a recorded decision), CII-Best-Practices 5, Vulnerabilities 7 (the sample UI's npm advisories), Contributors 6 | `https://api.securityscorecards.dev/projects/github.com/whizbang-lib/whizbang`; `.github/workflows/security-scorecard.yml` runs weekly on `develop`. Code-scanning alert #90 (Scorecard, Vulnerabilities) open || Confirmed |
+| Property-based and mutation testing | Property tests run on every pull request; mutation testing on demand | FsCheck properties in the unit suite (for example `tests/Whizbang.Core.Tests/ValueObjects/TrackedGuidPropertyTests.cs`); `.github/workflows/mutation.yml` is manual dispatch only || Confirmed |
 
 ## B. Trust boundaries
 
@@ -113,7 +113,7 @@ _Numbered findings agreed during the review: number, title, severity (high, medi
 
 | # | Finding | Severity | Decision | Tracking |
 |---|---|---|---|---|
-| | | | | |
+| 1 | Stack-exhaustion advisory in `braces`, a dependency of the sample UI (not shipped; reached only through the sample's test tooling) | Low | Accept: no patched release exists (3.0.3 is the latest). Add the override once a fixed version is published | OSV alert #347 |
 
 ## Sign-off
 
