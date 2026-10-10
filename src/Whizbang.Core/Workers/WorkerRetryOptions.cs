@@ -49,6 +49,14 @@ public class WorkerRetryOptions {
   public double BackoffMultiplier { get; set; } = 2.0;
 
   /// <summary>
+  /// The multiplier retries actually back off by: <see cref="BackoffMultiplier"/> when
+  /// <see cref="EnableExponentialBackoff"/> is on, otherwise 1, a fixed timeout.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerRetryOptionsTests.cs:Effective_BackoffOn_IsTheMultiplierAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerRetryOptionsTests.cs:Effective_BackoffOff_IsOneAsync</tests>
+  internal double EffectiveBackoffMultiplier => EnableExponentialBackoff ? BackoffMultiplier : 1.0;
+
+  /// <summary>
   /// Maximum retry timeout in seconds. Default: 60 seconds (1 minute).
   /// Prevents exponential backoff from growing indefinitely.
   /// IMPORTANT: Keep this low - failing messages block entire streams!

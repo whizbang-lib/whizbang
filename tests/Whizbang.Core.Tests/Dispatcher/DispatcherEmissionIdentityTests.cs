@@ -147,6 +147,26 @@ public class DispatcherEmissionIdentityTests {
   }
 
   [Test]
+  public async Task CascadeMessageAsync_NoDispatchContext_StillDerivesAStableIdAsync() {
+    await using var sp = _buildProvider();
+    var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));
+    var sourceMessageId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    MessageEnvelope<object> bare() => new() {
+      MessageId = MessageId.From(sourceMessageId),
+      Payload = new ProbeSourceCommand("o"),
+      Hops = [],
+      DispatchContext = null!,
+    };
+
+    await dispatcher.CascadeMessageAsync(new ProbeEvent(streamId), bare(), DispatchModes.Outbox);
+    await dispatcher.CascadeMessageAsync(new ProbeEvent(streamId), bare(), DispatchModes.Outbox);
+
+    await Assert.That(dispatcher.OutboxCascades[1].EventId).IsEqualTo(dispatcher.OutboxCascades[0].EventId)
+      .Because("an envelope deserialized without a dispatch context derives from no handler name, the same way each time");
+  }
+
+  [Test]
   public async Task CascadeMessageAsync_SiblingHandlerRowOfSameMessage_DerivesDistinctEventIdsAsync() {
     await using var sp = _buildProvider();
     var dispatcher = new ProbeDispatcher(sp, new FakeServiceInstanceProvider("orders"));

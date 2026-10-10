@@ -53,6 +53,17 @@ public class MessageHopCoverageTests {
     await Assert.That(thrown!.Message).Contains("Missing required property: ServiceInstance (or si)");
   }
 
+  /// <summary>A hop whose service instance is JSON null fails as loudly as one missing it.</summary>
+  [Test]
+  public async Task Read_NullServiceInstance_ThrowsAsync() {
+    var options = InfrastructureJsonContext.Default.Options;
+
+    var thrown = await Assert.That(() => JsonSerializer.Deserialize<MessageHop>("""{"si":null}""", options))
+      .Throws<JsonException>();
+
+    await Assert.That(thrown!.Message).Contains("Failed to deserialize ServiceInstance");
+  }
+
   private static MessageHop _hopWithCausation(Guid causation, Guid correlation) => new() {
     Type = HopType.Current,
     ServiceInstance = new ServiceInstanceInfo {

@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Offloads;
 
@@ -57,7 +58,7 @@ public static class BodyClaimRehydrator {
         $"Receiver does not have an IMessageBodyStore registered under provider name '{claim.ProviderName}'. Register the matching AddWhizbang*Offload(name) (e.g., AddWhizbangInMemoryOffload, AddWhizbangAzureBlobOffload) on the receiver service.");
     }
 
-    var downloadTimeout = serviceProvider.GetService<IOptions<MessageBodyOffloadOptions>>()?.Value?.DownloadTimeout
+    var downloadTimeout = serviceProvider.GetOptionsValue<MessageBodyOffloadOptions>()?.DownloadTimeout
       ?? TimeSpan.FromSeconds(100);
     ReadOnlyMemory<byte> downloaded;
     using (var downloadCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)) {

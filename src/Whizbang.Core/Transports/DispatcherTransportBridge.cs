@@ -202,7 +202,7 @@ public class DispatcherTransportBridge(
       CorrelationId = context.CorrelationId,
       CausationId = context.CausationId,
       Scope = scopeDelta,
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = HopStamping.AmbientTraceParent
     };
 
     envelope.AddHop(hop);

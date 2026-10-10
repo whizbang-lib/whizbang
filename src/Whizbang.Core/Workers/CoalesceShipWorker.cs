@@ -301,7 +301,7 @@ public sealed partial class CoalesceShipWorker(
       Payload = composite,
       Hops = [
         new MessageHop {
-          ServiceInstance = _instanceProvider.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider.ToInfoOrUnknown(),
           Type = HopType.Current,
           Timestamp = _timeProvider.GetUtcNow(),
           // The folded singles' scope, carried forward. The consumer's fan-out derives every
@@ -324,7 +324,7 @@ public sealed partial class CoalesceShipWorker(
       Envelope = serialized.JsonEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
-        Hops = envelope.Hops?.ToList() ?? []
+        Hops = envelope.CopyHops()
       },
       EnvelopeType = serialized.EnvelopeType,
       StreamId = composite.StreamId,

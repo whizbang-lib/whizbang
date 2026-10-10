@@ -22,6 +22,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
+using Whizbang.Core.DependencyInjection;
 
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance (not critical for worker startup/shutdown)
 
@@ -249,7 +250,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     if (_logger.IsEnabled(LogLevel.Information)) {
       _logger.LogInformation(
         "Receive-path flag derivation: indexedTypeNames={IndexedTypeNames}",
-        (_eventMarkerResolver as EventMarkerResolver)?.IndexedTypeNameCount ?? -1);
+        EventMarkerResolver.IndexedCountOf(_eventMarkerResolver));
     }
     if (_logger.IsEnabled(LogLevel.Information)) {
       var destinationCount = _options.Destinations.Count;
@@ -293,7 +294,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
         // Provision infrastructure for owned domains before creating subscriptions
         var provisioner = scope.ServiceProvider.GetService<IInfrastructureProvisioner>();
-        var routingOptions = scope.ServiceProvider.GetService<IOptions<RoutingOptions>>()?.Value;
+        var routingOptions = scope.ServiceProvider.GetOptionsValue<RoutingOptions>();
         if (provisioner != null && routingOptions?.OwnedDomains.Count > 0) {
           if (_logger.IsEnabled(LogLevel.Debug)) {
             var ownedDomainsCount = routingOptions.OwnedDomains.Count;
@@ -1136,8 +1137,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         // security-context failure) would fail the detached stage invisibly. Resolve a logger from a
         // fresh scope (the work scope is already disposed) and record it via LoggerMessage.
         using var logScope = scopeFactory.CreateScope();
-        ILogger detachedLogger = logScope.ServiceProvider.GetService<ILogger<TransportConsumerWorker>>()
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<TransportConsumerWorker>.Instance;
+        ILogger detachedLogger = logScope.ServiceProvider.GetLoggerOrNullLogger<TransportConsumerWorker>();
         LogDetachedStageError(detachedLogger, ex, stage, envelope.MessageId.Value);
       }
     });
@@ -1186,8 +1186,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         $"Envelope has JsonElement payload but envelope type is {envelope.GetType().Name}. MessageId: {envelope.MessageId}");
     } else {
       // Strongly-typed envelope - serialize it
-      var serializer = scopeServiceProvider.GetService<IEnvelopeSerializer>()
-        ?? throw new InvalidOperationException("IEnvelopeSerializer is required but not registered");
+      // Required: an unregistered serializer throws InvalidOperationException naming the type.
+      var serializer = scopeServiceProvider.GetRequiredService<IEnvelopeSerializer>();
 
       // Call generic SerializeEnvelope method via reflection
       var genericMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));

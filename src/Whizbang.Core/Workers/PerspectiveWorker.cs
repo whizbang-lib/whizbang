@@ -18,6 +18,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Workers;
 
@@ -200,8 +201,7 @@ public partial class PerspectiveWorker(
   // chatter up or down without touching the worker's own level.
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S6669:Logger fields should be named \"logger\"", Justification = "The name distinguishes this logger from the worker's own _logger; the rule assumes one logger per type.")]
   private readonly ILogger _startupScanLog = scopeFactory.CreateScope().ServiceProvider
-    .GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Workers.PerspectiveStartupScan")
-    ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+    .GetLoggerOrNullLogger("Whizbang.Core.Workers.PerspectiveStartupScan");
   private readonly IPerspectiveStreamLocker _streamLocker = streamLocker;
   private readonly PerspectiveStreamLockOptions _streamLockOptions = streamLockOptions.Value;
 
@@ -787,7 +787,7 @@ public partial class PerspectiveWorker(
     await _loopRecovery.RecoverAsync(
       exception,
       (transient, cause) => LogTransientBatchFailure(
-        _logger, transient.Reason, transient.SqlState ?? "none", streamIds.Count, streams, cause),
+        _logger, transient.Reason, transient.SqlStateOrNone, streamIds.Count, streams, cause),
       cause => LogUnexpectedBatchFailure(_logger, streamIds.Count, streams, cause),
       cancellationToken).ConfigureAwait(false);
   }
@@ -1837,7 +1837,7 @@ public partial class PerspectiveWorker(
       await _failureChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
         MessageId = f.LastEventId,
         CompletedStatus = MessageProcessingStatus.None,
-        Error = f.Error ?? "perspective failed",
+        Error = f.Error,
         Reason = MessageFailureReason.Unknown,
       }, ct).ConfigureAwait(false);
     }
@@ -2168,8 +2168,7 @@ public partial class PerspectiveWorker(
           var filteredEvents = perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME
               ? currentEvents.Where(e => e.Payload is ICollectiveEvent).OrderByMessageId().ToList()
               : [.. currentEvents
-                  .Where(e => currentContext.TypeNameCache.TryGetValue(e.Payload.GetType(), out var key)
-                    && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
+                  .Where(e => _perspectivesFor(currentContext.TypeNameCache, e.Payload).Contains(perspectiveName))
                   .OrderByMessageId()];
 
           if (filteredEvents.Count == 0) {
@@ -2281,6 +2280,16 @@ public partial class PerspectiveWorker(
     return (eventsForStream, nextContext);
   }
 
+  /// <summary>
+  /// The registered perspectives an event's type feeds, or none when its type is not in the stream's
+  /// type-name cache or no perspective takes it.
+  /// </summary>
+  private IReadOnlyList<string> _perspectivesFor(Dictionary<Type, string> typeNameCache, IEvent payload) =>
+    typeNameCache.TryGetValue(payload.GetType(), out var eventTypeKey)
+      && _perspectivesPerEventType!.TryGetValue(eventTypeKey, out var perspectives)
+      ? perspectives
+      : [];
+
   /// <summary>Collects the set of perspective names that apply to the event types in this stream.</summary>
   private HashSet<string> _collectDrainModePerspectiveNames(
       List<MessageEnvelope<IEvent>> streamEvents,
@@ -2293,9 +2302,8 @@ public partial class PerspectiveWorker(
       // Add it explicitly so the drain guard (_runDrainModePerspectiveAsync) dispatches the event.
       if (payload is ICollectiveEvent) {
         perspectiveNames.Add(CollectiveRouting.SINK_PERSPECTIVE_NAME);
-      } else if (typeNameCache.TryGetValue(payload.GetType(), out var eventTypeKey)
-          && _perspectivesPerEventType!.TryGetValue(eventTypeKey, out var perspectives)) {
-        perspectiveNames.UnionWith(perspectives);
+      } else {
+        perspectiveNames.UnionWith(_perspectivesFor(typeNameCache, payload));
       }
     }
     return perspectiveNames;
@@ -4140,7 +4148,7 @@ public partial class PerspectiveWorker(
     if (needsRewind && checkpoint is not null && rewindTriggerEventId.HasValue) {
       var eventsBehind = group.Count();
       LogRewindRequired(_logger, streamCtx.PerspectiveName, streamCtx.StreamId,
-        checkpoint.LastEventId ?? Guid.Empty, rewindTriggerEventId.Value, eventsBehind);
+        checkpoint.LastEventId, rewindTriggerEventId.Value, eventsBehind);
       _metrics?.RewindEventsBehind.Record(eventsBehind,
         new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, streamCtx.PerspectiveName));
 
@@ -4734,8 +4742,7 @@ public partial class PerspectiveWorker(
         // fresh scope (the work scope is already disposed here) and record it via the source-generated
         // LoggerMessage so a failed detached stage is always diagnosable.
         using var logScope = scopeFactory.CreateScope();
-        ILogger detachedLogger = logScope.ServiceProvider.GetService<ILogger<PerspectiveWorker>>()
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
+        ILogger detachedLogger = logScope.ServiceProvider.GetLoggerOrNullLogger<PerspectiveWorker>();
         LogDetachedStageError(detachedLogger, ex, stage, envelope.MessageId.Value);
       }
     });
@@ -5531,7 +5538,7 @@ public partial class PerspectiveWorker(
     Level = LogLevel.Warning,
     Message = "Perspective rewind required for {PerspectiveName} stream {StreamId} — cursor at {CursorEventId}, late event {TriggerEventId} ({EventsBehind} events behind)"
   )]
-  static partial void LogRewindRequired(ILogger logger, string perspectiveName, Guid streamId, Guid cursorEventId, Guid triggerEventId, int eventsBehind);
+  static partial void LogRewindRequired(ILogger logger, string perspectiveName, Guid streamId, Guid? cursorEventId, Guid triggerEventId, int eventsBehind);
 
   [LoggerMessage(
     EventId = 53,

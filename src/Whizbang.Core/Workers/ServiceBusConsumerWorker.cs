@@ -17,6 +17,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Workers;
 
@@ -550,8 +551,7 @@ public partial class ServiceBusConsumerWorker(
         // security-context failure) would fail the detached stage invisibly. Resolve a logger from a
         // fresh scope (the work scope is already disposed) and record it via LoggerMessage.
         using var logScope = scopeFactory.CreateScope();
-        ILogger detachedLogger = logScope.ServiceProvider.GetService<ILogger<ServiceBusConsumerWorker>>()
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ServiceBusConsumerWorker>.Instance;
+        ILogger detachedLogger = logScope.ServiceProvider.GetLoggerOrNullLogger<ServiceBusConsumerWorker>();
         LogDetachedStageError(detachedLogger, ex, stage, envelope.MessageId.Value);
       }
     });

@@ -13,6 +13,7 @@ using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Messaging;
 
@@ -143,7 +144,7 @@ public static partial class CompositeInboxFanout {
     var ephemeralModeResolver = scope.GetService<IEphemeralModeResolver>();
     // Null-object default so a dropped inner event is ALWAYS logged (NullLogger no-ops only when the
     // host has no logging configured).
-    var logger = scope.GetService<ILoggerFactory>()?.CreateLogger(LOG_CATEGORY) ?? NullLogger.Instance;
+    var logger = scope.GetLoggerOrNullLogger(LOG_CATEGORY);
 
     // Raw-inner composites (re-delivery bundles) carry children as stored wire JSON + type names —
     // no typed payloads exist on either side, so they expand through the raw path. A replacement
@@ -398,7 +399,7 @@ public static partial class CompositeInboxFanout {
         // why the catalog stamp (by wire name) is load-bearing here.
         Flags = EventFlagsDeriver.Derive(payload: null, wireTypeName, eventMarkerResolver, ephemeralModeResolver)
               | EventFlags.NoRebroadcast,
-        Scope = source.GetCurrentScope()?.Scope,
+        Scope = source.GetCurrentPerspectiveScope(),
         Metadata = new EnvelopeMetadata {
           MessageId = childEnvelope.MessageId,
           Hops = childEnvelope.Hops,
@@ -502,7 +503,7 @@ public static partial class CompositeInboxFanout {
       // here means the emit chain never routes the child to the collective sink.
       Flags = EventFlagsDeriver.Derive(inner, messageTypeName, eventMarkerResolver, ephemeralModeResolver)
             | EventFlags.NoRebroadcast,
-      Scope = source.GetCurrentScope()?.Scope,
+      Scope = source.GetCurrentPerspectiveScope(),
       Metadata = new EnvelopeMetadata {
         MessageId = childEnvelope.MessageId,
         Hops = childEnvelope.Hops,

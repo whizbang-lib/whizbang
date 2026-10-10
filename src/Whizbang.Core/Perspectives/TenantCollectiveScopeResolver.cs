@@ -91,7 +91,7 @@ public sealed class TenantCollectiveScopeResolver : ICollectiveScopeResolver {
       return tenantScope;
     }
     throw new ArgumentException(
-      $"TenantCollectiveScopeResolver only handles TenantCollectiveScope payloads (ScopeKind='tenant'); got {(scope is null ? "null" : TypeNameFormatter.DisplayName(scope.GetType()))} (ScopeKind='{scope?.ScopeKind ?? "null"}'). " +
+      $"TenantCollectiveScopeResolver only handles TenantCollectiveScope payloads (ScopeKind='tenant'); got {TypeNameFormatter.RuntimeDisplayName(scope)} (ScopeKind='{scope?.ScopeKind ?? "null"}'). " +
       "This indicates a misconfigured resolver registration — the resolver registry should dispatch each scope kind to a matching resolver.",
       nameof(scope));
   }

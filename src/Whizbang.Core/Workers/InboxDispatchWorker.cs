@@ -753,7 +753,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         _options.EnforceCompositeExpansionBudget);
       if (verdict.OverBudget) {
         LogCompositeExceedsConsumerBudget(
-          _logger, compositeTypeName ?? "(unknown)", result.Children.Count,
+          _logger, compositeTypeName, result.Children.Count,
           _options.MaxCompositeChildrenPerExpansion, verdict.Chunks);
 
         if (verdict.Refuse) {

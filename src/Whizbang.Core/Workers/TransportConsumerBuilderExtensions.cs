@@ -148,44 +148,7 @@ public static class TransportConsumerBuilderExtensions {
 
     // Register TransportConsumerOptions as singleton using factory pattern (AOT-safe)
     // The factory resolves dependencies at runtime and populates destinations
-    builder.Services.AddSingleton<TransportConsumerOptions>(sp => {
-      var options = new TransportConsumerOptions();
-
-      // Check if WithRouting() was called by looking for the marker
-      if (sp.GetService<IRoutingConfigured>() is null) {
-        throw new InvalidOperationException(
-            "WithRouting() must be called before AddTransportConsumer(). " +
-            "Call builder.WithRouting(routing => ...) to configure routing options first.");
-      }
-
-      // Get routing options - guaranteed to exist since WithRouting was called
-      var routingOptions = sp.GetRequiredService<IOptions<RoutingOptions>>();
-
-      // Get event subscription discovery (may be null if not registered)
-      var discovery = sp.GetService<EventSubscriptionDiscovery>()
-          ?? new EventSubscriptionDiscovery(routingOptions, sp.GetRequiredService<IEventNamespaceRegistry>());
-
-      // Get service name from provider or use fallback
-      var serviceName = _getServiceName(sp);
-
-      // Build and populate destinations using TransportSubscriptionBuilder.
-      // The inbox strategy resolves from DI (options fallback inside the builder) and the
-      // receptor registry feeds the handled-message enumeration into the subscription
-      // context (topology arc phase 3).
-      var subscriptionBuilder = new TransportSubscriptionBuilder(
-          routingOptions,
-          discovery,
-          serviceName,
-          sp.GetService<IInboxRoutingStrategy>(),
-          sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
-
-      subscriptionBuilder.ConfigureOptions(options);
-
-      // Add any additional custom destinations, then the configured ones (#1012)
-      options.Destinations.AddRange(additionalDestinations);
-
-      return TransportConsumerOptionsBinder.Bind(sp, options);
-    });
+    builder.Services.AddSingleton(sp => _buildConsumerOptions(sp, additionalDestinations));
 
     // Manifest-driven DARK provisioning wiring (topology arc phase 5): make the
     // TopologyManifest resolvable so TransportConsumerWorker can provision every entity the
@@ -304,44 +267,7 @@ public static class TransportConsumerBuilderExtensions {
     builder.Services.AddSingleton(sp => TransportConsumerOptionsBinder.Bind(sp, resilienceOptions));
 
     // Register TransportConsumerOptions as singleton using factory pattern (AOT-safe)
-    builder.Services.AddSingleton<TransportConsumerOptions>(sp => {
-      var options = new TransportConsumerOptions();
-
-      // Check if WithRouting() was called by looking for the marker
-      if (sp.GetService<IRoutingConfigured>() is null) {
-        throw new InvalidOperationException(
-            "WithRouting() must be called before AddTransportConsumer(). " +
-            "Call builder.WithRouting(routing => ...) to configure routing options first.");
-      }
-
-      // Get routing options - guaranteed to exist since WithRouting was called
-      var routingOptions = sp.GetRequiredService<IOptions<RoutingOptions>>();
-
-      // Get event subscription discovery (may be null if not registered)
-      var discovery = sp.GetService<EventSubscriptionDiscovery>()
-          ?? new EventSubscriptionDiscovery(routingOptions, sp.GetRequiredService<IEventNamespaceRegistry>());
-
-      // Get service name from provider or use fallback
-      var serviceName = _getServiceName(sp);
-
-      // Build and populate destinations using TransportSubscriptionBuilder.
-      // The inbox strategy resolves from DI (options fallback inside the builder) and the
-      // receptor registry feeds the handled-message enumeration into the subscription
-      // context (topology arc phase 3).
-      var subscriptionBuilder = new TransportSubscriptionBuilder(
-          routingOptions,
-          discovery,
-          serviceName,
-          sp.GetService<IInboxRoutingStrategy>(),
-          sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
-
-      subscriptionBuilder.ConfigureOptions(options);
-
-      // Add any additional custom destinations, then the configured ones (#1012)
-      options.Destinations.AddRange(additionalDestinations);
-
-      return TransportConsumerOptionsBinder.Bind(sp, options);
-    });
+    builder.Services.AddSingleton(sp => _buildConsumerOptions(sp, additionalDestinations));
 
     // Manifest-driven DARK provisioning wiring (topology arc phase 5): make the
     // TopologyManifest resolvable so TransportConsumerWorker can provision every entity the
@@ -415,6 +341,51 @@ public static class TransportConsumerBuilderExtensions {
         tags: ["transport", HEALTH_CHECK_NAME]));
 
     return builder;
+  }
+
+  /// <summary>
+  /// The consumer's options: every destination the routing strategies subscribe this service to,
+  /// then the caller's additional destinations, then the configured ones.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">WithRouting() was not called first.</exception>
+  private static TransportConsumerOptions _buildConsumerOptions(
+      IServiceProvider sp, List<TransportDestination> additionalDestinations) {
+    var options = new TransportConsumerOptions();
+
+    // Check if WithRouting() was called by looking for the marker
+    if (sp.GetService<IRoutingConfigured>() is null) {
+      throw new InvalidOperationException(
+          "WithRouting() must be called before AddTransportConsumer(). " +
+          "Call builder.WithRouting(routing => ...) to configure routing options first.");
+    }
+
+    // Get routing options - guaranteed to exist since WithRouting was called
+    var routingOptions = sp.GetRequiredService<IOptions<RoutingOptions>>();
+
+    // Get event subscription discovery (may be null if not registered)
+    var discovery = sp.GetService<EventSubscriptionDiscovery>()
+        ?? new EventSubscriptionDiscovery(routingOptions, sp.GetRequiredService<IEventNamespaceRegistry>());
+
+    // Get service name from provider or use fallback
+    var serviceName = _getServiceName(sp);
+
+    // Build and populate destinations using TransportSubscriptionBuilder.
+    // The inbox strategy resolves from DI (options fallback inside the builder) and the
+    // receptor registry feeds the handled-message enumeration into the subscription
+    // context (topology arc phase 3).
+    var subscriptionBuilder = new TransportSubscriptionBuilder(
+        routingOptions,
+        discovery,
+        serviceName,
+        sp.GetService<IInboxRoutingStrategy>(),
+        sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
+
+    subscriptionBuilder.ConfigureOptions(options);
+
+    // Add any additional custom destinations, then the configured ones (#1012)
+    options.Destinations.AddRange(additionalDestinations);
+
+    return TransportConsumerOptionsBinder.Bind(sp, options);
   }
 
   /// <summary>

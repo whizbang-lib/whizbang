@@ -296,7 +296,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           // (_continueRoundAsync, #936): the claim backstop is the last resort, not the first.
           WorkerLoopRecovery.Report(ex,
             (transient, cause) => LogTransientBatchDrainFailed(
-              _logger, transient.Reason, transient.SqlState ?? "none", cause),
+              _logger, transient.Reason, transient.SqlStateOrNone, cause),
             cause => LogBatchDrainFailed(_logger, cause));
         } finally {
           // Active → idle: batch done. If more stream_ids arrived during processing the
@@ -931,12 +931,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           _markPublished(row);
         } else {
           _markStreamFailed(row);
-          await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-            MessageId = result.MessageId,
-            CompletedStatus = result.CompletedStatus,
-            Error = result.Error ?? "publish failed",
-            Reason = result.Reason,
-          }, ct);
+          await _failureChannel.EnqueueAsync(WorkCategory.Outbox, result.ToFailure(result.MessageId), ct);
         }
       }
     } finally {
@@ -1054,12 +1049,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       return true;
     }
     _markStreamFailed(row);
-    await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-      MessageId = row.MessageId,
-      CompletedStatus = result.CompletedStatus,
-      Error = result.Error ?? "publish failed",
-      Reason = result.Reason,
-    }, ct);
+    await _failureChannel.EnqueueAsync(WorkCategory.Outbox, result.ToFailure(row.MessageId), ct);
     return false;
   }
 

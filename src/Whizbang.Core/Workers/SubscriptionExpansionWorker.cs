@@ -131,8 +131,7 @@ public sealed partial class SubscriptionExpansionWorker(
     var serializer = services.GetService<IEnvelopeSerializer>();
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var requester = instanceProvider?.ServiceName;
-    var topic = _options.RepairTopic
-      ?? services.GetService<TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
+    var topic = RepairTopicResolver.Resolve(_options.RepairTopic, services);
     if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       LogBackfillSkipped(_logger,
         transport is null, serializer is null, string.IsNullOrEmpty(requester), string.IsNullOrEmpty(topic));

@@ -12,6 +12,7 @@ using Whizbang.Core.Events.System;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.ValueObjects;
 using static Whizbang.Core.Messaging.ProcessingModeAccessor;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Perspectives;
 
@@ -309,7 +310,7 @@ public sealed partial class PerspectiveRebuilder(
     var table = await swapper.FindTableAsync(run.PerspectiveName, ct).ConfigureAwait(false)
       ?? throw new InvalidOperationException(
         $"Perspective '{run.PerspectiveName}' has no registered table, so there is nothing to rebuild blue-green.");
-    var options = sp.GetService<IOptions<BlueGreenRebuildOptions>>()?.Value ?? new BlueGreenRebuildOptions();
+    var options = sp.GetOptionsValue<BlueGreenRebuildOptions>() ?? new BlueGreenRebuildOptions();
 
     var mark = await changes.WatermarkAsync(ct).ConfigureAwait(false);
     var shadow = await swapper.CreateShadowAsync(table, ct).ConfigureAwait(false);

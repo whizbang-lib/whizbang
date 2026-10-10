@@ -543,17 +543,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       return await _atTheStallLimitAsync(tick, ctx, currentAgg, now, cancellationToken).ConfigureAwait(false);
     }
 
-    var next = new SagaCompletionWatchdogTickEvent {
-      StreamId = tick.StreamId,
-      SagaName = tick.SagaName,
-      EntityId = tick.EntityId,
-      RescheduleCount = tick.RescheduleCount + 1,
-      LastObservedAt = now,
-      LastObservedCompleted = currentAgg?.Completed ?? 0,
-      LastObservedFailed = currentAgg?.Failed ?? 0,
-      ConsecutiveStallCount = nextStallCount,
-    };
-    await _emitter.PublishAsync(next, now + nextDelay).ConfigureAwait(false);
+    await _emitter.PublishAsync(_nextTick(tick, currentAgg, now, nextStallCount), now + nextDelay).ConfigureAwait(false);
     return WatchdogTickOutcome.ReArmed;
   }
 
@@ -597,6 +587,22 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   }
 
   /// <summary>
+  /// The watchdog's next tick: the same saga one reschedule later, carrying the progress observed now
+  /// (none when there is no item repository to observe it from) and the stall count it continues with.
+  /// </summary>
+  private static SagaCompletionWatchdogTickEvent _nextTick(
+      SagaCompletionWatchdogTickEvent tick, SagaItemAggregate? observed, DateTimeOffset now, int stallCount) => new() {
+        StreamId = tick.StreamId,
+        SagaName = tick.SagaName,
+        EntityId = tick.EntityId,
+        RescheduleCount = tick.RescheduleCount + 1,
+        LastObservedAt = now,
+        LastObservedCompleted = observed?.Completed ?? 0,
+        LastObservedFailed = observed?.Failed ?? 0,
+        ConsecutiveStallCount = stallCount,
+      };
+
+  /// <summary>
   /// What a tick does once the saga has made no progress across the whole stall limit: resolve what
   /// it can, complete the saga if nothing is left that could still move, and abandon it only when
   /// neither is possible.
@@ -615,16 +621,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       if (_toTerminalOutcome(await _tryRecoverAsync(ctx, cancellationToken).ConfigureAwait(false)) is { } endedAfterResolve) {
         return endedAfterResolve;
       }
-      await _emitter.PublishAsync(new SagaCompletionWatchdogTickEvent {
-        StreamId = tick.StreamId,
-        SagaName = tick.SagaName,
-        EntityId = tick.EntityId,
-        RescheduleCount = tick.RescheduleCount + 1,
-        LastObservedAt = now,
-        LastObservedCompleted = currentAgg?.Completed ?? 0,
-        LastObservedFailed = currentAgg?.Failed ?? 0,
-        ConsecutiveStallCount = 0,
-      }, now + _options.MinWatchdogDelay).ConfigureAwait(false);
+      await _emitter.PublishAsync(_nextTick(tick, currentAgg, now, stallCount: 0), now + _options.MinWatchdogDelay).ConfigureAwait(false);
       return WatchdogTickOutcome.ReArmed;
     }
 

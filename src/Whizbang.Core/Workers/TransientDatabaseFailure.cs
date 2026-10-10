@@ -61,6 +61,14 @@ public sealed class TransientDatabaseFailure {
   /// <summary>The SQLSTATE the provider reported, when it reported one.</summary>
   public string? SqlState { get; }
 
+  /// <summary>
+  /// <see cref="SqlState"/> as a log line writes it: the SQLSTATE, or <c>none</c> when the provider
+  /// reported none, so the field is never blank in a structured log.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransientDatabaseFailureTests.cs:SqlStateOrNone_NoSqlState_NoneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransientDatabaseFailureTests.cs:SqlStateOrNone_SqlState_ItAsync</tests>
+  internal string SqlStateOrNone => SqlState ?? "none";
+
   /// <summary>The database exception the classification was read from.</summary>
   public Exception Cause { get; }
 

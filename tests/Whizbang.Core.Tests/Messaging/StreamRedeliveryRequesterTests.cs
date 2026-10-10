@@ -86,6 +86,16 @@ public class StreamRedeliveryRequesterTests {
   }
 
   [Test]
+  public async Task Request_NoIntegrityOptions_RepliesOnTheInboxAsync() {
+    var fixture = new Fixture { RequestTopic = "origin.requests", WithDefaults = false, WithIntegrityOptions = false };
+
+    var receipt = await fixture.Requester().RequestAsync(new StreamRedeliveryRequest { OriginService = "origin-svc", StreamIds = [TrackedGuid.New().Value] });
+
+    await Assert.That(receipt.ReplyTopic).IsEqualTo("inbox")
+      .Because("with no options system at all, the reply still comes back on a topic this service consumes");
+  }
+
+  [Test]
   public async Task Request_WithoutMetrics_StillSendsAsync() {
     var fixture = new Fixture { RequestTopic = "origin.requests", WithDefaults = false };
 

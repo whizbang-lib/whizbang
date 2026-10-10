@@ -95,7 +95,7 @@ public sealed class AuditingEventStoreDecorator(
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id,
+          TraceParent = HopStamping.AmbientTraceParent,
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
@@ -147,22 +147,7 @@ public sealed class AuditingEventStoreDecorator(
     var scopeContext = envelope.GetCurrentScope();
     var correlationId = envelope.GetCorrelationId();
 
-    // Build scope dictionary
-    var scope = new Dictionary<string, string?>();
-    if (scopeContext?.Scope.TenantId != null) {
-      scope["TenantId"] = scopeContext.Scope.TenantId;
-    }
-    if (scopeContext?.Scope.UserId != null) {
-      scope["UserId"] = scopeContext.Scope.UserId;
-    }
-    if (correlationId != null) {
-      scope["CorrelationId"] = correlationId.ToString();
-    }
-    if (scopeContext?.Claims is not null) {
-      foreach (var claim in scopeContext.Claims) {
-        scope[claim.Key] = claim.Value;
-      }
-    }
+    var scope = EventAuditScope.Build(scopeContext, correlationId);
 
     // Extract audit attribute metadata
     var attr = typeof(TMessage)
@@ -182,12 +167,12 @@ public sealed class AuditingEventStoreDecorator(
       // Supplied per occurrence by the decision hook; null falls back to humanizing the type name.
       ActivityName = decision.Name,
       ActivityDescription = decision.Description,
-      TenantId = scopeContext?.Scope?.TenantId,
-      UserId = scopeContext?.Scope?.UserId,
+      TenantId = scopeContext?.Scope.TenantId,
+      UserId = scopeContext?.Scope.UserId,
       CorrelationId = correlationId?.ToString(),
       AuditReason = attr?.Reason,
       AuditLevel = attr?.Level ?? AuditLevel.Info,
-      Scope = scope.Count > 0 ? scope : null
+      Scope = scope
     };
   }
 
@@ -205,7 +190,7 @@ public sealed class AuditingEventStoreDecorator(
           ServiceInstance = _instanceProvider.ToInfo(),
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id,
+          TraceParent = HopStamping.AmbientTraceParent,
           // The audited TENANT plus the system marker. Not the acting user: scope is an
           // access-control key, so writing the actor here would hand the SUBJECT of an audit
           // record a key to their own audit trail.
@@ -233,7 +218,7 @@ public sealed class AuditingEventStoreDecorator(
       Envelope = jsonEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
-        Hops = envelope.Hops?.ToList() ?? []
+        Hops = envelope.CopyHops()
       },
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
       StreamId = auditEvent.Id,

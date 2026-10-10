@@ -160,6 +160,15 @@ public class TenantCollectiveScopeResolverTests {
       .Because("Same defensive guard as ScopeFilter — a tenant resolver handed a non-tenant scope is a registration bug.");
   }
 
+  [Test]
+  public async Task EnterContext_NullScope_ThrowsNamingNullAsync() {
+    var resolver = new TenantCollectiveScopeResolver();
+
+    await Assert.That(() => resolver.EnterContext(null!))
+      .ThrowsExactly<ArgumentException>()
+      .WithMessageContaining("got null (ScopeKind='null')");
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────
 
   private sealed class JobModel {

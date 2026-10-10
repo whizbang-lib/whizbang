@@ -158,4 +158,19 @@ public class TransientDatabaseFailureTests {
     await Assert.That(() => TransientDatabaseFailure.TryClassify(null!, out _)).Throws<ArgumentNullException>();
     await Assert.That(() => TransientDatabaseFailure.IsTransient(null!)).Throws<ArgumentNullException>();
   }
+
+  [Test]
+  public async Task SqlStateOrNone_NoSqlState_NoneAsync() {
+    TransientDatabaseFailure.TryClassify(FakeDbException.WithSqlState(null, inner: new TimeoutException()), out var failure);
+
+    await Assert.That(failure!.SqlStateOrNone).IsEqualTo("none")
+      .Because("a log line names the missing SQLSTATE rather than leaving the field blank");
+  }
+
+  [Test]
+  public async Task SqlStateOrNone_SqlState_ItAsync() {
+    TransientDatabaseFailure.TryClassify(FakeDbException.WithSqlState("40P01"), out var failure);
+
+    await Assert.That(failure!.SqlStateOrNone).IsEqualTo("40P01");
+  }
 }

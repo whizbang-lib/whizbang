@@ -121,8 +121,8 @@ public static partial class SecurityContextHelper {
       CorrelationId = correlation,
       CausationId = causation,
       Timestamp = envelope.GetMessageTimestamp(),
-      UserId = scope?.Scope?.UserId,
-      TenantId = scope?.Scope?.TenantId,
+      UserId = scope?.Scope.UserId,
+      TenantId = scope?.Scope.TenantId,
       ScopeContext = scope,
       CallerInfo = callerInfo
     };
