@@ -120,8 +120,12 @@ Two consequences worth knowing:
   line, are not part of the statement. Reading stops at a multi-line string or block comment, whose text
   a per-line reader would take for code.
 
-The rule and its fixtures are tested in `.github/scripts/tests/Find-UncoveredNewLines.Tests.ps1`. Change
-both together.
+The rule is tested in `.github/scripts/tests/Find-UncoveredNewLines.Tests.ps1`. Change both together.
+Those tests never read a stored coverage report: they build the small libraries under
+`.github/scripts/tests/shapes/` and run each as two test processes under the real collector, with the
+settings and versions CI uses (`New-ShapesCoverage.ps1`), so the gate is tested against what the
+collector writes today. A new shape the gate must handle is added there as code, never as a report.
+The collector cannot instrument on macOS, so run them on Linux (CI's "Test · Pipeline scripts" job does).
 
 ### Outcomes taken in different test processes
 

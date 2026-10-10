@@ -30,47 +30,56 @@ BeforeAll {
     return $path
   }
 
-  # Real collector output (Microsoft.Testing.Extensions.CodeCoverage, the version CI uses) for a two-method
-  # library, from two test processes: A calls Sign(1) and Pick(1), B calls Sign(-1) and Pick(-1). Each
-  # process takes one outcome of Sign's `if`, so each report says 1/2 for that line although together they
-  # take both. merged-blocks.xml is `dotnet-coverage merge A.coverage B.coverage -f xml`. Calc.cs.txt is
-  # the library source the reports were collected from (line numbers matter).
-  $script:Fixture = Join-Path -Path $PSScriptRoot -ChildPath 'fixtures/shard-union'
-  $script:FixturePath = 'src/Whizbang.Exp/Calc.cs'
+  # Real collector output, produced now: shapes/New-ShapesCoverage.ps1 builds the two small libraries in
+  # shapes/ and runs each as two test processes (A and B) under the collector, settings and versions CI
+  # uses, then merges each pair of binary reports with dotnet-coverage. No coverage data is committed; a
+  # stored report would prove only what some collector once wrote. The sources are the real files.
+  $script:ShapesDir = Join-Path -Path $PSScriptRoot -ChildPath 'shapes'
+  $script:Generated = Join-Path ([System.IO.Path]::GetTempPath()) "whizbang-gate-shapes-$([guid]::NewGuid().ToString('N'))"
+  & (Join-Path $script:ShapesDir 'New-ShapesCoverage.ps1') -OutDir $script:Generated
+  function Get-ProcessReport([string]$Root, [string]$Process) {
+    return @(Get-ChildItem -Path (Join-Path $Root $Process) -Filter '*.cobertura.xml' -File)[0].FullName
+  }
 
-  # Real collector output (the same collector and versions as CI) for Shapes.cs.txt from two test processes:
-  # A takes every ?. statement's non-null outcome and B its null one, except where a shape needs otherwise
-  # (Unsplit and Continued are null in both, Throwing throws in both). merged-blocks.xml is
-  # `dotnet-coverage merge A.coverage B.coverage -f xml`. The shapes, by line:
+  # Calc.cs: A calls Sign(1) and Pick(1), B calls Sign(-1) and Pick(-1). Each process takes one outcome
+  # of Sign's `if`, so each report says 1/2 for that line although together they take both.
+  $script:Fixture = Join-Path $script:Generated 'CalcRunner'
+  $script:FixturePath = 'src/Whizbang.Exp/Calc.cs'
+  $script:FixtureA = Get-ProcessReport $script:Fixture 'A'
+  $script:FixtureB = Get-ProcessReport $script:Fixture 'B'
+  $script:FixtureBlocks = Join-Path $script:Generated 'CalcRunner.blocks.xml'
+  $script:CalcSource = [string[]]@(Get-Content (Join-Path $script:ShapesDir $script:FixturePath))
+
+  # Shapes.cs: A takes every ?. statement's non-null outcome and B its null one, except where a shape
+  # needs otherwise (ShapeRuns.cs). The shapes, by line:
   #   22 _sink?.Record(n): outcomes split across the processes, in a function with an unrun block
-  #   31 the same in an async method (a hoisted local), the MaintenanceWorker.cs:249 shape below
+  #   31 the same in an async method (a hoisted local)
   #   39 _never?.Record(n): the non-null outcome never taken, in either process
   #   47 if (sink?.Total >= 0) {: the if's false outcome never taken, though every block on the line ran
   #   57 bomb?.Fail(): the call always throws, so the null outcome's target never ran
   #   64 get()\n?.Record(n): the ?. on a continuation line, its non-null outcome never taken
   #   70 a collection initializer whose ?. and ?? are on a continuation line
   #   77 a call chain whose first line carries only the compiler's lambda-cache condition
-  $script:Shapes = Join-Path -Path $PSScriptRoot -ChildPath 'fixtures/statement-shapes'
-  $script:ShapesPath = 'src/Whizbang.Exp/Shapes.cs'
-  $script:ShapesSource = [string[]]@(Get-Content (Join-Path $script:Shapes 'Shapes.cs.txt'))
-  $script:ShapesReports = @((Join-Path $script:Shapes 'A/A.cobertura.xml'), (Join-Path $script:Shapes 'B/B.cobertura.xml'))
+  #   94 metrics?.Record(r) in an async loop: the MaintenanceWorker.cs:249 shape that found #1305, its
+  #      outcomes split across the processes while another statement of the method never ran
+  #   96 lookup.Find<Sink>()\n?.Record(...): the MaintenanceWorker.cs:252 shape, a ?. on the
+  #      continuation line, non-null in neither process
+  $script:Shapes = Join-Path $script:Generated 'ShapesRunner'
+  $script:ShapesPath = 'src/Whizbang.Shapes/Shapes.cs'
+  $script:ShapesSource = [string[]]@(Get-Content (Join-Path $script:ShapesDir $script:ShapesPath))
+  $script:ShapesReports = @((Get-ProcessReport $script:Shapes 'A'), (Get-ProcessReport $script:Shapes 'B'))
+  $script:ShapesBlocks = Join-Path $script:Generated 'ShapesRunner.blocks.xml'
   $script:ShapesRead = { param($p) if ($p -eq $script:ShapesPath) { $script:ShapesSource } else { $null } }
-
-  # Real CI output from the run that found the defect (#1305): the Cobertura reports of the Core unit and
-  # Core component test processes and their merged block data, cut down to MaintenanceWorker.cs, with
-  # the file as it was at that commit. Line 249 (metrics?.Record) took one outcome in each process;
-  # line 252 is a statement whose ?. is on its continuation line 253, non-null in neither process.
-  $script:Worker = Join-Path -Path $PSScriptRoot -ChildPath 'fixtures/maintenance-worker'
-  $script:WorkerPath = 'src/Whizbang.Core/Workers/MaintenanceWorker.cs'
-  $script:WorkerSource = [string[]]@(Get-Content (Join-Path $script:Worker 'MaintenanceWorker.cs.txt'))
-  $script:WorkerReports = @((Join-Path $script:Worker 'unit/unit.cobertura.xml'), (Join-Path $script:Worker 'component/component.cobertura.xml'))
-  $script:WorkerRead = { param($p) if ($p -eq $script:WorkerPath) { $script:WorkerSource } else { $null } }
 
   function New-Added([string]$file, [int[]]$lineNumbers) {
     $set = [System.Collections.Generic.HashSet[int]]::new()
     foreach ($n in $lineNumbers) { [void]$set.Add($n) }
     return @{ $file = $set }
   }
+}
+
+AfterAll {
+  if ($script:Generated -and (Test-Path -LiteralPath $script:Generated)) { Remove-Item -LiteralPath $script:Generated -Recurse -Force }
 }
 
 Describe 'Test-HandWrittenDecision' {
@@ -108,10 +117,10 @@ Describe 'Test-HandWrittenDecision' {
 # initializer) is counted on a line whose own text has none. The statement, not the line, is classified.
 Describe 'Get-StatementCode' {
   It 'reads a statement from its first line to the ; that ends it' {
-    $code = Get-StatementCode $script:WorkerSource 252
+    $code = Get-StatementCode $script:ShapesSource 96
 
     $code.Count | Should -Be 2
-    $code[1] | Should -Match '\?\.RecordItems'
+    $code[1] | Should -Match '\?\.Record\('
   }
 
   It 'reads an object or collection initializer to its end, nested ones included' {
@@ -210,10 +219,10 @@ Describe 'Get-StatementCode' {
 }
 
 Describe 'Test-HandWrittenStatement' {
-  It 'counts a decision on a continuation line of the statement whose first line carries the conditions (MaintenanceWorker.cs:252)' {
-    Test-HandWrittenDecision $script:WorkerSource[251] | Should -BeFalse
+  It 'counts a decision on a continuation line of the statement whose first line carries the conditions (Shapes.cs:96, the MaintenanceWorker.cs:252 shape)' {
+    Test-HandWrittenDecision $script:ShapesSource[95] | Should -BeFalse
 
-    Test-HandWrittenStatement $script:WorkerSource 252 | Should -BeTrue
+    Test-HandWrittenStatement $script:ShapesSource 96 | Should -BeTrue
   }
 
   It 'counts <name>' -ForEach @(
@@ -390,8 +399,8 @@ Describe 'Read-CoberturaCoverage, if-body evidence' {
   }
 
   It 'proves the real collector output: each process taking one outcome of the same if' {
-    $reports = @((Join-Path $script:Fixture 'A/A.cobertura.xml'), (Join-Path $script:Fixture 'B/B.cobertura.xml'))
-    $source = Get-Content (Join-Path $script:Fixture 'Calc.cs.txt')
+    $reports = @($script:FixtureA, $script:FixtureB)
+    $source = $script:CalcSource
 
     $coverage = Read-CoberturaCoverage $reports -ReadSource { param($p) $source }
 
@@ -403,7 +412,7 @@ Describe 'Read-CoberturaCoverage, if-body evidence' {
 
 Describe 'Read-BlockCoverage' {
   It 'sorts each line into the functions every block of which ran, and the functions some block of which did not' {
-    $blocks = Read-BlockCoverage (Join-Path $script:Fixture 'merged-blocks.xml')
+    $blocks = Read-BlockCoverage $script:FixtureBlocks
 
     $entry = $blocks[$script:FixturePath]
     @($entry.Complete | Sort-Object) | Should -Be @(5, 6, 8)
@@ -414,15 +423,15 @@ Describe 'Read-BlockCoverage' {
 Describe 'Merge-BlockCoverage' {
   BeforeAll {
     $script:ShardReports = @(
-      (Join-Path $script:Fixture 'A/A.cobertura.xml'),
-      (Join-Path $script:Fixture 'B/B.cobertura.xml'))
+      $script:FixtureA,
+      $script:FixtureB)
   }
 
   It 'counts a decision whose outcomes ran in different processes as fully covered once every block of its function ran' {
     $coverage = Read-CoberturaCoverage $script:ShardReports
     $coverage[$script:FixturePath].Conditions[5] | Should -Be @(1, 2)
 
-    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage (Join-Path $script:Fixture 'merged-blocks.xml')) | Should -Be 1
+    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage $script:FixtureBlocks) | Should -Be 1
 
     $coverage[$script:FixturePath].Conditions[5] | Should -Be @(2, 2)
   }
@@ -430,7 +439,7 @@ Describe 'Merge-BlockCoverage' {
   It 'leaves every line of a function with a block no test ran as the reports say, because which outcome is missing is unknowable' {
     $coverage = Read-CoberturaCoverage $script:ShardReports
 
-    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage (Join-Path $script:Fixture 'merged-blocks.xml')) | Out-Null
+    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage $script:FixtureBlocks) | Out-Null
 
     $coverage[$script:FixturePath].Conditions[12] | Should -Be @(1, 2)
     $coverage[$script:FixturePath].Conditions[15] | Should -Be @(1, 2)
@@ -458,7 +467,7 @@ Describe 'Merge-BlockCoverage' {
 # is real collector output; the ones that must stay uncovered are as real as the ones that must not.
 Describe 'Read-BlockCoverage, per-line evidence' {
   BeforeAll {
-    $script:ShapeBlocks = (Read-BlockCoverage (Join-Path $script:Shapes 'merged-blocks.xml'))[$script:ShapesPath]
+    $script:ShapeBlocks = (Read-BlockCoverage $script:ShapesBlocks)[$script:ShapesPath]
   }
 
   It 'records the lines some block that did not run, or ran only in part, touches' {
@@ -486,26 +495,26 @@ Describe 'Merge-BlockCoverage, a line proven by its own blocks' {
   BeforeAll {
     function Get-ShapesMerged([scriptblock]$Read = $script:ShapesRead) {
       $coverage = Read-CoberturaCoverage $script:ShapesReports
-      Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage (Join-Path $script:Shapes 'merged-blocks.xml')) -ReadSource $Read | Out-Null
+      Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage $script:ShapesBlocks) -ReadSource $Read | Out-Null
       return $coverage[$script:ShapesPath]
     }
   }
 
-  It 'counts the outcomes the real CI processes split as covered, though another statement in the function went unrun (MaintenanceWorker.cs:249)' {
-    $coverage = Read-CoberturaCoverage $script:WorkerReports
-    $coverage[$script:WorkerPath].Conditions[249] | Should -Be @(1, 2)
+  It 'counts as covered a ?. in an async loop whose outcomes the processes split, though another statement in the method never ran (Shapes.cs:94, the MaintenanceWorker.cs:249 shape)' {
+    $coverage = Read-CoberturaCoverage $script:ShapesReports
+    $coverage[$script:ShapesPath].Conditions[94] | Should -Be @(1, 2)
 
-    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage (Join-Path $script:Worker 'merged-blocks.xml')) -ReadSource $script:WorkerRead | Out-Null
+    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage $script:ShapesBlocks) -ReadSource $script:ShapesRead | Out-Null
 
-    $coverage[$script:WorkerPath].Conditions[249] | Should -Be @(2, 2)
+    $coverage[$script:ShapesPath].Conditions[94] | Should -Be @(2, 2)
   }
 
-  It 'leaves the real outcome no process took untested (MaintenanceWorker.cs:252)' {
-    $coverage = Read-CoberturaCoverage $script:WorkerReports
+  It 'leaves the outcome no process took untested (Shapes.cs:96, the MaintenanceWorker.cs:252 shape)' {
+    $coverage = Read-CoberturaCoverage $script:ShapesReports
 
-    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage (Join-Path $script:Worker 'merged-blocks.xml')) -ReadSource $script:WorkerRead | Out-Null
+    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage $script:ShapesBlocks) -ReadSource $script:ShapesRead | Out-Null
 
-    $coverage[$script:WorkerPath].Conditions[252] | Should -Be @(1, 2)
+    $coverage[$script:ShapesPath].Conditions[96] | Should -Be @(1, 2)
   }
 
   It 'counts a ?. whose outcomes ran in different processes as covered, in a plain and an async method (Shapes.cs:<line>)' -ForEach @(@{ line = 22 }, @{ line = 31 }) {
@@ -650,14 +659,14 @@ Describe 'Get-WholeLibraryCoverage' {
     $whole.Gap | Should -Be @('src/P/A.cs:1: (1/2 conditions) if (x) {', 'src/P/A.cs:4: (never ran) Do();')
   }
 
-  It 'lists the real continuation-line gap and not the outcomes split across processes (MaintenanceWorker.cs:249 and :252)' {
-    $coverage = Read-CoberturaCoverage $script:WorkerReports
-    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage (Join-Path $script:Worker 'merged-blocks.xml')) -ReadSource $script:WorkerRead | Out-Null
+  It 'lists the continuation-line gap and not the outcomes split across processes (Shapes.cs:94 and :96, the MaintenanceWorker.cs:249 and :252 shapes)' {
+    $coverage = Read-CoberturaCoverage $script:ShapesReports
+    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage $script:ShapesBlocks) -ReadSource $script:ShapesRead | Out-Null
 
-    $gap = (Get-WholeLibraryCoverage -Coverage $coverage -ReadSource $script:WorkerRead).Gap
+    $gap = (Get-WholeLibraryCoverage -Coverage $coverage -ReadSource $script:ShapesRead).Gap
 
-    $gap | Should -Contain "${script:WorkerPath}:252: (1/2 conditions) sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()"
-    @($gap | Where-Object { $_.StartsWith("${script:WorkerPath}:249:") }) | Should -BeNullOrEmpty
+    $gap | Should -Contain "${script:ShapesPath}:96: (1/2 conditions) lookup.Find<Sink>()"
+    @($gap | Where-Object { $_.StartsWith("${script:ShapesPath}:94:") }) | Should -BeNullOrEmpty
   }
 
   It 'counts the outcomes of a decision on a continuation line, and still not the compiler''s' {
@@ -743,9 +752,7 @@ Describe 'Get-WholeLibraryGateResult' {
 
 Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
   It 'merges the per-process reports and their block data, and summarizes the whole library' {
-    $sourceRoot = Join-Path $TestDrive 'repo'
-    New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'src/Whizbang.Exp') -Force | Out-Null
-    Copy-Item (Join-Path $script:Fixture 'Calc.cs.txt') (Join-Path $sourceRoot $script:FixturePath)
+    $sourceRoot = $script:ShapesDir
     $summaryFile = Join-Path $TestDrive 'whole.json'
     $merged = Join-Path $TestDrive 'out/merged.cobertura.xml'
     $gapFile = Join-Path $TestDrive 'out/library-gap.txt'
@@ -770,9 +777,7 @@ Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
   }
 
   It 'lists a continuation-line gap and not the ?. outcomes split across processes, from the binary reports' {
-    $sourceRoot = Join-Path $TestDrive 'repo-shapes'
-    New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'src/Whizbang.Exp') -Force | Out-Null
-    Copy-Item (Join-Path $script:Shapes 'Shapes.cs.txt') (Join-Path $sourceRoot $script:ShapesPath)
+    $sourceRoot = $script:ShapesDir
     $gapFile = Join-Path $TestDrive 'out-shapes/library-gap.txt'
     $scriptPath = Join-Path -Path $PSScriptRoot -ChildPath '../../../scripts/Find-UncoveredNewLines.ps1'
 
@@ -788,13 +793,13 @@ Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
       "${script:ShapesPath}:40: (1/2 conditions) if (rare) {",
       "${script:ShapesPath}:47: (2/4 conditions) if (sink?.Total >= 0) {",
       "${script:ShapesPath}:57: (1/2 conditions) bomb?.Fail();",
-      "${script:ShapesPath}:64: (1/2 conditions) get()")
+      "${script:ShapesPath}:64: (1/2 conditions) get()",
+      "${script:ShapesPath}:96: (1/2 conditions) lookup.Find<Sink>()",
+      "${script:ShapesPath}:98: (1/2 conditions) if (rare) {")
   }
 
   It 'fails with -FailOnWholeLibrary while any hand-written outcome in the library is untested' {
-    $sourceRoot = Join-Path $TestDrive 'repo-gate'
-    New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'src/Whizbang.Exp') -Force | Out-Null
-    Copy-Item (Join-Path $script:Fixture 'Calc.cs.txt') (Join-Path $sourceRoot $script:FixturePath)
+    $sourceRoot = $script:ShapesDir
     $scriptPath = Join-Path -Path $PSScriptRoot -ChildPath '../../../scripts/Find-UncoveredNewLines.ps1'
 
     $pwsh = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName

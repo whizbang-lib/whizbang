@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Named Whizbang.* so codecoverage.config's include list measures it, as it measures the library. -->
+</Project>

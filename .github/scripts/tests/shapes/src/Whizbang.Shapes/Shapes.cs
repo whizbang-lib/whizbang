@@ -80,3 +80,24 @@ public sealed class Shapes {
     return count;
   }
 }
+
+public interface IMeterLookup {
+  T? Find<T>() where T : class;
+}
+
+public static class Sweeper {
+  public static async Task<long> SweepAsync(IMeterLookup lookup, Sink? metrics, IEnumerable<int> rows, bool rare) {
+    await Task.Yield();
+    var swept = 0L;
+    foreach (var r in rows) {
+      swept += r;
+      metrics?.Record(r);
+    }
+    lookup.Find<Sink>()
+      ?.Record((int)swept);
+    if (rare) {
+      return -1;
+    }
+    return swept;
+  }
+}

@@ -1,0 +1,29 @@
+<Project>
+  <!--
+    The coverage gate's test library (Find-UncoveredNewLines.Tests.ps1). Its two small libraries and the
+    runners that exercise them are built and run under the real collector at test time, so the gate is
+    tested against coverage the collector produces now, never against a stored report.
+
+    This file deliberately does not import the repository's Directory.Build.props: these projects are not
+    product code (no packing, signing or analyzer gate), they are not in Whizbang.slnx, and the
+    repository's guards skip them (both skip dot folders such as .github). Package versions still come
+    from the repository's Directory.Packages.props, so the runners use the same TUnit and collector
+    versions as the product test projects. No lock file: the shapes are rebuilt from those versions on
+    every run, and a lock here would go stale on every dependency bump with nothing to regenerate it.
+
+    ShapesOut puts every build output outside the source tree; the tests pass a temporary directory.
+  -->
+  <PropertyGroup>
+    <ShapesOut Condition="'$(ShapesOut)' == ''">$(MSBuildThisFileDirectory)obj/shapes-out/</ShapesOut>
+    <BaseOutputPath>$(ShapesOut)bin/$(MSBuildProjectName)/</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(ShapesOut)obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <!-- The collector maps conditions to source lines through the PDB; Release is what CI measures. -->
+    <Optimize>true</Optimize>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

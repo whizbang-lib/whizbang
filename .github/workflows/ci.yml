@@ -1034,7 +1034,11 @@ jobs:
       # A full checkout: the inert-list test checks every tracked file the list matches.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The coverage merge tests read real binary coverage reports with the tool the quality job uses.
+      # The coverage gate's tests (Find-UncoveredNewLines.Tests.ps1) build the shapes under
+      # .github/scripts/tests/shapes and run them as separate test processes under the real collector
+      # (codecoverage.config, cobertura and binary output, as the suites do), then merge the binary
+      # reports with the tool the quality job uses. No coverage data is committed; without the SDK or
+      # dotnet-coverage those tests fail, they never skip.
       - name: Setup .NET
         uses: ./.github/actions/setup-dotnet-retry
         with:
