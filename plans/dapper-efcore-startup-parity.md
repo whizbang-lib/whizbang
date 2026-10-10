@@ -97,3 +97,10 @@ change recorded in the changelog with the upgrade note.
   runs every registered `ISchemaInitializationRunner` in order before it opens the gate;
   `AddWhizbangSchemaInitialization()` registers it once, by factory. EF Core registers its runner through it; its
   existing initializer tests pass unchanged apart from the constructor taking a list.
+- **Phase 2, Dapper on the runner: done.** `AddWhizbangPostgres` connects to nothing; it records a
+  `DapperSchemaInitializationRunner` (wait with the `PostgresOptions` retry settings, migrate, probe) and calls
+  `AddWhizbangSchemaInitialization()`, so the gate opens on Dapper too, and opens at once when the schema is
+  provisioned out of band. Migrations run under the schema lock (`SchemaInitializationLock`: the EF Core key, a
+  transaction-scoped lock on a connection of its own, try first, report contention to `ISchemaInitializationObserver`,
+  then wait on the server). The instance registers itself before the lock is released. The driver registers an
+  instance identity when the host has none.

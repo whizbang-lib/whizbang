@@ -43,7 +43,7 @@ public class DapperSchemaStartupTests {
   [After(Test)]
   public async Task TeardownAsync() => await PerTestDatabaseFactory.DropAsync(_database.Name);
 
-  private IServiceCollection _services(bool initializeSchema = true, string? connectionString = null) {
+  private ServiceCollection _services(bool initializeSchema = true, string? connectionString = null) {
     var services = new ServiceCollection();
     services.AddLogging();
     services.Configure<SchemaInitializationOptions>(o => o.NonBlockingSchemaInit = false);
@@ -53,7 +53,7 @@ public class DapperSchemaStartupTests {
     return services;
   }
 
-  private static IHostedService _initializer(IServiceProvider provider) =>
+  private static WhizbangDatabaseInitializerService _initializer(IServiceProvider provider) =>
     provider.GetServices<IHostedService>().OfType<WhizbangDatabaseInitializerService>().Single();
 
   private async Task<bool> _tableExistsAsync(string table) {
@@ -139,7 +139,7 @@ public class DapperSchemaStartupTests {
     var start = _initializer(provider).StartAsync(CancellationToken.None);
     var first = await Task.WhenAny(observer.Contended.Task, start);
 
-    await Assert.That(first).IsSameReferenceAs(observer.Contended.Task)
+    await Assert.That(ReferenceEquals(first, observer.Contended.Task)).IsTrue()
       .Because("another session holds the schema lock, so this start reports it and waits instead of migrating");
     await Assert.That(gate.IsReady).IsFalse();
     await Assert.That(await observer.Contended.Task).IsEqualTo("public");
@@ -149,6 +149,26 @@ public class DapperSchemaStartupTests {
 
     await Assert.That(gate.IsReady).IsTrue();
     await Assert.That(await _tableExistsAsync("wh_event_store")).IsTrue();
+  }
+
+  [Test]
+  public async Task ALockWaitThatIsCanceled_LeavesNothingWaitingOrHeldAsync() {
+    var observer = new LockObserver();
+    var key = SchemaInitializationLockKey.Compute("public");
+    await using var holder = new NpgsqlConnection(_database.ConnectionString);
+    await holder.OpenAsync();
+    await using var held = await holder.BeginTransactionAsync();
+    await holder.ExecuteAsync("SELECT pg_advisory_xact_lock(@key)", new { key }, held);
+    using var cancel = new CancellationTokenSource();
+
+    var acquire = SchemaInitializationLock.AcquireAsync(_database.ConnectionString, "public", [observer], cancel.Token);
+    await observer.Contended.Task;
+    await cancel.CancelAsync();
+
+    await Assert.That(async () => await acquire).Throws<OperationCanceledException>();
+    await Assert.That(await holder.ExecuteScalarAsync<long>(
+      "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted", transaction: held)).IsEqualTo(0L)
+      .Because("a canceled wait gives its connection back instead of staying queued for the lock");
   }
 
   private sealed class LockObserver : ISchemaInitializationObserver {
