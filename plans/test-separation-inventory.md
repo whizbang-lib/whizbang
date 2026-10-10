@@ -201,13 +201,13 @@ Test classes (top-level types with at least one `[Test]`) by category. A non-uni
 | Whizbang.Sagas.Tests | 39 | 0 | 0 | 0 | 39 | 0 |
 | Whizbang.SignalR.Tests | 6 | 0 | 0 | 0 | 6 | 0 |
 | Whizbang.Testing.Tests | 13 | 0 | 0 | 0 | 13 | 0 |
-| Whizbang.Transports.AzureServiceBus.Tests | 56 | 0 | 0 | 0 | 56 | 0 |
+| Whizbang.Transports.AzureServiceBus.Tests | 57 | 0 | 0 | 0 | 57 | 0 |
 | Whizbang.Transports.FastEndpoints.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
 | Whizbang.Transports.HotChocolate.Tests | 20 | 0 | 0 | 0 | 20 | 0 |
 | Whizbang.Transports.Mutations.Tests | 3 | 0 | 0 | 0 | 3 | 0 |
-| Whizbang.Transports.RabbitMQ.Tests | 23 | 0 | 0 | 0 | 23 | 0 |
+| Whizbang.Transports.RabbitMQ.Tests | 24 | 0 | 0 | 0 | 24 | 0 |
 | Whizbang.Transports.Tests | 12 | 0 | 0 | 0 | 12 | 0 |
-| **Total** | 1796 | 0 | 0 | 0 | 1796 | 3 |
+| **Total** | 1798 | 0 | 0 | 0 | 1798 | 3 |
 
 ## Worklist: non-unit types by project
 
@@ -332,7 +332,7 @@ All 24 types are unit-pure.
 
 ### Whizbang.Transports.AzureServiceBus.Tests
 
-All 85 types are unit-pure.
+All 86 types are unit-pure.
 
 ### Whizbang.Transports.FastEndpoints.Tests
 
@@ -348,7 +348,7 @@ All 13 types are unit-pure.
 
 ### Whizbang.Transports.RabbitMQ.Tests
 
-All 28 types are unit-pure.
+All 29 types are unit-pure.
 
 ### Whizbang.Transports.Tests
 
