@@ -154,6 +154,31 @@ public class ClaimWorkerPriorityBatchHookTests {
   }
 
   [Test]
+  public async Task Distribute_StreamWithNoArrivalTime_ShowsTheHookNoAgeAsync() {
+    var first = (Guid)TrackedGuid.New();
+    var second = (Guid)TrackedGuid.New();
+    var batch = _batch(first, second) with {
+      InboxStreams = [
+        new InboxStreamFold(first, WorkPriority.STANDARD, null, 1),
+        new InboxStreamFold(second, WorkPriority.STANDARD, null, 1),
+      ],
+    };
+    var hook = new Favor(second);
+    var (worker, drain, _) = _worker(batch, hook);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.FirstBatchWritten.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    PriorityBatchEntry seenFirst;
+    lock (hook.Seen) { seenFirst = hook.Seen.First(e => e.StreamId == first); }
+    await Assert.That(seenFirst.OldestAge).IsEqualTo(TimeSpan.Zero)
+      .Because("a fold the store returned without an arrival time has waited no measurable time, not a negative one");
+  }
+
+  [Test]
   public async Task Distribute_WithoutABatchHook_KeepsTheClaimsOrderAsync() {
     var first = (Guid)TrackedGuid.New();
     var second = (Guid)TrackedGuid.New();

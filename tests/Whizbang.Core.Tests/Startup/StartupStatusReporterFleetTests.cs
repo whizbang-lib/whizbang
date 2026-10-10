@@ -107,4 +107,20 @@ public class StartupStatusReporterFleetTests {
     await Assert.That(report.Instance.Ready).IsFalse()
       .Because("with no ready signal registered the instance never claims to be ready");
   }
+
+  [Test]
+  public async Task Started_NamesTheInstanceAndReadinessAsync() {
+    var state = new StartupPipelineState();
+    await state.OnRunStartingAsync(new StartupRunPlan([new StartupStepDescriptor { Name = "S" }]), CancellationToken.None);
+    var signal = new StartupReadySignal();
+    signal.MarkReady();
+
+    var report = await StartupStatusReporter.BuildAsync(
+      state, readySignal: signal, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(Guid.Empty, "svc", "h", 1),
+      fleetSource: null, includeReasons: false, cancellationToken: CancellationToken.None);
+
+    await Assert.That(report.Instance.ServiceName).IsEqualTo("svc");
+    await Assert.That(report.Instance.InstanceId).IsEqualTo(Guid.Empty);
+    await Assert.That(report.Instance.Ready).IsTrue();
+  }
 }

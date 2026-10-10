@@ -4313,7 +4313,7 @@ public abstract partial class Dispatcher(
   /// <param name="eventType">The event type to resolve topic for</param>
   /// <param name="context">Optional routing context (tenant ID, region, etc.)</param>
   /// <returns>The resolved topic name</returns>
-  private string? _resolveEventTopic(Type eventType, IReadOnlyDictionary<string, object>? context = null) {
+  private string _resolveEventTopic(Type eventType, IReadOnlyDictionary<string, object>? context = null) {
     // PRIORITY: Use outbox routing strategy if configured (routes events to namespace topics)
     // This ensures events are stored with their ACTUAL destination in the outbox,
     // providing proper durability guarantees
@@ -4593,7 +4593,7 @@ public abstract partial class Dispatcher(
             ? _resolveEventTopic(messageType)
             : _resolveCommandDestination(messageType);
         var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
-        // Null destination = owned-domain event → event-store-only (no transport)
+        // A batch send always has a destination: both resolvers return one (event-store-only is a publish option).
         var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
         await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
@@ -4604,7 +4604,7 @@ public abstract partial class Dispatcher(
         // Create receipt for this message
         receipts.Add(DeliveryReceipt.Accepted(
           envelope.MessageId,
-          destination ?? messageType.Name,
+          destination,
           context.CorrelationId,
           context.CausationId,
           streamId

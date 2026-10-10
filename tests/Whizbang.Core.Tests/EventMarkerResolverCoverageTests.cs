@@ -76,5 +76,6 @@ public class EventMarkerResolverCoverageTests {
 
   private sealed class OtherResolver : IEventMarkerResolver {
     public EventFlags? Resolve(string clrTypeName) => null;
+    public EventFlags? Resolve(Type type) => null;
   }
 }
