@@ -80,6 +80,17 @@ public class StartupAssessorTests : EFCoreTestBase {
       .Because("unreadable history does not block — the same stance the ledger guard takes");
   }
 
+  [Test]
+  public async Task OnlyUnreadableRecordedVersions_ServeAndSayTheHistoryWasUnreadableAsync() {
+    // Every recorded version is unreadable, so there is no newest to compare against. That still
+    // serves, and the reason must say why rather than naming a recorded version that does not exist.
+    var assessment = EFCorePostgresStartupAssessor.ComputeVerdict("0.9.4", ["garbage", "also-garbage"]);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Serve);
+    await Assert.That(assessment.Reason).Contains("only unreadable versions recorded");
+    await Assert.That(assessment.Reason).Contains("0.9.4");
+  }
+
   // ── end to end against the real ledger ─────────────────────────────────
 
   private EFCorePostgresStartupAssessor _assessorRunning(string version) {

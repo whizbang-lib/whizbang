@@ -140,13 +140,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorSchemaTests.cs</tests>
   internal static string ResolveSchema(
     Microsoft.EntityFrameworkCore.Metadata.IModel model,
-    Type entityType,
+    [DynamicallyAccessedMembers(EntityTypeTrimming.MEMBERS)] Type entityType,
     ILogger<EFCoreWorkCoordinator<TDbContext>>? logger) {
     ArgumentNullException.ThrowIfNull(model);
     return GetSchemaWithFallback(model.FindEntityType(entityType)?.GetSchema(), DEFAULT_SCHEMA, logger);
   }
 
-  private string _resolveSchema(Type entityType) => ResolveSchema(_dbContext.Model, entityType, _logger);
+  private string _resolveSchema([DynamicallyAccessedMembers(EntityTypeTrimming.MEMBERS)] Type entityType) => ResolveSchema(_dbContext.Model, entityType, _logger);
 
   /// <summary>
   /// Builds a schema-qualified identifier for SQL. Handles empty/public schema correctly.
@@ -444,7 +444,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "complete_outbox_published");
 
-    var idArray = ids is Guid[] arr ? arr : [.. ids];
+    var idArray = AsArray(ids);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
@@ -473,7 +473,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "reclassify_events_ephemeral");
-    var names = eventTypeNames as string[] ?? [.. eventTypeNames];
+    var names = AsArray(eventTypeNames);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -502,7 +502,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var eventStore = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
     var normalizeFn = BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION);
-    var names = eventTypeNames as string[] ?? [.. eventTypeNames];
+    var names = AsArray(eventTypeNames);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -599,7 +599,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
     var eventStore = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
-    var ids = streamIds as Guid[] ?? [.. streamIds];
+    var ids = AsArray(streamIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
@@ -1795,7 +1795,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
     var holdTable = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
-    var ids = eventIds as Guid[] ?? [.. eventIds];
+    var ids = AsArray(eventIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
@@ -1824,7 +1824,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var holdTable = BuildSchemaQualifiedName(schema, "wh_event_destruction_hold");
     var bodyTable = BuildSchemaQualifiedName(schema, EVENT_BODY_TABLE);
-    var ids = eventIds as Guid[] ?? [.. eventIds];
+    var ids = AsArray(eventIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
@@ -1903,7 +1903,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var functionName = BuildSchemaQualifiedName(schema, "complete_perspective");
 
     var cursorsJson = _serializePerspectiveCompletions([.. cursors]);
-    var idArray = eventWorkIds is Guid[] arr ? arr : [.. eventWorkIds];
+    var idArray = AsArray(eventWorkIds);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1979,7 +1979,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "resolve_sync_inquiries");
 
-    var inquiriesJson = _buildInquiriesJson(inquiries);
+    var inquiriesJson = BuildInquiriesJson(inquiries);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -2028,8 +2028,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await reader.IsDBNullAsync(0, cancellationToken) ? null : reader.GetGuid(0));
   }
 
+  /// <summary>
+  /// Writes the sync inquiries as the JSON array the batch status function reads.
+  /// </summary>
+  /// <param name="inquiries">The inquiries to send.</param>
+  /// <returns>The JSON array.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InquiriesJsonTests.cs</tests>
+#pragma warning disable RCS1158 // Static helper shared by every generic instantiation; it does not depend on TDbContext.
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Writes the inquiry array by hand, and a hand-written JSON array needs a separator decision at every element of every nested array. The loops and their index tests are the format.")]
-  private static string _buildInquiriesJson(IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries) {
+  internal static string BuildInquiriesJson(IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries) {
     var sb = new System.Text.StringBuilder("[");
     for (var i = 0; i < inquiries.Count; i++) {
       if (i > 0) {
@@ -2039,9 +2046,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       sb.Append("{\"InquiryId\":\"").Append(inq.InquiryId).Append("\",")
         .Append("\"StreamId\":\"").Append(inq.StreamId).Append("\",")
         .Append("\"PerspectiveName\":\"").Append(_jsonEscape(inq.PerspectiveName)).Append("\",")
-        .Append("\"DiscoverPendingFromOutbox\":").Append(inq.DiscoverPendingFromOutbox ? JSON_TRUE : JSON_FALSE).Append(',')
-        .Append("\"IncludePendingEventIds\":").Append(inq.IncludePendingEventIds ? JSON_TRUE : JSON_FALSE).Append(',')
-        .Append("\"IncludeProcessedEventIds\":").Append(inq.IncludeProcessedEventIds ? JSON_TRUE : JSON_FALSE);
+        .Append("\"DiscoverPendingFromOutbox\":").Append(_jsonBool(inq.DiscoverPendingFromOutbox)).Append(',')
+        .Append("\"IncludePendingEventIds\":").Append(_jsonBool(inq.IncludePendingEventIds)).Append(',')
+        .Append("\"IncludeProcessedEventIds\":").Append(_jsonBool(inq.IncludeProcessedEventIds));
       if (inq.EventIds is { Length: > 0 } eids) {
         sb.Append(",\"EventIds\":[");
         for (var j = 0; j < eids.Length; j++) {
@@ -2067,6 +2074,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     sb.Append(']');
     return sb.ToString();
   }
+#pragma warning restore RCS1158
 
   /// <inheritdoc />
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reads the claim's result set column by column into a work batch and then, when outstanding counts were requested, the second result set as well. The column reads dominate the count.")]
@@ -2310,7 +2318,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     sb.Append(",\"host_name\":\"").Append(_jsonEscape(request.HostName)).Append('"');
     sb.Append(",\"process_id\":").Append(request.ProcessId);
     sb.Append(",\"partition_count\":").Append(request.PartitionCount);
-    sb.Append(",\"debug_mode\":").Append(request.DebugMode ? JSON_TRUE : JSON_FALSE);
+    sb.Append(",\"debug_mode\":").Append(_jsonBool(request.DebugMode));
     sb.Append(",\"inbox_completion\":{")
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
@@ -2322,6 +2330,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
     sb.Append('}');
     return sb.ToString();
   }
+
+  /// <summary>
+  /// The array a Postgres array parameter binds: the caller's own array when it passed one, otherwise
+  /// a copy. Every id and name list the coordinator sends goes through here.
+  /// </summary>
+  /// <typeparam name="T">The element type.</typeparam>
+  /// <param name="items">The caller's collection.</param>
+  /// <returns>An array holding <paramref name="items"/>.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorParameterBindingTests.cs</tests>
+#pragma warning disable RCS1158 // Static helper shared by every generic instantiation; it does not depend on TDbContext.
+  internal static T[] AsArray<T>(IEnumerable<T> items) => items as T[] ?? [.. items];
+#pragma warning restore RCS1158
+
+  // One JSON literal per bool, so every hand-written payload spells its flags the same way and the
+  // choice is made (and tested) once.
+  private static string _jsonBool(bool value) => value ? JSON_TRUE : JSON_FALSE;
 
   private static string _jsonEscape(string s) =>
     s.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
@@ -2367,7 +2391,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "renew_leases");
 
-    var idArray = ids is Guid[] arr ? arr : [.. ids];
+    var idArray = AsArray(ids);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -2400,7 +2424,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "release_unprocessed_inbox");
 
-    var idArray = messageIds is Guid[] arr ? arr : [.. messageIds];
+    var idArray = AsArray(messageIds);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -2434,8 +2458,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "release_unstarted_leases");
 
-    Guid[] inboxArray = inboxStreamIds is Guid[] ia ? ia : [.. inboxStreamIds];
-    Guid[] perspectiveArray = perspectiveStreamIds is Guid[] pa ? pa : [.. perspectiveStreamIds];
+    Guid[] inboxArray = AsArray(inboxStreamIds);
+    Guid[] perspectiveArray = AsArray(perspectiveStreamIds);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -3588,7 +3612,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <param name="cmd">The command the parameters are added to.</param>
   /// <param name="originServiceId">The origin to filter on, or null for every origin.</param>
   /// <param name="eventTypes">The event types to filter on, or null for every type.</param>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DigestFilterParamsTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorParameterBindingTests.cs</tests>
 #pragma warning disable RCS1158 // Static helper shared by every generic instantiation; it does not depend on TDbContext.
   internal static void AddDigestFilterParams(
       System.Data.Common.DbCommand cmd, Guid? originServiceId, IReadOnlyList<string>? eventTypes) {
@@ -3961,7 +3985,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var completeSql = $"UPDATE {tableName} SET processed_at = NOW() WHERE message_id = ANY({{0}}) AND processed_at IS NULL";
 #pragma warning restore S2077
 
-    var foldedIdArray = foldedIds is Guid[] arr ? arr : [.. foldedIds];
+    var foldedIdArray = AsArray(foldedIds);
 
     // ONE transaction: the composite row(s) appear and the folded singles complete together —
     // a single is either still pending (floor intact) or folded (composite exists), never both,
@@ -4476,9 +4500,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // The concrete event type is resolved downstream by the lifecycle coordinator/receptors.
     JsonElement payload;
     try {
-      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement));
-      payload = (JsonElement)(System.Text.Json.JsonSerializer.Deserialize(row.EventData, typeInfo)
-        ?? throw new InvalidOperationException($"Failed to deserialize event {row.EventId} as JsonElement."));
+      // GetTypeInfo answers for exactly the type asked or throws (caught below), so this is the
+      // JsonElement contract, and a JsonElement cannot deserialize to null: JSON null is a Null element.
+      var typeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<JsonElement>)_jsonOptions.GetTypeInfo(typeof(JsonElement));
+      payload = System.Text.Json.JsonSerializer.Deserialize(row.EventData, typeInfo);
     } catch (NotSupportedException) {
       // Fallback: deserializing an interface/abstract type is not supported.
       // The chained type resolver may return polymorphic IEvent type info.
@@ -4711,7 +4736,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
 #pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
-      Value = streamIds is Guid[] arr ? arr : [.. streamIds]
+      Value = AsArray(streamIds)
     });
 #pragma warning restore RCS1130
     cmd.Parameters.Add(new NpgsqlParameter(P_MAX_ATTEMPTS, maxAttempts));
@@ -4864,7 +4889,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "fetch_outbox_batch");
 
-    var streamArr = streamIds is Guid[] arr ? arr : [.. streamIds];
+    var streamArr = AsArray(streamIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
@@ -5034,7 +5059,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "fetch_inbox_batch");
 
-    var streamArr = streamIds is Guid[] arr ? arr : [.. streamIds];
+    var streamArr = AsArray(streamIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
@@ -5198,7 +5223,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "fetch_events_by_ids");
 
-    var idArr = eventIds is Guid[] arr ? arr : [.. eventIds];
+    var idArr = AsArray(eventIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
@@ -5263,7 +5288,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var param = command.CreateParameter();
     param.ParameterName = "handled_types";
     param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
-    param.Value = handledTypeNames is string[] arr ? arr : [.. handledTypeNames];
+    param.Value = AsArray(handledTypeNames);
     command.Parameters.Add(param);
 
     await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -5331,7 +5356,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </param>
   /// <param name="entityType">The entity whose mapped schema the statement runs in.</param>
   private async Task<long> _discardPendingAsync(
-      Func<string, string> buildSql, Type entityType, IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken) {
+      Func<string, string> buildSql, [DynamicallyAccessedMembers(EntityTypeTrimming.MEMBERS)] Type entityType, IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(buildSql);
     ArgumentNullException.ThrowIfNull(messageTypeNames);
     if (messageTypeNames.Count == 0) {

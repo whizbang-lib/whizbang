@@ -169,6 +169,54 @@ public class PostgresDriverExtensionsTests {
     await Assert.That(steps).Count().IsEqualTo(1);
   }
 
+  /// <summary>
+  /// A host that has logging gets the prune step's report in its own log: the registration hands the
+  /// step the host's logger and falls back to a null one only where the host has none.
+  /// </summary>
+  [Test]
+  public async Task Postgres_TheClaimPruneStepLogsThroughTheHostsLoggerAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+    var hostLogger = new CapturingPruneLogger();
+    services.AddSingleton<ILogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep>>(hostLogger);
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    var step = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>()
+      .OfType<Whizbang.Core.Workers.ClaimedEmissionPruneStep>().Single();
+
+    // The step prunes through whatever claim store the run's services hold; this one reports three.
+    var runServices = new ServiceCollection()
+      .AddSingleton<IClaimedEmissionStore>(new PrunesThreeClaimedEmissionStore())
+      .BuildServiceProvider();
+    await step.RunAsync(runServices, CancellationToken.None);
+
+    await Assert.That(hostLogger.Messages).Count().IsEqualTo(1);
+    await Assert.That(hostLogger.Messages[0]).Contains("Pruned 3 claimed-emission claim(s)");
+  }
+
+  private sealed class PrunesThreeClaimedEmissionStore : IClaimedEmissionStore {
+    public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken)
+      => Task.FromResult(true);
+
+    public Task<int> PruneExpiredAsync(
+        DateTimeOffset expiredBefore, IReadOnlyCollection<string> retainedKeyPrefixes, int maxClaims, CancellationToken cancellationToken)
+      => Task.FromResult(3);
+  }
+
+  private sealed class CapturingPruneLogger : ILogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep> {
+    public List<string> Messages { get; } = [];
+
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception exception, Func<TState, Exception, string> formatter)
+      => Messages.Add(formatter(state, exception));
+  }
+
   [Test]
   public async Task Postgres_DoesNotOverrideExistingClaimedEmissionStore_Async() {
     // Locks the TryAdd semantics: consumers who already supply an IClaimedEmissionStore

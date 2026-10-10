@@ -70,11 +70,21 @@ public static class ProviderCapabilities {
   /// Whether both loaded versions fall inside the ranges the containment rewrite was verified
   /// against.
   /// </summary>
-  public static bool IsValidatedCombination =>
-    EfCoreVersion >= ValidatedEfCoreMinimum
-    && EfCoreVersion < ValidatedEfCoreExclusiveMaximum
-    && NpgsqlProviderVersion >= ValidatedNpgsqlMinimum
-    && NpgsqlProviderVersion < ValidatedNpgsqlExclusiveMaximum;
+  public static bool IsValidatedCombination => IsValidated(EfCoreVersion, NpgsqlProviderVersion);
+
+  /// <summary>Whether a pair of versions falls inside the verified ranges.</summary>
+  /// <remarks>
+  /// The loaded versions are fixed for a process, so only one answer is ever reachable through
+  /// <see cref="IsValidatedCombination"/>; the ranges themselves are asserted against any pair here.
+  /// </remarks>
+  /// <param name="efCore">An Entity Framework Core version.</param>
+  /// <param name="npgsql">An Npgsql provider version.</param>
+  /// <returns>True when both are inside their verified range.</returns>
+  internal static bool IsValidated(Version efCore, Version npgsql) =>
+    efCore >= ValidatedEfCoreMinimum
+    && efCore < ValidatedEfCoreExclusiveMaximum
+    && npgsql >= ValidatedNpgsqlMinimum
+    && npgsql < ValidatedNpgsqlExclusiveMaximum;
 
   /// <summary>
   /// Whether the provider already compiles a JSON member comparison into a containment test without
@@ -97,9 +107,16 @@ public static class ProviderCapabilities {
   /// diagnostics.
   /// </summary>
   /// <returns>The description.</returns>
-  public static string Describe() =>
-    $"EF Core {EfCoreVersion} (verified {ValidatedEfCoreRange}), " +
-    $"Npgsql {NpgsqlProviderVersion} (verified {ValidatedNpgsqlRange}), " +
-    $"containment rewrite {(ContainmentRewriteRequired ? "required" : "not required")}, " +
-    $"combination {(IsValidatedCombination ? "verified" : "NOT verified")}";
+  public static string Describe() => Describe(EfCoreVersion, NpgsqlProviderVersion, ContainmentRewriteRequired);
+
+  /// <summary>The description for a given pair of versions and rewrite requirement.</summary>
+  /// <param name="efCore">An Entity Framework Core version.</param>
+  /// <param name="npgsql">An Npgsql provider version.</param>
+  /// <param name="rewriteRequired">Whether the containment rewrite is required.</param>
+  /// <returns>The description.</returns>
+  internal static string Describe(Version efCore, Version npgsql, bool rewriteRequired) =>
+    $"EF Core {efCore} (verified {ValidatedEfCoreRange}), " +
+    $"Npgsql {npgsql} (verified {ValidatedNpgsqlRange}), " +
+    $"containment rewrite {(rewriteRequired ? "required" : "not required")}, " +
+    $"combination {(IsValidated(efCore, npgsql) ? "verified" : "NOT verified")}";
 }

@@ -1779,4 +1779,96 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     await Assert.That(envelopes[0].SourceCommitSequence).IsEqualTo(4242L)
       .Because("the row's origin_commit_sequence is the event's true position in its stream");
   }
+
+  // === Raw-message append: the hop carries the ambient trace ===
+
+  [Test]
+  public async Task AppendAsync_WithRawMessage_UnderAnActivity_StampsItsTraceParentOnTheHopAsync() {
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+    var streamId = Guid.NewGuid();
+    using var activity = new System.Diagnostics.Activity("event-store-append")
+      .SetIdFormat(System.Diagnostics.ActivityIdFormat.W3C)
+      .Start();
+
+    await eventStore.AppendAsync(streamId, new OrderCreatedEvent { OrderId = streamId, CustomerName = "Traced" });
+
+    var pointer = await context.Set<EventStoreRecord>().SingleAsync(e => e.StreamId == streamId);
+    var body = await context.Set<EventBodyRecord>().SingleAsync(b => b.EventId == pointer.Id);
+    await Assert.That(body.Metadata.Hops[0].TraceParent).IsEqualTo(activity.Id)
+      .Because("an event appended inside a trace must carry that trace, or the event's history loses its cause");
+  }
+
+  [Test]
+  public async Task AppendAsync_WithRawMessage_OutsideAnyActivity_LeavesTheTraceParentEmptyAsync() {
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+    var streamId = Guid.NewGuid();
+    System.Diagnostics.Activity.Current = null;
+
+    await eventStore.AppendAsync(streamId, new OrderCreatedEvent { OrderId = streamId, CustomerName = "Untraced" });
+
+    var pointer = await context.Set<EventStoreRecord>().SingleAsync(e => e.StreamId == streamId);
+    var body = await context.Set<EventBodyRecord>().SingleAsync(b => b.EventId == pointer.Id);
+    await Assert.That(body.Metadata.Hops[0].TraceParent).IsNull();
+  }
+
+  // === A payload stored as JSON null is refused on every read path ===
+
+  private async Task<(Guid StreamId, Guid EventId)> _seedJsonNullPayloadAsync() {
+    await using var context = CreateDbContext();
+    var streamId = Guid.NewGuid();
+    var messageId = MessageId.New();
+    var nullPayload = System.Text.Json.JsonDocument.Parse("null").RootElement;
+    var record = new EventStoreRecord {
+      Id = messageId.Value,
+      StreamId = streamId,
+      AggregateId = streamId,
+      AggregateType = "TestAggregate",
+      Version = 1,
+      EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
+      EventData = nullPayload,
+      Metadata = new EnvelopeMetadata { MessageId = messageId, Hops = [CreateTestHop()] },
+      CreatedAt = DateTime.UtcNow,
+    };
+    context.Set<EventStoreRecord>().Add(record);
+    context.Set<EventBodyRecord>().Add(new EventBodyRecord {
+      EventId = record.Id,
+      EventData = nullPayload,
+      Metadata = record.Metadata!,
+    });
+    await context.SaveChangesAsync();
+    return (streamId, messageId.Value);
+  }
+
+  [Test]
+  public async Task ReadAsync_WhenAStoredPayloadIsJsonNull_ThrowsNamingTheEventAsync() {
+    var (streamId, eventId) = await _seedJsonNullPayloadAsync();
+    await using var readContext = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(readContext);
+
+    var thrown = await Assert.That(async () => {
+      await foreach (var _ in eventStore.ReadAsync<OrderCreatedEvent>(streamId, fromSequence: 0)) {
+        // Draining is the read; the row must be refused rather than yielded as a null event.
+      }
+    }).Throws<InvalidOperationException>();
+
+    await Assert.That(thrown!.Message).Contains(eventId.ToString());
+    await Assert.That(thrown.Message).Contains("JSON null");
+  }
+
+  [Test]
+  public async Task ReadPolymorphicAsync_WhenAStoredPayloadIsJsonNull_ThrowsNamingTheEventAsync() {
+    var (streamId, eventId) = await _seedJsonNullPayloadAsync();
+    await using var readContext = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(readContext);
+
+    var thrown = await Assert.That(async () => {
+      await foreach (var _ in eventStore.ReadPolymorphicAsync(streamId, null, [typeof(OrderCreatedEvent)])) {
+        // Draining is the read.
+      }
+    }).Throws<InvalidOperationException>();
+
+    await Assert.That(thrown!.Message).Contains(eventId.ToString());
+  }
 }

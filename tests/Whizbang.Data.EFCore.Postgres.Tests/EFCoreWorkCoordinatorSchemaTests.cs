@@ -217,7 +217,7 @@ public class EFCoreWorkCoordinatorSchemaTests {
     await Assert.That(result).DoesNotStartWith(".");
   }
 
-  private sealed class SchemaProbeRow {
+  public sealed class SchemaProbeRow {
     public int Id { get; set; }
   }
 
