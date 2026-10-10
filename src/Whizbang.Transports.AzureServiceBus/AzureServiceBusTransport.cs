@@ -1929,7 +1929,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // governor answers with ONE exponentially-backed pause per streak; the pause runs detached
     // because StopProcessingAsync awaits in-flight handlers (including this one).
     if (args.Exception is ServiceBusException sbEx
-        && _throttlePolicy.RecordError(sbEx.Reason, DateTimeOffset.UtcNow) is { } pause
+        && _throttlePolicy.RecordError(sbEx.Reason, _timeProvider.GetUtcNow()) is { } pause
         && stopProcessingAsync is not null && startProcessingAsync is not null
         && _throttlePolicy.TryBeginPause()) {
       if (_logger.IsEnabled(LogLevel.Warning)) {
@@ -1942,10 +1942,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // CancellationToken.None throughout the detached pause is deliberate: args.CancellationToken
       // is signaled when the processor stops — which is exactly what the pause DOES first, so
       // flowing it here would cancel our own delay/resume and strand the processor stopped.
+      // The pause runs on the transport's clock, like every other time this transport measures.
       _ = Task.Run(async () => {
         try {
           await stopProcessingAsync();
-          await Task.Delay(pause, CancellationToken.None);
+          await Task.Delay(pause, _timeProvider, CancellationToken.None);
           await startProcessingAsync();
           if (_logger.IsEnabled(LogLevel.Information)) {
             _logger.LogInformation(

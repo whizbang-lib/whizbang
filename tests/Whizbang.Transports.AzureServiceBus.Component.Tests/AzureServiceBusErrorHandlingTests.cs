@@ -3,7 +3,9 @@
 
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
@@ -650,7 +652,9 @@ public class AzureServiceBusErrorHandlingTests {
 
   private static (AzureServiceBusTransport Transport, FakeServiceBusClient Client) _createTransport(
     bool enableSessions,
-    int maxDeliveryAttempts = 10) {
+    int maxDeliveryAttempts = 10,
+    ILogger<AzureServiceBusTransport>? logger = null,
+    TimeProvider? timeProvider = null) {
     var client = new FakeServiceBusClient();
     var options = new AzureServiceBusOptions {
       // No admin client is wired, so provisioning short-circuits regardless.
@@ -662,7 +666,8 @@ public class AzureServiceBusErrorHandlingTests {
       client,
       _combinedOptions,
       options,
-      NullLogger<AzureServiceBusTransport>.Instance);
+      logger ?? NullLogger<AzureServiceBusTransport>.Instance,
+      timeProvider: timeProvider);
     return (transport, client);
   }
 
@@ -755,23 +760,90 @@ public class AzureServiceBusErrorHandlingTests {
   /// ServiceBusProcessor whose event pipeline can be pumped synchronously via the SDK's
   /// OnProcessMessageAsync / OnProcessErrorAsync mocking hooks.
   /// </summary>
-  private sealed class FakeProcessor : ServiceBusProcessor {
-    private int _startCount;
-    private int _stopCount;
+  /// <summary>
+  /// A count the fake processors raise on every stop or start, with a wait for the moment it reaches a
+  /// target: the exact transition a pause or resume test asserts, rather than a poll.
+  /// </summary>
+  private sealed class CountSignal {
+    private readonly Lock _sync = new();
+    private readonly List<(int Target, TaskCompletionSource Reached)> _waiters = [];
+    private int _count;
 
+    public int Count {
+      get {
+        lock (_sync) {
+          return _count;
+        }
+      }
+    }
+
+    public void Increment() {
+      List<TaskCompletionSource> reached = [];
+      lock (_sync) {
+        _count++;
+        reached.AddRange(_waiters.Where(w => _count >= w.Target).Select(w => w.Reached));
+        _waiters.RemoveAll(w => _count >= w.Target);
+      }
+      foreach (var signal in reached) {
+        signal.TrySetResult();
+      }
+    }
+
+    public Task WaitForAsync(int target) {
+      lock (_sync) {
+        if (_count >= target) {
+          return Task.CompletedTask;
+        }
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _waiters.Add((target, reached));
+        return reached.Task;
+      }
+    }
+  }
+
+  /// <summary>
+  /// A fake clock that signals when the throttle pause's timer exists, so a test advances past the
+  /// pause only once the transport is waiting on it. The pause is a one-shot timer of exactly the
+  /// policy's first pause; the transport's periodic timers are told apart by their period.
+  /// </summary>
+  private sealed class PauseClock : FakeTimeProvider {
+    private readonly TaskCompletionSource _pauseTimerCreated = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task PauseTimerCreated => _pauseTimerCreated.Task;
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      var timer = base.CreateTimer(callback, state, dueTime, period);
+      if (dueTime == _firstThrottlePause && period == Timeout.InfiniteTimeSpan) {
+        _pauseTimerCreated.TrySetResult();
+      }
+      return timer;
+    }
+  }
+
+  /// <summary>The first pause of a throttle streak: the transport's policy starts at two seconds.</summary>
+  private static readonly TimeSpan _firstThrottlePause = TimeSpan.FromSeconds(2);
+
+  /// <summary>The fragment of the warning the transport logs, synchronously, when it decides to pause.</summary>
+  private const string PAUSE_DECISION = "pausing accepts for";
+
+  private sealed class FakeProcessor : ServiceBusProcessor {
     /// <summary>Accept-loop starts, including the throttle governor's resume.</summary>
-    public int StartCount => Volatile.Read(ref _startCount);
+    public CountSignal Starts { get; } = new();
 
     /// <summary>Accept-loop stops, including the throttle governor's pause.</summary>
-    public int StopCount => Volatile.Read(ref _stopCount);
+    public CountSignal Stops { get; } = new();
+
+    public int StartCount => Starts.Count;
+
+    public int StopCount => Stops.Count;
 
     public override Task StartProcessingAsync(CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _startCount);
+      Starts.Increment();
       return Task.CompletedTask;
     }
 
     public override Task StopProcessingAsync(CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _stopCount);
+      Stops.Increment();
       return Task.CompletedTask;
     }
 
@@ -790,24 +862,25 @@ public class AzureServiceBusErrorHandlingTests {
   private sealed class FakeSessionProcessor : ServiceBusSessionProcessor {
     private readonly InnerFakeProcessor _inner = new();
 
-    private int _startCount;
-    private int _stopCount;
-
     protected override ServiceBusProcessor InnerProcessor => _inner;
 
     /// <summary>Accept-loop starts, including the throttle governor's resume.</summary>
-    public int StartCount => Volatile.Read(ref _startCount);
+    public CountSignal Starts { get; } = new();
 
     /// <summary>Accept-loop stops, including the throttle governor's pause.</summary>
-    public int StopCount => Volatile.Read(ref _stopCount);
+    public CountSignal Stops { get; } = new();
+
+    public int StartCount => Starts.Count;
+
+    public int StopCount => Stops.Count;
 
     public override Task StartProcessingAsync(CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _startCount);
+      Starts.Increment();
       return Task.CompletedTask;
     }
 
     public override Task StopProcessingAsync(CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _stopCount);
+      Stops.Increment();
       return Task.CompletedTask;
     }
 
@@ -936,7 +1009,8 @@ public class AzureServiceBusErrorHandlingTests {
   [Timeout(60000)]
   public async Task BatchProcessorError_ServiceBusy_PausesThenResumesTheAcceptLoopAsync(
       CancellationToken cancellationToken) {
-    var (transport, client) = _createTransport(enableSessions: false);
+    var clock = new PauseClock();
+    var (transport, client) = _createTransport(enableSessions: false, timeProvider: clock);
     await transport.SubscribeBatchAsync(
       (_, _) => Task.CompletedTask, _destination(), _batchOptions(), cancellationToken);
     var processor = client.LastProcessor!;
@@ -946,16 +1020,16 @@ public class AzureServiceBusErrorHandlingTests {
       _errorArgs(new ServiceBusException("throttled", ServiceBusFailureReason.ServiceBusy)));
 
     // The pause runs detached so the error callback can return — StopProcessingAsync awaits
-    // in-flight handlers, and this callback is one of them.
-    while (processor.StopCount == 0 && !cancellationToken.IsCancellationRequested) {
-      await Task.Delay(25, cancellationToken);
-    }
+    // in-flight handlers, and this callback is one of them. Wait on the stop it makes.
+    await processor.Stops.WaitForAsync(1).WaitAsync(cancellationToken);
     await Assert.That(processor.StopCount).IsGreaterThanOrEqualTo(1)
       .Because("shedding accept pressure is the whole response to a namespace throttle");
 
-    while (processor.StartCount <= startsAfterSubscribe && !cancellationToken.IsCancellationRequested) {
-      await Task.Delay(25, cancellationToken);
-    }
+    // The pause runs on the transport's clock: once its timer exists, move the clock past it and
+    // wait on the start the resume makes.
+    await clock.PauseTimerCreated.WaitAsync(cancellationToken);
+    clock.Advance(_firstThrottlePause);
+    await processor.Starts.WaitForAsync(startsAfterSubscribe + 1).WaitAsync(cancellationToken);
     await Assert.That(processor.StartCount).IsGreaterThan(startsAfterSubscribe)
       .Because("a pause with no resume is an outage, not a backoff");
   }
@@ -973,7 +1047,11 @@ public class AzureServiceBusErrorHandlingTests {
   [Timeout(60000)]
   public async Task BatchProcessorError_ServiceBusyBurst_PausesOnlyOnceAsync(
       CancellationToken cancellationToken) {
-    var (transport, client) = _createTransport(enableSessions: false);
+    // The clock never moves, so the first pause cannot end and free the single flight for another:
+    // every report below is decided while that pause holds it.
+    var clock = new PauseClock();
+    var logger = new RecordingTransportLogger();
+    var (transport, client) = _createTransport(enableSessions: false, logger: logger, timeProvider: clock);
     await transport.SubscribeBatchAsync(
       (_, _) => Task.CompletedTask, _destination(), _batchOptions(), cancellationToken);
     var processor = client.LastProcessor!;
@@ -982,14 +1060,13 @@ public class AzureServiceBusErrorHandlingTests {
       processor.RaiseErrorAsync(
         _errorArgs(new ServiceBusException("throttled", ServiceBusFailureReason.ServiceBusy)))));
 
-    while (processor.StopCount == 0 && !cancellationToken.IsCancellationRequested) {
-      await Task.Delay(25, cancellationToken);
-    }
-    // Give any duplicate pause a chance to land before counting.
-    await Task.Delay(300, cancellationToken);
-
-    await Assert.That(processor.StopCount).IsEqualTo(1)
+    // Each report decides to pause or not before its error callback returns, so all eight decisions
+    // are in once WhenAll completes.
+    await Assert.That(logger.Count(LogLevel.Warning, PAUSE_DECISION)).IsEqualTo(1)
       .Because("one namespace throttle is one pause however many slots reported it");
+    await processor.Stops.WaitForAsync(1).WaitAsync(cancellationToken);
+    await Assert.That(processor.StopCount).IsEqualTo(1)
+      .Because("the one pause stops the accept loop once");
   }
 
   /// <summary>
@@ -1002,16 +1079,18 @@ public class AzureServiceBusErrorHandlingTests {
   [Arguments(ServiceBusFailureReason.QuotaExceeded)]
   public async Task BatchProcessorError_NonThrottleReason_LeavesTheAcceptLoopRunningAsync(
       ServiceBusFailureReason reason, CancellationToken cancellationToken) {
-    var (transport, client) = _createTransport(enableSessions: false);
+    var logger = new RecordingTransportLogger();
+    var (transport, client) = _createTransport(enableSessions: false, logger: logger);
     await transport.SubscribeBatchAsync(
       (_, _) => Task.CompletedTask, _destination(), _batchOptions(), cancellationToken);
     var processor = client.LastProcessor!;
 
     await processor.RaiseErrorAsync(_errorArgs(new ServiceBusException("not a throttle", reason)));
-    await Task.Delay(300, cancellationToken);
 
-    await Assert.That(processor.StopCount).IsEqualTo(0)
+    // The pause decision is made before the error callback returns, so its absence is final here.
+    await Assert.That(logger.Contains(LogLevel.Warning, PAUSE_DECISION)).IsFalse()
       .Because("pausing accepts for an unrelated error sheds throughput for no reason");
+    await Assert.That(processor.StopCount).IsEqualTo(0);
   }
 
   /// <summary>
@@ -1021,14 +1100,16 @@ public class AzureServiceBusErrorHandlingTests {
   [Timeout(60000)]
   public async Task BatchProcessorError_NonServiceBusException_LeavesTheAcceptLoopRunningAsync(
       CancellationToken cancellationToken) {
-    var (transport, client) = _createTransport(enableSessions: false);
+    var logger = new RecordingTransportLogger();
+    var (transport, client) = _createTransport(enableSessions: false, logger: logger);
     await transport.SubscribeBatchAsync(
       (_, _) => Task.CompletedTask, _destination(), _batchOptions(), cancellationToken);
     var processor = client.LastProcessor!;
 
     await processor.RaiseErrorAsync(_errorArgs(new InvalidOperationException("unrelated")));
-    await Task.Delay(300, cancellationToken);
 
+    // The pause decision is made before the error callback returns, so its absence is final here.
+    await Assert.That(logger.Contains(LogLevel.Warning, PAUSE_DECISION)).IsFalse();
     await Assert.That(processor.StopCount).IsEqualTo(0);
   }
 
@@ -1040,7 +1121,8 @@ public class AzureServiceBusErrorHandlingTests {
   [Timeout(60000)]
   public async Task SessionBatchProcessorError_ServiceBusy_PausesThenResumesTheAcceptLoopAsync(
       CancellationToken cancellationToken) {
-    var (transport, client) = _createTransport(enableSessions: true);
+    var clock = new PauseClock();
+    var (transport, client) = _createTransport(enableSessions: true, timeProvider: clock);
     await transport.SubscribeBatchAsync(
       (_, _) => Task.CompletedTask, _destination(), _batchOptions(), cancellationToken);
     var processor = client.LastSessionProcessor!;
@@ -1049,14 +1131,12 @@ public class AzureServiceBusErrorHandlingTests {
     await processor.RaiseErrorAsync(
       _errorArgs(new ServiceBusException("throttled", ServiceBusFailureReason.ServiceBusy)));
 
-    while (processor.StopCount == 0 && !cancellationToken.IsCancellationRequested) {
-      await Task.Delay(25, cancellationToken);
-    }
+    await processor.Stops.WaitForAsync(1).WaitAsync(cancellationToken);
     await Assert.That(processor.StopCount).IsGreaterThanOrEqualTo(1);
 
-    while (processor.StartCount <= startsAfterSubscribe && !cancellationToken.IsCancellationRequested) {
-      await Task.Delay(25, cancellationToken);
-    }
+    await clock.PauseTimerCreated.WaitAsync(cancellationToken);
+    clock.Advance(_firstThrottlePause);
+    await processor.Starts.WaitForAsync(startsAfterSubscribe + 1).WaitAsync(cancellationToken);
     await Assert.That(processor.StartCount).IsGreaterThan(startsAfterSubscribe);
   }
 
@@ -1100,14 +1180,17 @@ public class AzureServiceBusErrorHandlingTests {
   [Timeout(60000)]
   public async Task SingleMessageProcessorError_ServiceBusy_DoesNotPauseTheAcceptLoopAsync(
       CancellationToken cancellationToken) {
-    var (transport, client) = _createTransport(enableSessions: false);
+    var logger = new RecordingTransportLogger();
+    var (transport, client) = _createTransport(enableSessions: false, logger: logger);
     await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, _destination(), cancellationToken);
     var processor = client.LastProcessor!;
 
     await processor.RaiseErrorAsync(
       _errorArgs(new ServiceBusException("throttled", ServiceBusFailureReason.ServiceBusy)));
-    await Task.Delay(300, cancellationToken);
 
+    // The pause decision is made before the error callback returns, so its absence is final here.
+    await Assert.That(logger.Contains(LogLevel.Warning, PAUSE_DECISION)).IsFalse()
+      .Because("the single-message path has no accept-loop delegates to pause with");
     await Assert.That(processor.StopCount).IsEqualTo(0)
       .Because("the single-message path has no concurrent accept slots to shed, so it is wired "
              + "without the pause delegates");
