@@ -590,4 +590,73 @@ public class TestClass { }
   }
 
   #endregion
+
+  #region FirstArgumentEnumMember Tests
+
+  private const string ENUM_ATTRIBUTE_SOURCE = """
+using System;
+
+public enum Stage { Draft = 0, Active = 1 }
+
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
+public class StageAttribute : Attribute {
+    // A parameterless constructor declared FIRST: reading "the first constructor's first parameter" finds
+    // no parameter here, although the applications below bind to the Stage constructor.
+    public StageAttribute() { }
+    public StageAttribute(Stage stage) { }
+    public StageAttribute(int number) { }
+}
+
+[Stage(Stage.Active)]
+public class NamedMember { }
+
+[Stage((Stage)42)]
+public class UndefinedValue { }
+
+[Stage(7)]
+public class NotAnEnum { }
+
+[Stage]
+public class NoArgument { }
+""";
+
+  private static Microsoft.CodeAnalysis.AttributeData _stageAttributeOn(string typeName) {
+    var compilation = GeneratorTestHelper.CreateCompilation(ENUM_ATTRIBUTE_SOURCE);
+    return compilation.GetTypeByMetadataName(typeName)!.GetAttributes()[0];
+  }
+
+  [Test]
+  public async Task FirstArgumentEnumMember_EnumArgument_ReturnsTheNamedMemberEvenWhenAnotherConstructorIsDeclaredFirstAsync() {
+    var member = AttributeUtilities.FirstArgumentEnumMember(_stageAttributeOn("NamedMember"));
+
+    await Assert.That(member).IsNotNull();
+    await Assert.That(member!.Name).IsEqualTo("Active");
+    await Assert.That(member.ContainingType.Name).IsEqualTo("Stage")
+      .Because("the enumeration comes from the bound argument, not from whichever constructor the class declares first");
+  }
+
+  [Test]
+  public async Task FirstArgumentEnumMember_ValueTheEnumerationDoesNotName_ReturnsNullAsync() {
+    var member = AttributeUtilities.FirstArgumentEnumMember(_stageAttributeOn("UndefinedValue"));
+
+    await Assert.That(member).IsNull()
+      .Because("a cast of an undefined number names no member, and guessing one would emit a member that does not exist");
+  }
+
+  [Test]
+  public async Task FirstArgumentEnumMember_NonEnumArgument_ReturnsNullAsync() {
+    var member = AttributeUtilities.FirstArgumentEnumMember(_stageAttributeOn("NotAnEnum"));
+
+    await Assert.That(member).IsNull()
+      .Because("an int argument bound to an int parameter is a number, not an enumeration member");
+  }
+
+  [Test]
+  public async Task FirstArgumentEnumMember_NoConstructorArgument_ReturnsNullAsync() {
+    var member = AttributeUtilities.FirstArgumentEnumMember(_stageAttributeOn("NoArgument"));
+
+    await Assert.That(member).IsNull();
+  }
+
+  #endregion
 }

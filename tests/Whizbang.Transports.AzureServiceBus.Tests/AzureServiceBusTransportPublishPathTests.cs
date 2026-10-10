@@ -72,6 +72,24 @@ public class AzureServiceBusTransportPublishPathTests {
   }
 
   /// <summary>
+  /// A destination with no routing key publishes under the default subject, and the subject
+  /// diagnostic names the missing key as "(null)" rather than leaving the slot blank, so an operator
+  /// reading the log can tell an absent key from an empty one.
+  /// </summary>
+  [Test]
+  public async Task PublishAsync_DestinationWithoutRoutingKey_LogsNullRoutingKeyAndDefaultSubjectAsync() {
+    var logger = new RecordingTransportLogger();
+    var (transport, client) = _createTransport(logger: logger);
+    var envelope = AsbTransportTestData.CreateEnvelope();
+
+    await transport.PublishAsync(envelope, new TransportDestination("bulk-topic"));
+
+    await Assert.That(client.LastSender!.Sent[0].Subject).IsEqualTo("message");
+    await Assert.That(logger.Contains(LogLevel.Debug, "Setting Subject=message")).IsTrue();
+    await Assert.That(logger.Contains(LogLevel.Debug, "(RoutingKey=(null))")).IsTrue();
+  }
+
+  /// <summary>
   /// Bodies longer than 500 characters take the truncated-preview branch of the publish
   /// diagnostic without affecting what goes on the wire.
   /// </summary>

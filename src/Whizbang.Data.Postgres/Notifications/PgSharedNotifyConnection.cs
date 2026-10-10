@@ -157,7 +157,7 @@ public sealed partial class PgSharedNotifyConnection(
     var resolution = NotificationConnectionStringResolver.Resolve(
       _options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null && _dataSource is null) {
-      SetAvailable(false, "no connection string resolvable");
+      MarkUnavailable("no connection string resolvable");
       return false;
     }
     try {
@@ -175,10 +175,14 @@ public sealed partial class PgSharedNotifyConnection(
       // can't authenticate). When the data source path is used the probe doesn't open a
       // second connection itself, so this argument is unused.
       var ok = await RunProbeAsync(conn, resolution.ConnectionString ?? string.Empty, cancellationToken).ConfigureAwait(false);
-      SetAvailable(ok, ok ? null : "ProbeNowAsync round-trip failed");
+      if (ok) {
+        MarkAvailable();
+      } else {
+        MarkUnavailable("ProbeNowAsync round-trip failed");
+      }
       return ok;
     } catch (Exception ex) {
-      SetAvailable(false, ProbeFailureReason(ex, cancellationToken));
+      MarkUnavailable(ProbeFailureReason(ex, cancellationToken));
       return false;
     }
   }
@@ -507,13 +511,13 @@ public sealed partial class PgSharedNotifyConnection(
         // and recycle the conn so the reprobe path runs after PeriodicReprobeInterval.
         var probeOk = await RunProbeAsync(conn, connectionString ?? string.Empty, stoppingToken).ConfigureAwait(false);
         if (!probeOk) {
-          SetAvailable(false, "self-test probe round-trip failed");
+          MarkUnavailable("self-test probe round-trip failed");
           throw new InvalidOperationException(
             "Self-test probe failed: connection opened but pg_notify round-trip did not arrive within SelfTestTimeout.");
         }
 
         attempt = 0;
-        SetAvailable(true, failureReason: null);
+        MarkAvailable();
         var channelCount = _registry.AllChannels().Count;
         LogConnected(_logger, channelCount);
         _emitMode(SignalingModeName.LISTEN_NOTIFY, reason: $"connected; LISTENing on {channelCount} channel(s)");
@@ -533,7 +537,7 @@ public sealed partial class PgSharedNotifyConnection(
           _connection = null;
         }
         attempt++;
-        SetAvailable(false, failureReason: ex.Message);
+        MarkUnavailable(ex.Message);
         var delay = _computeBackoff(attempt);
         LogReconnect(_logger, ex.Message, resolution.Source, _options.ConnectionStringKey ?? "(unset)", delay.TotalSeconds);
         try {
@@ -548,7 +552,7 @@ public sealed partial class PgSharedNotifyConnection(
       }
     }
 
-    SetAvailable(false, failureReason: "shutdown");
+    MarkUnavailable("shutdown");
     LogStopped(_logger);
   }
 
@@ -654,11 +658,18 @@ public sealed partial class PgSharedNotifyConnection(
     }
   }
 
-  internal void SetAvailable(bool available, string? failureReason) {
+  /// <summary>Records that the LISTEN/NOTIFY connection works: a probe round-trip succeeded.</summary>
+  internal void MarkAvailable() => _transition(available: true, reason: "self-test probe succeeded (restored)");
+
+  /// <summary>Records that the LISTEN/NOTIFY connection does not work, and why.</summary>
+  /// <param name="failureReason">What failed, for the mode-transition log and <c>LastFailureReason</c>.</param>
+  internal void MarkUnavailable(string failureReason) => _transition(available: false, reason: failureReason);
+
+  private void _transition(bool available, string reason) {
     bool fire;
     lock (_availabilityGate) {
       // ProbeNowAsync can run concurrently with the BackgroundService loop's probe; both
-      // call SetAvailable. Guard the transition so OnAvailabilityChanged fires exactly
+      // record a transition. Guard it so OnAvailabilityChanged fires exactly
       // once per actual change.
       fire = _isAvailable != available;
       _isAvailable = available;
@@ -667,7 +678,7 @@ public sealed partial class PgSharedNotifyConnection(
         _lastVerifiedAt = now;
       } else {
         _lastFailureAt = now;
-        _lastFailureReason = failureReason;
+        _lastFailureReason = reason;
       }
     }
     if (fire) {
@@ -677,10 +688,7 @@ public sealed partial class PgSharedNotifyConnection(
       // captures the runtime fallback / restore.
       _metrics?.ConnectionState.Add(available ? 1 : -1);
       var transitionMode = available ? SignalingModeName.LISTEN_NOTIFY : SignalingModeName.POLLING_ONLY;
-      var transitionReason = available
-        ? "self-test probe succeeded (restored)"
-        : failureReason ?? "connection lost";
-      _emitMode(transitionMode, reason: transitionReason);
+      _emitMode(transitionMode, reason: reason);
       OnAvailabilityChanged?.Invoke(available);
     }
   }

@@ -67,6 +67,50 @@ public class PerspectiveAccessorGeneratorTests {
   }
 
   /// <summary>
+  /// Only what a filter could name gets an accessor: a public, readable, instance property. A static
+  /// property belongs to no row, a write-only one has nothing to read, and a non-public one is not
+  /// part of the model's surface, so none of them is offered.
+  /// </summary>
+  [Test]
+  public async Task Accessors_SkipStaticAndWriteOnlyPropertiesAsync() {
+    const string source = """
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace MyApp.Perspectives;
+
+      public class TicketModel {
+        [StreamId]
+        public Guid TicketId { get; init; }
+        public string Title { get; init; } = "";
+        public static string SharedLabel { get; set; } = "";
+        public string Secret { set { _ = value; } }
+        internal string HiddenNote { get; init; } = "";
+      }
+
+      public record TicketOpened([property: StreamId] Guid TicketId) : IEvent;
+
+      public class TicketPerspective : IPerspectiveFor<TicketModel, TicketOpened> {
+        public TicketModel Apply(TicketModel? current, TicketOpened @event) =>
+          new TicketModel { TicketId = @event.TicketId };
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveAccessorGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MyApp_Perspectives_TicketModelAccessors.g.cs");
+
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains("case \"Title\":");
+    await Assert.That(generated).DoesNotContain("SharedLabel")
+      .Because("a static property is not part of any row a filter reads");
+    await Assert.That(generated).DoesNotContain("Secret")
+      .Because("a property with no getter has nothing for an accessor to read");
+    await Assert.That(generated).DoesNotContain("HiddenNote")
+      .Because("a non-public property is not part of the model's addressable surface");
+  }
+
+  /// <summary>
   /// The walk stops rather than following a model that refers back to its own type.
   /// </summary>
   [Test]

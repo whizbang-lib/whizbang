@@ -522,18 +522,16 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// <summary>
   /// Applies a minted control-class lifetime as AMQP per-message expiry (topology arc phase 9).
   /// The wire encoding is a millisecond count as a string; a null or non-positive lifetime leaves
-  /// <c>Expiration</c> unset, which is the pre-phase-9 wire shape exactly. Values beyond
-  /// <see cref="long.MaxValue"/> milliseconds saturate rather than throwing — a degenerate
-  /// configuration must never fault a publish.
+  /// <c>Expiration</c> unset, which is the pre-phase-9 wire shape exactly. Every lifetime fits:
+  /// the longest <see cref="TimeSpan"/> is <see cref="long.MaxValue"/> ticks, which is ten thousand
+  /// times fewer milliseconds, so the count is whole milliseconds with no saturation to decide.
   /// </summary>
   private static void _applyControlClassTimeToLive(BasicProperties properties, TimeSpan? timeToLive) {
     if (timeToLive is not { } lifetime || lifetime <= TimeSpan.Zero) {
       return;
     }
 
-    var milliseconds = lifetime.TotalMilliseconds >= long.MaxValue
-      ? long.MaxValue
-      : (long)lifetime.TotalMilliseconds;
+    var milliseconds = lifetime.Ticks / TimeSpan.TicksPerMillisecond;
     properties.Expiration = milliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
   }
 

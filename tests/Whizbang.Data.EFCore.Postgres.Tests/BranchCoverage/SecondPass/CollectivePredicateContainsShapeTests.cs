@@ -76,6 +76,17 @@ public class CollectivePredicateContainsShapeTests {
       .WithMessageContaining("Args=2 [Int32, Int32]");
   }
 
+  // A static Contains of an unknown arity has no instance to name: the message says "Object=null", and
+  // names the method's declaring type so the author can find which Contains the binder chose.
+  [Test]
+  public async Task UnsupportedStaticContainsShape_SaysThereIsNoInstanceAsync() {
+    Expression<Func<PerspectiveRow<JobModel>, bool>> oneArgument = row => Holder.Contains(row.Data.Count);
+
+    await Assert.That(() => CollectivePredicateSqlCompiler<JobModel>.Compile(oneArgument))
+      .Throws<NotSupportedException>()
+      .WithMessageContaining("Method=Holder.Contains, Object=null, Args=1 [Int32, -]");
+  }
+
   // Each IN value is bound as the text a jsonb ->> extraction yields: a null stays null, an enum is its
   // number (how the document stores it), and anything else is its own text.
   [Test]
@@ -121,5 +132,7 @@ public class CollectivePredicateContainsShapeTests {
     public bool Contains() => throw new NotSupportedException(GetType().Name);
 
     public bool Contains(int item, int other) => throw new NotSupportedException($"{GetType().Name}: {item}, {other}");
+
+    public static bool Contains(int item) => throw new NotSupportedException($"{item}");
   }
 }

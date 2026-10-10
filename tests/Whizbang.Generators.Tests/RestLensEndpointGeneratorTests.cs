@@ -65,6 +65,50 @@ public class RestLensEndpointGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_ModelPropertyNamedLikeAKeyword_IsAddressedAsAVerbatimIdentifierAsync() {
+    // A property may be named with a C# keyword (declared as @event). The request still names it
+    // "event", but the generated lambda must write x.@event, or the endpoint does not compile.
+    var generated = _generatedSource("""
+      namespace App {
+        using Whizbang.Core.Lenses;
+        using Whizbang.Transports.FastEndpoints;
+
+        public class Ticket {
+          public string @event { get; set; } = "";
+          public string Title { get; set; } = "";
+        }
+
+        [RestLens(Route = "/api/tickets")]
+        public interface ITicketLens : ILensQuery<Ticket> { }
+      }
+      """);
+
+    await Assert.That(generated).Contains("x.@event")
+      .Because("a keyword is only an identifier when it is escaped");
+    await Assert.That(generated).Contains("x.Title")
+      .Because("an ordinary name is written as it is");
+  }
+
+  [Test]
+  public async Task Generator_LensNameWithoutTheInterfacePrefix_KeepsItsWholeNameAsync() {
+    // Only the conventional leading "I" is dropped. A lens interface named without it keeps its
+    // whole name, so "OrderLens" becomes "OrderLensEndpoint", not "rderLensEndpoint".
+    var generated = _generatedSource("""
+      namespace App {
+        using Whizbang.Core.Lenses;
+        using Whizbang.Transports.FastEndpoints;
+
+        [RestLens(Route = "/api/orders")]
+        public interface OrderLens : ILensQuery<Order> { }
+      }
+      """);
+
+    await Assert.That(generated).Contains("class OrderLensEndpoint");
+    await Assert.That(generated).DoesNotContain("class rderLensEndpoint")
+      .Because("stripping a first letter that is not an interface prefix would mangle the name");
+  }
+
+  [Test]
   public async Task Generator_WithoutTheAttribute_EmitsNothingAsync() {
     // A lens is an ordinary query type until someone opts it into HTTP. Generating an endpoint
     // for every lens would publish query surfaces nobody asked to expose.

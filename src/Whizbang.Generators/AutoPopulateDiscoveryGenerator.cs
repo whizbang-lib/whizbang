@@ -140,6 +140,10 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     var properties = typeSymbol.GetAllProperties();
 
     foreach (var property in properties) {
+      // Whether a class's populator can assign the property in place: it needs a setter, and not an
+      // init one. Decided once per property, for every attribute on it.
+      var isSettable = property.SetMethod is { IsInitOnly: false };
+
       foreach (var attribute in property.GetAttributes()) {
         var attributeName = TypeNameUtilities.DisplayOrNull(attribute.AttributeClass);
         if (attributeName is null) {
@@ -147,11 +151,11 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         }
 
         AutoPopulateInfo? info = attributeName switch {
-          POPULATE_TIMESTAMP_ATTRIBUTE => _extractTimestampInfo(typeFullName, property, attribute, isRecord),
-          POPULATE_FROM_CONTEXT_ATTRIBUTE => _extractContextInfo(typeFullName, property, attribute, isRecord),
-          POPULATE_FROM_SERVICE_ATTRIBUTE => _extractServiceInfo(typeFullName, property, attribute, isRecord),
-          POPULATE_FROM_IDENTIFIER_ATTRIBUTE => _extractIdentifierInfo(typeFullName, property, attribute, isRecord),
-          POPULATE_FROM_HTTP_HEADER_ATTRIBUTE => _extractHttpHeaderInfo(typeFullName, property, attribute, isRecord),
+          POPULATE_TIMESTAMP_ATTRIBUTE => _extractTimestampInfo(typeFullName, property, attribute, isRecord, isSettable),
+          POPULATE_FROM_CONTEXT_ATTRIBUTE => _extractContextInfo(typeFullName, property, attribute, isRecord, isSettable),
+          POPULATE_FROM_SERVICE_ATTRIBUTE => _extractServiceInfo(typeFullName, property, attribute, isRecord, isSettable),
+          POPULATE_FROM_IDENTIFIER_ATTRIBUTE => _extractIdentifierInfo(typeFullName, property, attribute, isRecord, isSettable),
+          POPULATE_FROM_HTTP_HEADER_ATTRIBUTE => _extractHttpHeaderInfo(typeFullName, property, attribute, isRecord, isSettable),
           _ => null
         };
 
@@ -170,7 +174,8 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       string typeFullName,
       IPropertySymbol property,
       AttributeData attribute,
-      bool isRecord) {
+      bool isRecord,
+      bool isSettable) {
 
     var kindArg = attribute.ConstructorArguments.FirstOrDefault();
     if (kindArg.Value is null) {
@@ -192,7 +197,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PopulateKind: POPULATE_KIND_TIMESTAMP,
         SpecificKind: $"TimestampKind.{kindName}",
         IsRecord: isRecord,
-        IsSettable: property.SetMethod?.IsInitOnly == false
+        IsSettable: isSettable
     );
   }
 
@@ -200,7 +205,8 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       string typeFullName,
       IPropertySymbol property,
       AttributeData attribute,
-      bool isRecord) {
+      bool isRecord,
+      bool isSettable) {
 
     var kindArg = attribute.ConstructorArguments.FirstOrDefault();
     if (kindArg.Value is null) {
@@ -221,7 +227,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PopulateKind: POPULATE_KIND_CONTEXT,
         SpecificKind: $"ContextKind.{kindName}",
         IsRecord: isRecord,
-        IsSettable: property.SetMethod?.IsInitOnly == false
+        IsSettable: isSettable
     );
   }
 
@@ -229,7 +235,8 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       string typeFullName,
       IPropertySymbol property,
       AttributeData attribute,
-      bool isRecord) {
+      bool isRecord,
+      bool isSettable) {
 
     var kindArg = attribute.ConstructorArguments.FirstOrDefault();
     if (kindArg.Value is null) {
@@ -252,7 +259,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PopulateKind: POPULATE_KIND_SERVICE,
         SpecificKind: $"ServiceKind.{kindName}",
         IsRecord: isRecord,
-        IsSettable: property.SetMethod?.IsInitOnly == false
+        IsSettable: isSettable
     );
   }
 
@@ -260,7 +267,8 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       string typeFullName,
       IPropertySymbol property,
       AttributeData attribute,
-      bool isRecord) {
+      bool isRecord,
+      bool isSettable) {
 
     var kindArg = attribute.ConstructorArguments.FirstOrDefault();
     if (kindArg.Value is null) {
@@ -283,7 +291,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PopulateKind: POPULATE_KIND_IDENTIFIER,
         SpecificKind: $"IdentifierKind.{kindName}",
         IsRecord: isRecord,
-        IsSettable: property.SetMethod?.IsInitOnly == false
+        IsSettable: isSettable
     );
   }
 
@@ -291,7 +299,8 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       string typeFullName,
       IPropertySymbol property,
       AttributeData attribute,
-      bool isRecord) {
+      bool isRecord,
+      bool isSettable) {
 
     // The single ctor arg is the header / scope-extension key. SpecificKind carries it verbatim (it is
     // emitted as a string literal in the extractor call and as HttpHeaderName in the registration).
@@ -307,7 +316,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PopulateKind: POPULATE_KIND_HEADER,
         SpecificKind: headerName,
         IsRecord: isRecord,
-        IsSettable: property.SetMethod?.IsInitOnly == false
+        IsSettable: isSettable
     );
   }
 

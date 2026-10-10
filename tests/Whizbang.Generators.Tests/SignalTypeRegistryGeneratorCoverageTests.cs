@@ -160,4 +160,26 @@ namespace App.Signals {
     await Assert.That(alphaIndex).IsLessThan(zetaIndex)
       .Because("entries must be ordered by fully-qualified name (ordinal) regardless of declaration order, or the generated file's byte content would vary run-to-run for the same set of signals");
   }
+
+  /// <summary>
+  /// A signal declared in the global namespace is still rendered with the global:: prefix in its fully
+  /// qualified form, so its default wire name is its bare type name, with no namespace and no prefix.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_SignalInTheGlobalNamespace_WireNameIsTheBareTypeNameAsync() {
+    const string source = @"
+using Whizbang.Core.Signals;
+
+public sealed record RootPing : ISignal {
+  public static SignalDeliveryClass DeliveryClass => SignalDeliveryClass.BestEffort;
+  public static SignalTargeting Targeting => SignalTargeting.Broadcast;
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<SignalTypeRegistryGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "SignalTypeSource.g.cs");
+
+    await Assert.That(code).Contains("_entry<global::RootPing>(\"RootPing\")")
+      .Because("the global:: prefix is dropped from every default wire name, a global-namespace type's included");
+  }
 }

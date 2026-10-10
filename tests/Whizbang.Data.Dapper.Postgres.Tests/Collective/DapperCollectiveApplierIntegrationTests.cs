@@ -586,6 +586,45 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task ApplyAsync_HandlerOverrides_WinOverTheGlobalOptionsAsync() {
+    // A handler's [CollectiveApplyFor(BatchSize = …, StatementTimeoutSeconds = …)] overrides the global
+    // options for its own applies. With a global batch of 1000 the 5-row cohort would be one batch; the
+    // handler's batch of 2 makes it three, each bounded by the handler's statement timeout.
+    await _createTableAsync();
+    var ids = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+    foreach (var id in ids) {
+      await _seedAsync(id, "t-A", "Active");
+    }
+    var entry = new CollectiveApplyEntry(
+      ModelType: typeof(JobModel),
+      EventType: typeof(ArchiveEvent),
+      HandlerType: typeof(JobPerspective),
+      MethodName: nameof(JobPerspective.Archive),
+      ScopeHandling: CollectiveScopeHandling.Framework,
+      SpecKind: CollectiveSpecKind.Linq,
+      Invoker: static (h, e, _) => ((JobPerspective)h).Archive((ArchiveEvent)e),
+      BatchSizeOverride: 2,
+      StatementTimeoutSecondsOverride: 30);
+    var batches = 0;
+
+    var affected = await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
+      entry,
+      new JobPerspective(),
+      new ArchiveEvent { Scope = new TenantCollectiveScope("t-A") },
+      new TenantCollectiveScopeResolver(),
+      ConnectionFactory,
+      TABLE,
+      _noSiblings, new CollectiveApplyOptions { BatchSize = 1000, StatementTimeoutSeconds = 5 },
+      logger: null,
+      default,
+      onBatchApplied: _ => { batches++; return ValueTask.CompletedTask; });
+
+    await Assert.That(affected).IsEqualTo(5);
+    await Assert.That(batches).IsEqualTo(3)
+      .Because("the handler's batch of 2 splits 5 rows into 3 keyset batches; the global 1000 would have made one");
+  }
+
+  [Test]
   public async Task ApplyAsync_FrameworkWithHandlerWhere_RefinesWithinScopeAsync() {
     await _createTableAsync();
     var draftA = Guid.NewGuid();
