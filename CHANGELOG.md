@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Startup
+- **`ISchemaInitializationObserver`** — watch schema initialization: `OnSchemaLockContendedAsync` (another
+  instance holds the schema lock; this start waits) and `OnAttemptFailedAsync` (a background attempt failed and
+  will be retried), on both Postgres drivers.
+- **`ISchemaInitializationRunner` and `AddWhizbangSchemaInitialization()`** — one schema initializer runs every
+  driver's registered runner in order, then opens the schema-ready gate.
+
 #### Messaging & delivery
 - **Composite events** — `ICompositeEvent`: durable dispatch-time fan-out that lives inside the
   inbox/dispatch/retry/DLQ envelope (not at the transport edge), with lineage, composite
@@ -97,6 +104,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking (Dapper driver): the schema is initialized at host start, not inside `AddWhizbangPostgres`.**
+  Registration no longer connects to the database. With `initializeSchema: true` the shared schema
+  initializer (`WhizbangDatabaseInitializerService`, now in `Whizbang.Data.Postgres` and used by both
+  drivers) waits for the database with the `PostgresOptions` retry settings, migrates under the schema
+  initialization lock the EF Core driver takes, registers the instance, runs the managed-object cleanup
+  and opens `ISchemaReadyGate`, in the background by default (`SchemaInitializationOptions`). **Upgrade:**
+  code that used the schema between registration and host start must wait on `ISchemaReadyGate`. A host
+  with `initializeSchema: false` gets an open gate at start.
+- **Both drivers register the instance at start and check the cleanup settings first.** An EF Core
+  instance joins `wh_service_instances` at start whether or not a duty elector is registered, and reads
+  `Whizbang:Schema:Reconcile` before it touches the database, so a bad value fails the start before the
+  instance registers, as on the Dapper driver.
+- **The once-per-fleet maintenance claim falls back to the claim table.** The EF Core managed-object and
+  physical-column-fill steps used to stand down when no `IClaimedEmissionStore` was registered; they now
+  claim through `wh_unique_emission_claims` directly (`FleetClaim`), as the Dapper step already did.
+
 - **Role assignment: the mixed-version bridge is off by default.**
   `Whizbang:Database:RoleAssignment:HoldLegacySessionLock` now defaults to `false`. A holder no longer
   also takes the duty's legacy session advisory lock, which frees one pinned connection per held role.
@@ -169,6 +192,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **A multi-instance Dapper fleet never dropped a retired schema object (#1253).** The Dapper driver ran
+  its managed-object cleanup at registration with no instance id, so every running peer looked
+  unreported and the fleet gate held every drop; it also ignored `Whizbang:Schema:Reconcile` and logged
+  nothing. It now runs at host start with the instance id, the settings and the host's logger, and a
+  maintenance step re-runs it between starts.
+- **The schema-ready gate never opened on a Dapper host,** so the background workers of a Dapper-only
+  host waited forever. The shared initializer opens it on both drivers.
+- **Instances starting together on the Dapper driver migrated concurrently.** They now take the schema
+  initialization lock, and a start that finds it held tells every `ISchemaInitializationObserver` before it
+  waits.
+- **A DbContext registered by the application missed the periodic cleanup re-run,** because only the
+  generated turnkey registration keyed its managed-object manifest. The generated model registration now
+  keys it for every context.
 - **The bootstrap closure was never recognized as recorded:** the infrastructure schema script
   carried a stamp of the current time in a comment line, and that script is the first thing the
   closure hash covers, so every instance of one release computed a different hash, the record never
