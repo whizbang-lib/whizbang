@@ -36,6 +36,7 @@ Whizbang:BodyOffload:PassiveSweepBatchSize
 Whizbang:BodyOffload:PassiveSweepClaimWindow
 Whizbang:BodyOffload:PassiveSweepMaxBatchesPerCycle
 Whizbang:BodyOffload:ProviderName
+Whizbang:BodyOffload:RequireSealedBodies
 Whizbang:BodyOffload:SizeThresholdBytes
 Whizbang:CircuitBreakers:*:CooldownBackoffMultiplier
 Whizbang:CircuitBreakers:*:FailureThreshold
