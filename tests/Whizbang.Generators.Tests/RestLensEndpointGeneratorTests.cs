@@ -299,4 +299,169 @@ public class RestLensEndpointGeneratorTests {
 
     await Assert.That(generated).Contains("await Send.OkAsync(response, ct);");
   }
+
+  // ========================================
+  // [FieldPermission]: protected members are masked in responses and cannot filter or sort
+  // ========================================
+
+  private const string FIELD_PERMISSION_STUB = """
+    namespace Whizbang.Core.Security.Attributes {
+      public enum MaskingStrategy { Hide = 0, Mask = 1, Partial = 2, Redact = 3 }
+
+      [System.AttributeUsage(System.AttributeTargets.Property)]
+      public sealed class FieldPermissionAttribute : System.Attribute {
+        public FieldPermissionAttribute(string permission, MaskingStrategy masking = MaskingStrategy.Hide) { }
+      }
+    }
+    namespace App {
+      using System.Collections.Generic;
+      using System.Text.Json.Serialization;
+      using Whizbang.Core.Security.Attributes;
+
+      public class Street { [FieldPermission("pii:view", MaskingStrategy.Mask)] public string? Line { get; set; } }
+
+      public class Contact {
+        public string? Kind { get; set; }
+        [FieldPermission("pii:view", MaskingStrategy.Redact)] public string? Value { get; set; }
+        public Street? Street { get; set; }
+      }
+
+      public class Node { public string? Label { get; set; } public Node? Next { get; set; } }
+
+      public struct Coordinates { [FieldPermission("geo:view", MaskingStrategy.Mask)] public string? Grid { get; set; } }
+
+      public enum Ward { North, South }
+
+      public class PersonBase {
+        [FieldPermission("pii:view")] public virtual string? Secret { get; set; }
+      }
+
+      public class Patient : PersonBase {
+        public System.Guid Id { get; set; }
+        public string? Name { get; set; }
+        [FieldPermission("pii:view", MaskingStrategy.Partial)] public string? Ssn { get; set; }
+        [FieldPermission("finance:view", MaskingStrategy.Mask)] public decimal Balance { get; set; }
+        [FieldPermission("pii:view", MaskingStrategy.Redact)]
+        [JsonPropertyName("tax_id")]
+        public string? TaxId { get; set; }
+        public override string? Secret { get; set; }
+        public List<Contact> Contacts { get; set; } = new();
+        public Street[] Streets { get; set; } = new Street[0];
+        public Node? Head { get; set; }
+        public PersonBase? Guardian { get; set; }
+        public Coordinates Location { get; set; }
+        public Ward Ward { get; set; }
+        public dynamic? Bag { get; set; }
+        [FieldPermission("pii:view")] public static string? Shared { get; set; }
+        [FieldPermission("pii:view")] public string? this[int index] => null;
+        [FieldPermission("pii:view")] public string? WriteOnly { set { } }
+        [FieldPermission("pii:view")] internal string? Internal { get; set; }
+      }
+    }
+    """;
+
+  private static string _patientEndpoint() => _generatedSource(FIELD_PERMISSION_STUB + """
+    namespace App {
+      using Whizbang.Core.Lenses;
+      using Whizbang.Transports.FastEndpoints;
+
+      [RestLens(Route = "/api/patients")]
+      public interface IPatientLens : ILensQuery<Patient> { }
+    }
+    """);
+
+  private const string REGISTER = "global::Whizbang.Transports.FastEndpoints.FieldPermissionJson.Register(";
+  private const string ATTRIBUTE = "new global::Whizbang.Core.Security.Attributes.FieldPermissionAttribute(";
+  private const string STRATEGY = "(global::Whizbang.Core.Security.Attributes.MaskingStrategy)";
+
+  [Test]
+  public async Task Generator_ProtectedMembers_CannotBeFilteredOrSortedByAsync() {
+    var generated = _patientEndpoint();
+
+    await Assert.That(generated).Contains("case \"NAME\":").Because("an unprotected member still filters");
+    await Assert.That(generated).Contains("\"NAME\" => LensQueryShaping.ThenOrderBy(");
+    foreach (var key in new[] { "SSN", "BALANCE", "TAXID", "SECRET" }) {
+      await Assert.That(generated).DoesNotContain($"case \"{key}\":")
+        .Because("a filter on a protected member would reveal its value");
+      await Assert.That(generated).DoesNotContain($"\"{key}\" =>")
+        .Because("an ordering by a protected member would reveal its value");
+    }
+  }
+
+  [Test]
+  public async Task Generator_RegistersEachProtectedMemberForResponseMaskingAsync() {
+    var generated = _patientEndpoint();
+
+    await Assert.That(generated).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]");
+    await Assert.That(generated).Contains($"{REGISTER}typeof(global::App.Patient), \"Ssn\", null, {ATTRIBUTE}\"pii:view\", {STRATEGY}2), true);");
+    await Assert.That(generated).Contains($"{REGISTER}typeof(global::App.Patient), \"Balance\", null, {ATTRIBUTE}\"finance:view\", {STRATEGY}1), false);")
+      .Because("a non-string member is registered as one, so it is hidden rather than given a placeholder");
+    await Assert.That(generated).Contains($"{REGISTER}typeof(global::App.Patient), \"TaxId\", \"tax_id\", {ATTRIBUTE}\"pii:view\", {STRATEGY}3), true);")
+      .Because("an explicit JSON name is the name the response carries");
+    await Assert.That(generated).Contains($"{REGISTER}typeof(global::App.PersonBase), \"Secret\", null, {ATTRIBUTE}\"pii:view\", {STRATEGY}0), true);")
+      .Because("an inherited member is registered on the type that declares it, with the default strategy when none is given");
+    await Assert.That(generated).DoesNotContain("\"Name\", null");
+  }
+
+  [Test]
+  public async Task Generator_RegistersProtectedMembersOfNestedTypesAsync() {
+    var generated = _patientEndpoint();
+
+    await Assert.That(generated).Contains($"{REGISTER}typeof(global::App.Contact), \"Value\", null,")
+      .Because("a list's element type is part of the response");
+    await Assert.That(generated).Contains($"{REGISTER}typeof(global::App.Street), \"Line\", null,")
+      .Because("types nested inside nested types, and array element types, are part of the response");
+    await Assert.That(generated).Contains($"{REGISTER}typeof(global::App.Coordinates), \"Grid\", null,")
+      .Because("a struct of the application's is part of the response");
+    await Assert.That(generated.Split($"{REGISTER}typeof(global::App.Street)").Length - 1).IsEqualTo(1)
+      .Because("a type reached twice is registered once");
+    await Assert.That(generated.Split($"{REGISTER}typeof(global::App.PersonBase)").Length - 1).IsEqualTo(1)
+      .Because("a base type reached both directly and through a derived type is registered once");
+  }
+
+  [Test]
+  public async Task Generator_RegistersOnlyMembersAResponseCarriesAsync() {
+    var generated = _patientEndpoint();
+
+    await Assert.That(generated).DoesNotContain("\"Shared\"").Because("a static property is not part of a row");
+    await Assert.That(generated).DoesNotContain("\"this[]\"").Because("an indexer is not serialized");
+    await Assert.That(generated).DoesNotContain("\"Item\"").Because("an indexer is not serialized");
+    await Assert.That(generated).DoesNotContain("\"WriteOnly\"").Because("a property with no getter is not serialized");
+    await Assert.That(generated).DoesNotContain("\"Internal\"").Because("a non-public property is not serialized");
+  }
+
+  [Test]
+  public async Task Generator_TwoLensesOverOneModel_RegisterItsMembersOnceAsync() {
+    var generated = _generatedSource(FIELD_PERMISSION_STUB + """
+      namespace App {
+        using Whizbang.Core.Lenses;
+        using Whizbang.Transports.FastEndpoints;
+
+        [RestLens(Route = "/api/patients")]
+        public interface IPatientLens : ILensQuery<Patient> { }
+
+        [RestLens(Route = "/api/admin/patients")]
+        public interface IAdminPatientLens : ILensQuery<Patient> { }
+      }
+      """);
+
+    await Assert.That(generated.Split($"{REGISTER}typeof(global::App.Patient), \"Ssn\"").Length - 1).IsEqualTo(1);
+    await Assert.That(generated.Split("FieldPermissionJson.EnsureMasked(typeof(global::App.Patient));").Length - 1).IsEqualTo(2)
+      .Because("each endpoint checks before it responds");
+  }
+
+  [Test]
+  public async Task Generator_ProtectedModel_ChecksTheResponseIsMaskedBeforeQueryingAsync() {
+    var generated = _patientEndpoint();
+
+    await Assert.That(generated).Contains("global::Whizbang.Transports.FastEndpoints.FieldPermissionJson.EnsureMasked(typeof(global::App.Patient));");
+  }
+
+  [Test]
+  public async Task Generator_ModelWithoutProtectedMembers_RegistersNothingAsync() {
+    var generated = _invoiceEndpoint("Route = \"/api/invoices\"");
+
+    await Assert.That(generated).DoesNotContain("FieldPermissionJson");
+    await Assert.That(generated).DoesNotContain("ModuleInitializer");
+  }
 }

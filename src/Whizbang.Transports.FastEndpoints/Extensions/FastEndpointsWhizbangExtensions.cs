@@ -1,7 +1,10 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace Whizbang.Transports.FastEndpoints;
 
@@ -18,6 +21,12 @@ public static class FastEndpointsWhizbangExtensions {
   /// Adds Whizbang lens endpoint services for REST API integration.
   /// Generated lens endpoints are discovered and registered automatically.
   /// </summary>
+  /// <remarks>
+  /// Adds the <see cref="FieldPermissionJson"/> masking to the host's JSON options, which FastEndpoints writes
+  /// responses with, so <c>[FieldPermission]</c> members are masked for a caller without the permission. A
+  /// generated endpoint whose model has protected members refuses to respond when the masking is missing.
+  /// Calling this more than once adds the masking once.
+  /// </remarks>
   /// <param name="services">The service collection</param>
   /// <returns>The service collection for chaining</returns>
   /// <example>
@@ -25,9 +34,9 @@ public static class FastEndpointsWhizbangExtensions {
   ///     .AddWhizbangLenses();
   /// </example>
   public static IServiceCollection AddWhizbangLenses(this IServiceCollection services) {
-    // Note: Generated lens endpoints are auto-discovered by FastEndpoints
-    // This method is a placeholder for future lens-specific service registration
-    // (e.g., custom filter handlers, sort handlers, etc.)
+    // Generated lens endpoints are auto-discovered by FastEndpoints; responses need the field masking.
+    services.AddOptions();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<JsonOptions>, FieldPermissionJsonOptionsSetup>());
     return services;
   }
 
