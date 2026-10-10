@@ -117,8 +117,8 @@ public class DapperManagedObjectsTests {
   }
 
   /// <summary>
-  /// The registration hands the declared objects to the schema initialization it runs, so a host that
-  /// declares them gets the reconcile without building the initializer itself.
+  /// The registration hands the declared objects to the schema initialization the host runs at start, so a
+  /// host that declares them gets the reconcile without building the initializer itself.
   /// </summary>
   [Test]
   public async Task TheRegistration_WithDeclaredObjects_ReconcilesAtStartAsync() {
@@ -127,14 +127,15 @@ public class DapperManagedObjectsTests {
       _connectionString, new System.Text.Json.JsonSerializerOptions(), initializeSchema: true,
       [new KeyValuePair<string, string>("ProbePerspective", ENTRY)],
       managedObjects: [(TABLE, "index", $"ix_{TABLE}_status", "ProbeModel")]);
+    await using var provider = await SchemaStartup.StartAsync(services);
 
     await using var db = new NpgsqlConnection(_connectionString);
     var recorded = await db.QueryAsync<string>("SELECT object_name FROM wh_managed_objects ORDER BY object_name");
     await Assert.That(recorded).Contains($"ix_{TABLE}_status")
-      .Because("the declared objects reached the initialization the registration ran");
+      .Because("the declared objects reached the initialization the host ran at start");
   }
 
-  /// <summary>The registration without a declaration leaves every object in place and records none.</summary>
+  /// <summary>A host started from the registration without a declaration leaves every object in place and records none.</summary>
   [Test]
   public async Task TheRegistration_WithoutADeclaration_ReconcilesNothingAsync() {
     var services = new ServiceCollection();
@@ -142,6 +143,7 @@ public class DapperManagedObjectsTests {
       _connectionString, new System.Text.Json.JsonSerializerOptions(), initializeSchema: true,
       [new KeyValuePair<string, string>("ProbePerspective", ENTRY)],
       managedObjects: null);
+    await using var provider = await SchemaStartup.StartAsync(services);
 
     await using var db = new NpgsqlConnection(_connectionString);
     await Assert.That(await db.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_managed_objects")).IsEqualTo(0L);
