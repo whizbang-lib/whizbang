@@ -175,14 +175,19 @@ public class PhysicalColumnFillMaintenanceStepTests {
     await Assert.That(await _scalarAsync($"SELECT count(*) FROM {TABLE} WHERE name = 'late-1'")).IsEqualTo("0");
   }
 
-  /// <summary>Without a claim store there is no way to run on one instance, so the step does not run.</summary>
+  /// <summary>
+  /// Without a claim store the step claims its window through the claim table directly, the same claim the Dapper
+  /// driver's step takes, so it still runs on one instance.
+  /// </summary>
   [Test]
-  public async Task WithoutAClaimStore_TheStepDoesNotRunAsync() {
+  public async Task WithoutAClaimStore_TheStepClaimsThroughTheTable_AndRunsAsync() {
     await _writeAsThePreviousReleaseAsync(1, "late");
 
     await _runAsync(_step(), withClaimStore: false);
 
-    await Assert.That(await _scalarAsync($"SELECT count(*) FROM {TABLE} WHERE name = 'late-1'")).IsEqualTo("0");
+    await Assert.That(await _scalarAsync($"SELECT count(*) FROM {TABLE} WHERE name = 'late-1'")).IsEqualTo("1");
+    await Assert.That(await _scalarAsync(
+      "SELECT count(*) FROM wh_unique_emission_claims WHERE claim_key LIKE 'whizbang:physical-column-fill:%'")).IsEqualTo("1");
   }
 
   /// <summary>With nothing armed the step does not claim, so a service that promotes nothing writes nothing.</summary>

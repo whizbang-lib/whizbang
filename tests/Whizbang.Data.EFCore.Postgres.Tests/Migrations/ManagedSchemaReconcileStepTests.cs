@@ -112,10 +112,22 @@ public class ManagedSchemaReconcileStepTests {
   }
 
   [Test]
-  public async Task WithoutAClaimStore_TheStepStandsDownAsync() {
+  public async Task WithoutAClaimStore_TheStepClaimsThroughTheTable_OncePerWindowAsync() {
+    await _execAsync($"SELECT public.wh_pin_object('{TABLE}', '{RETIRED}', 'held for the first run')");
+    await _runAsync(withClaimStore: false);
+    await _execAsync($"SELECT public.wh_unpin_object('{TABLE}', '{RETIRED}')");
+
     await _runAsync(withClaimStore: false);
 
-    await Assert.That(await _existsAsync(RETIRED)).IsTrue();
+    await Assert.That(await _existsAsync(RETIRED)).IsTrue()
+      .Because("the first run took the window's claim through the claim table, so this one stands down");
+  }
+
+  [Test]
+  public async Task WithoutAClaimStore_TheStepStillRunsOnOneInstanceAsync() {
+    await _runAsync(withClaimStore: false);
+
+    await Assert.That(await _existsAsync(RETIRED)).IsFalse();
   }
 
   [Test]

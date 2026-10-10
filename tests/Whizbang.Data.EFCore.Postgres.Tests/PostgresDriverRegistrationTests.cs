@@ -69,6 +69,24 @@ public class PostgresDriverRegistrationTests {
   }
 
   [Test]
+  public async Task Postgres_ForAConsumerRegisteredContext_RegistersItsManagedObjectManifestAsync() {
+    // The consumer registered the context itself, so the generated turnkey registration is skipped; the periodic
+    // managed-object reconcile still needs the context's manifest.
+    var services = new ServiceCollection();
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddDbContext<DocumentIndexesDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services)
+      .WithEFCore<DocumentIndexesDbContext>()
+      .WithDriver.Postgres;
+    await using var provider = services.BuildServiceProvider();
+
+    var manifest = provider.GetKeyedService<Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof(DocumentIndexesDbContext));
+
+    await Assert.That(manifest).IsNotNull();
+    await Assert.That(manifest!.Schema).IsEqualTo("public");
+  }
+
+  [Test]
   public async Task Postgres_EveryServiceItRegistersCanBeResolvedAsync() {
     var services = new ServiceCollection();
     services.AddLogging();
