@@ -461,7 +461,10 @@ coverage_files.txt
 .sonar-scan-origin.json
 .mcp.json
 coverage-report/
-coverage/
+# Anchored: a bare `coverage/` matches a directory of that name ANYWHERE, so it silently
+# swallowed a new test folder (and would swallow anything added under scripts/coverage/).
+# This rule is for the repo-root coverage output; per-project output lands under bin/.
+/coverage/
 
 # PR readiness script history files
 logs/
