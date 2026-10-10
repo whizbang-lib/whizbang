@@ -118,6 +118,9 @@ change recorded in the changelog with the upgrade note.
   lock (`SchemaInitializationObservers.LockContendedAsync`); an EF Core instance registers itself at start with or
   without a duty elector; and EF Core reads the reconcile settings before it touches the database, so a bad
   value fails the start before the instance registers, as on Dapper.
+- **Phase 6, docs: done.** Docs-site PR whizbang-lib/whizbang-lib.github.io#1073 (turnkey initialization, Dapper
+  integration, PostgreSQL provider, database readiness, managed schema objects, migration guide), with the Dapper
+  upgrade note; `CHANGELOG.md` and `ai-docs/startup-registration-invariants.md` updated. #1253 closes with the PR.
 
 ## Phase 4 remaining
 

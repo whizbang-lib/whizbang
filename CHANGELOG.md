@@ -202,6 +202,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Instances starting together on the Dapper driver migrated concurrently.** They now take the schema
   initialization lock, and a start that finds it held tells every `ISchemaInitializationObserver` before it
   waits.
+- **Running the generated registration twice initialized each DbContext twice per start.** A second
+  `DbContextInitializationRegistry.Register` for the same context now replaces the first.
 - **A DbContext registered by the application missed the periodic cleanup re-run,** because only the
   generated turnkey registration keyed its managed-object manifest. The generated model registration now
   keys it for every context.

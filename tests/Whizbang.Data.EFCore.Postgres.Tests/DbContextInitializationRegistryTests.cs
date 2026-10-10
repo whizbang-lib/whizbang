@@ -220,8 +220,8 @@ public class DbContextInitializationRegistryTests {
     DbContextInitializationRegistry.Register<FakeDbContextA>(
         (_, _, _) => Task.CompletedTask);
 
-    // Act & Assert
-    await Assert.That(DbContextInitializationRegistry.Count).IsEqualTo(3);
+    // Act & Assert: one per context; registering A again replaced its initializer rather than adding a second
+    await Assert.That(DbContextInitializationRegistry.Count).IsEqualTo(2);
   }
 
   // --- Fake DbContext types for test isolation ---

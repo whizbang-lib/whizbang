@@ -43,9 +43,11 @@ public static class DbContextInitializationRegistry {
       Func<IServiceProvider, ILogger?, CancellationToken, Task> Callback);
 
   /// <summary>
-  /// Registers an initialization callback for a DbContext type.
-  /// Called by source-generated module initializer in the consumer assembly.
+  /// Registers an initialization callback for a DbContext type, replacing an earlier one for the same type.
+  /// Called by source-generated module initializer in the consumer assembly; running that initializer again must
+  /// not make a start initialize the context twice.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbContextInitializationRegistryTests.cs:Register_TheSameContextTwice_KeepsOne_SoAStartInitializesItOnceAsync</tests>
   /// <typeparam name="TDbContext">The DbContext type.</typeparam>
   /// <param name="callback">
   /// Callback that initializes the database schema.
@@ -54,6 +56,7 @@ public static class DbContextInitializationRegistry {
   public static void Register<TDbContext>(Func<IServiceProvider, ILogger?, CancellationToken, Task> callback)
       where TDbContext : class {
     lock (_lock) {
+      _initializers.RemoveAll(i => i.DbContextType == typeof(TDbContext));
       _initializers.Add(new DbContextInitializer(typeof(TDbContext), callback));
     }
   }
