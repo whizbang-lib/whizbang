@@ -38,6 +38,34 @@ BeforeAll {
   $script:Fixture = Join-Path -Path $PSScriptRoot -ChildPath 'fixtures/shard-union'
   $script:FixturePath = 'src/Whizbang.Exp/Calc.cs'
 
+  # Real collector output (the same collector and versions as CI) for Shapes.cs.txt from two test processes:
+  # A takes every ?. statement's non-null outcome and B its null one, except where a shape needs otherwise
+  # (Unsplit and Continued are null in both, Throwing throws in both). merged-blocks.xml is
+  # `dotnet-coverage merge A.coverage B.coverage -f xml`. The shapes, by line:
+  #   22 _sink?.Record(n): outcomes split across the processes, in a function with an unrun block
+  #   31 the same in an async method (a hoisted local), the MaintenanceWorker.cs:249 shape below
+  #   39 _never?.Record(n): the non-null outcome never taken, in either process
+  #   47 if (sink?.Total >= 0) {: the if's false outcome never taken, though every block on the line ran
+  #   57 bomb?.Fail(): the call always throws, so the null outcome's target never ran
+  #   64 get()\n?.Record(n): the ?. on a continuation line, its non-null outcome never taken
+  #   70 a collection initializer whose ?. and ?? are on a continuation line
+  #   77 a call chain whose first line carries only the compiler's lambda-cache condition
+  $script:Shapes = Join-Path -Path $PSScriptRoot -ChildPath 'fixtures/statement-shapes'
+  $script:ShapesPath = 'src/Whizbang.Exp/Shapes.cs'
+  $script:ShapesSource = [string[]]@(Get-Content (Join-Path $script:Shapes 'Shapes.cs.txt'))
+  $script:ShapesReports = @((Join-Path $script:Shapes 'A/A.cobertura.xml'), (Join-Path $script:Shapes 'B/B.cobertura.xml'))
+  $script:ShapesRead = { param($p) if ($p -eq $script:ShapesPath) { $script:ShapesSource } else { $null } }
+
+  # Real CI output from the run that found the defect (#1305): the Cobertura reports of the Core unit and
+  # Core component test processes and their merged block data, cut down to MaintenanceWorker.cs, with
+  # the file as it was at that commit. Line 249 (metrics?.Record) took one outcome in each process;
+  # line 252 is a statement whose ?. is on its continuation line 253, non-null in neither process.
+  $script:Worker = Join-Path -Path $PSScriptRoot -ChildPath 'fixtures/maintenance-worker'
+  $script:WorkerPath = 'src/Whizbang.Core/Workers/MaintenanceWorker.cs'
+  $script:WorkerSource = [string[]]@(Get-Content (Join-Path $script:Worker 'MaintenanceWorker.cs.txt'))
+  $script:WorkerReports = @((Join-Path $script:Worker 'unit/unit.cobertura.xml'), (Join-Path $script:Worker 'component/component.cobertura.xml'))
+  $script:WorkerRead = { param($p) if ($p -eq $script:WorkerPath) { $script:WorkerSource } else { $null } }
+
   function New-Added([string]$file, [int[]]$lineNumbers) {
     $set = [System.Collections.Generic.HashSet[int]]::new()
     foreach ($n in $lineNumbers) { [void]$set.Add($n) }
@@ -72,6 +100,142 @@ Describe 'Test-HandWrittenDecision' {
       @{ line = 'public int Size => _size;' }, @{ line = 'get => _value;' }, @{ line = 'items.Select(x => x.Id)' },
       @{ line = 'public sealed class Worker : BackgroundService {' }) {
     Test-HandWrittenDecision $line | Should -BeFalse
+  }
+}
+
+# The collector reports every condition of a statement on the statement's first line, so a decision
+# written on a continuation line (a ?. starting the second line of a call chain, a ?? inside an
+# initializer) is counted on a line whose own text has none. The statement, not the line, is classified.
+Describe 'Get-StatementCode' {
+  It 'reads a statement from its first line to the ; that ends it' {
+    $code = Get-StatementCode $script:WorkerSource 252
+
+    $code.Count | Should -Be 2
+    $code[1] | Should -Match '\?\.RecordItems'
+  }
+
+  It 'reads an object or collection initializer to its end, nested ones included' {
+    $source = @('var hop = new MessageHop {', '  Topic = destination ?? "x",', '  Inner = new Inner { A = 1 },', '};', 'Next();')
+
+    (Get-StatementCode $source 1).Count | Should -Be 4
+  }
+
+  It 'reads the initializer of an object created with arguments' {
+    $source = @('return new Envelope<T>(id) {', '  Scope = scope?.Value,', '};', 'Next();')
+
+    (Get-StatementCode $source 1).Count | Should -Be 3
+  }
+
+  It 'ends at the { that opens a block, after a condition or a block keyword' {
+    $source = @('if (a', '    && b) {', '  Do(x ?? y);', '}', 'else', '{', '  Do(z ?? w);', '}', 'try {', '  Do(q ?? r);', '}')
+
+    (Get-StatementCode $source 1).Count | Should -Be 2
+    (Get-StatementCode $source 5).Count | Should -Be 2
+    (Get-StatementCode $source 9).Count | Should -Be 1
+  }
+
+  It 'reads "} else {" as the else, and a line that only closes a block as nothing more' {
+    $source = @('} else if (x) {', '  Do(a ?? b);', '}', 'Do(c ?? d);')
+
+    (Get-StatementCode $source 1).Count | Should -Be 1
+    (Get-StatementCode $source 3).Count | Should -Be 1
+  }
+
+  It 'ends where a bracket opened before the statement closes, or a block it is inside closes' {
+    $source = @('  first ?? second)', '  .Next(a ?? b);', 'x = 1 }', 'Next(c ?? d);')
+
+    (Get-StatementCode $source 1) | Should -Be @('  first ?? second')
+    (Get-StatementCode $source 3) | Should -Be @('x = 1 ')
+  }
+
+  It 'ends at a ; even inside an initializer it never saw close' {
+    $source = @('return new Hop {', 'Do();', 'if (y) {')
+
+    (Get-StatementCode $source 1).Count | Should -Be 2
+  }
+
+  It 'leaves out a lambda body that starts on a continuation line, and every block body after the first line' {
+    $source = @(
+      'var count = items',
+      '  .Where(i => i?.Total > 0)',
+      '  .Select((i, n) => new { i, n })',
+      '  .Count();',
+      'Run(() => {',
+      '  if (ready) { Go(); }',
+      '}, other ?? fallback);')
+
+    (Get-StatementCode $source 1) | Should -Be @('var count = items', '  .Where(i )', '  .Select((i, n) )', '  .Count();')
+    (Get-StatementCode $source 5) | Should -Be @('Run(() => {', '', ', other ?? fallback);')
+  }
+
+  It 'keeps a lambda that starts on the first line, body and all' {
+    $source = @('Run(() => { if (ready) { Go(); } });', 'var x = items.Select(i =>', '  i?.Total);')
+
+    (Get-StatementCode $source 1) | Should -Be @('Run(() => { if (ready) { Go(); } });')
+    (Get-StatementCode $source 2) | Should -Be @('var x = items.Select(i =>', '  i?.Total);')
+  }
+
+  It 'keeps an Allman lambda body on the first line out of nothing, and drops it after' {
+    $source = @('Run(x =>', '{', '  if (x) { Go(); }', '});')
+
+    (Get-StatementCode $source 1) | Should -Be @('Run(x =>', '', '', ');')
+  }
+
+  It 'stops at a line that opens a multi-line string or comment, whose text a per-line reader would take for code' {
+    $source = @(
+      'await using var cmd = new Command(',
+      '  """',
+      '  SELECT CASE WHEN a IS NULL OR b THEN 1 END',
+      '  """, conn);',
+      'Run(@"line one',
+      '  if (x) ? a : b");',
+      'Run(a, /* note',
+      '  if (x) */ b);')
+
+    (Get-StatementCode $source 1).Count | Should -Be 2
+    (Get-StatementCode $source 5).Count | Should -Be 1
+    (Get-StatementCode $source 7).Count | Should -Be 1
+  }
+
+  It 'reads to the end of the source when the statement never ends' {
+    (Get-StatementCode @('Run(a,', '  b') 1).Count | Should -Be 2
+  }
+}
+
+Describe 'Test-HandWrittenStatement' {
+  It 'counts a decision on a continuation line of the statement whose first line carries the conditions (MaintenanceWorker.cs:252)' {
+    Test-HandWrittenDecision $script:WorkerSource[251] | Should -BeFalse
+
+    Test-HandWrittenStatement $script:WorkerSource 252 | Should -BeTrue
+  }
+
+  It 'counts <name>' -ForEach @(
+      @{ name = 'a ?. starting a continuation line (Shapes.cs:64)'; line = 64 },
+      @{ name = 'a ?. and ?? inside a collection initializer (Shapes.cs:70)'; line = 70 },
+      @{ name = 'a decision on the first line, as before (Shapes.cs:22)'; line = 22 }) {
+    Test-HandWrittenStatement $script:ShapesSource $line | Should -BeTrue
+  }
+
+  It 'counts <name>' -ForEach @(
+      @{ name = 'a ?. split at the line break'; source = @('var parent = envelope.Hops?', '  .LastOrDefault();') },
+      @{ name = 'a ?[ split at the line break'; source = @('var first = items?', '  [0];') },
+      @{ name = 'a conditional split across lines'; source = @('var size = count > 0', '  ? count', '  : 1;') },
+      @{ name = 'a decision in an interpolation hole on a continuation line'; source = @('throw new TimeoutException(', '  $"after {timeout ?? fallback}");') },
+      @{ name = 'a switch expression inside an initializer'; source = @('var hop = new Hop {', '  Scope = For(record switch {', '    A a => a.Id,', '    _ => null,', '  }),', '};') }) {
+    Test-HandWrittenStatement $source 1 | Should -BeTrue
+  }
+
+  It 'excludes <name>' -ForEach @(
+      @{ name = 'a call chain whose decisions are all in lambdas starting on continuation lines (Shapes.cs:77)'; source = $null; line = 77 },
+      @{ name = 'a multi-line await'; source = @('var r = await pending', '  .ConfigureAwait(false);'); line = 1 },
+      @{ name = 'a multi-line initializer with no decision'; source = @('var sink = new Sink {', '  Total = 3,', '};'); line = 1 },
+      @{ name = 'a line closing a block, followed by a decision'; source = @('}', 'Do(a ?? b);'); line = 1 },
+      @{ name = 'a statement lambda whose body holds the decisions'; source = @('Run(() => {', '  if (ready) { Go(); }', '});'); line = 1 },
+      @{ name = 'a raw SQL string whose text reads like decisions'; source = @('await using var cmd = new Command(', '  """', '  SELECT CASE WHEN a IS NULL OR b THEN 1 END', '  """, conn);'); line = 1 },
+      @{ name = 'a line past the end of the source'; source = @('Do();'); line = 2 }) {
+    $text = if ($null -eq $source) { $script:ShapesSource } else { [string[]]$source }
+
+    Test-HandWrittenStatement $text $line | Should -BeFalse
   }
 }
 
@@ -116,6 +280,14 @@ Describe 'Get-UncoveredNewCode' {
   It 'lists an added hand-written decision with an untaken outcome as a branch, and nothing compiler-generated' {
     $result = Get-UncoveredNewCode -Added (New-Added $script:File (1..6)) -Coverage $script:Coverage -ReadSource $script:ReadSource
     $result.Branches | Should -Be @("${script:File}:1: (1/2 conditions) if (x) {")
+  }
+
+  It 'lists an added statement whose decision is on its continuation line as a branch' {
+    $coverage = Read-CoberturaCoverage $script:ShapesReports
+
+    $result = Get-UncoveredNewCode -Added (New-Added $script:ShapesPath @(64, 65, 77, 78)) -Coverage $coverage -ReadSource $script:ShapesRead
+
+    $result.Branches | Should -Be @("${script:ShapesPath}:64: (1/2 conditions) get()", "${script:ShapesPath}:78: (1/2 conditions) .Where(i => i?.Total > 0)")
   }
 
   It 'ignores lines the branch did not add, and files without coverage data' {
@@ -266,6 +438,98 @@ Describe 'Merge-BlockCoverage' {
   }
 }
 
+# A function with any unrun block left every line in it as the per-process reports said, so a ?. whose
+# two outcomes ran in two processes stayed half covered whenever anything else in its function was
+# untested (#1305, MaintenanceWorker.cs:249). The block data can prove such a line on its own: when every
+# block on the statement ran, the statement only branches within itself (no if, loop, switch, catch or
+# await), and the code it falls through to ran, every outcome of its conditions was taken. Each case below
+# is real collector output; the ones that must stay uncovered are as real as the ones that must not.
+Describe 'Read-BlockCoverage, per-line evidence' {
+  BeforeAll {
+    $script:ShapeBlocks = (Read-BlockCoverage (Join-Path $script:Shapes 'merged-blocks.xml'))[$script:ShapesPath]
+  }
+
+  It 'records the lines some block that did not run, or ran only in part, touches' {
+    $script:ShapeBlocks.NotRun.Contains(39) | Should -BeTrue
+    $script:ShapeBlocks.NotRun.Contains(65) | Should -BeTrue
+    $script:ShapeBlocks.NotRun.Contains(24) | Should -BeTrue
+    $script:ShapeBlocks.NotRun.Contains(22) | Should -BeFalse
+    $script:ShapeBlocks.NotRun.Contains(47) | Should -BeFalse
+  }
+
+  It 'records the lines a statement starts on' {
+    $script:ShapeBlocks.Starts.Contains(64) | Should -BeTrue
+    $script:ShapeBlocks.Starts.Contains(65) | Should -BeFalse
+  }
+
+  It 'records the statements the code that follows them never ran after' {
+    $script:ShapeBlocks.Unreached.Contains(57) | Should -BeTrue
+    $script:ShapeBlocks.Unreached.Contains(23) | Should -BeTrue
+    $script:ShapeBlocks.Unreached.Contains(22) | Should -BeFalse
+    $script:ShapeBlocks.Unreached.Contains(31) | Should -BeFalse
+  }
+}
+
+Describe 'Merge-BlockCoverage, a line proven by its own blocks' {
+  BeforeAll {
+    function Get-ShapesMerged([scriptblock]$Read = $script:ShapesRead) {
+      $coverage = Read-CoberturaCoverage $script:ShapesReports
+      Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage (Join-Path $script:Shapes 'merged-blocks.xml')) -ReadSource $Read | Out-Null
+      return $coverage[$script:ShapesPath]
+    }
+  }
+
+  It 'counts the outcomes the real CI processes split as covered, though another statement in the function went unrun (MaintenanceWorker.cs:249)' {
+    $coverage = Read-CoberturaCoverage $script:WorkerReports
+    $coverage[$script:WorkerPath].Conditions[249] | Should -Be @(1, 2)
+
+    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage (Join-Path $script:Worker 'merged-blocks.xml')) -ReadSource $script:WorkerRead | Out-Null
+
+    $coverage[$script:WorkerPath].Conditions[249] | Should -Be @(2, 2)
+  }
+
+  It 'leaves the real outcome no process took untested (MaintenanceWorker.cs:252)' {
+    $coverage = Read-CoberturaCoverage $script:WorkerReports
+
+    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage (Join-Path $script:Worker 'merged-blocks.xml')) -ReadSource $script:WorkerRead | Out-Null
+
+    $coverage[$script:WorkerPath].Conditions[252] | Should -Be @(1, 2)
+  }
+
+  It 'counts a ?. whose outcomes ran in different processes as covered, in a plain and an async method (Shapes.cs:<line>)' -ForEach @(@{ line = 22 }, @{ line = 31 }) {
+    (Get-ShapesMerged).Conditions[$line] | Should -Be @(2, 2)
+  }
+
+  It 'leaves <name> untested (Shapes.cs:<line>)' -ForEach @(
+      @{ name = 'a ?. no process took both ways, a block on its line unrun'; line = 39; expected = @(1, 2) },
+      @{ name = 'an if whose line ran in full but whose false outcome leads off it and never ran'; line = 47; expected = @(2, 4) },
+      @{ name = 'a ?. whose only path threw, so the code after it never ran'; line = 57; expected = @(1, 2) },
+      @{ name = 'an if whose body never ran'; line = 23; expected = @(1, 2) },
+      @{ name = 'a ?. on a continuation line no process took both ways'; line = 64; expected = @(1, 2) }) {
+    (Get-ShapesMerged).Conditions[$line] | Should -Be $expected
+  }
+
+  It 'claims nothing for a line whose source it cannot read, or without a source reader' {
+    (Get-ShapesMerged -Read { param($p) $null }).Conditions[22] | Should -Be @(1, 2)
+    (Get-ShapesMerged -Read $null).Conditions[22] | Should -Be @(1, 2)
+  }
+
+  It 'claims nothing for a line whose conditions are the compiler''s, such as one that only closes a block' {
+    $report = New-Report $TestDrive 'close.cobertura.xml' 'src/P/A.cs' @(@{ n = 2; hits = 1; cov = '1/2' }, @{ n = 3; hits = 1; cov = '1/2' })
+    $coverage = Read-CoberturaCoverage @($report)
+    $lines = { param([int[]]$n) [System.Collections.Generic.HashSet[int]]::new($n) }
+    $blocks = @{ 'src/P/A.cs' = @{
+        Complete = (& $lines @()); Incomplete = (& $lines @(2, 3)); NotRun = (& $lines @(9))
+        Starts = (& $lines @(2, 3)); Unreached = (& $lines @()) } }
+    $source = @('void M() {', '  }', '  x?.Go();')
+
+    Merge-BlockCoverage -Coverage $coverage -Blocks $blocks -ReadSource { param($p) $source } | Should -Be 1
+
+    $coverage['src/P/A.cs'].Conditions[2] | Should -Be @(1, 2)
+    $coverage['src/P/A.cs'].Conditions[3] | Should -Be @(2, 2)
+  }
+}
+
 Describe 'Get-BlockCoverageXml' {
   It 'returns nothing when no test process wrote a binary report' {
     $empty = Join-Path $TestDrive 'nobinaries'
@@ -373,6 +637,29 @@ Describe 'Get-WholeLibraryCoverage' {
     $whole.Gap | Should -Be @('src/P/A.cs:1: (1/2 conditions) if (x) {', 'src/P/A.cs:4: (never ran) Do();')
   }
 
+  It 'lists the real continuation-line gap and not the outcomes split across processes (MaintenanceWorker.cs:249 and :252)' {
+    $coverage = Read-CoberturaCoverage $script:WorkerReports
+    Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage (Join-Path $script:Worker 'merged-blocks.xml')) -ReadSource $script:WorkerRead | Out-Null
+
+    $gap = (Get-WholeLibraryCoverage -Coverage $coverage -ReadSource $script:WorkerRead).Gap
+
+    $gap | Should -Contain "${script:WorkerPath}:252: (1/2 conditions) sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()"
+    @($gap | Where-Object { $_.StartsWith("${script:WorkerPath}:249:") }) | Should -BeNullOrEmpty
+  }
+
+  It 'counts the outcomes of a decision on a continuation line, and still not the compiler''s' {
+    $coverage = Read-CoberturaCoverage $script:ShapesReports
+    $only = { param([int[]]$keep) foreach ($n in @($coverage[$script:ShapesPath].Conditions.Keys)) { if ($keep -notcontains $n) { $coverage[$script:ShapesPath].Conditions.Remove($n) } } }
+    & $only @(64, 70, 77)
+
+    $whole = Get-WholeLibraryCoverage -Coverage $coverage -ReadSource $script:ShapesRead
+
+    # 64 (1/2) and 70 (1/2) are counted; 77 (2/2) carries only the compiler's lambda-cache condition.
+    $whole.Outcomes | Should -Be 4
+    $whole.CoveredOutcomes | Should -Be 2
+    $whole.Gap | Should -Contain "${script:ShapesPath}:64: (1/2 conditions) get()"
+  }
+
   It 'skips a library file it cannot read, rather than counting lines it cannot classify' {
     $report = New-Report $TestDrive 'gone.cobertura.xml' 'src/P/Gone.cs' @(@{ n = 1; hits = 0; cov = '0/2' })
 
@@ -467,6 +754,28 @@ Describe 'Find-UncoveredNewLines.ps1, merge only (no base ref)' {
     $summary.Text | Should -Be 'Whole library: lines 87.5%, hand-written branches 83.3% (1 outcome untested)'
     $summary.Untested | Should -Be 1
     (Read-CoberturaCoverage @($merged))[$script:FixturePath].Conditions[5] | Should -Be @(2, 2)
+  }
+
+  It 'lists a continuation-line gap and not the ?. outcomes split across processes, from the binary reports' {
+    $sourceRoot = Join-Path $TestDrive 'repo-shapes'
+    New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'src/Whizbang.Exp') -Force | Out-Null
+    Copy-Item (Join-Path $script:Shapes 'Shapes.cs.txt') (Join-Path $sourceRoot $script:ShapesPath)
+    $gapFile = Join-Path $TestDrive 'out-shapes/library-gap.txt'
+    $scriptPath = Join-Path -Path $PSScriptRoot -ChildPath '../../../scripts/Find-UncoveredNewLines.ps1'
+
+    $pwsh = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    & $pwsh -NoProfile -File $scriptPath -CoverageRoot $script:Shapes -SourceRoot $sourceRoot -LibraryGapOutFile $gapFile | Out-Null
+    $LASTEXITCODE | Should -Be 0
+    $gap = @(Get-Content $gapFile | Where-Object { $_ -match '\(\d+/\d+ conditions\)' })
+
+    $gap | Should -Be @(
+      "${script:ShapesPath}:23: (1/2 conditions) if (rare) {",
+      "${script:ShapesPath}:32: (1/2 conditions) if (rare) {",
+      "${script:ShapesPath}:39: (1/2 conditions) _never?.Record(n);",
+      "${script:ShapesPath}:40: (1/2 conditions) if (rare) {",
+      "${script:ShapesPath}:47: (2/4 conditions) if (sink?.Total >= 0) {",
+      "${script:ShapesPath}:57: (1/2 conditions) bomb?.Fail();",
+      "${script:ShapesPath}:64: (1/2 conditions) get()")
   }
 
   It 'fails with -FailOnWholeLibrary while any hand-written outcome in the library is untested' {
