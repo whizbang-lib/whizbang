@@ -47,6 +47,27 @@ public class PerspectiveRebuilderBlueGreenTests {
       .Because("With no driver support there is no shadow table, so the replay writes the live table, as it always did.");
   }
 
+  /// <summary>
+  /// The table registry is keyed by the MODEL's type name, which is what the schema pass writes, so asking for
+  /// the PERSPECTIVE's name matches nothing and the rebuild throws "no registered table" before replaying a
+  /// single stream (#1308). Every blue-green test passed through that bug because the fake swapper answered
+  /// whatever it was asked; this one asserts WHICH name it was asked for.
+  /// </summary>
+  [Test]
+  public async Task BlueGreen_LooksTheTableUpByTheModelName_NotThePerspectiveAsync() {
+    var swapper = new FakeSwapper();
+    var fixture = new Fixture(swapper);
+    fixture.Add(_a, 1);
+
+    var result = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(swapper.FoundFor).IsEqualTo(MODEL)
+      .Because("the registry is keyed by the model, so the model's name is the only one that can find a table");
+    await Assert.That(swapper.FoundFor).IsNotEqualTo(PERSPECTIVE)
+      .Because("asking for the perspective name is the defect itself, and it fails the same way for every perspective");
+  }
+
   [Test]
   public async Task BlueGreen_ReplaysIntoTheShadowTable_ThenSwapsItInAsync() {
     var swapper = new FakeSwapper();
@@ -299,8 +320,12 @@ public class PerspectiveRebuilderBlueGreenTests {
     public Exception? SwapFailure { get; init; }
     public Exception? DropFailure { get; init; }
 
-    public Task<string?> FindTableAsync(string perspectiveName, CancellationToken cancellationToken) {
+    /// <summary>The name the rebuilder asked for. Recorded because asking for the wrong one is #1308.</summary>
+    public string? FoundFor { get; private set; }
+
+    public Task<string?> FindTableAsync(string modelTypeName, CancellationToken cancellationToken) {
       Calls.Add("find");
+      FoundFor = modelTypeName;
       return Task.FromResult(Table);
     }
 
