@@ -35,6 +35,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 [Category("Shard2")]
 public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildBalancePerspective";
+  // The registry is keyed by the MODEL, which is what the schema pass writes. Seeding it under the
+  // PERSPECTIVE name built a world where the old lookup worked, which is how #1308 kept green
+  // integration coverage over a mode that could not run against a real schema.
+  private const string MODEL = "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildBalanceModel";
   private const string TABLE = "wh_per_rebuild_balance";
   private const decimal STALE = 999m;
 
@@ -128,7 +132,9 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
     await _registerTableAsync();
 
     await Assert.That(swapper).IsNotNull();
-    await Assert.That(await swapper!.FindTableAsync(PERSPECTIVE, CancellationToken.None)).IsEqualTo(TABLE);
+    await Assert.That(await swapper!.FindTableAsync(MODEL, CancellationToken.None)).IsEqualTo(TABLE);
+    await Assert.That(await swapper.FindTableAsync(PERSPECTIVE, CancellationToken.None)).IsNull()
+      .Because("the registry holds models, so a perspective name finds nothing: asking with it is #1308");
     await Assert.That(EFCorePerspectiveTableSwapperFactory.Create(inMemorySp, typeof(InMemoryContext))).IsNull()
       .Because("With no connection of its own to open, there is no swapper, and a blue-green rebuild replays in place.");
   }
@@ -230,7 +236,7 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
     await conn.ExecuteAsync("""
       INSERT INTO wh_perspective_registry (clr_type_name, table_name, schema_json, schema_hash, service_name)
       VALUES (@name, @table, '{}'::jsonb, 'h', 'svc') ON CONFLICT DO NOTHING
-      """, new { name = PERSPECTIVE, table = TABLE });
+      """, new { name = MODEL, table = TABLE });
   }
 
   private Task<Dictionary<Guid, decimal>> _liveBalancesAsync() => _balancesAsync(TABLE);
