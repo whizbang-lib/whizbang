@@ -289,7 +289,7 @@ public class CommitSequenceStreamOrderSqlTests : EFCoreTestBase {
   /// One stamp of <see cref="BATCH"/>, rolled back, with the index entries it read on the event store's indexes: counted
   /// inside the call's own transaction, so the number is the same on any machine and names the index that did the reading.
   /// </summary>
-  private static async Task<(int Stamped, long Entries, string ByIndex)> _entriesReadAsync(NpgsqlConnection conn) {
+  private static async Task<StampRead> _entriesReadAsync(NpgsqlConnection conn) {
     const string READ = """
       SELECT i.indexrelid::regclass::text AS name, pg_stat_get_xact_tuples_returned(i.indexrelid) AS entries
       FROM pg_index i WHERE i.indrelid = 'wh_event_store'::regclass
@@ -301,8 +301,10 @@ public class CommitSequenceStreamOrderSqlTests : EFCoreTestBase {
     await _execAsync(conn, "ROLLBACK");
     var delta = after.ToDictionary(kv => kv.Key, kv => kv.Value - before.GetValueOrDefault(kv.Key));
     var byIndex = string.Join(", ", delta.Where(kv => kv.Value > 0).Select(kv => $"{kv.Key} {kv.Value}"));
-    return (stamped, delta.Values.Sum(), byIndex.Length == 0 ? "no index read" : byIndex);
+    return new StampRead(stamped, delta.Values.Sum(), byIndex.Length == 0 ? "no index read" : byIndex);
   }
+
+  private sealed record StampRead(int Stamped, long Entries, string ByIndex);
 
   private static async Task<Dictionary<string, long>> _readByIndexAsync(NpgsqlConnection conn, string sql) {
     var read = new Dictionary<string, long>(StringComparer.Ordinal);

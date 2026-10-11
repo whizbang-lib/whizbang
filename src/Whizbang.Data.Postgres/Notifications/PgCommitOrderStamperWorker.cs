@@ -319,29 +319,14 @@ public sealed partial class PgCommitOrderStamperWorker(
         LogFenced(_logger);
         return;
       } catch (Exception ex) when (IsTimeout(ex)) {
-        // #1217: a canceled call rolled back everything it did, so the same size can never succeed. Back off and
-        // retry at once, still leading: giving up the lock would come back with the same size, which is how one
-        // stamper repeated a 30 s timeout for ten hours after an import had grown its batch.
-        var timedOutAt = _batchSize;
-        _batchSize = CommitOrderStampBatch.AfterTimeout(_batchSize);
-        _timeoutCap = _batchSize;
-        LogStampTimedOut(_logger, timedOutAt, _batchSize);
-        OnStampTimedOut?.Invoke(_batchSize);
+        // #1217: retry at once, still leading: giving up the lock would come back with the same size.
+        _backOffAfterTimeout();
         skipWakeWait = true;
         continue;
       }
       _ = Interlocked.Add(ref _totalStamped, stamped);
       OnStampCompleted?.Invoke(stamped);
-
-      // Resized from the count the call returned rather than from a count of what is left: a probe for
-      // the backlog size would be another scan of the set that is already too expensive to scan.
-      var asked = _batchSize;
-      _batchSize = CommitOrderStampBatch.Next(
-        _batchSize, stamped, _stamperOptions.BatchSize, _stamperOptions.DrainBatchSize, _timeoutCap);
-      if (stamped < asked) {
-        // Drained to the fence: the next burst starts at the configured size and may grow past the old timeout again.
-        _timeoutCap = null;
-      }
+      _resizeAfter(stamped);
 
       if (stamped > 0) {
         // A full batch may have left more behind — drain immediately instead of
@@ -610,6 +595,35 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   [LoggerMessage(EventId = 16, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker released the stamper role to a newer-version instance that asked for it")]
   static partial void LogRoleDrained(ILogger logger);
+
+  /// <summary>
+  /// Halves the batch after a call that timed out (#1217) and holds growth at the new size until the backlog drains.
+  /// </summary>
+  /// <remarks>
+  /// A canceled call rolled back everything it did, so the same size can never succeed: one stamper repeated a 30 s
+  /// timeout for ten hours after an import had grown its batch, because the size changed only after a call returned.
+  /// </remarks>
+  private void _backOffAfterTimeout() {
+    var timedOutAt = _batchSize;
+    _batchSize = CommitOrderStampBatch.AfterTimeout(_batchSize);
+    _timeoutCap = _batchSize;
+    LogStampTimedOut(_logger, timedOutAt, _batchSize);
+    OnStampTimedOut?.Invoke(_batchSize);
+  }
+
+  /// <summary>
+  /// Sizes the next call from the count this one returned rather than from a count of what is left: a probe for the
+  /// backlog size would be another read of the set a stamp exists to avoid reading.
+  /// </summary>
+  private void _resizeAfter(int stamped) {
+    var asked = _batchSize;
+    _batchSize = CommitOrderStampBatch.Next(
+      _batchSize, stamped, _stamperOptions.BatchSize, _stamperOptions.DrainBatchSize, _timeoutCap);
+    if (stamped < asked) {
+      // Drained to the fence: the next burst starts at the configured size and may grow past the old timeout again.
+      _timeoutCap = null;
+    }
+  }
 
   /// <summary>
   /// Whether a stamp call failed because it ran out of time: the client's command timeout (Npgsql cancels the

@@ -3,6 +3,7 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -44,7 +45,8 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       bool disable = false,
       INotifySignalingGate? gate = null,
       string? searchPath = null,
-      int batchSize = 100) {
+      int batchSize = 100,
+      ILogger<PgCommitOrderStamperWorker>? logger = null) {
     var notificationOptions = new WhizbangNotificationOptions {
       DirectConnectionString = connectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
@@ -73,7 +75,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       Options.Create(stamperOptions),
       config,
       shared,
-      NullLogger<PgCommitOrderStamperWorker>.Instance,
+      logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
       dutyElector: null,
       notifySignalingGate: gate);
   }
@@ -491,6 +493,53 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       .Because("once a call can complete, the backed-off batch stamps the pending row");
     await Assert.That(leaderships).IsEqualTo(1)
       .Because("a timeout is answered by a smaller batch, not by giving up the stamper's lock and electing again");
+  }
+
+  /// <summary>
+  /// The same timeout with nothing subscribed to <see cref="PgCommitOrderStamperWorker.OnStampTimedOut"/>: the backoff
+  /// does not depend on an observer, and the operator is told what timed out and what the next call asks for.
+  /// </summary>
+  [Test]
+  public async Task Worker_AStampTimesOut_WithNoObserver_LogsTheBackoffAndStillStampsAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    var eventId = (Guid)TrackedGuid.New();
+    await _insertEventStoreRowAsync((Guid)TrackedGuid.New(), eventId, version: 1);
+
+    await using var blocker = new NpgsqlConnection(ConnectionString);
+    await blocker.OpenAsync(cts.Token);
+    await using (var begin = new NpgsqlCommand("BEGIN; LOCK TABLE wh_event_store IN SHARE MODE", blocker)) {
+      await begin.ExecuteNonQueryAsync(cts.Token);
+    }
+
+    var logger = new TimeoutSignalingLogger();
+    var worker = _newWorker(ConnectionString + ";Command Timeout=1", batchSize: 8, logger: logger);
+    var stamped = _whenStampCount(worker, minStamped: 1);
+    await worker.StartAsync(cts.Token);
+
+    var logged = await logger.TimedOut.Task.WaitAsync(cts.Token);
+    await using (var commit = new NpgsqlCommand("COMMIT", blocker)) {
+      await commit.ExecuteNonQueryAsync(cts.Token);
+    }
+    await stamped.Task.WaitAsync(cts.Token);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(logged).Contains("a stamp of 8 rows timed out").And.Contains("the next asks for 4")
+      .Because("a stamper that backs off is visible as one: the warning names the size that failed and the next");
+    await Assert.That(await _readCommitSequenceAsync(eventId)).IsNotNull();
+  }
+
+  /// <summary>Completes on the worker's timeout warning, so a test can act on it without subscribing to the event.</summary>
+  private sealed class TimeoutSignalingLogger : ILogger<PgCommitOrderStamperWorker> {
+    private const int STAMP_TIMED_OUT = 18;
+    public TaskCompletionSource<string> TimedOut { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (eventId.Id == STAMP_TIMED_OUT) {
+        TimedOut.TrySetResult(formatter(state, exception));
+      }
+    }
   }
 
   // ============================================================================
