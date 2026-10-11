@@ -269,7 +269,9 @@ flowchart LR
 - A **manual/override** version is still reflected, because it is what gets tagged.
 - `release.yml` **fails if the tag already exists** — you can never re-publish a version, and the
   tag history can never silently disagree with GitVersion.
-- The **Protect release tags** ruleset refuses moving or deleting any `v*` tag, for every actor.
+- The **Protect release tags** ruleset refuses moving or deleting any `v*` tag, for every actor,
+  and creating one for anyone but the release app and repository admins, who are the recovery path
+  when a tag step fails (see *Which identity writes*).
 - A **lower** version (a backport tag `< highest`) will not advance the mainline base — correct.
 
 ---
@@ -294,6 +296,27 @@ That is why `release.yml` starts from the **push** a merged release PR makes to 
 ref is `refs/pull/N/merge`. The push run finds the release PR through the merge commit
 (`repos/…/commits/<sha>/pulls`) and applies the same title and branch checks as before. Admitting
 `refs/pull/*/merge` instead would let any pull request's workflow in.
+
+### Which identity writes
+
+Every write that must start CI, or that only one identity may make, goes through the
+**`whizbang-release-bot`** GitHub App: each job mints a short-lived installation token
+(`actions/create-github-app-token`, from the org secrets `RELEASE_APP_ID` and
+`RELEASE_APP_PRIVATE_KEY`) scoped to the one repository and the permissions it needs. No personal
+access token is involved, so nothing long-lived belongs to a person.
+
+| Write | Where | App permissions |
+|---|---|---|
+| Release branch push and release PR | `start-release.yml` | contents, pull requests, workflows |
+| Release PR for a current-line hotfix | `ci.yml` → Plan · Route the hotfix by line | pull requests |
+| Merge-back branch and PR into `develop` | `reusable-sync-develop.yml` | contents, pull requests, workflows |
+| `v*` tag | `release.yml`, `nuget-publish.yml` | contents, workflows |
+| README numbers PR | `readme-refresh.yml` | contents, pull requests |
+| Docs site test status and security advisories, and its release | `ci.yml` → Report · Test status to docs, `security-advisories-docs.yml` | contents, pull requests, actions (docs repository only) |
+
+A PR or push made with `GITHUB_TOKEN` starts no workflow, which is why these are not `GITHUB_TOKEN`.
+The tag is because the tag ruleset lets only the app create a `v*` tag, and GitHub Actions cannot be
+a ruleset bypass actor. GitHub releases and everything else stay on `GITHUB_TOKEN`.
 
 ### What a stable GitHub release carries
 
@@ -618,6 +641,7 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
 | Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
 | `Gate · Alpha is not below NuGet` is red on a develop push, or a published prerelease out-sorts develop's current builds ("latest" resolves to old code) | a release cut was abandoned after develop had published in the cut's next band (#872): the open branch raised develop's number, deleting it lowered it again | Find the commit that first published the stale version (its develop run's push log), **tag it with that version** (`git tag -a vX.Y.Z-alpha.N <sha>`; it records a version that really shipped, and develop then computes above it), and **unlist** that version on nuget.org for every package. Never set a version floor in `GitVersion.yml`: versions come from tags only |
+| `Mint the release app token` failed, or a push, PR or tag step after it is refused | the app's private key was rotated or revoked, the org secrets `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` are missing for this repository, the app was uninstalled from the repository, or it lacks a permission that step needs | Fix the app or the secret (Settings → Developer settings → GitHub Apps → `whizbang-release-bot`), then re-run the failed jobs. Every tag step checks for the tag first, so a re-run after the packages reached NuGet only adds the missing tag. If the app cannot be fixed quickly, a repository admin may push the tag by hand: `git tag -a vX.Y.Z <sha> -m "Release vX.Y.Z" && git push origin vX.Y.Z` |
 | A job in a release run failed for a flaky test | a real flake | Re-run the failed jobs to unblock, **and** fix the flake in a PR (flakes are fixed on sight, never parked) |
 
 `dry_run` on `release.yml` defaults to `true`: a dispatch without `-f dry_run=false` reports success

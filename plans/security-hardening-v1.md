@@ -31,10 +31,13 @@ Approved by the owner on 2026-10-10, all as suggested. State:
 3. **`release/**` requires a pull request and the CI gate** (live; checks not enforced on creation, so Start Release
    and a hotfix cut still push the new branch). F7 hotfixes now arrive as a PR into the hotfix branch, like F8.
 4. **SHA pinning enforced; `GITHUB_TOKEN` can no longer approve pull requests** (live).
-5. **Replace `RELEASE_PAT` and `DOCS_REPO_PUSH_TOKEN` with a GitHub App token.** Waiting on the owner to create the app
-   (contents, pull requests and workflows write; installed on this repository and the docs repository) and store its
-   id and private key as secrets. Then the workflows switch to `actions/create-github-app-token`, the PATs are
-   revoked, and the tag ruleset's creation rule names the app as its only bypass.
+5. **Replace `RELEASE_PAT` and `DOCS_REPO_PUSH_TOKEN` with a GitHub App token.** App `whizbang-release-bot`
+   created 2026-10-11 (contents, pull requests, workflows and actions write; installed on this repository, the docs
+   repository and the extension repository; org secrets `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` scoped to this
+   repository and the extension). This repository's workflows mint per-job tokens instead of the PATs, tag pushes
+   included. Remaining: the tag ruleset's creation rule (bypass: the app and repository admins), the same switch in
+   the extension repository, then the owner revokes both PATs once a release cut and a docs publish have run on
+   the app.
 6. **Offload encryption stays opt-in; a store with no cipher logs a warning at start** (`UnsealedOffloadStartupWarning`).
 
 ## Hunt list (highest risk first)
