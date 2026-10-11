@@ -70,9 +70,12 @@ public sealed partial class PartitionAssignmentCache : IPartitionAssignmentSourc
   public event Action<PartitionAssignment?>? OnRefreshed;
 
   /// <summary>
-  /// Raised when the assigner's announcement of a publish arrives, with its <c>epoch:revision</c> payload, before the
-  /// copy is marked stale. The signal that this instance heard a publish. Must not block.
+  /// Raised when the assigner's announcement of a publish arrives, with its <c>epoch:revision</c> payload, after the
+  /// copy is marked stale, so a claim made by a caller woken by it reads the new version. The signal that this
+  /// instance heard a publish. Must not block.
   /// </summary>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:OnNotification_RaisesTheAnnouncementOnlyOnceTheCopyIsStaleAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:OnNotification_ForTheVersionAlreadyHeld_StillRaisesTheAnnouncementAsync</tests>
   public event Action<string>? OnPublishAnnounced;
 
   /// <inheritdoc />
@@ -81,12 +84,11 @@ public sealed partial class PartitionAssignmentCache : IPartitionAssignmentSourc
   /// <inheritdoc />
   /// <remarks>A publish marks the copy stale unless it already is this version; the read happens on the next claim.</remarks>
   public void OnNotification(string payload) {
-    OnPublishAnnounced?.Invoke(payload);
     var current = Current;
-    if (current is not null && string.Equals(payload, PayloadOf(current.Version), StringComparison.Ordinal)) {
-      return;
+    if (current is null || !string.Equals(payload, PayloadOf(current.Version), StringComparison.Ordinal)) {
+      MarkStale();
     }
-    MarkStale();
+    OnPublishAnnounced?.Invoke(payload);
   }
 
   /// <inheritdoc />
