@@ -35,9 +35,10 @@ Approved by the owner on 2026-10-10, all as suggested. State:
    created 2026-10-11 (contents, pull requests, workflows and actions write; installed on this repository, the docs
    repository and the extension repository; org secrets `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` scoped to this
    repository and the extension). This repository's workflows mint per-job tokens instead of the PATs, tag pushes
-   included. Remaining: the tag ruleset's creation rule (bypass: the app and repository admins), the same switch in
-   the extension repository, then the owner revokes both PATs once a release cut and a docs publish have run on
-   the app.
+   included (#1322). Ruleset "Restrict release tag creation" (24882819) lets only the app and repository admins
+   create a `v*` tag. Verified: the first develop run after the merge published test status to the docs site as the
+   app and its docs release succeeded. Remaining: the extension repository's switch (whizbang-vscode#89) and its own
+   tag rulesets, then the owner revokes both PATs once a release cut has run on the app.
 6. **Offload encryption stays opt-in; a store with no cipher logs a warning at start** (`UnsealedOffloadStartupWarning`).
 
 ## Hunt list (highest risk first)
