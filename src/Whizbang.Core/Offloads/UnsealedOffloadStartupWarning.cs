@@ -20,7 +20,7 @@ namespace Whizbang.Core.Offloads;
 /// <param name="options">The bound offload options.</param>
 /// <param name="logger">The logger.</param>
 /// <docs>fundamentals/offloads/message-body-store#sealing-bodies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Offloads/UnsealedOffloadStartupWarningTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Offloads/UnsealedOffloadStartupWarningTests.cs</tests>
 public sealed partial class UnsealedOffloadStartupWarning(
     IOptions<MessageBodyOffloadOptions> options,
     ILogger<UnsealedOffloadStartupWarning> logger) : IHostedService {

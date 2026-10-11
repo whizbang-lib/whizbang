@@ -232,7 +232,7 @@ public static class OffloadServiceCollectionExtensions {
   /// without a configured ProviderName the hook is a no-op (pass-through).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Offloads/BodyOffloadPostSerializeHookTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Offloads/UnsealedOffloadStartupWarningTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Offloads/UnsealedOffloadStartupWarningTests.cs</tests>
   public static IServiceCollection AddWhizbangBodyOffload(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
     // AddOptions registers IOptions/IOptionsMonitor/IOptionsSnapshot for the
