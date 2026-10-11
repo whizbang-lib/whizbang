@@ -366,3 +366,23 @@ partition_assignment.claim.assigned.instances_400.shared_buffers	599	buffers/cla
 partition_assignment.claim.self_ranked.instances_20.shared_buffers	619	buffers/claim		
 partition_assignment.claim.self_ranked.instances_400.shared_buffers	599	buffers/claim		
 partition_assignment.refresh_read.shared_buffers	2	buffers/read		recorded: gated at 2 in the scenario
+
+# --- Role vote beside a stamp held back by an open import -----------------------------------------
+# One import transaction holds the visibility horizon open while 100,000 events (10,000 streams of
+# ten) commit behind it, and the stamper makes 20 fenced calls of 1,000 beside the holder's renewal
+# votes. Captured on a deployed environment under bulk imports (#1217): the holder's vote waited a
+# median of 14.5 s and up to 30 s, behind a fenced stamp that ran, unblocked, for up to 47 s.
+#
+# Nothing behind the horizon is eligible. Before 205 the stamp's walk filtered on xmin, which no index
+# holds, so it never reached its batch: each call read every unstamped entry behind the horizon
+# (100,001) and stamped none, the worker retried on its fenced interval because rows were pending, and
+# the holder's vote waited 474 samples behind those calls. 205 finds eligible rows through the
+# inserting transaction's id, so a call reads nothing behind the horizon. Entries read are counted on
+# every event-store index inside the call's own transaction and do not depend on the machine, so they
+# carry the gate: a call may read what one batch (1,000) could stamp. Times and samples are recorded.
+role_vote.held_back_stamp.index_entries_read_per_call	4	entries	1000	GATED: was 100,001 before 205
+role_vote.held_back_stamp.longest_vote_wait_ms	3	ms		recorded: was 17 before 205
+role_vote.held_back_stamp.rows_behind_the_horizon	100000	rows		recorded
+role_vote.held_back_stamp.rows_stamped_per_call	0	rows		recorded
+role_vote.held_back_stamp.stamp_call_median_ms	0	ms		recorded: was 10 before 205
+role_vote.held_back_stamp.vote_lock_wait_samples	41	samples		recorded: was 474 before 205
