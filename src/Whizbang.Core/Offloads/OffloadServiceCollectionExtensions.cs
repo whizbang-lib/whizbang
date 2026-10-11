@@ -232,6 +232,7 @@ public static class OffloadServiceCollectionExtensions {
   /// without a configured ProviderName the hook is a no-op (pass-through).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Offloads/BodyOffloadPostSerializeHookTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Offloads/UnsealedOffloadStartupWarningTests.cs</tests>
   public static IServiceCollection AddWhizbangBodyOffload(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
     // AddOptions registers IOptions/IOptionsMonitor/IOptionsSnapshot for the
@@ -242,6 +243,9 @@ public static class OffloadServiceCollectionExtensions {
     services.TryAddSingleton<IConfiguration>(_ => new ConfigurationBuilder().Build());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       Microsoft.Extensions.Options.IPostConfigureOptions<MessageBodyOffloadOptions>, MessageBodyOffloadOptionsPostConfigure>());
+    // Encryption is opt-in; a store with no cipher is announced once at start.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Microsoft.Extensions.Hosting.IHostedService, UnsealedOffloadStartupWarning>());
     return services.AddWhizbangPostSerializeHook<BodyOffloadPostSerializeHook>();
   }
 }
