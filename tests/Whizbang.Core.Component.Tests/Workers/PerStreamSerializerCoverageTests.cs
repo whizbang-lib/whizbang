@@ -93,11 +93,12 @@ public class PerStreamSerializerCoverageTests {
   }
 
   /// <summary>
-  /// A fake clock that reports when the drain window's race starts. <c>Task.Delay(remaining,
-  /// timeProvider, ct)</c> asks its provider for a timer, so a timer whose due time falls inside the
-  /// window is the worker arriving at <c>Task.WhenAny</c>: the first is the window opening, the
-  /// second is the loop-back after a mid-window arrival. The sweep's timer is excluded by due time.
+  /// A fake clock that reports when the drain window's race starts. A delay asks its time provider
+  /// for a timer, so a timer whose due time falls inside the window is the worker arriving at the
+  /// race: the first is the window opening, the second is the loop-back after a mid-window arrival.
+  /// The idle sweep's timer is excluded by its far larger due time.
   /// </summary>
+  /// <param name="window">The drain window, the upper bound on a due time that counts as a wait.</param>
   private sealed class DrainWindowClock(TimeSpan window) : FakeTimeProvider {
     private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _second = new(TaskCreationOptions.RunContinuationsAsynchronously);
