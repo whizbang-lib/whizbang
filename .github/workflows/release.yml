@@ -2,13 +2,15 @@ name: Release
 
 run-name: >-
   Release ${{ github.event_name == 'workflow_dispatch' && (inputs.dry_run && '· dry run' || format('· manual publish · v{0}', inputs.version))
-      || github.event.pull_request.merged && format('· 6 publish stable · {0}', github.event.pull_request.head.ref)
-      || format('· not a release (PR #{0} closed unmerged)', github.event.pull_request.number) }}
+      || '· 6 publish stable (if this push to main merged a release PR)' }}
 
 on:
-  # Trigger when a release PR is merged to main
-  pull_request:
-    types: [closed]
+  # A merged release PR lands on main as a push. The run starts from that push, not from the
+  # pull_request event: GitHub evaluates an environment's deployment-branch policy against the run's
+  # ref, which for a pull_request event is refs/pull/N/merge. The publish environments admit only
+  # develop, main and release/**, so a pull_request-started run could never reach them, and admitting
+  # refs/pull/*/merge would let any pull request's own copy of a workflow in.
+  push:
     branches: [main]
 
   # Keep manual trigger for dry runs
@@ -52,6 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read   # find the release PR this push merged
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
       version: ${{ steps.check.outputs.version }}
@@ -60,9 +63,9 @@ jobs:
         id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_MERGED: ${{ github.event.pull_request.merged }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
           DRY_RUN: ${{ inputs.dry_run }}
           INPUT_VERSION: ${{ inputs.version }}
         run: |
@@ -76,9 +79,18 @@ jobs:
               echo "should_release=true" >> "$GITHUB_OUTPUT"
               echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
             fi
-          elif [ "$PR_MERGED" == "true" ]; then
-            # Check if PR title matches release pattern
-            if [[ "$PR_TITLE" =~ ^chore\(release\):\ v([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then
+          else
+            # The pull request this push merged into main, if any. Main takes merges only from
+            # release branches, so a push with no merged PR behind it publishes nothing.
+            PR_JSON=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+              --jq '[.[] | select(.merged_at != null and .base.ref == "main" and .merge_commit_sha == env.SHA)][0] // empty')
+            PR_TITLE=$(jq -r '.title // ""' <<< "$PR_JSON")
+            PR_HEAD_REF=$(jq -r '.head.ref // ""' <<< "$PR_JSON")
+            if [ -z "$PR_JSON" ]; then
+              echo "Push to main merged no pull request, skipping"
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              echo "version=" >> "$GITHUB_OUTPUT"
+            elif [[ "$PR_TITLE" =~ ^chore\(release\):\ v([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then
               VERSION="${BASH_REMATCH[1]}"
               # Gitflow: only a release branch ships to main, and it ships its OWN stable number.
               # A release-looking title on any other branch, a prerelease version (those publish
@@ -96,10 +108,6 @@ jobs:
               echo "should_release=false" >> "$GITHUB_OUTPUT"
               echo "version=" >> "$GITHUB_OUTPUT"
             fi
-          else
-            echo "PR not merged, skipping"
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "version=" >> "$GITHUB_OUTPUT"
           fi
 
   version:
@@ -371,12 +379,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           VERSION: ${{ needs.check-release.outputs.version }}
-          # On a release PR merge the tested commit is the PR head. On a recovery dispatch (from
-          # main) it is the merge commit's release-branch parent.
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          SRC="${PR_HEAD:-$(git rev-parse --verify --quiet HEAD^2 || true)}"
+          # The tested commit is the merge commit's release-branch parent, on a release merge and on
+          # a recovery dispatch from main alike: main takes merge commits only.
+          SRC="$(git rev-parse --verify --quiet HEAD^2 || true)"
           if [ -z "$SRC" ]; then
             echo "::error::Cannot find the release-branch commit for v$VERSION: HEAD is not a merge of a release branch."
             exit 1
