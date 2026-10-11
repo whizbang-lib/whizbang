@@ -34,9 +34,8 @@ public class UnsealedOffloadStartupWarningTests {
       await hosted.StartAsync(CancellationToken.None);
     }
 
-    return provider.GetFakeLogCollector().GetSnapshot()
-      .Where(r => r.Category == typeof(UnsealedOffloadStartupWarning).FullName)
-      .ToList();
+    return [.. provider.GetFakeLogCollector().GetSnapshot()
+      .Where(r => r.Category == typeof(UnsealedOffloadStartupWarning).FullName)];
   }
 
   [Test]
