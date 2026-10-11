@@ -197,6 +197,25 @@ public class PartitionAssignmentCacheTests {
   }
 
   [Test]
+  public async Task OnNotification_AReaderActingOnTheAnnouncement_SeesTheNewVersionAsync() {
+    var (cache, store, _) = _create();
+    store.Published = _read(3, 1, TimeSpan.FromSeconds(90), _self);
+    _ = await cache.ForClaimAsync(_self, CancellationToken.None);
+    store.Published = _read(3, 2, TimeSpan.FromSeconds(90), _self);
+    Task<PartitionAssignmentVersion?>? readOnAnnouncement = null;
+    // The reader runs inside the announcement, as any subscriber that acts on it may; the stale check is the first
+    // thing ForClaimAsync does, before it awaits anything.
+    cache.OnPublishAnnounced += _ => readOnAnnouncement = cache.ForClaimAsync(_self, CancellationToken.None).AsTask();
+
+    cache.OnNotification("3:2");
+
+    await Assert.That(await readOnAnnouncement!).IsEqualTo(new PartitionAssignmentVersion(3, 2))
+      .Because("the announcement is the signal that this instance heard a publish, so by the time it is raised the copy "
+        + "has to be marked stale; raised first, a reader acting on it got the old version (or none) and the copy was "
+        + "marked stale only after it had read");
+  }
+
+  [Test]
   public async Task Constructor_RequiresAStoreAndALoggerAsync() {
     await Assert.That(() => new PartitionAssignmentCache(null!, NullLogger<PartitionAssignmentCache>.Instance)).Throws<ArgumentNullException>();
     await Assert.That(() => new PartitionAssignmentCache(new FakePartitionAssignmentStore(), null!)).Throws<ArgumentNullException>();
