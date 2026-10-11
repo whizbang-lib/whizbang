@@ -317,6 +317,63 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     }
   }
 
+  /// <summary>
+  /// <para>
+  /// A rebuild of a row that is already at its stream's head must still re-derive it. The generated runner's
+  /// idempotency filter compares each event against the row's own recorded position, which is right for the
+  /// live drain re-claiming a batch after a crash and exactly wrong here: by that measure every event is
+  /// already applied, so the whole batch was dropped, the stream returned Completed, and the rebuilder
+  /// reported success having written nothing (#1313).
+  /// </para>
+  /// <para>
+  /// The row is corrupted out of band first, because that is the only way to tell a rebuild that re-derived
+  /// the row from one that skipped it: with no corruption both produce the same number and the test would
+  /// pass against the defect. Asserting the exact balance also pins the other half of the fix, that a rebuild
+  /// starts from an empty model: folding the stream onto the stored row would give 999 + 100, not 100.
+  /// </para>
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheRowIsAlreadyAtTheStreamHead_StillRederivesItAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    // First rebuild: the row now exists and its metadata records the stream's last event.
+    var seeded = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+    await Assert.That(seeded.Success).IsTrue();
+
+    // Corrupt it. Nothing in the event stream justifies this value, so only a rebuild that skipped the
+    // events can leave it standing. Written straight to the stored JSON: round-tripping the row through
+    // EF to change one number drags the whole PerspectiveScope complex type along, and saving it back
+    // fails on a required member the read did not populate. That is incidental to what is being tested.
+    await using (var corruptContext = CreateDbContext()) {
+      await corruptContext.Database.ExecuteSqlRawAsync(
+        // Braces doubled: ExecuteSqlRawAsync reads its SQL as a composite format string, so a jsonb path
+        // literal is otherwise parsed as a parameter placeholder.
+        "UPDATE wh_per_rebuild_balance SET data = jsonb_set(data, '{{Balance}}', '999') WHERE id = {0}", streamId);
+    }
+
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+
+    await using var verifyContext = CreateDbContext();
+    var rebuilt = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstAsync(r => r.Id == streamId);
+
+    await Assert.That(rebuilt.Data.Balance).IsEqualTo(100m)
+      .Because("the rebuild re-derives the row from its events, so it neither skips them nor folds them onto what was there");
+  }
+
   [Test]
   public async Task RebuildStreamsAsync_WithSubset_UpdatesOnlyTargetedStreamsAsync() {
     // Arrange: seed five streams with events. Do NOT project ahead of time — this keeps the
