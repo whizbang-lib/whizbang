@@ -221,6 +221,28 @@ lock, so a later version could be numbered below an earlier one, across two call
 transaction. **Rule:** within a stream, `commit_sequence` follows the versions; a stamp's cost follows
 its batch.
 
+197's walk still filtered each row on `xmin < horizon`, and `xmin` cannot be indexed, so the walk
+could not skip a row that was not yet eligible: it read it to find out. Under an import that is every
+row. The import's oldest open transaction holds the horizon while the rest of it commits behind, the
+walk never reaches its batch, and each call reads every row behind the horizon and stamps none. The
+leader retries on `FencedRetryInterval` (250 ms) while rows are pending, under the role fence, so the
+holder's renewal vote queued behind it: measured on a deployed environment under bulk imports, votes
+waited a median of 14.5 s and up to 30 s behind fenced stamps that ran, unblocked, for up to 47 s
+(#1217). Migration 205 records the inserting transaction's id at insert (`insert_xid`, in the 32-bit
+form `xmin` and `backend_xid` carry) and indexes it for unstamped rows; the walk range-scans
+`insert_xid < horizon`. Behind an open transaction a stamp read 20,001 index entries to stamp nothing
+before and 2 after (`CommitSequenceStreamOrderSqlTests`); the harness
+(`RoleVoteBehindAHeldBackStampScenarioTests`) gates it at one batch. **Rule:** a stamp reads only rows
+it may stamp. When more are eligible than one batch holds, the earlier transaction's rows go first; a
+batch is numbered in insertion order and a stream in version order, as before.
+
+**Measure a function's work inside its own transaction, not from its plan.** `EXPLAIN (ANALYZE,
+BUFFERS)` of `SELECT stamp_pending_commit_sequences(…)` did not follow the walk: 910 buffers for a
+call that read 1,000 index entries and 530 for one that read 20,000. Index entries read come from
+`pg_stat_get_xact_tuples_returned(indexrelid)` summed over the table's indexes, read before and after
+the call in the same transaction (the counters hold everything the backend has not flushed, so take
+the difference). The count is the same on every machine, which is what a ceiling needs.
+
 ## Finding 3, round two: the liveness calls waited on locks, and what held them
 
 Heartbeats, role votes, the lapsed-bridge expiry and due-schedule claims were reported at 8 to 16 s
@@ -231,7 +253,8 @@ prints every wait with the statement that held it. On the SQL before 197 to 199:
 
 - **The holder's renewal vote** waited behind the stamper's fenced transaction. `wh_assert_role_epoch`
   holds the role row `FOR SHARE` until the fenced stamp commits, and the renewal needs `FOR UPDATE`.
-  That is the fence working; what bounds it is the stamp, which 197 made cost what its batch stamps.
+  That is the fence working; what bounds it is the stamp, which 197 made cost what its batch stamps
+  and 205 made read nothing an open transaction holds back.
   `RoleFenceWaitSqlTests` pins the wait as a design property.
 - **`wh_end_lapsed_bridge`** waited behind the same stamper and behind the holder's vote, because it
   took the vote lock and the row lock before it looked. Every bridged instance that cannot take the

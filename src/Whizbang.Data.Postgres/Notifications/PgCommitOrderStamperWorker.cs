@@ -125,8 +125,9 @@ public sealed partial class PgCommitOrderStamperWorker(
   /// <remarks>
   /// The stamp used to run on every wake whether or not anything was unstamped, and its eligibility
   /// query then sorted every unstamped row before taking a batch: about half a core per busy database
-  /// on the backstop tick under a bulk load. The stamp now walks an index and stops at its batch
-  /// (migration 197), and the partial-index existence probe still decides whether it runs at all.
+  /// on the backstop tick under a bulk load. The stamp now walks an index of eligible rows and stops at
+  /// its batch (migrations 197 and 205), and the partial-index existence probe still decides whether it
+  /// runs at all.
   /// </remarks>
   public event Action? OnStampSkipped;
 

@@ -26,16 +26,19 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </para>
 /// <para>
 /// An import does not leave the stamper rows to stamp. Its transactions keep the visibility horizon at the oldest of
-/// them, so every row inserted after that one is unstamped and not yet eligible. The stamp walks the unstamped rows
-/// in insertion order until it has its batch, and with nothing eligible it never has it: it reads every unstamped
-/// row behind the horizon and stamps none. The worker then retries on its fenced interval because rows are pending,
-/// and each retry reads them all again under the role fence, holding the role row the holder's vote has to write.
+/// them, so every row inserted after that one is unstamped and not yet eligible. Before 205 the stamp walked the
+/// unstamped rows in insertion order until it had its batch, and with nothing eligible it never had it: it read every
+/// unstamped row behind the horizon (100,001 index entries here) and stamped none. The worker retries on its fenced
+/// interval because rows are pending, so each retry read them all again under the role fence, holding the role row the
+/// holder's vote has to write. Since 205 the walk finds eligible rows through the inserting transaction's id and reads
+/// nothing behind the horizon.
 /// </para>
 /// <para>
 /// This scenario holds one import transaction open, commits a backlog behind it, and runs the stamper's fenced
-/// calls beside the holder's votes. The index entries each call reads come from <c>pg_stat_xact_user_indexes</c>
-/// inside the call's own transaction, so they are the same on every machine; the vote's waits are sampled from
-/// <c>pg_stat_activity</c> and recorded, never gated, because their length depends on the machine.
+/// calls beside the holder's votes. The index entries each call reads, on every index of the event store, come from
+/// <c>pg_stat_get_xact_tuples_returned</c> inside the call's own transaction, so they are the same on every machine
+/// and carry the gate; the vote's waits are sampled from <c>pg_stat_activity</c> and recorded, never gated, because
+/// their length depends on the machine.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
@@ -43,7 +46,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 [Category("Performance")]
 public class RoleVoteBehindAHeldBackStampScenarioTests : EFCoreTestBase {
   private const string STAMPER_ROLE = "commit-stamper";
-  private const string WALK_INDEX = "idx_event_store_unstamped_insert_order";
   /// <summary>Streams the import commits behind its open transaction.</summary>
   private const int HELD_BACK_STREAMS = 10_000;
   private const int HELD_BACK_VERSIONS = 10;
@@ -134,18 +136,22 @@ public class RoleVoteBehindAHeldBackStampScenarioTests : EFCoreTestBase {
       await _execAsync(conn, $"SELECT wh_assert_role_epoch('{STAMPER_ROLE}', '{_holder}'::uuid, {epoch})");
       // The counter holds every read this backend has not yet flushed, earlier transactions included, so a call's
       // reads are the difference across it.
-      var before = await _scalarAsync(conn, _walkReadsSql());
+      var before = await _scalarAsync(conn, WALK_READS_SQL);
       var clock = Stopwatch.StartNew();
       var stamped = await _scalarAsync(conn, $"SELECT stamp_pending_commit_sequences({STAMP_BATCH}, false)");
       clock.Stop();
-      var read = await _scalarAsync(conn, _walkReadsSql()) - before;
+      var read = await _scalarAsync(conn, WALK_READS_SQL) - before;
       await tx.CommitAsync(cancellationToken);
       calls.Add(new StampCall((int)stamped, read, clock.ElapsedMilliseconds));
     }
     return calls;
   }
 
-  private static string _walkReadsSql() => $"SELECT pg_stat_get_xact_tuples_returned('{WALK_INDEX}'::regclass)";
+  // Every index on the event store, so the count does not depend on which index the walk is written against.
+  private const string WALK_READS_SQL = """
+    SELECT COALESCE(sum(pg_stat_get_xact_tuples_returned(i.indexrelid)), 0)::bigint
+    FROM pg_index i WHERE i.indrelid = 'wh_event_store'::regclass
+    """;
 
   private static async Task<int> _voteUntilAsync(NpgsqlDataSource dataSource, Task until) {
     await using var conn = await dataSource.OpenConnectionAsync();

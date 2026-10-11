@@ -11,8 +11,9 @@ namespace Whizbang.Core.Notifications;
 /// Each call to <c>stamp_pending_commit_sequences</c> used to cost a scan and a sort of the unstamped set,
 /// because the column that ordered it was a system column no index can cover, so draining a backlog of N
 /// rows in fixed steps of B cost about N/B of those scans (#1060). Since migration 197 the stamp walks an
-/// insertion-order index and stops at its batch, so a call costs what it stamps (#1062) and the number of
-/// calls no longer multiplies a scan.
+/// index and stops at its batch, so a call costs what it stamps (#1062) and the number of calls no longer
+/// multiplies a scan; since 205 the walk reads only rows past the visibility horizon, so rows an open
+/// transaction holds back cost a call nothing either (#1217).
 /// </para>
 /// <para>
 /// The batch still grows while there is clearly more work and returns to the configured size once there
