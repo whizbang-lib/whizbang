@@ -56,6 +56,9 @@ Work out the version from facts, not guesses:
   `Merge back ·`). RELEASING.md → *Reading a run*.
 - `release.yml` starts from the push to `main` (not the `pull_request` event), because the publish
   environments admit only `develop`, `main` and `release/**`. RELEASING.md → *Where a publish may run from*.
+- Pushes, PRs and `v*` tags are made by the `whizbang-release-bot` app, never `GITHUB_TOKEN` or a
+  personal token. A red `Mint the release app token` has its own Recovery row. RELEASING.md →
+  *Which identity writes*.
 - After merging a release PR, confirm three things, and don't assume: the `release.yml` run reached
   the approval gate, the tag exists (`git ls-remote --tags origin vX.Y.Z`), and after approval the
   packages are live (`curl -s https://api.nuget.org/v3-flatcontainer/softwareextravaganza.whizbang.core/index.json | jq -r '.versions[-3:][]'`).
@@ -97,3 +100,6 @@ by name, so suites can be renamed or sharded freely, but a new suite must join t
 `$Suites` in `.github/scripts/Test-CiResult.ps1`. Any new way to skip suites must become a path in that
 script with its own evidence and tests (`Test · Pipeline scripts`); the gate fails a skip it cannot
 prove. Renaming the gate itself wedges every merge.
+A new workflow step that pushes, opens a PR or tags mints the app token the same way the existing ones
+do (`actions/create-github-app-token`, only the permissions it needs) and gets a row in *Which identity
+writes*; a reusable workflow declares `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` as secrets.

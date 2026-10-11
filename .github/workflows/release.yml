@@ -413,11 +413,23 @@ jobs:
       contents: write
 
     steps:
+      # The release app pushes the tag: the tag ruleset lets only that app create v* tags, and GitHub Actions
+      # cannot be a ruleset bypass actor. Workflows: GitHub refuses an app a ref whose commit changes
+      # .github/workflows without it.
+      - name: Mint the release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Configure Git
         run: |
@@ -644,7 +656,8 @@ jobs:
       source-label: main
       version: ${{ needs.check-release.outputs.version }}
     secrets:
-      RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+      RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
   # ============================================================================
   # Notifications - comprehensive failure detection

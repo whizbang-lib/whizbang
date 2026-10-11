@@ -24,16 +24,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: read   # every write goes through RELEASE_PAT, so the PR it opens triggers CI
+      contents: read   # every write goes through the release app, so the PR it opens triggers CI
     env:
       BRANCH: docs/readme-refresh
       BASE: develop
     steps:
+      - name: Mint the release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Checkout develop
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: develop
-          token: ${{ secrets.RELEASE_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Regenerate the quality block
         shell: pwsh
@@ -42,8 +51,8 @@ jobs:
       - name: Open or update the refresh PR
         env:
           # A PR opened with GITHUB_TOKEN never triggers workflows, so its required checks would never
-          # report; RELEASE_PAT opens it the way ci.yml opens its release PRs.
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          # report; the release app opens it the way ci.yml opens its release PRs.
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
