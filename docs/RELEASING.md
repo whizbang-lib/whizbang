@@ -269,9 +269,11 @@ flowchart LR
 - A **manual/override** version is still reflected, because it is what gets tagged.
 - `release.yml` **fails if the tag already exists** — you can never re-publish a version, and the
   tag history can never silently disagree with GitVersion.
-- The **Protect release tags** ruleset refuses moving or deleting any `v*` tag, for every actor,
-  and creating one for anyone but the release app and repository admins, who are the recovery path
-  when a tag step fails (see *Which identity writes*).
+- The **Protect release tags** ruleset refuses moving or deleting any `v*` tag, for every actor.
+- The **Restrict release tag creation** ruleset refuses creating a `v*` tag to anyone but the release
+  app and repository admins, who are the recovery path when a tag step fails (see *Which identity
+  writes*). It is a ruleset of its own because a bypass applies to every rule in a ruleset: in the
+  first one, the app could also move or delete tags.
 - A **lower** version (a backport tag `< highest`) will not advance the mainline base — correct.
 
 ---
