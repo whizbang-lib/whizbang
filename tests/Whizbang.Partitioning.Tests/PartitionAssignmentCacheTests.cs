@@ -197,22 +197,33 @@ public class PartitionAssignmentCacheTests {
   }
 
   [Test]
-  public async Task OnNotification_AReaderActingOnTheAnnouncement_SeesTheNewVersionAsync() {
+  public async Task OnNotification_RaisesTheAnnouncementOnlyOnceTheCopyIsStaleAsync() {
+    // A caller woken by the announcement claims at once; it must be handed the new version, not the copy the
+    // announcement replaced.
     var (cache, store, _) = _create();
     store.Published = _read(3, 1, TimeSpan.FromSeconds(90), _self);
     _ = await cache.ForClaimAsync(_self, CancellationToken.None);
     store.Published = _read(3, 2, TimeSpan.FromSeconds(90), _self);
-    Task<PartitionAssignmentVersion?>? readOnAnnouncement = null;
-    // The reader runs inside the announcement, as any subscriber that acts on it may; the stale check is the first
-    // thing ForClaimAsync does, before it awaits anything.
-    cache.OnPublishAnnounced += _ => readOnAnnouncement = cache.ForClaimAsync(_self, CancellationToken.None).AsTask();
+    var claimsOnAnnouncement = new List<Task<PartitionAssignmentVersion?>>();
+    cache.OnPublishAnnounced += _ => claimsOnAnnouncement.Add(cache.ForClaimAsync(_self, CancellationToken.None).AsTask());
 
     cache.OnNotification("3:2");
 
-    await Assert.That(await readOnAnnouncement!).IsEqualTo(new PartitionAssignmentVersion(3, 2))
-      .Because("the announcement is the signal that this instance heard a publish, so by the time it is raised the copy "
-        + "has to be marked stale; raised first, a reader acting on it got the old version (or none) and the copy was "
-        + "marked stale only after it had read");
+    await Assert.That(claimsOnAnnouncement).Count().IsEqualTo(1);
+    await Assert.That(await claimsOnAnnouncement[0]).IsEqualTo(new PartitionAssignmentVersion(3, 2));
+  }
+
+  [Test]
+  public async Task OnNotification_ForTheVersionAlreadyHeld_StillRaisesTheAnnouncementAsync() {
+    var (cache, store, _) = _create();
+    store.Published = _read(3, 1, TimeSpan.FromSeconds(90), _self);
+    _ = await cache.ForClaimAsync(_self, CancellationToken.None);
+    var announced = new List<string>();
+    cache.OnPublishAnnounced += announced.Add;
+
+    cache.OnNotification("3:1");
+
+    await Assert.That(announced).IsEquivalentTo(["3:1"]);
   }
 
   [Test]

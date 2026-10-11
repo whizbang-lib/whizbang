@@ -30,6 +30,9 @@
   build time and never reads it from that file (except as a last-ditch fallback if GitVersion fails).
 - **Publishing to nuget.org waits for your approval** (the `nuget-publish` environment), unless the
   repository variable `PUBLISH_WITHOUT_APPROVAL` is `true`.
+- **Only reviewed code publishes.** The publish environments admit runs from `develop`, `main` and
+  `release/**` only, and each of those takes changes through a pull request with the CI gate. A
+  published `v*` tag cannot be moved or deleted.
 - **Claude sessions follow the `release` skill** (`.claude/skills/release/SKILL.md`), which maps any
   situation to the flow below and its recovery. Keep it in step with this document.
 
@@ -48,7 +51,7 @@ the enforcement points named in the last column refuse it.
 | F4 | Fix something in an open release | PR from `fix/*` (or `bugfix/*`, `hotfix/*`) into `release/vX.Y.Z` | The branch re-tests; publish the next beta or rc when ready (F3); the fix reaches develop after release (F5) | gitflow check |
 | F5 | Ship the **stable** release | Merge the release PR (merge commit) and approve `nuget-publish` | Promotes the release branch's tested packages as **`X.Y.Z`**, tags `main`, syncs `main` back to `develop` by PR; CI 5 released reuses the release branch's results | release PR must come from `release/vX.Y.Z` with its own stable number; tested tree must equal the tagged tree |
 | F6 | Abandon a release | Close the release PR, delete the branch | Nothing publishes. A re-cut with `auto` reuses the same number if betas or rcs already shipped for it | — |
-| F7 | Hotfix the **current** line | Branch `release/vX.Y.(Z+1)` from tag `vX.Y.Z`, push it, then push the fix | The push run opens the release PR into `main` itself; continue with F3/F5 | release guard |
+| F7 | Hotfix the **current** line | Branch `release/vX.Y.(Z+1)` from tag `vX.Y.Z` and push it; put the fix on `fix/*` and PR it **into** `release/vX.Y.(Z+1)` | The push run opens the release PR into `main` itself; continue with F3/F5 | release guard; `release/**` ruleset: a direct push is refused |
 | F8 | Patch an **older** line | Branch `release/vA.B.(C+1)` from tag `vA.B.C` and push it; put the fix on `fix/*` and PR it **into** `release/vA.B.(C+1)` | Merging the fix PR publishes **`A.B.(C+1)`**, then opens a develop-only back-merge PR; never touches `main` | release guard: a direct push is refused; the fix PR's coverage/Sonar gate must have passed |
 | F9 | Recover a stuck release | See [Recovery](#recovery) | — | — |
 
@@ -266,6 +269,9 @@ flowchart LR
 - A **manual/override** version is still reflected, because it is what gets tagged.
 - `release.yml` **fails if the tag already exists** — you can never re-publish a version, and the
   tag history can never silently disagree with GitVersion.
+- The **Protect release tags** ruleset refuses moving or deleting any `v*` tag, for every actor,
+  and creating one for anyone but the release app and repository admins, who are the recovery path
+  when a tag step fails (see *Which identity writes*).
 - A **lower** version (a backport tag `< highest`) will not advance the mainline base — correct.
 
 ---
@@ -275,7 +281,42 @@ flowchart LR
 The `push` job in `nuget-push.yml` declares `environment: nuget-publish`, which has a **required
 reviewer**. Every publish path funnels through it, so **nothing reaches nuget.org without an approval**
 in the GitHub Actions UI. (`release-approval`, used by release.yml's "Approve Release" job, has no
-rules today and auto-passes — the real gate is `nuget-publish`.)
+reviewers and auto-passes — the real gate is `nuget-publish`.)
+
+### Where a publish may run from
+
+`nuget-publish`, `nuget-publish-auto` and `release-approval` each carry a deployment-branch policy
+admitting `develop`, `main` and `release/**`. A run from any other ref, including a manual
+`nuget-publish` dispatched from an unreviewed branch, is refused before the job starts, so no branch's
+own copy of a workflow can reach the publishing identity. `nuget-publish.yml` also refuses a `ref`
+input no protected branch contains.
+
+That is why `release.yml` starts from the **push** a merged release PR makes to `main`, not from the
+`pull_request` event: GitHub evaluates the policy against the run's ref, and a `pull_request` run's
+ref is `refs/pull/N/merge`. The push run finds the release PR through the merge commit
+(`repos/…/commits/<sha>/pulls`) and applies the same title and branch checks as before. Admitting
+`refs/pull/*/merge` instead would let any pull request's workflow in.
+
+### Which identity writes
+
+Every write that must start CI, or that only one identity may make, goes through the
+**`whizbang-release-bot`** GitHub App: each job mints a short-lived installation token
+(`actions/create-github-app-token`, from the org secrets `RELEASE_APP_ID` and
+`RELEASE_APP_PRIVATE_KEY`) scoped to the one repository and the permissions it needs. No personal
+access token is involved, so nothing long-lived belongs to a person.
+
+| Write | Where | App permissions |
+|---|---|---|
+| Release branch push and release PR | `start-release.yml` | contents, pull requests, workflows |
+| Release PR for a current-line hotfix | `ci.yml` → Plan · Route the hotfix by line | pull requests |
+| Merge-back branch and PR into `develop` | `reusable-sync-develop.yml` | contents, pull requests, workflows |
+| `v*` tag | `release.yml`, `nuget-publish.yml` | contents, workflows |
+| README numbers PR | `readme-refresh.yml` | contents, pull requests |
+| Docs site test status and security advisories, and its release | `ci.yml` → Report · Test status to docs, `security-advisories-docs.yml` | contents, pull requests, actions (docs repository only) |
+
+A PR or push made with `GITHUB_TOKEN` starts no workflow, which is why these are not `GITHUB_TOKEN`.
+The tag is because the tag ruleset lets only the app create a `v*` tag, and GitHub Actions cannot be
+a ruleset bypass actor. GitHub releases and everything else stay on `GITHUB_TOKEN`.
 
 ### What a stable GitHub release carries
 
@@ -600,6 +641,7 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
 | Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
 | `Gate · Alpha is not below NuGet` is red on a develop push, or a published prerelease out-sorts develop's current builds ("latest" resolves to old code) | a release cut was abandoned after develop had published in the cut's next band (#872): the open branch raised develop's number, deleting it lowered it again | Find the commit that first published the stale version (its develop run's push log), **tag it with that version** (`git tag -a vX.Y.Z-alpha.N <sha>`; it records a version that really shipped, and develop then computes above it), and **unlist** that version on nuget.org for every package. Never set a version floor in `GitVersion.yml`: versions come from tags only |
+| `Mint the release app token` failed, or a push, PR or tag step after it is refused | the app's private key was rotated or revoked, the org secrets `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` are missing for this repository, the app was uninstalled from the repository, or it lacks a permission that step needs | Fix the app or the secret (Settings → Developer settings → GitHub Apps → `whizbang-release-bot`), then re-run the failed jobs. Every tag step checks for the tag first, so a re-run after the packages reached NuGet only adds the missing tag. If the app cannot be fixed quickly, a repository admin may push the tag by hand: `git tag -a vX.Y.Z <sha> -m "Release vX.Y.Z" && git push origin vX.Y.Z` |
 | A job in a release run failed for a flaky test | a real flake | Re-run the failed jobs to unblock, **and** fix the flake in a PR (flakes are fixed on sight, never parked) |
 
 `dry_run` on `release.yml` defaults to `true`: a dispatch without `-f dry_run=false` reports success
@@ -674,6 +716,9 @@ and publishes nothing.
 - **A `pull_request` trigger filters on the BASE branch only.** There is no head-branch filter, so a
   release PR always starts a CI run. Its jobs can yield (release-pr), but the run itself cannot be
   prevented, which is why a release PR still shows a row per yielded job.
+- **`release/**` requires a pull request and the CI gate** (`Gate · CI result`, `Gate · Gitflow branch
+  direction`), like `develop`. The checks are not enforced on creation, so Start Release and a hotfix
+  cut can still push the new branch; every change after that arrives as a PR.
 - **`main` is protected by a ruleset, not classic branch protection.** `.../branches/main/protection`
   returns 404 "Branch not protected"; the required checks are at
   `gh api repos/<owner>/<repo>/rules/branches/main`.

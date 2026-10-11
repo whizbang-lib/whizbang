@@ -71,20 +71,18 @@ public sealed partial class PartitionAssignmentCache : IPartitionAssignmentSourc
 
   /// <summary>
   /// Raised when the assigner's announcement of a publish arrives, with its <c>epoch:revision</c> payload, after the
-  /// copy is marked stale, so the next read presents the announced version. The signal that this instance heard a
-  /// publish. Must not block.
+  /// copy is marked stale, so a claim made by a caller woken by it reads the new version. The signal that this
+  /// instance heard a publish. Must not block.
   /// </summary>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:OnNotification_RaisesTheAnnouncementOnlyOnceTheCopyIsStaleAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:OnNotification_ForTheVersionAlreadyHeld_StillRaisesTheAnnouncementAsync</tests>
   public event Action<string>? OnPublishAnnounced;
 
   /// <inheritdoc />
   public string ChannelName => CHANNEL;
 
   /// <inheritdoc />
-  /// <remarks>
-  /// A publish marks the copy stale unless it already is this version; the read happens on the next claim. The
-  /// announcement is raised after the mark, so a reader acting on it reads the new version: raised before it, a reader
-  /// could check the copy between the two and keep the old one.
-  /// </remarks>
+  /// <remarks>A publish marks the copy stale unless it already is this version; the read happens on the next claim.</remarks>
   public void OnNotification(string payload) {
     var current = Current;
     if (current is null || !string.Equals(payload, PayloadOf(current.Version), StringComparison.Ordinal)) {

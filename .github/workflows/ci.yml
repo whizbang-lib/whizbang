@@ -1267,13 +1267,21 @@ jobs:
       should_publish: ${{ steps.check.outputs.should_publish }}
       line: ${{ steps.check.outputs.line }}
     steps:
+      # The release app opens the PR so its CI runs: a PR opened with GITHUB_TOKEN sits in action_required
+      # and never reports its required checks.
+      - name: Mint the release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+
       - name: Classify the release branch and route its publish
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
-          # RELEASE_PAT opens the PR so its CI runs (a GITHUB_TOKEN-created PR sits in
-          # action_required and never reports its required checks).
-          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+          RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           VERSION: ${{ needs.version.outputs.semver }}
@@ -1321,7 +1329,7 @@ jobs:
           if [ "$LINE" = "current" ]; then
             # Route through main like every release: the merge publishes (release.yml) and
             # sync-develop carries it back. The title IS the version string (release.yml parses it).
-            GH_TOKEN="$RELEASE_PAT" gh pr create --repo "$REPO" --head "$BRANCH" --base main \
+            GH_TOKEN="$RELEASE_TOKEN" gh pr create --repo "$REPO" --head "$BRANCH" --base main \
               --title "chore(release): v${VERSION}" \
               --body "Current-line hotfix: v${VERSION} is above the highest stable release (v${HIGHEST}), so it ships through main — merging publishes it and syncs develop. Opened automatically because the branch was pushed without a PR." \
               || [ -n "$(open_pr)" ] || {
@@ -1401,7 +1409,8 @@ jobs:
       source-label: hotfix
       version: ${{ needs.version.outputs.semver }}
     secrets:
-      RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+      RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
   # ============================================================================
   # Notifications - Send push notifications on build completion
@@ -1485,16 +1494,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      DOCS_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+      HAVE_APP: ${{ secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
     steps:
-      - name: Check for docs push token
+      - name: Check for the release app
         id: token
         run: |
-          if [ -n "$DOCS_TOKEN" ]; then
+          if [ "$HAVE_APP" = true ]; then
             echo "have=true" >> "$GITHUB_OUTPUT"
           else
             echo "have=false" >> "$GITHUB_OUTPUT"
-            echo "DOCS_REPO_PUSH_TOKEN not set — skipping test-status publish"
+            echo "RELEASE_APP_ID or RELEASE_APP_PRIVATE_KEY not set — skipping test-status publish"
           fi
 
       - name: Download TRX artifacts
@@ -1515,13 +1524,27 @@ jobs:
             echo "No TRX artifacts (suites skipped?) — nothing to publish"
           fi
 
+      # Scoped to the docs repository. Actions: the last step dispatches the docs site's start-release.
+      - name: Mint the release app token
+        id: app-token
+        if: steps.trx.outputs.have == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: whizbang-lib.github.io
+          permission-contents: write
+          permission-pull-requests: write
+          permission-actions: write
+
       - name: Checkout docs repo
         if: steps.trx.outputs.have == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: whizbang-lib/whizbang-lib.github.io
           ref: develop
-          token: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           path: docs-repo
 
       - name: Build test-status data
@@ -1545,7 +1568,7 @@ jobs:
         if: steps.trx.outputs.have == 'true'
         working-directory: docs-repo
         env:
-          GH_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           # `published` is only ever set on a successful merge; unset reads as falsy.
           git config user.name "whizbang-ci"
@@ -1584,7 +1607,7 @@ jobs:
       - name: Release docs to main
         if: steps.publish.outputs.published == 'true'
         env:
-          GH_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           gh workflow run start-release.yml \
             --repo whizbang-lib/whizbang-lib.github.io \

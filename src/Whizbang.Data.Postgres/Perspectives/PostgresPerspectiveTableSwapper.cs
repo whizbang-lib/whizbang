@@ -55,12 +55,25 @@ public sealed class PostgresPerspectiveTableSwapper(
   public static string PreviousName(string name) => _suffixed(name, PREVIOUS_SUFFIX);
 
   /// <inheritdoc />
-  public async Task<string?> FindTableAsync(string perspectiveName, CancellationToken cancellationToken) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(perspectiveName);
+  public async Task<string?> FindTableAsync(string modelTypeName, CancellationToken cancellationToken) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(modelTypeName);
+
+    // Two renderings of one name reach this method. The schema pass writes the registry key in CLR
+    // form, with '+' before a nested type; the runner registry reports a model as the generated
+    // fully-qualified form, 'global::'-prefixed and dotted throughout. Neither side is wrong, so the
+    // match is made on the dotted normalization of both, which is the same reconciliation
+    // CollectiveReplayApplier already makes for the same pair of forms. The exact comparison stays
+    // first so a caller holding the registry key still hits the index.
+    var key = modelTypeName.StartsWith("global::", StringComparison.Ordinal)
+      ? modelTypeName["global::".Length..]
+      : modelTypeName;
+
     await using var conn = await _openConnection(cancellationToken).ConfigureAwait(false);
     await using var cmd = new NpgsqlCommand(
-      $"SELECT table_name FROM {PgIdentifier.Qualify(schema, "wh_perspective_registry")} WHERE clr_type_name = @name LIMIT 1", conn);
-    cmd.Parameters.AddWithValue("name", perspectiveName);
+      $"SELECT table_name FROM {PgIdentifier.Qualify(schema, "wh_perspective_registry")} " +
+      "WHERE clr_type_name = @name OR replace(clr_type_name, '+', '.') = @dotted LIMIT 1", conn);
+    cmd.Parameters.AddWithValue("name", key);
+    cmd.Parameters.AddWithValue("dotted", key.Replace('+', '.'));
     return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
   }
 
